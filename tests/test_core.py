@@ -11,10 +11,10 @@ import pytest
 
 from forge_bridge.core import (
     Asset, FrameRange, Layer, Location, Media, Project,
-    Relational, Relationship, Registry, RelationshipDefinition,
+    Relational, Relationship, Registry, RelationshipTypeDef,
     RoleDefinition, Sequence, Shot, Stack, STANDARD_ROLES,
     SYSTEM_REL_KEYS, Status, StorageType, Timecode, Version,
-    OrphanError, SystemProtectedError, NotFoundError, DuplicateError,
+    OrphanError, ProtectedEntryError, UnknownNameError, RegistryError,
     get_default_registry, set_default_registry,
 )
 
@@ -105,7 +105,7 @@ class TestRoleRegistry:
         assert self.reg.roles.get_key("hero") == old_key
 
     def test_rename_to_existing_raises(self):
-        with pytest.raises(DuplicateError):
+        with pytest.raises(RegistryError):
             self.reg.roles.rename("primary", "matte")
 
     def test_add_custom(self):
@@ -114,7 +114,7 @@ class TestRoleRegistry:
         assert defn.label == "Paint Pass"
 
     def test_add_duplicate_raises(self):
-        with pytest.raises(DuplicateError):
+        with pytest.raises(RegistryError):
             self.reg.roles.add("primary")
 
     def test_delete_unused(self):
@@ -146,7 +146,7 @@ class TestRoleRegistry:
         assert self.reg.roles.usage_count("counted") == 2
 
     def test_not_found_raises(self):
-        with pytest.raises(NotFoundError):
+        with pytest.raises(UnknownNameError):
             self.reg.roles.get_by_name("does_not_exist")
 
 
@@ -176,7 +176,7 @@ class TestRelationshipRegistry:
 
     def test_delete_system_blocked(self):
         """System types can never be deleted."""
-        with pytest.raises(SystemProtectedError):
+        with pytest.raises(ProtectedEntryError):
             self.reg.relationships.delete("version_of")
 
     def test_add_custom(self):
@@ -199,7 +199,7 @@ class TestRelationshipRegistry:
             self.reg.relationships.delete("blocking_type")
 
     def test_rename_to_existing_blocked(self):
-        with pytest.raises(DuplicateError):
+        with pytest.raises(RegistryError):
             self.reg.relationships.rename("member_of", "version_of")
 
 

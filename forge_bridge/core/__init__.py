@@ -6,12 +6,17 @@ forge-bridge core vocabulary.
         Project, Sequence, Shot, Asset, Version, Media, Stack, Layer,
         # Traits
         Versionable, Locatable, Relational,
+        # Relationship primitives
+        Relationship, SYSTEM_REL_KEYS,
         # Supporting types
         Role, STANDARD_ROLES, Status, Timecode, FrameRange,
-        Location, StorageType, Relationship, SYSTEM_REL_KEYS,
+        Location, StorageType,
         # Registry
-        Registry, RoleDefinition, RelationshipDefinition,
-        OrphanError, SystemProtectedError, NotFoundError,
+        Registry, RoleRegistry, RelationshipTypeRegistry,
+        RoleDefinition, RelationshipTypeDef,
+        RegistryError, OrphanError, ProtectedEntryError,
+        UnknownNameError, UnknownKeyError,
+        STANDARD_ROLE_KEYS,
         get_default_registry, set_default_registry,
     )
 """
@@ -46,16 +51,17 @@ from forge_bridge.core.vocabulary import (
     Timecode,
 )
 from forge_bridge.core.registry import (
-    DuplicateError,
-    NotFoundError,
     OrphanError,
+    ProtectedEntryError,
     Registry,
     RegistryError,
-    RelationshipDefinition,
-    RelationshipRegistry,
+    RelationshipTypeDef,
+    RelationshipTypeRegistry,
     RoleDefinition,
     RoleRegistry,
-    SystemProtectedError,
+    STANDARD_ROLE_KEYS,
+    UnknownKeyError,
+    UnknownNameError,
 )
 
 __all__ = [
@@ -71,9 +77,10 @@ __all__ = [
     "Timecode", "FrameRange",
     "Location", "StorageType",
     # Registry
-    "Registry", "RoleRegistry", "RelationshipRegistry",
-    "RoleDefinition", "RelationshipDefinition",
-    "RegistryError", "OrphanError", "SystemProtectedError",
-    "NotFoundError", "DuplicateError",
+    "Registry", "RoleRegistry", "RelationshipTypeRegistry",
+    "RoleDefinition", "RelationshipTypeDef",
+    "RegistryError", "OrphanError", "ProtectedEntryError",
+    "UnknownNameError", "UnknownKeyError",
+    "STANDARD_ROLE_KEYS",
     "get_default_registry", "set_default_registry",
 ]

@@ -445,11 +445,17 @@ class Layer(BridgeEntity):
         else:
             raise TypeError(f"role must be a name string or UUID, got {type(role)}")
 
-        # Register usage so the registry can block orphaning deletion
+        # Store registry reference for set_role and migration operations
+        self._registry = reg
+
+        # Register usage so the registry tracks this layer and blocks orphaning deletion
         try:
-            reg.roles.register_usage(self.role_key, self.id)
+            reg.roles.register_usage(self.role_key, self.id, "Layer")
         except Exception:
             pass
+
+        # Migration callback — when delete+migrate fires, auto-update our role_key
+        reg.roles.on_migration(self._on_role_migration)
 
         self.order:      int                    = order
         self.stack_id:   Optional[uuid.UUID]    = (
@@ -464,9 +470,32 @@ class Layer(BridgeEntity):
         if self.version_id:
             self.add_relationship(self.version_id, "references")
 
+    def _on_role_migration(self, holder_id: uuid.UUID, old_key: uuid.UUID, new_key: uuid.UUID) -> None:
+        """Called by the registry when a delete+migrate reassigns our role key."""
+        if holder_id == self.id and self.role_key == old_key:
+            self.role_key = new_key
+
+    def set_role(self, new_name: str, registry: Optional[object] = None) -> None:
+        """Change this layer's role. Releases the old registry reference and acquires the new."""
+        reg = registry or self._registry or _get_registry()
+        new_key = reg.roles.get_key(new_name)
+        if new_key == self.role_key:
+            return
+        # Release old
+        try:
+            reg.roles.unregister_usage(self.role_key, self.id)
+        except Exception:
+            pass
+        # Acquire new
+        self.role_key = new_key
+        try:
+            reg.roles.register_usage(self.role_key, self.id, "Layer")
+        except Exception:
+            pass
+
     def role_name(self, registry: Optional[object] = None) -> str:
-        """Return the current display name of this layer's role."""
-        reg = registry or _get_registry()
+        """Return the current canonical name of this layer's role."""
+        reg = registry or self._registry or _get_registry()
         try:
             return reg.roles.get_by_key(self.role_key).name
         except Exception:
@@ -562,5 +591,5 @@ class Stack(BridgeEntity):
         return d
 
     def __repr__(self) -> str:
-        roles = [l.role.name for l in self._layers]
+        roles = [l.role_name() for l in self._layers]
         return f"Stack(shot={self.shot_id!s:.8}..., layers={roles})"
