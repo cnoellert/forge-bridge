@@ -28,8 +28,13 @@ from datetime import datetime
 from fractions import Fraction
 from typing import Any, Optional
 
-from forge_bridge.core.traits import Locatable, Relational, RelationshipType, Versionable
+from forge_bridge.core.traits import Locatable, Relational, Versionable, get_default_registry
 from forge_bridge.core.vocabulary import FrameRange, Role, Status, Timecode
+
+
+def _get_registry():
+    """Thin wrapper so entity code does not import Registry directly."""
+    return get_default_registry()
 
 
 # ─────────────────────────────────────────────────────────────
@@ -152,7 +157,7 @@ class Sequence(Versionable, BridgeEntity):
 
         # Auto-declare relationship to project
         if self.project_id:
-            self.add_relationship(self.project_id, RelationshipType.MEMBER_OF)
+            self.add_relationship(self.project_id, "member_of")
 
     def to_dict(self) -> dict:
         d = super().to_dict()
@@ -206,7 +211,7 @@ class Shot(Versionable, BridgeEntity):
         )
 
         if self.sequence_id:
-            self.add_relationship(self.sequence_id, RelationshipType.MEMBER_OF)
+            self.add_relationship(self.sequence_id, "member_of")
 
     @property
     def duration(self) -> Optional[int]:
@@ -266,7 +271,7 @@ class Asset(Versionable, BridgeEntity):
         )
 
         if self.project_id:
-            self.add_relationship(self.project_id, RelationshipType.MEMBER_OF)
+            self.add_relationship(self.project_id, "member_of")
 
     def to_dict(self) -> dict:
         d = super().to_dict()
@@ -318,7 +323,7 @@ class Version(BridgeEntity):
         self.created_by: Optional[str] = created_by
 
         if self.parent_id:
-            self.add_relationship(self.parent_id, RelationshipType.VERSION_OF)
+            self.add_relationship(self.parent_id, "version_of")
 
     def to_dict(self) -> dict:
         d = super().to_dict()
@@ -378,7 +383,7 @@ class Media(Versionable, BridgeEntity):
         )
 
         if self.version_id:
-            self.add_relationship(self.version_id, RelationshipType.REFERENCES)
+            self.add_relationship(self.version_id, "references")
 
     def to_dict(self) -> dict:
         d = super().to_dict()
@@ -401,10 +406,16 @@ class Media(Versionable, BridgeEntity):
 # ─────────────────────────────────────────────────────────────
 
 class Layer(BridgeEntity):
-    """A single member of a Stack. Carries a Role assignment.
+    """A single member of a Stack. Carries a role assignment.
 
-    In Flame terms: L01, L02, L03 are Layers within a Stack.
-    The Role distinguishes them.
+    Stores role_key (UUID) — the stable key into the role registry —
+    NOT a Role object or name string. This means renaming "primary"
+    to "hero" in the registry takes effect everywhere automatically,
+    and the registry can block deletion while this Layer exists.
+
+    To get the current role name:
+        layer.role_name()                        # uses default registry
+        layer.role_name(registry=my_registry)    # explicit registry
 
     Endpoint mappings:
         Flame: track in a timeline segment stack (L01/L02/L03)
@@ -412,47 +423,73 @@ class Layer(BridgeEntity):
 
     def __init__(
         self,
-        role: Role | str,
-        stack_id: Optional[uuid.UUID | str] = None,
-        order: int = 0,
+        role:       str | uuid.UUID,               # role name or role key UUID
+        stack_id:   Optional[uuid.UUID | str] = None,
+        order:      int = 0,
         version_id: Optional[uuid.UUID | str] = None,
-        id: Optional[uuid.UUID | str] = None,
-        metadata: Optional[dict] = None,
+        registry:   Optional[object] = None,       # Registry, or None for default
+        id:         Optional[uuid.UUID | str] = None,
+        metadata:   Optional[dict] = None,
     ):
         super().__init__(id=id, metadata=metadata)
 
-        # Accept a Role object or a role name string
-        if isinstance(role, str):
-            from forge_bridge.core.vocabulary import STANDARD_ROLES
-            self.role = STANDARD_ROLES.get(role, Role(role))
+        # Resolve role name → key via registry
+        reg = registry or _get_registry()
+        if isinstance(role, uuid.UUID):
+            self.role_key: uuid.UUID = role
+        elif isinstance(role, str):
+            try:
+                self.role_key = uuid.UUID(role)
+            except ValueError:
+                self.role_key = reg.roles.get_key(role)
         else:
-            self.role = role
+            raise TypeError(f"role must be a name string or UUID, got {type(role)}")
 
-        self.order: int = order
-        self.stack_id: Optional[uuid.UUID] = (
+        # Register usage so the registry can block orphaning deletion
+        try:
+            reg.roles.register_usage(self.role_key, self.id)
+        except Exception:
+            pass
+
+        self.order:      int                    = order
+        self.stack_id:   Optional[uuid.UUID]    = (
             uuid.UUID(str(stack_id)) if stack_id else None
         )
-        self.version_id: Optional[uuid.UUID] = (
+        self.version_id: Optional[uuid.UUID]    = (
             uuid.UUID(str(version_id)) if version_id else None
         )
 
         if self.stack_id:
-            self.add_relationship(self.stack_id, RelationshipType.MEMBER_OF)
+            self.add_relationship(self.stack_id, "member_of")
         if self.version_id:
-            self.add_relationship(self.version_id, RelationshipType.REFERENCES)
+            self.add_relationship(self.version_id, "references")
 
-    def to_dict(self) -> dict:
+    def role_name(self, registry: Optional[object] = None) -> str:
+        """Return the current display name of this layer's role."""
+        reg = registry or _get_registry()
+        try:
+            return reg.roles.get_by_key(self.role_key).name
+        except Exception:
+            return str(self.role_key)
+
+    def role_definition(self, registry: Optional[object] = None):
+        """Return the full RoleDefinition for this layer's role."""
+        reg = registry or _get_registry()
+        return reg.roles.get_by_key(self.role_key)
+
+    def to_dict(self, registry: Optional[object] = None) -> dict:
         d = super().to_dict()
         d.update({
-            "role": self.role.to_dict(),
-            "order": self.order,
-            "stack_id": str(self.stack_id) if self.stack_id else None,
+            "role_key":   str(self.role_key),
+            "role_name":  self.role_name(registry),
+            "order":      self.order,
+            "stack_id":   str(self.stack_id)   if self.stack_id   else None,
             "version_id": str(self.version_id) if self.version_id else None,
         })
         return d
 
     def __repr__(self) -> str:
-        return f"Layer(role={self.role.name!r}, order={self.order}, id={self.id!s:.8}...)"
+        return f"Layer(role={self.role_name()!r}, order={self.order}, id={self.id!s:.8}...)"
 
 
 class Stack(BridgeEntity):
@@ -478,26 +515,36 @@ class Stack(BridgeEntity):
         self._layers: list[Layer] = []
 
         if self.shot_id:
-            self.add_relationship(self.shot_id, RelationshipType.MEMBER_OF)
+            self.add_relationship(self.shot_id, "member_of")
 
     def add_layer(self, layer: Layer) -> Layer:
         """Add a Layer to this Stack and set its stack_id."""
         layer.stack_id = self.id
-        layer.add_relationship(self.id, RelationshipType.MEMBER_OF)
+        layer.add_relationship(self.id, "member_of")
         self._layers.append(layer)
         self._layers.sort(key=lambda l: l.order)
         # Layers within a stack are peers of each other
         for existing in self._layers:
             if existing.id != layer.id:
-                layer.add_relationship(existing.id, RelationshipType.PEER_OF)
+                layer.add_relationship(existing.id, "peer_of")
         return layer
 
     def get_layers(self) -> list[Layer]:
         return list(self._layers)
 
-    def get_layer_by_role(self, role_name: str) -> Optional[Layer]:
+    def get_layer_by_role(self, role_name: str, registry=None) -> Optional[Layer]:
+        """Return the layer carrying the given role name, or None.
+
+        Pass the same registry used to create the layers.
+        Uses the module default registry if not specified.
+        """
+        reg = registry or get_default_registry()
+        try:
+            target_key = reg.roles.get_key(role_name)
+        except Exception:
+            return None
         for layer in self._layers:
-            if layer.role.name == role_name:
+            if layer.role_key == target_key:
                 return layer
         return None
 

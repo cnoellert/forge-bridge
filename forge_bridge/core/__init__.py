@@ -1,15 +1,18 @@
 """
 forge-bridge core vocabulary.
 
-This package implements the canonical language that bridge speaks.
-Import from here for all entity types, traits, and vocabulary types.
-
     from forge_bridge.core import (
-        Project, Sequence, Shot, Asset, Version, Media,
-        Stack, Layer, Role, Status, Timecode, FrameRange,
-        Locatable, Versionable, Relational,
-        RelationshipType, StorageType, Location,
-        STANDARD_ROLES,
+        # Entities
+        Project, Sequence, Shot, Asset, Version, Media, Stack, Layer,
+        # Traits
+        Versionable, Locatable, Relational,
+        # Supporting types
+        Role, STANDARD_ROLES, Status, Timecode, FrameRange,
+        Location, StorageType, Relationship, SYSTEM_REL_KEYS,
+        # Registry
+        Registry, RoleDefinition, RelationshipDefinition,
+        OrphanError, SystemProtectedError, NotFoundError,
+        get_default_registry, set_default_registry,
     )
 """
 
@@ -29,9 +32,11 @@ from forge_bridge.core.traits import (
     Location,
     Relational,
     Relationship,
-    RelationshipType,
+    SYSTEM_REL_KEYS,
     StorageType,
     Versionable,
+    get_default_registry,
+    set_default_registry,
 )
 from forge_bridge.core.vocabulary import (
     FrameRange,
@@ -40,30 +45,35 @@ from forge_bridge.core.vocabulary import (
     Status,
     Timecode,
 )
+from forge_bridge.core.registry import (
+    DuplicateError,
+    NotFoundError,
+    OrphanError,
+    Registry,
+    RegistryError,
+    RelationshipDefinition,
+    RelationshipRegistry,
+    RoleDefinition,
+    RoleRegistry,
+    SystemProtectedError,
+)
 
 __all__ = [
     # Entities
-    "BridgeEntity",
-    "Project",
-    "Sequence",
-    "Shot",
-    "Asset",
-    "Version",
-    "Media",
-    "Stack",
-    "Layer",
+    "BridgeEntity", "Project", "Sequence", "Shot", "Asset",
+    "Version", "Media", "Stack", "Layer",
     # Traits
-    "Versionable",
-    "Locatable",
-    "Relational",
+    "Versionable", "Locatable", "Relational",
+    # Relationship primitives
+    "Relationship", "SYSTEM_REL_KEYS",
     # Supporting types
-    "Role",
-    "STANDARD_ROLES",
-    "Status",
-    "Timecode",
-    "FrameRange",
-    "Location",
-    "StorageType",
-    "Relationship",
-    "RelationshipType",
+    "Role", "STANDARD_ROLES", "Status",
+    "Timecode", "FrameRange",
+    "Location", "StorageType",
+    # Registry
+    "Registry", "RoleRegistry", "RelationshipRegistry",
+    "RoleDefinition", "RelationshipDefinition",
+    "RegistryError", "OrphanError", "SystemProtectedError",
+    "NotFoundError", "DuplicateError",
+    "get_default_registry", "set_default_registry",
 ]

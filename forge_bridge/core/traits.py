@@ -2,26 +2,100 @@
 forge-bridge core traits.
 
 Traits are cross-cutting capabilities that any entity can possess.
-Rather than baking versioning or pathing into specific entity types,
-those behaviors are defined here once. Any entity that needs them
-declares that it carries the trait and gets the behavior for free.
 
-Traits:
-    Versionable  — entity can exist as a series of discrete iterations
-    Locatable    — entity has one or more path-based addresses
-    Relational   — entity can declare and traverse relationships
+Key design principle: entities store stable UUIDs (rel_key, role_key),
+NOT names or enum values. Names are display artifacts looked up through
+the registry at read time. This means:
+
+  - Renaming a role/relationship type never breaks existing entities
+  - The registry can track every reference and block orphaning deletions
+  - No stale copies: there is one source of truth
+
+System relationship type keys are constants defined here so both
+traits.py and registry.py can import them without circular deps.
 """
 
 from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
-    from forge_bridge.core.entities import BridgeEntity
+    from forge_bridge.core.registry import Registry
+
+
+# ─────────────────────────────────────────────────────────────
+# System relationship type keys
+# These UUIDs are permanent — do not change them between versions.
+# registry.py imports these rather than redefining them.
+# ─────────────────────────────────────────────────────────────
+
+SYSTEM_REL_KEYS: dict[str, uuid.UUID] = {
+    "member_of":    uuid.UUID("00000000-0000-0000-0000-000000000001"),
+    "version_of":   uuid.UUID("00000000-0000-0000-0000-000000000002"),
+    "derived_from": uuid.UUID("00000000-0000-0000-0000-000000000003"),
+    "references":   uuid.UUID("00000000-0000-0000-0000-000000000004"),
+    "peer_of":      uuid.UUID("00000000-0000-0000-0000-000000000005"),
+}
+
+# Reverse map for fallback name resolution without a registry
+_SYSTEM_REL_NAMES: dict[uuid.UUID, str] = {v: k for k, v in SYSTEM_REL_KEYS.items()}
+
+
+def _resolve_rel_key(name_or_key: str | uuid.UUID) -> uuid.UUID:
+    """Resolve a name or UUID to a stable relationship type key.
+
+    Accepts:
+      - UUID instance              → returned as-is
+      - UUID string                → parsed to UUID
+      - System type name string    → looked up in SYSTEM_REL_KEYS
+
+    For custom types, pass the UUID key directly or call
+    registry.relationships.get_key("custom_name").
+    """
+    if isinstance(name_or_key, uuid.UUID):
+        return name_or_key
+    try:
+        return uuid.UUID(name_or_key)
+    except ValueError:
+        pass
+    key = SYSTEM_REL_KEYS.get(name_or_key)
+    if key is None:
+        raise ValueError(
+            f"'{name_or_key}' is not a system relationship type. "
+            f"For custom types pass the UUID key directly or use "
+            f"registry.relationships.get_key('{name_or_key}')."
+        )
+    return key
+
+
+# ─────────────────────────────────────────────────────────────
+# Module-level default registry
+# ─────────────────────────────────────────────────────────────
+
+_default_registry: Optional[Registry] = None
+
+
+def get_default_registry() -> Registry:
+    """Return the module-level default registry, creating it if needed."""
+    global _default_registry
+    if _default_registry is None:
+        from forge_bridge.core.registry import Registry
+        _default_registry = Registry.default()
+    return _default_registry
+
+
+def set_default_registry(registry: Registry) -> None:
+    """Replace the module-level default registry.
+
+    Call at pipeline startup to use a configured registry (custom roles,
+    renamed types, path templates, etc.) rather than built-in defaults.
+    """
+    global _default_registry
+    _default_registry = registry
 
 
 # ─────────────────────────────────────────────────────────────
@@ -39,33 +113,31 @@ class StorageType(str, Enum):
 class Location:
     """A path-based address for a Locatable entity.
 
-    A single entity may have multiple Locations — a local cache path,
-    a network share path, and a cloud bucket path all pointing at the
-    same underlying media. Bridge tracks all of them.
+    A single entity may have multiple Locations (local, network, cloud)
+    all pointing at the same underlying media.
     """
-    path: str
+    path:         str
     storage_type: StorageType = StorageType.LOCAL
-    exists: Optional[bool] = None        # None = not yet checked
-    priority: int = 0                    # higher = more preferred
-    metadata: dict[str, Any] = field(default_factory=dict)
+    exists:       Optional[bool] = None   # None = not yet checked
+    priority:     int = 0                 # higher = preferred
+    metadata:     dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         if isinstance(self.storage_type, str):
             self.storage_type = StorageType(self.storage_type)
 
     def check_exists(self) -> bool:
-        """Check whether the path currently exists on disk."""
         import os
         self.exists = os.path.exists(self.path)
         return self.exists
 
     def to_dict(self) -> dict:
         return {
-            "path": self.path,
+            "path":         self.path,
             "storage_type": self.storage_type.value,
-            "exists": self.exists,
-            "priority": self.priority,
-            "metadata": self.metadata,
+            "exists":       self.exists,
+            "priority":     self.priority,
+            "metadata":     self.metadata,
         }
 
 
@@ -73,55 +145,58 @@ class Location:
 # Relationship
 # ─────────────────────────────────────────────────────────────
 
-class RelationshipType(str, Enum):
-    MEMBER_OF    = "member_of"      # Shot member_of Sequence
-    VERSION_OF   = "version_of"     # Version version_of Shot
-    DERIVED_FROM = "derived_from"   # Render derived_from source plate
-    REFERENCES   = "references"     # Layer references Version
-    PEER_OF      = "peer_of"        # Layer peer_of Layer (within Stack)
-
-
 @dataclass
 class Relationship:
-    """A declared relationship between two entities.
+    """A directed relationship between two entities.
 
-    Relationships are directional: source → target.
-    The type describes the nature of the connection.
+    Stores rel_key (UUID) — the stable key into the relationship
+    type registry — NOT the display name. This means renaming a
+    relationship type in the registry never invalidates existing
+    Relationship instances.
+
+    To get the display name:
+        rel.type_name()                          # uses default registry
+        rel.type_name(registry=my_registry)      # uses specific registry
     """
-    source_id: uuid.UUID
-    target_id: uuid.UUID
-    relationship_type: RelationshipType
-    metadata: dict[str, Any] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    source_id:  uuid.UUID
+    target_id:  uuid.UUID
+    rel_key:    uuid.UUID
+    metadata:   dict[str, Any] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def __post_init__(self):
-        if isinstance(self.relationship_type, str):
-            self.relationship_type = RelationshipType(self.relationship_type)
         if isinstance(self.source_id, str):
             self.source_id = uuid.UUID(self.source_id)
         if isinstance(self.target_id, str):
             self.target_id = uuid.UUID(self.target_id)
+        if isinstance(self.rel_key, (str, uuid.UUID)):
+            self.rel_key = _resolve_rel_key(self.rel_key)
 
-    def to_dict(self) -> dict:
+    def type_name(self, registry: Optional[Registry] = None) -> str:
+        """Return the current display name of this relationship type."""
+        reg = registry or get_default_registry()
+        try:
+            return reg.relationships.get_by_key(self.rel_key).name
+        except Exception:
+            return _SYSTEM_REL_NAMES.get(self.rel_key, str(self.rel_key))
+
+    def to_dict(self, registry: Optional[Registry] = None) -> dict:
         return {
-            "source_id": str(self.source_id),
-            "target_id": str(self.target_id),
-            "relationship_type": self.relationship_type.value,
-            "metadata": self.metadata,
+            "source_id":  str(self.source_id),
+            "target_id":  str(self.target_id),
+            "rel_key":    str(self.rel_key),
+            "type_name":  self.type_name(registry),
+            "metadata":   self.metadata,
             "created_at": self.created_at.isoformat(),
         }
 
 
 # ─────────────────────────────────────────────────────────────
-# Traits (mixin classes)
+# Traits
 # ─────────────────────────────────────────────────────────────
 
 class Versionable:
-    """Trait: this entity can exist as a series of discrete iterations.
-
-    Any Versionable entity tracks its own version history.
-    Version numbers are monotonically increasing integers.
-    """
+    """Trait: entity can exist as a series of discrete iterations."""
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -130,20 +205,9 @@ class Versionable:
     def is_versionable(self) -> bool:
         return True
 
-    def get_version_info(self) -> dict:
-        """Return version metadata for this entity."""
-        return {
-            "version_number": getattr(self, "version_number", None),
-            "is_latest": getattr(self, "is_latest", None),
-        }
-
 
 class Locatable:
-    """Trait: this entity has one or more path-based addresses.
-
-    A single Locatable entity may have multiple simultaneous Locations
-    — local cache, network share, cloud bucket. Bridge tracks all of them.
-    """
+    """Trait: entity has one or more path-based addresses."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -156,12 +220,11 @@ class Locatable:
 
     def add_location(
         self,
-        path: str,
+        path:         str,
         storage_type: StorageType | str = StorageType.LOCAL,
-        priority: int = 0,
+        priority:     int = 0,
         **metadata,
     ) -> Location:
-        """Register a new location for this entity."""
         loc = Location(
             path=path,
             storage_type=StorageType(storage_type) if isinstance(storage_type, str) else storage_type,
@@ -173,24 +236,16 @@ class Locatable:
         return loc
 
     def get_locations(self) -> list[Location]:
-        """Return all known locations, highest priority first."""
         return list(self._locations)
 
     def get_primary_location(self) -> Optional[Location]:
-        """Return the highest-priority location, or None if none registered."""
         return self._locations[0] if self._locations else None
 
     def resolve_path(self) -> Optional[str]:
-        """Return the best available path given current system state.
-
-        Checks existence in priority order and returns the first
-        path that actually exists. Falls back to the highest-priority
-        path if none are confirmed to exist.
-        """
+        """Return the best available path, checking existence in priority order."""
         for loc in self._locations:
             if loc.check_exists():
                 return loc.path
-        # Nothing confirmed — return primary path anyway (may be offline/archive)
         primary = self.get_primary_location()
         return primary.path if primary else None
 
@@ -199,13 +254,18 @@ class Locatable:
 
 
 class Relational:
-    """Trait: this entity can declare and traverse relationships.
+    """Trait: entity can declare and traverse relationships.
 
-    The dependency graph is built from these relationships. Bridge
-    parses incoming data and creates relationships automatically from
-    the natural structure of the data — no manual declaration needed.
-    Manual declaration is also supported for cases where explicit
-    relationships need to be asserted.
+    Relationships are stored as Relationship(rel_key=UUID) — the key
+    is stable even if the type is renamed. Usage is auto-registered
+    with the default registry so orphan protection works automatically.
+
+    For system types, use the name string directly:
+        entity.add_relationship(target_id, "member_of")
+
+    For custom types, get the key from the registry first:
+        key = registry.relationships.get_key("my_custom_type")
+        entity.add_relationship(target_id, key)
     """
 
     def __init__(self, *args, **kwargs):
@@ -220,32 +280,81 @@ class Relational:
     def add_relationship(
         self,
         target_id: uuid.UUID | str,
-        relationship_type: RelationshipType | str,
+        rel_type:  uuid.UUID | str,
+        registry:  Optional[Registry] = None,
         **metadata,
     ) -> Relationship:
-        """Declare a relationship from this entity to another."""
+        """Declare a relationship and register its usage.
+
+        rel_type: system name ("member_of"), UUID string, or UUID instance.
+        For custom types: registry.relationships.get_key("name").
+        """
         entity_id = getattr(self, "id", None)
         if entity_id is None:
             raise ValueError("Entity must have an id to declare relationships")
 
+        rel_key = _resolve_rel_key(rel_type)
+        tgt     = uuid.UUID(str(target_id)) if isinstance(target_id, str) else target_id
+
         rel = Relationship(
             source_id=entity_id,
-            target_id=uuid.UUID(str(target_id)) if isinstance(target_id, str) else target_id,
-            relationship_type=relationship_type,
+            target_id=tgt,
+            rel_key=rel_key,
             metadata=metadata,
         )
         self._relationships.append(rel)
+
+        # Auto-register usage → enables orphan protection in registry
+        try:
+            reg = registry or get_default_registry()
+            reg.relationships.register_usage(rel_key, entity_id, tgt)
+        except Exception:
+            pass  # Never let bookkeeping break entity construction
+
         return rel
+
+    def remove_relationship(
+        self,
+        target_id: uuid.UUID | str,
+        rel_type:  uuid.UUID | str,
+        registry:  Optional[Registry] = None,
+    ) -> bool:
+        """Remove a relationship and unregister its usage.
+
+        Returns True if found and removed, False if not found.
+        """
+        entity_id = getattr(self, "id", None)
+        tgt     = uuid.UUID(str(target_id)) if isinstance(target_id, str) else target_id
+        rel_key = _resolve_rel_key(rel_type)
+
+        before = len(self._relationships)
+        self._relationships = [
+            r for r in self._relationships
+            if not (r.target_id == tgt and r.rel_key == rel_key)
+        ]
+        removed = len(self._relationships) < before
+
+        if removed and entity_id:
+            try:
+                reg = registry or get_default_registry()
+                reg.relationships.unregister_usage(rel_key, entity_id, tgt)
+            except Exception:
+                pass
+
+        return removed
 
     def get_relationships(
         self,
-        relationship_type: Optional[RelationshipType | str] = None,
+        rel_type: Optional[uuid.UUID | str] = None,
     ) -> list[Relationship]:
-        """Return relationships, optionally filtered by type."""
-        if relationship_type is None:
-            return list(self._relationships)
-        rtype = RelationshipType(relationship_type) if isinstance(relationship_type, str) else relationship_type
-        return [r for r in self._relationships if r.relationship_type == rtype]
+        """Return relationships, optionally filtered by type.
 
-    def get_relationship_dicts(self) -> list[dict]:
-        return [r.to_dict() for r in self._relationships]
+        rel_type: system name string, UUID string, UUID instance, or None for all.
+        """
+        if rel_type is None:
+            return list(self._relationships)
+        key = _resolve_rel_key(rel_type)
+        return [r for r in self._relationships if r.rel_key == key]
+
+    def get_relationship_dicts(self, registry: Optional[Registry] = None) -> list[dict]:
+        return [r.to_dict(registry) for r in self._relationships]
