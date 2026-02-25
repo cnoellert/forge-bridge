@@ -90,6 +90,27 @@ class ForgeServer:
 
         role_count    = len(self.registry.roles.names())
         reltype_count = len(self.registry.relationships.names())
+
+        # First-run seed — if DB is empty, write defaults and reload
+        if role_count == 0 and reltype_count == 0:
+            logger.info("Registry empty — seeding defaults...")
+            from forge_bridge.core.registry import Registry as _Registry
+            defaults = _Registry.default()
+            async with get_session() as session:
+                repo = RegistryRepo(session)
+                for name in defaults.roles.names():
+                    role_def = defaults.roles.get_by_name(name)
+                    await repo.save_role(role_def)
+                for name in defaults.relationships.names():
+                    typedef = defaults.relationships.get_by_name(name)
+                    await repo.save_relationship_type(typedef)
+            # Reload from DB so we have the persisted keys
+            async with get_session() as session:
+                self.registry = await RegistryRepo(session).restore_registry()
+            role_count    = len(self.registry.roles.names())
+            reltype_count = len(self.registry.relationships.names())
+            logger.info(f"Seeded {role_count} roles, {reltype_count} relationship types.")
+
         logger.info(
             f"Registry loaded: {role_count} roles, {reltype_count} relationship types."
         )
