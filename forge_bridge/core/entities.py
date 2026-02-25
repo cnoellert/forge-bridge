@@ -207,7 +207,8 @@ class Shot(Versionable, BridgeEntity):
         self.cut_in: Optional[Timecode] = cut_in
         self.cut_out: Optional[Timecode] = cut_out
         self.status: Status = (
-            Status.from_string(status) if isinstance(status, str) else status
+            Status.from_string(status) if isinstance(status, str)
+            else (status if status is not None else Status.PENDING)
         )
 
         if self.sequence_id:
@@ -267,7 +268,8 @@ class Asset(Versionable, BridgeEntity):
             uuid.UUID(str(project_id)) if project_id else None
         )
         self.status: Status = (
-            Status.from_string(status) if isinstance(status, str) else status
+            Status.from_string(status) if isinstance(status, str)
+            else (status if status is not None else Status.PENDING)
         )
 
         if self.project_id:
@@ -318,7 +320,8 @@ class Version(BridgeEntity):
         )
         self.parent_type: str = parent_type
         self.status: Status = (
-            Status.from_string(status) if isinstance(status, str) else status
+            Status.from_string(status) if isinstance(status, str)
+            else (status if status is not None else Status.PENDING)
         )
         self.created_by: Optional[str] = created_by
 

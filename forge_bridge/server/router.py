@@ -932,7 +932,7 @@ class Router:
         t    = msg.get("entity_type")
         a    = msg.get("attributes", {})
         name = msg.get("name")
-        status = msg.get("status", "pending")
+        status = msg.get("status") or "pending"
 
         if t == "sequence":
             return CoreSequence(
