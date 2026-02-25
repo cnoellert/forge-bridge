@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import websockets
-from websockets.server import WebSocketServerProtocol
+from websockets.asyncio.server import ServerConnection
 
 from forge_bridge.server.protocol import Message, MsgType, event as make_event
 
@@ -46,7 +46,7 @@ class ConnectedClient:
                     (used for catch-up on reconnect)
     """
     session_id:    uuid.UUID
-    ws:            WebSocketServerProtocol
+    ws:            ServerConnection
     client_name:   str
     endpoint_type: str = "unknown"
     subscriptions: set[uuid.UUID] = field(default_factory=set)
@@ -65,8 +65,7 @@ class ConnectedClient:
         try:
             await self.ws.send(msg.serialize())
             return True
-        except (websockets.exceptions.ConnectionClosed,
-                websockets.exceptions.WebSocketException) as e:
+        except Exception as e:
             logger.debug(f"Send failed to {self.client_name}: {e}")
             return False
 
@@ -98,7 +97,7 @@ class ConnectionManager:
     def register(
         self,
         session_id: uuid.UUID,
-        ws: WebSocketServerProtocol,
+        ws: ServerConnection,
         client_name: str,
         endpoint_type: str = "unknown",
         last_event_id: str | None = None,

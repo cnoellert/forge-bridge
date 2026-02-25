@@ -379,6 +379,10 @@ def role_rename(old_name: str, new_name: str) -> Message:
     })
 
 
+def role_list() -> Message:
+    return Message({"type": MsgType.ROLE_LIST, "id": _new_id()})
+
+
 def role_delete(name: str, migrate_to: str | None = None) -> Message:
     return Message({
         "type": MsgType.ROLE_DELETE, "id": _new_id(),

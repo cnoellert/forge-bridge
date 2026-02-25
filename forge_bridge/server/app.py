@@ -31,7 +31,7 @@ import uuid
 from typing import Any
 
 import websockets
-from websockets.server import WebSocketServerProtocol, serve
+from websockets.asyncio.server import serve, ServerConnection
 
 from forge_bridge.server.connections import ConnectionManager
 from forge_bridge.server.protocol import (
@@ -148,7 +148,7 @@ class ForgeServer:
 
     async def _connection_handler(
         self,
-        ws: WebSocketServerProtocol,
+        ws: ServerConnection,
     ) -> None:
         """Manage one client connection from connect to disconnect.
 
@@ -181,7 +181,7 @@ class ForgeServer:
 
     async def _handshake(
         self,
-        ws: WebSocketServerProtocol,
+        ws: ServerConnection,
     ):
         """Wait for a hello message and register the client.
 
@@ -191,21 +191,21 @@ class ForgeServer:
             raw = await asyncio.wait_for(ws.recv(), timeout=15.0)
         except asyncio.TimeoutError:
             logger.warning(f"Connection from {ws.remote_address} timed out waiting for hello")
-            await ws.close(1008, "hello timeout")
+            await ws.close()
             return None
 
         try:
             msg = Message.parse(raw)
         except (ValueError, json.JSONDecodeError) as e:
             logger.warning(f"Malformed hello message: {e}")
-            await ws.close(1007, "invalid message format")
+            await ws.close()
             return None
 
         if msg.type != MsgType.HELLO:
             logger.warning(f"Expected hello, got {msg.type!r}")
             err = error(msg.msg_id, ErrorCode.INVALID, "First message must be hello")
             await ws.send(err.serialize())
-            await ws.close(1002, "protocol error")
+            await ws.close()
             return None
 
         session_id = uuid.uuid4()
@@ -235,7 +235,7 @@ class ForgeServer:
 
     async def _replay_missed_events(
         self,
-        ws: WebSocketServerProtocol,
+        ws: ServerConnection,
         last_event_id: str,
     ) -> None:
         """Send any events the client missed since last_event_id."""
@@ -267,7 +267,7 @@ class ForgeServer:
 
     async def _message_loop(
         self,
-        ws: WebSocketServerProtocol,
+        ws: ServerConnection,
         client,
     ) -> None:
         """Receive and dispatch messages until the connection closes."""
@@ -287,7 +287,7 @@ class ForgeServer:
 
             # Clean disconnect
             if msg.type == MsgType.BYE:
-                await ws.close(1000, "client requested disconnect")
+                await ws.close()
                 break
 
 
