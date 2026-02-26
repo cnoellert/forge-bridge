@@ -390,13 +390,13 @@ else:
     segs = _collect_segments(seq)
     rows = []
     for s in segs:
-        if s['track_idx'] != 0:
-            continue   # only background track drives start frames
         head        = s['head']
         clip_start  = default_frame - head
         rows.append({{
             'shot_name':   s['shot_name'],
             'seg_name':    s['seg_name'],
+            'track':       s['track_idx'],
+            'layer':       s['layer_num'],
             'head':        head,
             'target':      default_frame,
             'clip_start':  clip_start,
@@ -431,12 +431,14 @@ class SetStartFramesInput(BaseModel):
 async def set_start_frames(params: SetStartFramesInput) -> str:
     """Set the composite start frame for all shots on a sequence.
 
-    Only processes background track (L01) segments — upper tracks align
-    implicitly because they share the same clip frame number space.
+    Processes all tracks (not just L01) — timelines are typically multi-track
+    and every non-gap segment needs its start frame set.
 
-    Math:  seg.change_start_frame(target - seg.head)
-    Result: frame 'target' becomes the first visible edit frame.
-            Head handles run from (target - head) to (target - 1).
+    Calls seg.change_start_frame(target) directly — target is the absolute
+    frame number (e.g. 1001). Flame handles the head handle offset internally.
+    'Clip Starts At' (target - head) is informational only; it tells you what
+    frame the clip material actually begins at, and is negative if handles
+    exceed the target — that's the only invalid case.
 
     Default target applies to all shots. Use overrides dict for per-shot
     exceptions: {'noise_010': 1001, 'noise_020': 1101}
@@ -459,34 +461,35 @@ else:
 
     def _do():
         try:
-            segs = _collect_segments(seq)
             tracks = []
             for ver in seq.versions:
                 for track in ver.tracks:
                     tracks.append(track)
-            bg_segs = [s for s in tracks[0].segments if str(s.source_name) if s.source_name]
 
-            for seg in bg_segs:
-                shot_name = ''
-                try:
-                    shot_name = seg.shot_name.get_value() if hasattr(seg.shot_name, 'get_value') else str(seg.shot_name)
-                except: pass
-                target = overrides.get(shot_name, default_frame)
-                head   = 0
-                try: head = int(seg.head)
-                except: pass
-                clip_start = target - head
-                if clip_start < 0:
-                    result['errors'].append(f"{{shot_name}}: clip_start={{clip_start}} < 0, skipped")
-                    result['skipped'] += 1
-                    continue
-                try:
-                    seg.change_start_frame(clip_start)
-                    result['changes'].append({{'shot': shot_name, 'target': target, 'head': head, 'clip_start': clip_start}})
-                    result['applied'] += 1
-                except Exception as e:
-                    result['errors'].append(f"{{shot_name}}: {{e}}")
-                    result['skipped'] += 1
+            for track in tracks:
+                for seg in track.segments:
+                    if not seg.source_name:
+                        continue
+                    shot_name = ''
+                    try:
+                        shot_name = seg.shot_name.get_value() if hasattr(seg.shot_name, 'get_value') else str(seg.shot_name)
+                    except: pass
+                    target = overrides.get(shot_name, default_frame)
+                    head   = 0
+                    try: head = int(seg.head)
+                    except: pass
+                    clip_start = target - head   # informational — negative = invalid
+                    if clip_start < 0:
+                        result['errors'].append(f"{{shot_name}}: clip_start={{clip_start}} < 0, skipped")
+                        result['skipped'] += 1
+                        continue
+                    try:
+                        seg.change_start_frame(target)
+                        result['changes'].append({{'shot': shot_name, 'target': target, 'head': head, 'clip_start': clip_start}})
+                        result['applied'] += 1
+                    except Exception as e:
+                        result['errors'].append(f"{{shot_name}}: {{e}}")
+                        result['skipped'] += 1
         except Exception as e:
             result['error'] = str(e)
         event.set()
