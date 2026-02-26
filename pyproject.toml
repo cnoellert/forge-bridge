@@ -32,6 +32,9 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["forge_bridge"]
 
+[tool.hatch.build]
+include = ["forge_bridge/**"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
