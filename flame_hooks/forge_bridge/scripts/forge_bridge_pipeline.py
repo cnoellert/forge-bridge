@@ -127,9 +127,11 @@ def _watchdog():
     while True:
         time.sleep(10)
         with _sidecar_lock:
-            if _sidecar_proc is not None and _sidecar_proc.poll() is not None:
-                _log(f"Sidecar exited (rc={_sidecar_proc.returncode}) — restarting...")
-                _spawn()
+            if _sidecar_proc is not None:
+                rc = _sidecar_proc.poll()
+                if rc is not None and rc != 0:
+                    _log(f"Sidecar exited unexpectedly (rc={rc}) — restarting...")
+                    _spawn()
 
 
 def _start_watchdog():

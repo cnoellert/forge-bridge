@@ -426,12 +426,22 @@ class FlameSidecar:
         self.handler = SidecarEventHandler(self.client, self.flame)
 
         # Start HTTP listener in background thread
-        self._http = _ReuseHTTPServer(
-            (SIDECAR_HOST, SIDECAR_PORT),
-            _EventHandler,
-            loop=loop,
-            event_queue=self._queue,
-        )
+        try:
+            self._http = _ReuseHTTPServer(
+                (SIDECAR_HOST, SIDECAR_PORT),
+                _EventHandler,
+                loop=loop,
+                event_queue=self._queue,
+            )
+        except OSError as e:
+            if e.errno in (48, 98):  # EADDRINUSE — macOS=48, Linux=98
+                logger.info(
+                    f"Port {SIDECAR_PORT} already in use — "
+                    "another sidecar is running. Exiting cleanly."
+                )
+                await self.client.stop()
+                return
+            raise
         http_thread = threading.Thread(
             target=self._http.serve_forever,
             name="sidecar-http",
