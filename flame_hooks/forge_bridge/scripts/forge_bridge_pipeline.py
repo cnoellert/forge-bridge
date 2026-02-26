@@ -180,20 +180,21 @@ def _obj_to_dict(obj):
 # ─────────────────────────────────────────────────────────────
 
 def app_initialized(project_name, *args, **kwargs):
-    if not PIPELINE_ENABLED:
-        return
-    _log(f"Pipeline hook active — project: {project_name}")
-    _ensure_sidecar()
-    _start_watchdog()
-    # Delay first event slightly so sidecar has time to bind
-    threading.Timer(2.0, _forward, args=(
-        "app.initialized", {"project_name": str(project_name)}
-    )).start()
+    # Intentionally empty — forge_bridge.py also defines app_initialized
+    # and must own it to start the HTTP bridge. We launch the sidecar from
+    # project_changed_dict which fires reliably after startup.
+    pass
 
 
 def project_changed_dict(info, *args, **kwargs):
     if not PIPELINE_ENABLED:
         return
+
+    # Launch sidecar here instead of app_initialized to avoid
+    # overwriting forge_bridge.py's HTTP bridge startup
+    _ensure_sidecar()
+    _start_watchdog()
+
     try:
         payload = {
             "project_name": str(info.get("project_name", "")),
@@ -202,7 +203,13 @@ def project_changed_dict(info, *args, **kwargs):
         }
     except Exception:
         payload = {"raw": str(info)}
-    _forward("project.changed", payload)
+
+    project_name = payload.get("project_name", "")
+    if project_name:
+        _log(f"Pipeline hook active — project: {project_name}")
+
+    # Delay first event slightly so sidecar has time to bind its port
+    threading.Timer(2.0, _forward, args=("project.changed", payload)).start()
 
 
 def segment_created(segment, *args, **kwargs):
