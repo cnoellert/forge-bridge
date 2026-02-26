@@ -206,6 +206,35 @@ try:
     mcp.tool(name="flame_list_desktop",   annotations={"readOnlyHint": True})(flame_project.list_desktop)
     mcp.tool(name="flame_find_media",     annotations={"readOnlyHint": True})(flame_project.find_media)
 
+# ── Publish workflow tools ─────────────────────────────────────────────────
+
+mcp.tool(
+    name="forge_check_shots",
+    annotations={
+        "title": "Pre-publish preflight — check if shots already exist",
+        "readOnlyHint": True,
+        "idempotentHint": True,
+    },
+)(tools.check_shots)
+
+mcp.tool(
+    name="forge_register_publish",
+    annotations={
+        "title": "Register a published component in forge-bridge",
+        "readOnlyHint": False,
+        "idempotentHint": False,
+    },
+)(tools.register_publish)
+
+mcp.tool(
+    name="flame_snapshot_timeline",
+    annotations={
+        "title": "Snapshot current Flame timeline — all sequences and segments",
+        "readOnlyHint": True,
+        "idempotentHint": True,
+    },
+)(tools.snapshot_timeline)
+
 except ImportError:
     logger.warning("Flame HTTP bridge tools not available — forge_bridge.tools not found")
 

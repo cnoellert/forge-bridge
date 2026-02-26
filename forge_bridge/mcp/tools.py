@@ -436,3 +436,281 @@ async def get_events(params: GetEventsInput) -> str:
         })
     except Exception as e:
         return _err(str(e))
+
+
+# ─────────────────────────────────────────────────────────────
+# Flame timeline tools — publish workflow
+# ─────────────────────────────────────────────────────────────
+
+LAYER_ROLE_MAP = {
+    "L01": "primary",
+    "L02": "reference",
+    "L03": "matte",
+    "L04": "audio",
+    "L05": "comp",
+}
+
+
+def _parse_shot_name(segment_name: str) -> tuple[str, str]:
+    """Extract (shot_name, role) from a segment name like 'tst_010_graded_L01'.
+
+    Layer suffix (L01/L02/L03...) maps to a role. If no suffix found,
+    role defaults to 'primary'.
+    """
+    parts = segment_name.rsplit("_", 1)
+    if len(parts) == 2 and parts[1] in LAYER_ROLE_MAP:
+        return parts[0], LAYER_ROLE_MAP[parts[1]]
+    return segment_name, "primary"
+
+
+class CheckShotsInput(BaseModel):
+    shot_names: list[str] = Field(
+        ...,
+        description="List of shot names to check e.g. ['tst_010', 'tst_020']",
+    )
+    project_id: Optional[str] = Field(
+        default=None,
+        description="Project UUID to scope the check. Uses first project if omitted.",
+    )
+
+
+async def check_shots(params: CheckShotsInput) -> str:
+    """Pre-publish preflight — check which shots already exist in forge-bridge.
+
+    For each shot name, reports:
+    - exists: whether it's already registered
+    - last_version: highest version number published so far
+    - next_version: what the next publish should be numbered
+    - layers: which roles/layers have been published
+
+    Use this before a Flame publish to know whether you're creating new
+    shots or incrementing existing ones, and to catch naming conflicts.
+    """
+    try:
+        client = _client()
+
+        # Resolve project
+        project_id = params.project_id
+        if not project_id:
+            projects = await client.request(
+                __import__("forge_bridge.server.protocol", fromlist=["query_projects"]).query_projects()
+            )
+            proj_list = projects.get("projects", [])
+            if not proj_list:
+                return _err("No projects found in forge-bridge")
+            project_id = proj_list[0]["id"]
+
+        from forge_bridge.server.protocol import query_shots
+        all_shots = await client.request(query_shots(project_id=project_id, limit=500))
+        existing = {s["name"]: s for s in all_shots.get("shots", [])}
+
+        results = []
+        for name in params.shot_names:
+            if name in existing:
+                shot = existing[name]
+                # Count versions
+                from forge_bridge.server.protocol import query_versions
+                vers = await client.request(query_versions(shot_id=shot["id"]))
+                version_list = vers.get("versions", [])
+                last_v = max((v.get("version_number", 0) for v in version_list), default=0)
+                results.append({
+                    "name":         name,
+                    "exists":       True,
+                    "shot_id":      shot["id"],
+                    "status":       shot.get("status"),
+                    "last_version": last_v,
+                    "next_version": last_v + 1,
+                    "version_count": len(version_list),
+                })
+            else:
+                results.append({
+                    "name":         name,
+                    "exists":       False,
+                    "shot_id":      None,
+                    "last_version": 0,
+                    "next_version": 1,
+                    "version_count": 0,
+                })
+
+        new_count      = sum(1 for r in results if not r["exists"])
+        existing_count = sum(1 for r in results if r["exists"])
+
+        return _ok({
+            "project_id":     project_id,
+            "checked":        len(results),
+            "new_shots":      new_count,
+            "existing_shots": existing_count,
+            "shots":          results,
+        })
+    except Exception as e:
+        return _err(str(e))
+
+
+class RegisterPublishInput(BaseModel):
+    segment_name:  str            = Field(..., description="Flame segment name e.g. 'tst_010_graded_L01'")
+    output_path:   str            = Field(..., description="Full output path on disk")
+    start_frame:   int            = Field(..., description="First frame number")
+    end_frame:     int            = Field(..., description="Last frame number")
+    colour_space:  str            = Field(default="", description="Colour space name e.g. 'ACEScg'")
+    project_id:    Optional[str]  = Field(default=None, description="Project UUID")
+    sequence_name: Optional[str]  = Field(default=None, description="Sequence name this shot belongs to")
+
+
+async def register_publish(params: RegisterPublishInput) -> str:
+    """Register a single published component in forge-bridge.
+
+    Call this once per exported segment after a Flame publish completes.
+    Derives the shot name and role from the segment name automatically:
+    - 'tst_010_graded_L01' → shot='tst_010', role='primary'
+    - 'tst_010_graded_L02' → shot='tst_010', role='reference'
+    - 'tst_010_graded_L03' → shot='tst_010', role='matte'
+
+    Creates the Shot if it doesn't exist, then creates a Version and
+    Media record linked to it.
+    """
+    try:
+        client = _client()
+
+        shot_name, role = _parse_shot_name(params.segment_name)
+
+        # Resolve project
+        project_id = params.project_id
+        if not project_id:
+            from forge_bridge.server.protocol import query_projects
+            projects = await client.request(query_projects())
+            proj_list = projects.get("projects", [])
+            if not proj_list:
+                return _err("No projects found in forge-bridge")
+            project_id = proj_list[0]["id"]
+
+        from forge_bridge.server.protocol import (
+            create_shot as proto_create_shot,
+            query_shots,
+        )
+
+        # Find or create shot
+        all_shots = await client.request(query_shots(project_id=project_id, limit=500))
+        existing = {s["name"]: s for s in all_shots.get("shots", [])}
+
+        if shot_name in existing:
+            shot_id = existing[shot_name]["id"]
+            shot_created = False
+        else:
+            new_shot = await client.request(proto_create_shot(
+                project_id=project_id,
+                name=shot_name,
+                sequence_name=params.sequence_name or "",
+                roles=list(LAYER_ROLE_MAP.values()),
+            ))
+            shot_id = new_shot["id"]
+            shot_created = True
+
+        # Create version
+        from forge_bridge.server.protocol import create_version
+        version = await client.request(create_version(
+            shot_id=shot_id,
+            role=role,
+            output_path=params.output_path,
+            start_frame=params.start_frame,
+            end_frame=params.end_frame,
+            colour_space=params.colour_space,
+        ))
+
+        return _ok({
+            "shot_name":    shot_name,
+            "shot_id":      shot_id,
+            "shot_created": shot_created,
+            "role":         role,
+            "version_id":   version.get("id"),
+            "version_number": version.get("version_number"),
+            "output_path":  params.output_path,
+        })
+    except Exception as e:
+        return _err(str(e))
+
+
+async def snapshot_timeline() -> str:
+    """Snapshot the current Flame timeline — all sequences and their segments.
+
+    Traverses the correct Flame 2026 hierarchy:
+      desktop → reel_groups → reels → sequences → versions → tracks → segments
+
+    Returns a structured view of every sequence on the desktop, with
+    all tracks and segment names. Useful for pre-publish review and
+    understanding what shots are in the current project.
+
+    Segment names follow the FORGE convention: <shot>_<descriptor>_L01/L02/L03
+    """
+    code = """
+import flame, json
+
+def snap():
+    desktop = flame.projects.current_project.current_workspace.desktop
+    result = []
+    for rg in desktop.reel_groups:
+        rg_name = str(rg.name)
+        for reel in rg.reels:
+            reel_name = str(reel.name)
+            seqs = reel.sequences or []
+            for seq in seqs:
+                seq_name = str(seq.name)
+                tracks_data = []
+                try:
+                    for ver in (seq.versions or []):
+                        for track in (ver.tracks or []):
+                            segs = []
+                            for seg in (track.segments or []):
+                                seg_name = str(seg.name) if seg.name else ''
+                                if seg_name:
+                                    segs.append({
+                                        'name':        seg_name,
+                                        'start_frame': int(seg.start_frame) if seg.start_frame else None,
+                                        'duration':    int(seg.duration) if seg.duration else None,
+                                        'tape_name':   str(seg.tape_name) if seg.tape_name else '',
+                                        'shot_name':   str(seg.shot_name) if seg.shot_name else '',
+                                    })
+                            if segs:
+                                tracks_data.append({
+                                    'name':     str(track.name) if track.name else '',
+                                    'segments': segs,
+                                })
+                except Exception as e:
+                    tracks_data.append({'error': str(e)})
+                result.append({
+                    'reel_group': rg_name,
+                    'reel':       reel_name,
+                    'sequence':   seq_name,
+                    'tracks':     tracks_data,
+                    'track_count': len(tracks_data),
+                    'segment_count': sum(len(t.get('segments', [])) for t in tracks_data),
+                })
+    return result
+
+import json
+print(json.dumps(snap()))
+"""
+    try:
+        from forge_bridge.tools.bridge import execute_json
+        data = await execute_json(code)
+        sequences = data if isinstance(data, list) else []
+
+        total_segs = sum(s.get("segment_count", 0) for s in sequences)
+
+        # Derive unique shot names from segment names
+        shot_names = set()
+        for seq in sequences:
+            for track in seq.get("tracks", []):
+                for seg in track.get("segments", []):
+                    name = seg.get("name", "")
+                    shot, _ = _parse_shot_name(name)
+                    if shot:
+                        shot_names.add(shot)
+
+        return _ok({
+            "sequence_count": len(sequences),
+            "total_segments":  total_segs,
+            "unique_shots":    sorted(shot_names),
+            "sequences":       sequences,
+        })
+    except Exception as e:
+        return _err(str(e))
