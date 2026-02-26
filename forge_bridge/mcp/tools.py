@@ -442,25 +442,30 @@ async def get_events(params: GetEventsInput) -> str:
 # Flame timeline tools — publish workflow
 # ─────────────────────────────────────────────────────────────
 
-LAYER_ROLE_MAP = {
-    "L01": "primary",
-    "L02": "reference",
-    "L03": "matte",
-    "L04": "audio",
-    "L05": "comp",
-}
+def _parse_shot_name(segment_name: str) -> tuple[str, str, int]:
+    """Parse a FORGE segment name into (shot_name, role, layer).
 
+    FORGE naming convention: {shot_name}_{role}_L{track##}
+    e.g. 'tst_010_graded_L01'  → ('tst_010', 'graded', 1)
+         'data_080_graded_L02' → ('data_080', 'graded', 2)
+         'tst_020_raw_L01'     → ('tst_020', 'raw', 1)
 
-def _parse_shot_name(segment_name: str) -> tuple[str, str]:
-    """Extract (shot_name, role) from a segment name like 'tst_010_graded_L01'.
+    Shot name format: {prefix}_{number} — always prefix_NNN.
+    Role: the descriptor between shot number and layer suffix (graded, raw,
+          denoised, flat, external, scans, stock, filler).
+    Layer: track number from _L## suffix (1-based).
 
-    Layer suffix (L01/L02/L03...) maps to a role. If no suffix found,
-    role defaults to 'primary'.
+    Returns ('', '', 0) if the name doesn't match the convention.
     """
-    parts = segment_name.rsplit("_", 1)
-    if len(parts) == 2 and parts[1] in LAYER_ROLE_MAP:
-        return parts[0], LAYER_ROLE_MAP[parts[1]]
-    return segment_name, "primary"
+    import re
+    # Match: word_NNN_role_L##  where NNN is digits, ## is digits
+    m = re.match(r'^([A-Za-z]\w+_\d+)_(.+)_L(\d+)$', segment_name)
+    if m:
+        shot_name = m.group(1)
+        role      = m.group(2)
+        layer     = int(m.group(3))
+        return shot_name, role, layer
+    return "", "", 0
 
 
 class CheckShotsInput(BaseModel):
@@ -578,7 +583,9 @@ async def register_publish(params: RegisterPublishInput) -> str:
             project_list, entity_list, entity_create, relationship_create, location_add,
         )
 
-        shot_name, role = _parse_shot_name(params.segment_name)
+        shot_name, role, layer = _parse_shot_name(params.segment_name)
+        if not shot_name:
+            return _err(f"Could not parse segment name '{params.segment_name}' — expected format: shot_NNN_role_L##")
 
         # Resolve project
         project_id = params.project_id
@@ -695,12 +702,16 @@ def snap():
                             for seg in (track.segments or []):
                                 seg_name = str(seg.name) if seg.name else ''
                                 if seg_name:
+                                    import re
+                                    m = re.match('^([A-Za-z]\\w+_\\d+)_(.+)_L(\\d+)$', seg_name)
                                     segs.append({
                                         'name':        seg_name,
+                                        'shot_name':   m.group(1) if m else '',
+                                        'role':        m.group(2) if m else '',
+                                        'layer':       int(m.group(3)) if m else 0,
                                         'start_frame': int(seg.start_frame) if seg.start_frame else None,
                                         'duration':    int(seg.duration) if seg.duration else None,
                                         'tape_name':   str(seg.tape_name) if seg.tape_name else '',
-                                        'shot_name':   str(seg.shot_name) if seg.shot_name else '',
                                     })
                             if segs:
                                 tracks_data.append({
@@ -735,7 +746,7 @@ print(json.dumps(snap()))
             for track in seq.get("tracks", []):
                 for seg in track.get("segments", []):
                     name = seg.get("name", "")
-                    shot, _ = _parse_shot_name(name)
+                    shot, role, layer = _parse_shot_name(name)
                     if shot:
                         shot_names.add(shot)
 
