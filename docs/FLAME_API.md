@@ -271,15 +271,13 @@ seg.name                    → PyAttribute with .get_value() / .set_value()
 ### Start frame math
 
 ```
-target_frame = 1001          # first visible edit frame
-head         = int(seg.head) # handle frames before cut
-clip_start   = target - head # actual first frame of clip material
+target_frame = 1001          # desired first visible frame — pass this directly
+head         = int(seg.head) # handle frames before cut — for validation only
+clip_start   = target - head # must be >= 0 or Flame rejects it
 
-seg.change_start_frame(clip_start)
+seg.change_start_frame(target_frame)   # Flame handles head offset internally
 
-# Result: frame 1001 is first visible frame
-#         frames (1001 - head) to 1000 are head handles
-# INVALID if clip_start < 0 — Flame cannot write negative frame numbers
+# Validation only — block the operation if clip_start < 0
 ```
 
 ### Role detection from source path
