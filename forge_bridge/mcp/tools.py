@@ -481,65 +481,69 @@ async def check_shots(params: CheckShotsInput) -> str:
     - exists: whether it's already registered
     - last_version: highest version number published so far
     - next_version: what the next publish should be numbered
-    - layers: which roles/layers have been published
 
     Use this before a Flame publish to know whether you're creating new
     shots or incrementing existing ones, and to catch naming conflicts.
     """
     try:
         client = _client()
+        from forge_bridge.server.protocol import project_list, entity_list
 
         # Resolve project
         project_id = params.project_id
         if not project_id:
-            projects = await client.request(
-                __import__("forge_bridge.server.protocol", fromlist=["query_projects"]).query_projects()
-            )
+            projects = await client.request(project_list())
             proj_list = projects.get("projects", [])
             if not proj_list:
                 return _err("No projects found in forge-bridge")
             project_id = proj_list[0]["id"]
 
-        from forge_bridge.server.protocol import query_shots
-        all_shots = await client.request(query_shots(project_id=project_id, limit=500))
-        existing = {s["name"]: s for s in all_shots.get("shots", [])}
+        # Fetch all shots and versions in one pass each
+        shots_result   = await client.request(entity_list("shot",    project_id))
+        versions_result = await client.request(entity_list("version", project_id))
+
+        shots_by_name = {s["name"]: s for s in shots_result.get("entities", [])}
+
+        # Group versions by parent shot id
+        versions_by_shot: dict[str, list] = {}
+        for v in versions_result.get("entities", []):
+            parent = v.get("attributes", {}).get("parent_id", "")
+            versions_by_shot.setdefault(parent, []).append(v)
 
         results = []
         for name in params.shot_names:
-            if name in existing:
-                shot = existing[name]
-                # Count versions
-                from forge_bridge.server.protocol import query_versions
-                vers = await client.request(query_versions(shot_id=shot["id"]))
-                version_list = vers.get("versions", [])
-                last_v = max((v.get("version_number", 0) for v in version_list), default=0)
+            if name in shots_by_name:
+                shot = shots_by_name[name]
+                shot_id = shot["id"]
+                vers = versions_by_shot.get(shot_id, [])
+                last_v = max(
+                    (v.get("attributes", {}).get("version_number", 0) for v in vers),
+                    default=0,
+                )
                 results.append({
-                    "name":         name,
-                    "exists":       True,
-                    "shot_id":      shot["id"],
-                    "status":       shot.get("status"),
-                    "last_version": last_v,
-                    "next_version": last_v + 1,
-                    "version_count": len(version_list),
+                    "name":          name,
+                    "exists":        True,
+                    "shot_id":       shot_id,
+                    "status":        shot.get("status"),
+                    "last_version":  last_v,
+                    "next_version":  last_v + 1,
+                    "version_count": len(vers),
                 })
             else:
                 results.append({
-                    "name":         name,
-                    "exists":       False,
-                    "shot_id":      None,
-                    "last_version": 0,
-                    "next_version": 1,
+                    "name":          name,
+                    "exists":        False,
+                    "shot_id":       None,
+                    "last_version":  0,
+                    "next_version":  1,
                     "version_count": 0,
                 })
-
-        new_count      = sum(1 for r in results if not r["exists"])
-        existing_count = sum(1 for r in results if r["exists"])
 
         return _ok({
             "project_id":     project_id,
             "checked":        len(results),
-            "new_shots":      new_count,
-            "existing_shots": existing_count,
+            "new_shots":      sum(1 for r in results if not r["exists"]),
+            "existing_shots": sum(1 for r in results if r["exists"]),
             "shots":          results,
         })
     except Exception as e:
@@ -561,69 +565,98 @@ async def register_publish(params: RegisterPublishInput) -> str:
 
     Call this once per exported segment after a Flame publish completes.
     Derives the shot name and role from the segment name automatically:
-    - 'tst_010_graded_L01' → shot='tst_010', role='primary'
-    - 'tst_010_graded_L02' → shot='tst_010', role='reference'
-    - 'tst_010_graded_L03' → shot='tst_010', role='matte'
+    - 'tst_010_graded_L01' → shot='tst_010_graded', role='primary'
+    - 'tst_010_graded_L02' → shot='tst_010_graded', role='reference'
+    - 'tst_010_graded_L03' → shot='tst_010_graded', role='matte'
 
     Creates the Shot if it doesn't exist, then creates a Version and
     Media record linked to it.
     """
     try:
         client = _client()
+        from forge_bridge.server.protocol import (
+            project_list, entity_list, entity_create, relationship_create, location_add,
+        )
 
         shot_name, role = _parse_shot_name(params.segment_name)
 
         # Resolve project
         project_id = params.project_id
         if not project_id:
-            from forge_bridge.server.protocol import query_projects
-            projects = await client.request(query_projects())
+            projects = await client.request(project_list())
             proj_list = projects.get("projects", [])
             if not proj_list:
                 return _err("No projects found in forge-bridge")
             project_id = proj_list[0]["id"]
 
-        from forge_bridge.server.protocol import (
-            create_shot as proto_create_shot,
-            query_shots,
-        )
-
         # Find or create shot
-        all_shots = await client.request(query_shots(project_id=project_id, limit=500))
-        existing = {s["name"]: s for s in all_shots.get("shots", [])}
+        shots_result = await client.request(entity_list("shot", project_id))
+        shots_by_name = {s["name"]: s for s in shots_result.get("entities", [])}
 
-        if shot_name in existing:
-            shot_id = existing[shot_name]["id"]
+        if shot_name in shots_by_name:
+            shot_id = shots_by_name[shot_name]["id"]
             shot_created = False
         else:
-            new_shot = await client.request(proto_create_shot(
+            shot_result = await client.request(entity_create(
+                entity_type="shot",
                 project_id=project_id,
                 name=shot_name,
-                sequence_name=params.sequence_name or "",
-                roles=list(LAYER_ROLE_MAP.values()),
+                attributes={
+                    "sequence_name": params.sequence_name or "",
+                    "status": "in_progress",
+                },
             ))
-            shot_id = new_shot["id"]
+            shot_id = shot_result["id"]
             shot_created = True
 
-        # Create version
-        from forge_bridge.server.protocol import create_version
-        version = await client.request(create_version(
-            shot_id=shot_id,
-            role=role,
-            output_path=params.output_path,
-            start_frame=params.start_frame,
-            end_frame=params.end_frame,
-            colour_space=params.colour_space,
+        # Count existing versions for this shot to get next version number
+        versions_result = await client.request(entity_list("version", project_id))
+        shot_versions = [
+            v for v in versions_result.get("entities", [])
+            if v.get("attributes", {}).get("shot_id") == shot_id
+        ]
+        next_version = len(shot_versions) + 1
+
+        # Create version entity
+        version_result = await client.request(entity_create(
+            entity_type="version",
+            project_id=project_id,
+            name=f"{shot_name}_v{next_version:03d}",
+            attributes={
+                "shot_id":        shot_id,
+                "role":           role,
+                "version_number": next_version,
+                "start_frame":    params.start_frame,
+                "end_frame":      params.end_frame,
+                "colour_space":   params.colour_space,
+                "segment_name":   params.segment_name,
+            },
+        ))
+        version_id = version_result["id"]
+
+        # Link version → shot
+        await client.request(relationship_create(
+            from_id=version_id,
+            to_id=shot_id,
+            relationship_type="version_of",
         ))
 
+        # Register output path as a location
+        if params.output_path:
+            await client.request(location_add(
+                entity_id=version_id,
+                path=params.output_path,
+                location_type="render",
+            ))
+
         return _ok({
-            "shot_name":    shot_name,
-            "shot_id":      shot_id,
-            "shot_created": shot_created,
-            "role":         role,
-            "version_id":   version.get("id"),
-            "version_number": version.get("version_number"),
-            "output_path":  params.output_path,
+            "shot_name":      shot_name,
+            "shot_id":        shot_id,
+            "shot_created":   shot_created,
+            "role":           role,
+            "version_id":     version_id,
+            "version_number": next_version,
+            "output_path":    params.output_path,
         })
     except Exception as e:
         return _err(str(e))
@@ -690,8 +723,8 @@ import json
 print(json.dumps(snap()))
 """
     try:
-        from forge_bridge.tools.bridge import execute_json
-        data = await execute_json(code)
+        from forge_mcp import bridge
+        data = await bridge.execute_json(code)
         sequences = data if isinstance(data, list) else []
 
         total_segs = sum(s.get("segment_count", 0) for s in sequences)
