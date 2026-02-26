@@ -214,7 +214,7 @@ def _start_endpoint() -> None:
         global _endpoint
         try:
             # Add forge_bridge to path if running from the repo
-            repo_path = os.environ.get("FORGE_BRIDGE_REPO")
+            repo_path = os.environ.get("FORGE_BRIDGE_REPO", "/Users/cnoellert/Documents/GitHub/forge-bridge")
             if repo_path and repo_path not in sys.path:
                 sys.path.insert(0, repo_path)
 
