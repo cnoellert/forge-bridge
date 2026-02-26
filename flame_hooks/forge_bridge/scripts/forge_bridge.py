@@ -293,6 +293,16 @@ class _ReusableHTTPServer(http.server.HTTPServer):
     allow_reuse_address = True
 
 
+def _server_loop():
+    """Manual request loop — avoids serve_forever select() issues on macOS."""
+    global _bridge_active
+    while _bridge_active:
+        try:
+            _server.handle_request()
+        except Exception:
+            pass
+
+
 def _start_server():
     """Start the HTTP server in a daemon thread."""
     global _server, _bridge_active
@@ -305,7 +315,7 @@ def _start_server():
         _log(f"Listening on http://{BRIDGE_HOST}:{BRIDGE_PORT}/")
 
         thread = threading.Thread(
-            target=_server.serve_forever,
+            target=_server_loop,
             name="forge-bridge",
             daemon=True,
         )
