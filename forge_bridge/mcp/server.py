@@ -206,37 +206,49 @@ try:
     mcp.tool(name="flame_list_desktop",   annotations={"readOnlyHint": True})(flame_project.list_desktop)
     mcp.tool(name="flame_find_media",     annotations={"readOnlyHint": True})(flame_project.find_media)
 
-# ── Publish workflow tools ─────────────────────────────────────────────────
+    mcp.tool(name="flame_get_sequence_segments",
+             annotations={"title": "Get all segments with FORGE metadata", "readOnlyHint": True}
+             )(flame_timeline.get_sequence_segments)
+
+    mcp.tool(name="flame_preview_rename",
+             annotations={"title": "Preview rename without changes", "readOnlyHint": True, "idempotentHint": True}
+             )(flame_timeline.preview_rename)
+
+    mcp.tool(name="flame_rename_shots",
+             annotations={"title": "Rename shots and segments on a sequence", "readOnlyHint": False}
+             )(flame_timeline.rename_shots)
+
+    mcp.tool(name="flame_preview_start_frames",
+             annotations={"title": "Preview start frame assignments", "readOnlyHint": True, "idempotentHint": True}
+             )(flame_timeline.preview_start_frames)
+
+    mcp.tool(name="flame_set_start_frames",
+             annotations={"title": "Set composite start frames on a sequence", "readOnlyHint": False}
+             )(flame_timeline.set_start_frames)
+
+    mcp.tool(name="flame_set_segment_attribute",
+             annotations={"title": "Set an attribute on a single segment", "readOnlyHint": False}
+             )(flame_timeline.set_segment_attribute)
+
+except ImportError:
+    logger.warning("Flame HTTP bridge tools not available — forge_bridge.tools not found")
+
+# ── Publish workflow tools (forge-bridge state, no Flame dependency) ──
 
 mcp.tool(
     name="forge_check_shots",
-    annotations={
-        "title": "Pre-publish preflight — check if shots already exist",
-        "readOnlyHint": True,
-        "idempotentHint": True,
-    },
+    annotations={"title": "Pre-publish preflight — check if shots exist", "readOnlyHint": True, "idempotentHint": True},
 )(tools.check_shots)
 
 mcp.tool(
     name="forge_register_publish",
-    annotations={
-        "title": "Register a published component in forge-bridge",
-        "readOnlyHint": False,
-        "idempotentHint": False,
-    },
+    annotations={"title": "Register a published component in forge-bridge", "readOnlyHint": False},
 )(tools.register_publish)
 
 mcp.tool(
     name="flame_snapshot_timeline",
-    annotations={
-        "title": "Snapshot current Flame timeline — all sequences and segments",
-        "readOnlyHint": True,
-        "idempotentHint": True,
-    },
+    annotations={"title": "Snapshot Flame timeline — all sequences and segments", "readOnlyHint": True, "idempotentHint": True},
 )(tools.snapshot_timeline)
-
-except ImportError:
-    logger.warning("Flame HTTP bridge tools not available — forge_bridge.tools not found")
 
 
 # ─────────────────────────────────────────────────────────────

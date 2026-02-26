@@ -252,3 +252,50 @@ Layer suffix → role mapping: `L01=primary`, `L02=reference`, `L03=matte`
 | `forge_list_published(shot_name)` | What has been published for this shot? |
 | `forge_list_sequences()` | All sequences and segment names in current project |
 | `forge_snapshot_timeline()` | Full timeline state: reel_groups→reels→seqs→segments |
+
+---
+
+## Start Frame Workflow — Key API
+
+```
+seg.head                    → int, head handle frames before cut point
+seg.change_start_frame(n)   → sets clip start frame (call with n = target - head)
+seg.start_frame             → current start frame (read-only inspection)
+seg.source_name             → non-empty = real segment; empty = gap/filler
+seg.file_path               → source media path (for role detection)
+seg.record_in / record_out  → edit timecodes as strings (for shot propagation)
+seg.shot_name               → PyAttribute with .get_value() / .set_value()
+seg.name                    → PyAttribute with .get_value() / .set_value()
+```
+
+### Start frame math
+
+```
+target_frame = 1001          # first visible edit frame
+head         = int(seg.head) # handle frames before cut
+clip_start   = target - head # actual first frame of clip material
+
+seg.change_start_frame(clip_start)
+
+# Result: frame 1001 is first visible frame
+#         frames (1001 - head) to 1000 are head handles
+# INVALID if clip_start < 0 — Flame cannot write negative frame numbers
+```
+
+### Role detection from source path
+
+```python
+import re
+m = re.search(r'footage/([^/]+)/', str(seg.file_path))
+role = m.group(1) if m and m.group(1) in KNOWN_ROLES else 'source'
+# KNOWN_ROLES = ['graded', 'raw', 'denoised', 'flat', 'external', 'scans', 'stock', 'source']
+```
+
+### All set operations require main thread
+
+```python
+# Must use main_thread=True or schedule_idle_event():
+seg.name.set_value(new_name)
+seg.shot_name.set_value(shot_name)
+seg.change_start_frame(n)
+```

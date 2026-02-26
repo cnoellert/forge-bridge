@@ -893,7 +893,7 @@ class Router:
         return ok(msg.msg_id, {
             "shot_id": shot_id,
             "stack_id": str(stack.id),
-            "layers": [l.to_dict() for l in layers],
+            "layers": [l.to_dict(self.registry) for l in layers],
         })
 
     async def _handle_query_events(
