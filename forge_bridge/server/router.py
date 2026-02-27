@@ -960,27 +960,47 @@ class Router:
                 status=status,
             )
         elif t == "version":
-            return Version(
-                version_number=a.get("version_number", 1),
-                parent_id=a.get("parent_id"),
+            # Our publish attributes: shot_id, iteration, version_label,
+            # sequence_name, published_by. Legacy: version_number, parent_id.
+            shot_id     = a.get("shot_id") or a.get("parent_id")
+            iter_num    = a.get("iteration") or a.get("version_number", 1)
+            v_entity = Version(
+                version_number=int(iter_num),
+                parent_id=shot_id,
                 parent_type=a.get("parent_type", "shot"),
                 status=status,
-                created_by=a.get("created_by"),
+                created_by=a.get("created_by") or a.get("published_by"),
             )
+            # Preserve all extra attributes in metadata for JSONB storage
+            v_entity.metadata = {k: v for k, v in a.items()
+                                 if k not in ("parent_id", "parent_type")}
+            if name:
+                v_entity.name = name
+            return v_entity
         elif t == "media":
             from forge_bridge.core.vocabulary import FrameRange
             from fractions import Fraction
+            # Support both new flat keys (colour_space, width, height, fps,
+            # depth, tape_name, layer_index, kind) and legacy structured keys.
             fr_data = a.get("frame_range")
-            fr = FrameRange(fr_data["start"], fr_data["end"],
-                            Fraction(fr_data.get("fps", "24"))) if fr_data else None
-            return Media(
+            fr = (FrameRange(fr_data["start"], fr_data["end"],
+                             Fraction(fr_data.get("fps", "24"))) if fr_data else None)
+            m_entity = Media(
                 format=a.get("format", "EXR"),
-                resolution=a.get("resolution"),
+                resolution=( f"{a['width']}x{a['height']}"
+                             if a.get("width") and a.get("height")
+                             else a.get("resolution") ),
                 frame_range=fr,
-                colorspace=a.get("colorspace"),
-                bit_depth=a.get("bit_depth"),
+                colorspace=a.get("colorspace") or a.get("colour_space"),
+                bit_depth=a.get("bit_depth") or a.get("depth"),
                 version_id=a.get("version_id"),
             )
+            # Preserve all extra attributes (kind, tape_name, layer_index, etc.)
+            m_entity.metadata = {k: v for k, v in a.items()
+                                 if k not in ("frame_range", "version_id")}
+            if name:
+                m_entity.name = name
+            return m_entity
         elif t == "layer":
             role_name = a.get("role", "primary")
             return Layer(

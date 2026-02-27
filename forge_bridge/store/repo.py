@@ -333,9 +333,16 @@ class EntityRepo:
     # ── Serialization ─────────────────────────────────────────
 
     def _attrs_to_dict(self, entity: BridgeEntity) -> dict:
-        """Extract type-specific attributes for JSONB storage."""
+        """Extract type-specific attributes for JSONB storage.
+
+        Typed fields are extracted from the entity's formal properties.
+        entity.metadata (the open key/value store) is merged on top so
+        arbitrary pipeline attributes (kind, colour_space, tape_name, etc.)
+        survive the round-trip without requiring schema changes.
+        """
         t = entity.entity_type
-        a = {}
+        # Start with metadata so typed fields win on collision
+        a = dict(entity.metadata or {})
 
         if t == "sequence":
             seq = entity
