@@ -250,6 +250,16 @@ mcp.tool(
     annotations={"title": "Snapshot Flame timeline — all sequences and segments", "readOnlyHint": True, "idempotentHint": True},
 )(tools.snapshot_timeline)
 
+mcp.tool(
+    name="forge_list_published_plates",
+    annotations={"title": "List published video plates from the forge-bridge registry", "readOnlyHint": True, "idempotentHint": True},
+)(tools.list_published_plates)
+
+mcp.tool(
+    name="forge_get_shot_versions",
+    annotations={"title": "Get all published plate versions for a specific shot", "readOnlyHint": True, "idempotentHint": True},
+)(tools.get_shot_versions)
+
 
 # ─────────────────────────────────────────────────────────────
 # Startup / shutdown

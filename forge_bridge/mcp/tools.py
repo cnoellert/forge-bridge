@@ -758,3 +758,187 @@ print(json.dumps(snap()))
         })
     except Exception as e:
         return _err(str(e))
+
+
+# ─────────────────────────────────────────────────────────────
+# Publish registry queries
+# ─────────────────────────────────────────────────────────────
+
+class ListPublishedPlatesInput(BaseModel):
+    project_id:    Optional[str] = Field(default=None, description="Project UUID — defaults to first project")
+    shot_name:     Optional[str] = Field(default=None, description="Filter to a specific shot name e.g. 'ABC_010'")
+    sequence_name: Optional[str] = Field(default=None, description="Filter to a specific sequence e.g. 'test'")
+    colour_space:  Optional[str] = Field(default=None, description="Filter by colour space e.g. 'ACEScct'")
+
+
+async def list_published_plates(params: ListPublishedPlatesInput) -> str:
+    """List all video plates registered in the forge-bridge publish registry.
+
+    Returns one record per published plate (version entity) with:
+    - shot name, asset name, track (L01/L02/…), colour space
+    - resolution, fps, frame range
+    - full file path on disk (from the location record)
+    - version name and number
+
+    Use shot_name / sequence_name / colour_space to filter results.
+    Use get_shot_versions to drill into a specific shot's history.
+    """
+    try:
+        from forge_bridge.server.protocol import project_list, entity_list
+        client = _client()
+
+        # Resolve project
+        project_id = params.project_id
+        if not project_id:
+            projects = await client.request(project_list())
+            proj_list = projects.get("projects", [])
+            if not proj_list:
+                return _err("No projects in forge-bridge")
+            project_id = proj_list[0]["id"]
+
+        versions = (await client.request(entity_list("version", project_id))).get("entities", [])
+
+        plates = []
+        for v in versions:
+            attrs = v.get("attributes", {})
+
+            # Apply filters
+            if params.shot_name and attrs.get("shot_id"):
+                # need shot name — we'll filter after building the shot map
+                pass
+            if params.colour_space and attrs.get("colour_space", "") != params.colour_space:
+                continue
+            if params.sequence_name and attrs.get("sequence_name", "") != params.sequence_name:
+                continue
+
+            # Only include versions that look like plate registrations
+            # (have asset_name and colour_space from the hook)
+            if not attrs.get("asset_name") and not attrs.get("colour_space"):
+                continue
+
+            path = ""
+            locs = v.get("locations", [])
+            if locs:
+                path = locs[0].get("path", "")
+
+            plates.append({
+                "version_id":     v["id"],
+                "version_name":   v.get("name", ""),
+                "shot_id":        attrs.get("shot_id", ""),
+                "asset_name":     attrs.get("asset_name", ""),
+                "track":          attrs.get("track", ""),
+                "colour_space":   attrs.get("colour_space", ""),
+                "width":          attrs.get("width", 0),
+                "height":         attrs.get("height", 0),
+                "fps":            attrs.get("fps", ""),
+                "depth":          attrs.get("depth", ""),
+                "start_frame":    attrs.get("start_frame", 0),
+                "source_in":      attrs.get("source_in", 0),
+                "source_out":     attrs.get("source_out", 0),
+                "tape_name":      attrs.get("tape_name", ""),
+                "sequence_name":  attrs.get("sequence_name", ""),
+                "version_number": attrs.get("version_number", 0),
+                "path":           path,
+            })
+
+        # Apply shot_name filter — requires shot lookup
+        if params.shot_name:
+            shots = (await client.request(entity_list("shot", project_id))).get("entities", [])
+            shot_ids = {s["id"] for s in shots if s.get("name") == params.shot_name}
+            plates = [p for p in plates if p["shot_id"] in shot_ids]
+
+        # Sort: sequence → asset_name → track
+        plates.sort(key=lambda p: (p["sequence_name"], p["asset_name"], p["track"]))
+
+        return _ok({
+            "project_id": project_id,
+            "count":      len(plates),
+            "filters":    {
+                "shot_name":     params.shot_name,
+                "sequence_name": params.sequence_name,
+                "colour_space":  params.colour_space,
+            },
+            "plates": plates,
+        })
+    except Exception as e:
+        return _err(str(e))
+
+
+class GetShotVersionsInput(BaseModel):
+    shot_name:  str           = Field(..., description="Shot name e.g. 'ABC_010'")
+    project_id: Optional[str] = Field(default=None, description="Project UUID — defaults to first project")
+
+
+async def get_shot_versions(params: GetShotVersionsInput) -> str:
+    """Get all published plate versions for a specific shot.
+
+    Returns the full publish history for the shot — every registered
+    plate across all tracks (L01, L02, …) and all publish rounds.
+    Versions are sorted oldest → newest within each track.
+
+    Useful for understanding what has been published, at what colour
+    space, and where the files live on disk.
+    """
+    try:
+        from forge_bridge.server.protocol import project_list, entity_list
+        client = _client()
+
+        # Resolve project
+        project_id = params.project_id
+        if not project_id:
+            projects = await client.request(project_list())
+            proj_list = projects.get("projects", [])
+            if not proj_list:
+                return _err("No projects in forge-bridge")
+            project_id = proj_list[0]["id"]
+
+        # Find shot
+        shots = (await client.request(entity_list("shot", project_id))).get("entities", [])
+        shot = next((s for s in shots if s.get("name") == params.shot_name), None)
+        if not shot:
+            return _err(f"Shot '{params.shot_name}' not found in project")
+        shot_id = shot["id"]
+
+        # Get all versions for this shot
+        all_versions = (await client.request(entity_list("version", project_id))).get("entities", [])
+        shot_versions = [
+            v for v in all_versions
+            if v.get("attributes", {}).get("shot_id") == shot_id
+            and (v.get("attributes", {}).get("asset_name") or v.get("attributes", {}).get("colour_space"))
+        ]
+
+        # Build output records
+        records = []
+        for v in shot_versions:
+            attrs = v.get("attributes", {})
+            locs = v.get("locations", [])
+            path = locs[0].get("path", "") if locs else ""
+            records.append({
+                "version_id":     v["id"],
+                "version_name":   v.get("name", ""),
+                "asset_name":     attrs.get("asset_name", ""),
+                "track":          attrs.get("track", ""),
+                "colour_space":   attrs.get("colour_space", ""),
+                "width":          attrs.get("width", 0),
+                "height":         attrs.get("height", 0),
+                "fps":            attrs.get("fps", ""),
+                "start_frame":    attrs.get("start_frame", 0),
+                "source_in":      attrs.get("source_in", 0),
+                "source_out":     attrs.get("source_out", 0),
+                "tape_name":      attrs.get("tape_name", ""),
+                "version_number": attrs.get("version_number", 0),
+                "path":           path,
+            })
+
+        # Sort by track then version number
+        records.sort(key=lambda r: (r["track"], r["version_number"]))
+
+        return _ok({
+            "shot_name":  params.shot_name,
+            "shot_id":    shot_id,
+            "project_id": project_id,
+            "count":      len(records),
+            "versions":   records,
+        })
+    except Exception as e:
+        return _err(str(e))
