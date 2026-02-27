@@ -114,6 +114,7 @@ class StorageType(str, Enum):
     NETWORK = "network"
     CLOUD   = "cloud"
     ARCHIVE = "archive"
+    CLIP    = "clip"    # Flame openClip / batchOpenClip XML pointer
 
 
 @dataclass
