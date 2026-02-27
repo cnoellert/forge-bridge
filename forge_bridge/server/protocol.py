@@ -301,17 +301,21 @@ def entity_list(entity_type: str, project_id: str) -> Message:
 
 # Graph messages
 def relationship_create(
-    source_id: str,
-    target_id: str,
-    rel_type: str,
+    source_id:  str,
+    target_id:  str,
+    rel_type:   str,
+    attributes: dict | None = None,
 ) -> Message:
-    return Message({
+    msg: dict = {
         "type":      MsgType.REL_CREATE,
         "id":        _new_id(),
         "source_id": source_id,
         "target_id": target_id,
         "rel_type":  rel_type,
-    })
+    }
+    if attributes:
+        msg["attributes"] = attributes
+    return Message(msg)
 
 
 def location_add(

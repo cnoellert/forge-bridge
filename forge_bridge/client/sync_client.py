@@ -305,12 +305,20 @@ class SyncClient:
 
     def relationship_create(
         self,
-        source_id: str | uuid.UUID,
-        target_id: str | uuid.UUID,
-        rel_type:  str,
+        source_id:  str | uuid.UUID,
+        target_id:  str | uuid.UUID,
+        rel_type:   str,
+        attributes: dict | None = None,
     ) -> None:
-        """Create a relationship edge."""
-        self._run(relationship_create(str(source_id), str(target_id), rel_type))
+        """Create a relationship edge, optionally with edge attributes.
+
+        For consumes/produces edges, pass:
+            attributes={"track_role": "primary", "layer_index": "001"}
+        """
+        self._run(relationship_create(
+            str(source_id), str(target_id), rel_type,
+            attributes=attributes,
+        ))
 
     def location_add(
         self,

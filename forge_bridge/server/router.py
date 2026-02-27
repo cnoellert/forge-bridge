@@ -741,17 +741,20 @@ class Router:
                          f"Relationship type {rel_type!r} not found")
 
         from forge_bridge.core.traits import Relationship
+        rel_attrs = msg.get("attributes") or {}
         rel = Relationship(
             source_id=uuid.UUID(source_id),
             target_id=uuid.UUID(target_id),
             rel_key=rel_key,
+            metadata=rel_attrs,
         )
         async with get_session() as session:
             await RelationshipRepo(session).save(rel)
 
         await self.connections.broadcast_event(
             "relationship.created",
-            {"source_id": source_id, "target_id": target_id, "rel_type": rel_type},
+            {"source_id": source_id, "target_id": target_id, "rel_type": rel_type,
+             "attributes": rel_attrs},
             originator_session_id=client.session_id,
         )
         return ok(msg.msg_id)
