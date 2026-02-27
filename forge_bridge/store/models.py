@@ -81,17 +81,23 @@ def _uuid() -> uuid.UUID:
 class DBRole(Base):
     """A role definition in the registry.
 
-    key   — stable UUID. Stored in Layer.role_key. Never changes.
-    name  — canonical string name. Can change via rename.
-    label — display name. Can change freely.
+    key        — stable UUID. Stored in Layer.role_key. Never changes.
+    name       — canonical string name. Can change via rename.
+    label      — display name. Can change freely.
+    role_class — "track" or "media":
+                   track  → compositional function within a shot Version
+                            (primary/matte/background etc., L01/L02/L03 in Flame)
+                   media  → pipeline stage that produced the media atom
+                            (raw/grade/denoise/prep/roto/comp)
     """
     __tablename__ = "registry_roles"
 
-    key       = Column(UUID(as_uuid=True), primary_key=True, default=_uuid)
-    name      = Column(String(128), nullable=False, unique=True)
-    label     = Column(String(256), nullable=False)
-    order     = Column(Integer, nullable=False, default=0)
-    protected = Column(Boolean, nullable=False, default=False)
+    key        = Column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    name       = Column(String(128), nullable=False, unique=True)
+    label      = Column(String(256), nullable=False)
+    role_class = Column(String(32),  nullable=False, default="track")
+    order      = Column(Integer, nullable=False, default=0)
+    protected  = Column(Boolean, nullable=False, default=False)
 
     # Flexible storage for path_template, aliases, and future fields
     attributes = Column(JSONB, nullable=False, default=dict)
@@ -217,12 +223,29 @@ class DBEntity(Base):
     project_id) are promoted to real columns with indexes.
 
     Attributes column contents by entity_type:
+
       sequence:  frame_rate, duration_tc
+
       shot:      cut_in, cut_out, sequence_id
+
       asset:     asset_type
-      version:   version_number, parent_id, parent_type, created_by
-      media:     format, resolution, frame_range, colorspace, bit_depth, version_id
+
+      version:   The process/event record — equivalent to a git commit.
+                 The batch file IS the version; its location is the .batch file.
+                 Fields: version_number (iteration counter, 1-based for published
+                 comps), published_at, published_by, shot_id, sequence_name.
+                 NOT: plate metadata — that belongs on media entities.
+
+      media:     The atomic content unit — immutable once created.
+                 Fields: role (media role: raw/grade/denoise/prep/roto/comp),
+                 generation (0=raw, 1+=derived), kind (plate/render/clip/batch),
+                 format, colorspace, bit_depth, width, height, fps,
+                 frame_range {start, end}, tape_name, source_tc_in, source_tc_out.
+                 Does NOT carry version_id — the relationship graph owns that link
+                 via consumes/produces edges on the Version entity.
+
       layer:     role_key, order, stack_id, version_id
+
       stack:     shot_id
     """
     __tablename__ = "entities"
@@ -335,7 +358,7 @@ class DBLocation(Base):
             name="ck_locations_owner",
         ),
         CheckConstraint(
-            "storage_type IN ('local', 'network', 'cloud', 'archive')",
+            "storage_type IN ('local', 'network', 'cloud', 'archive', 'clip')",
             name="ck_locations_storage_type",
         ),
         Index("ix_locations_path",     "path"),
@@ -428,8 +451,11 @@ EVENT_TYPES = frozenset({
     "location.added", "location.updated", "location.removed",
     "relationship.created", "relationship.removed",
     # Pipeline events
-    "version.published", "media.ingested",
-    # Session events
+    "version.published",     # A Version (comp/batch) was published to a Shot
+    "media.ingested",        # A raw media atom arrived via ingest
+    "media.derived",         # A media atom was derived from another (lineage hop)
+    "media.registered",      # A media atom was registered from a publish hook
+    "entity.deleted",
     "client.connected", "client.disconnected",
 })
 

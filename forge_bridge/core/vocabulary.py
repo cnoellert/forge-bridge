@@ -129,15 +129,47 @@ class Role:
 # ─────────────────────────────────────────────────────────────
 # Default role registry
 # ─────────────────────────────────────────────────────────────
+#
+# Roles are split into two classes:
+#
+#   track  — compositional function within a shot's comp stack.
+#             Describes what the media *does* in a specific Version.
+#             Carried on the edge (consumes relationship attributes),
+#             not on the media entity itself.
+#             L01/L02/L03 are Flame's slot indices for these roles.
+#
+#   media  — pipeline stage that *produced* this media atom.
+#             Describes what happened to the media to create it.
+#             Travels with the media entity as media.attributes.role.
+#             Scoped by generation: raw=0, grade/denoise/prep/roto/comp=1+
+#
+# The same media entity can have a different track role in every Version
+# that consumes it — the media role is fixed, the track role is contextual.
 
 STANDARD_ROLES = {
-    "primary":    Role("primary",    order=0, aliases={"flame": "L01"}),
-    "reference":  Role("reference",  order=1, aliases={"flame": "L02"}),
-    "matte":      Role("matte",      order=2, aliases={"flame": "L03"}),
-    "background": Role("background", order=3),
-    "foreground": Role("foreground", order=4),
-    "color":      Role("color",      order=5),
-    "audio":      Role("audio",      order=6),
+    # ── Track roles (compositional function within a shot Version) ──────────
+    "primary":    Role("primary",    order=0, aliases={"flame": "L01", "role_class": "track"}),
+    "reference":  Role("reference",  order=1, aliases={"flame": "L02", "role_class": "track"}),
+    "matte":      Role("matte",      order=2, aliases={"flame": "L03", "role_class": "track"}),
+    "background": Role("background", order=3, aliases={"role_class": "track"}),
+    "foreground": Role("foreground", order=4, aliases={"role_class": "track"}),
+    "color":      Role("color",      order=5, aliases={"role_class": "track"}),
+    "audio":      Role("audio",      order=6, aliases={"role_class": "track"}),
+
+    # ── Media roles (pipeline stage that produced the media) ─────────────────
+    # raw: camera source — always generation 0, never produced by a process.
+    #      Anything in footage/raw/ is implicitly this role.
+    "raw":        Role("raw",        order=10, aliases={"role_class": "media", "generation_floor": "0"}),
+    # grade: colour graded plate — generation 1+. Product of a grade process.
+    "grade":      Role("grade",      order=11, aliases={"role_class": "media", "generation_floor": "1"}),
+    # denoise: noise reduction pass — generation 1+.
+    "denoise":    Role("denoise",    order=12, aliases={"role_class": "media", "generation_floor": "1"}),
+    # prep: paint / cleanup / rig removal — generation 1+.
+    "prep":       Role("prep",       order=13, aliases={"role_class": "media", "generation_floor": "1"}),
+    # roto: rotoscope delivery — generation 1+.
+    "roto":       Role("roto",       order=14, aliases={"role_class": "media", "generation_floor": "1"}),
+    # comp: composite render output — generation 1+.
+    "comp":       Role("comp",       order=15, aliases={"role_class": "media", "generation_floor": "1"}),
 }
 
 

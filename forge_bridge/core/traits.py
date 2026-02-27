@@ -39,6 +39,13 @@ SYSTEM_REL_KEYS: dict[str, uuid.UUID] = {
     "derived_from": uuid.UUID("00000000-0000-0000-0000-000000000003"),
     "references":   uuid.UUID("00000000-0000-0000-0000-000000000004"),
     "peer_of":      uuid.UUID("00000000-0000-0000-0000-000000000005"),
+    # Process graph — Version ↔ Media axes
+    # consumes: Version → Media  (this media was an input to this process)
+    # produces: Version → Media  (this media was created by this process)
+    # The edge attributes carry compositional role when relevant:
+    #   consumes.attributes = {"track_role": "primary", "layer_index": "L01"}
+    "consumes":     uuid.UUID("00000000-0000-0000-0000-000000000006"),
+    "produces":     uuid.UUID("00000000-0000-0000-0000-000000000007"),
 }
 
 # Reverse map for fallback name resolution without a registry

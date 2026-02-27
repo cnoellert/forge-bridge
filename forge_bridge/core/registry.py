@@ -64,6 +64,7 @@ from forge_bridge.core.vocabulary import Role, STANDARD_ROLES
 # Well-known UUIDs for standard roles — parallel to SYSTEM_REL_KEYS.
 # These are permanent. Do not change them between versions.
 STANDARD_ROLE_KEYS: dict[str, uuid.UUID] = {
+    # Track roles — compositional function within a shot Version
     "primary":    uuid.UUID("10000000-0000-0000-0000-000000000001"),
     "reference":  uuid.UUID("10000000-0000-0000-0000-000000000002"),
     "matte":      uuid.UUID("10000000-0000-0000-0000-000000000003"),
@@ -71,6 +72,14 @@ STANDARD_ROLE_KEYS: dict[str, uuid.UUID] = {
     "foreground": uuid.UUID("10000000-0000-0000-0000-000000000005"),
     "color":      uuid.UUID("10000000-0000-0000-0000-000000000006"),
     "audio":      uuid.UUID("10000000-0000-0000-0000-000000000007"),
+    # Media roles — pipeline stage that produced the media atom
+    # Must match _MEDIA_ROLE_KEYS in migration 0002 exactly.
+    "raw":        uuid.UUID("00000000-0000-0000-0010-000000000001"),
+    "grade":      uuid.UUID("00000000-0000-0000-0010-000000000002"),
+    "denoise":    uuid.UUID("00000000-0000-0000-0010-000000000003"),
+    "prep":       uuid.UUID("00000000-0000-0000-0010-000000000004"),
+    "roto":       uuid.UUID("00000000-0000-0000-0010-000000000005"),
+    "comp":       uuid.UUID("00000000-0000-0000-0010-000000000006"),
 }
 _STANDARD_ROLE_NAMES: dict[uuid.UUID, str] = {v: k for k, v in STANDARD_ROLE_KEYS.items()}
 
@@ -657,11 +666,15 @@ class Registry:
 
         # Built-in relationship types with well-known UUIDs from traits.py
         _builtin_rel_types = {
-            "member_of":    ("member of",    "Entity belongs to a collection",        "→"),
-            "version_of":   ("version of",   "Entity is an iteration of another",     "→"),
-            "derived_from": ("derived from", "Entity was produced from another",       "→"),
-            "references":   ("references",   "Entity uses another without ownership",  "→"),
-            "peer_of":      ("peer of",      "Entities related at the same level",     "↔"),
+            "member_of":    ("member of",    "Entity belongs to a collection",                      "→"),
+            "version_of":   ("version of",   "Entity is an iteration of another",                   "→"),
+            "derived_from": ("derived from", "Media was produced from another media (lineage axis)", "→"),
+            "references":   ("references",   "Entity uses another without ownership",                "→"),
+            "peer_of":      ("peer of",      "Entities related at the same level",                  "↔"),
+            # Process graph axes
+            "consumes":     ("consumes",     "Version took this media as input; edge attributes "
+                                             "carry track_role and layer_index when relevant",       "→"),
+            "produces":     ("produces",     "Version created this media as output",                 "→"),
         }
         for name, (label, description, direction) in _builtin_rel_types.items():
             key = SYSTEM_REL_KEYS[name]
