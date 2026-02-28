@@ -443,6 +443,7 @@ class EntityRepo:
                 FrameRange(fr_data["start"], fr_data["end"], Fraction(fr_data["fps"]))
                 if fr_data else None
             )
+            e.status     = Status.from_string(db.status) if db.status else Status.PENDING
 
         elif t == "layer":
             from forge_bridge.core.traits import get_default_registry
