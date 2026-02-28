@@ -433,6 +433,7 @@ class EntityRepo:
         elif t == "media":
             e = Media.__new__(Media)
             BridgeEntity.__init__(e, id=db.id, metadata={})
+            e.name       = db.name
             e.format     = a.get("format", "unknown")
             e.resolution = a.get("resolution")
             e.colorspace = a.get("colorspace")

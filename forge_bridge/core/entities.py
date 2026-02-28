@@ -374,8 +374,11 @@ class Media(Versionable, BridgeEntity):
         version_id: Optional[uuid.UUID | str] = None,
         id: Optional[uuid.UUID | str] = None,
         metadata: Optional[dict] = None,
+        name: Optional[str] = None,
+        status: Optional["Status"] = None,
     ):
         super().__init__(id=id, metadata=metadata)
+        self.name: Optional[str] = name
         self.format: str = format
         self.resolution: Optional[str] = resolution
         self.frame_range: Optional[FrameRange] = frame_range
@@ -384,6 +387,8 @@ class Media(Versionable, BridgeEntity):
         self.version_id: Optional[uuid.UUID] = (
             uuid.UUID(str(version_id)) if version_id else None
         )
+        from forge_bridge.core.vocabulary import Status as _Status
+        self.status: _Status = status if status is not None else _Status.PENDING
 
         if self.version_id:
             self.add_relationship(self.version_id, "references")
