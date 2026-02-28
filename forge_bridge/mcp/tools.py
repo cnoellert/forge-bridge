@@ -760,9 +760,297 @@ print(json.dumps(snap()))
         return _err(str(e))
 
 
+
 # ─────────────────────────────────────────────────────────────
-# Publish registry queries
+# Lineage & impact
 # ─────────────────────────────────────────────────────────────
+
+class GetShotLineageInput(BaseModel):
+    shot_name:  str           = Field(..., description="Shot name e.g. 'ABC_010'")
+    project_id: Optional[str] = Field(default=None, description="Project UUID — defaults to first project")
+
+
+async def get_shot_lineage(params: GetShotLineageInput) -> str:
+    """Get the full publish lineage for a shot.
+
+    Traverses the Version → Media graph for the shot, returning every
+    published version with its produced media entities, verification
+    status, file paths, colour space, and frame range.
+
+    Useful for understanding the current state of a shot's deliverables
+    and whether they've been verified on disk.
+    """
+    try:
+        from forge_bridge.server.protocol import project_list, entity_list, entity_get, query_dependents
+        client = _client()
+
+        # Resolve project
+        project_id = params.project_id
+        if not project_id:
+            projects = await client.request(project_list())
+            proj_list = projects.get("projects", [])
+            if not proj_list:
+                return _err("No projects in forge-bridge")
+            project_id = proj_list[0]["id"]
+
+        # Find shot
+        shots = (await client.request(entity_list("shot", project_id))).get("entities", [])
+        shot = next((s for s in shots if s.get("name") == params.shot_name), None)
+        if not shot:
+            return _err(f"Shot '{params.shot_name}' not found")
+        shot_id = shot["id"]
+
+        # Get all versions for this shot
+        all_versions = (await client.request(entity_list("version", project_id))).get("entities", [])
+        shot_versions = [
+            v for v in all_versions
+            if v.get("attributes", {}).get("shot_id") == shot_id
+        ]
+
+        # Get all media for this project
+        all_media = (await client.request(entity_list("media", project_id))).get("entities", [])
+        media_by_id = {m["id"]: m for m in all_media}
+
+        # For each version, find its produced media via dependents
+        lineage = []
+        for v in sorted(shot_versions, key=lambda x: x.get("attributes", {}).get("version_number", 0)):
+            attrs = v.get("attributes", {})
+            deps = await client.request(query_dependents(v["id"]))
+            dependent_ids = deps.get("dependents", [])
+
+            produced_media = []
+            for mid in dependent_ids:
+                m = media_by_id.get(mid)
+                if not m:
+                    continue
+                m_attrs = m.get("attributes", {})
+                locs = m.get("locations", [])
+                path = next((l["path"] for l in locs if l.get("storage_type") == "local"), "")
+                if not path and locs:
+                    path = locs[0].get("path", "")
+                produced_media.append({
+                    "media_id":    m["id"],
+                    "name":        m.get("name", ""),
+                    "status":      m.get("status", "pending"),
+                    "kind":        m_attrs.get("kind", ""),
+                    "colour_space": m_attrs.get("colour_space", ""),
+                    "resolution":  m.get("resolution", ""),
+                    "layer_index": m_attrs.get("layer_index"),
+                    "path":        path,
+                })
+
+            lineage.append({
+                "version_id":     v["id"],
+                "version_name":   v.get("name", ""),
+                "version_number": attrs.get("version_number", 0),
+                "asset_name":     attrs.get("asset_name", ""),
+                "sequence_name":  attrs.get("sequence_name", ""),
+                "published_by":   attrs.get("published_by", ""),
+                "media":          produced_media,
+            })
+
+        verified   = sum(1 for v in lineage for m in v["media"] if m["status"] == "verified")
+        unverified = sum(1 for v in lineage for m in v["media"] if m["status"] != "verified")
+
+        return _ok({
+            "shot_name":        params.shot_name,
+            "shot_id":          shot_id,
+            "project_id":       project_id,
+            "version_count":    len(lineage),
+            "media_verified":   verified,
+            "media_unverified": unverified,
+            "lineage":          lineage,
+        })
+    except Exception as e:
+        return _err(str(e))
+
+
+class BlastRadiusInput(BaseModel):
+    media_id:   Optional[str] = Field(default=None, description="Media entity UUID")
+    media_name: Optional[str] = Field(default=None, description="Media name e.g. 'ABC_010_graded_L01' — used if media_id not provided")
+    project_id: Optional[str] = Field(default=None, description="Project UUID — defaults to first project")
+
+
+async def blast_radius(params: BlastRadiusInput) -> str:
+    """Find what depends on a media entity — the blast radius of a change.
+
+    Given a media entity (by ID or name), returns all versions that
+    produced it and all shots that would be affected if this media
+    changed or was republished.
+
+    Useful for impact analysis: 'if I re-deliver this plate, what
+    downstream work needs to be revisited?'
+    """
+    try:
+        from forge_bridge.server.protocol import project_list, entity_list, entity_get, query_dependents
+        client = _client()
+
+        # Resolve project
+        project_id = params.project_id
+        if not project_id:
+            projects = await client.request(project_list())
+            proj_list = projects.get("projects", [])
+            if not proj_list:
+                return _err("No projects in forge-bridge")
+            project_id = proj_list[0]["id"]
+
+        # Resolve media entity
+        media_id = params.media_id
+        if not media_id:
+            if not params.media_name:
+                return _err("Provide either media_id or media_name")
+            all_media = (await client.request(entity_list("media", project_id))).get("entities", [])
+            match = next((m for m in all_media if m.get("name") == params.media_name), None)
+            if not match:
+                return _err(f"Media '{params.media_name}' not found")
+            media_id = match["id"]
+
+        media = await client.request(entity_get(media_id))
+        m_attrs = media.get("attributes", {})
+        locs = media.get("locations", [])
+        path = next((l["path"] for l in locs if l.get("storage_type") == "local"), "")
+
+        # What depends on this media? (what versions produced/consume it)
+        deps = await client.request(query_dependents(media_id))
+        dependent_ids = deps.get("dependents", [])
+
+        # Resolve each dependent to a version + shot
+        shots_by_id = {}
+        affected_versions = []
+        all_versions = (await client.request(entity_list("version", project_id))).get("entities", [])
+        versions_by_id = {v["id"]: v for v in all_versions}
+        all_shots = (await client.request(entity_list("shot", project_id))).get("entities", [])
+        shots_lookup = {s["id"]: s for s in all_shots}
+
+        for did in dependent_ids:
+            v = versions_by_id.get(did)
+            if not v:
+                continue
+            v_attrs = v.get("attributes", {})
+            shot_id = v_attrs.get("shot_id", "")
+            shot = shots_lookup.get(shot_id, {})
+            shot_name = shot.get("name", "unknown")
+            if shot_id:
+                shots_by_id[shot_id] = shot_name
+            affected_versions.append({
+                "version_id":    v["id"],
+                "version_name":  v.get("name", ""),
+                "asset_name":    v_attrs.get("asset_name", ""),
+                "shot_id":       shot_id,
+                "shot_name":     shot_name,
+                "sequence_name": v_attrs.get("sequence_name", ""),
+            })
+
+        return _ok({
+            "media_id":        media_id,
+            "media_name":      media.get("name", ""),
+            "media_status":    media.get("status", ""),
+            "colour_space":    m_attrs.get("colour_space", ""),
+            "path":            path,
+            "affected_shots":  list(shots_by_id.values()),
+            "affected_count":  len(shots_by_id),
+            "dependent_versions": affected_versions,
+        })
+    except Exception as e:
+        return _err(str(e))
+
+
+class ListMediaInput(BaseModel):
+    project_id: Optional[str] = Field(default=None, description="Project UUID — defaults to first project")
+    status:     Optional[str] = Field(
+        default=None,
+        description="Filter by status: 'pending', 'verified', 'failed', 'in_progress'"
+    )
+    shot_name:  Optional[str] = Field(default=None, description="Filter to a specific shot e.g. 'ABC_010'")
+    kind:       Optional[str] = Field(default=None, description="Filter by media kind: 'grade', 'comp', 'raw'")
+
+
+async def list_media(params: ListMediaInput) -> str:
+    """List media entities with optional filters.
+
+    Returns all registered media (published plates, comp renders, etc.)
+    with their verification status, file paths, and metadata.
+
+    Particularly useful for finding unverified or failed plates after
+    a publish run, or auditing what's been delivered for a shot.
+    """
+    try:
+        from forge_bridge.server.protocol import project_list, entity_list
+        client = _client()
+
+        # Resolve project
+        project_id = params.project_id
+        if not project_id:
+            projects = await client.request(project_list())
+            proj_list = projects.get("projects", [])
+            if not proj_list:
+                return _err("No projects in forge-bridge")
+            project_id = proj_list[0]["id"]
+
+        all_media = (await client.request(entity_list("media", project_id))).get("entities", [])
+
+        # Build shot lookup if needed
+        shot_id_filter = None
+        if params.shot_name:
+            all_shots = (await client.request(entity_list("shot", project_id))).get("entities", [])
+            shot = next((s for s in all_shots if s.get("name") == params.shot_name), None)
+            if not shot:
+                return _err(f"Shot '{params.shot_name}' not found")
+            shot_id_filter = shot["id"]
+
+        records = []
+        for m in all_media:
+            m_attrs = m.get("attributes", {})
+            status = m.get("status") or "pending"
+
+            # Filters
+            if params.status and status != params.status:
+                continue
+            if params.kind and m_attrs.get("kind", "") != params.kind:
+                continue
+            if shot_id_filter:
+                # Media links to shot via version — skip if no version_id match
+                # (approximation: filter by name prefix if shot_name provided)
+                name = m.get("name", "")
+                if not name.startswith(params.shot_name):
+                    continue
+
+            locs = m.get("locations", [])
+            path = next((l["path"] for l in locs if l.get("storage_type") == "local"), "")
+            if not path and locs:
+                path = locs[0].get("path", "")
+
+            records.append({
+                "media_id":     m["id"],
+                "name":         m.get("name", ""),
+                "status":       status,
+                "kind":         m_attrs.get("kind", ""),
+                "colour_space": m_attrs.get("colour_space", ""),
+                "resolution":   m.get("resolution", ""),
+                "layer_index":  m_attrs.get("layer_index"),
+                "sequence_name": m_attrs.get("sequence_name", ""),
+                "path":         path,
+            })
+
+        records.sort(key=lambda r: (r["sequence_name"], r["name"]))
+
+        status_summary = {}
+        for r in records:
+            status_summary[r["status"]] = status_summary.get(r["status"], 0) + 1
+
+        return _ok({
+            "project_id":     project_id,
+            "count":          len(records),
+            "status_summary": status_summary,
+            "filters": {
+                "status":    params.status,
+                "shot_name": params.shot_name,
+                "kind":      params.kind,
+            },
+            "media": records,
+        })
+    except Exception as e:
+        return _err(str(e))
 
 class ListPublishedPlatesInput(BaseModel):
     project_id:    Optional[str] = Field(default=None, description="Project UUID — defaults to first project")

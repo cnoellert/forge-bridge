@@ -260,6 +260,21 @@ mcp.tool(
     annotations={"title": "Get all published plate versions for a specific shot", "readOnlyHint": True, "idempotentHint": True},
 )(tools.get_shot_versions)
 
+mcp.tool(
+    name="forge_get_shot_lineage",
+    annotations={"title": "Get full publish lineage for a shot — versions, media, verification status", "readOnlyHint": True, "idempotentHint": True},
+)(tools.get_shot_lineage)
+
+mcp.tool(
+    name="forge_blast_radius",
+    annotations={"title": "Find what depends on a media entity — impact analysis for republishes", "readOnlyHint": True, "idempotentHint": True},
+)(tools.blast_radius)
+
+mcp.tool(
+    name="forge_list_media",
+    annotations={"title": "List media entities with status filter — find unverified or failed plates", "readOnlyHint": True, "idempotentHint": True},
+)(tools.list_media)
+
 
 # ─────────────────────────────────────────────────────────────
 # Startup / shutdown
