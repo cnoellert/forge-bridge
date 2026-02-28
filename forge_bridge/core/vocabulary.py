@@ -32,6 +32,8 @@ class Status(str, Enum):
     REJECTED    = "rejected"
     DELIVERED   = "delivered"
     ARCHIVED    = "archived"
+    VERIFIED    = "verified"   # media QC passed — frames confirmed on disk
+    FAILED      = "failed"     # media QC failed — frames missing or corrupt
 
     @classmethod
     def from_string(cls, value: str) -> "Status":
