@@ -19,7 +19,7 @@ async def get_project() -> str:
     """
     data = await bridge.execute_json("""
         import flame, json
-        proj = flame.projects.current_project
+        proj = flame.project.current_project
         ws = proj.current_workspace
         user = flame.users.current_user
         info = {
@@ -110,7 +110,8 @@ async def list_desktop() -> str:
     """
     data = await bridge.execute_json("""
         import flame, json
-        desk = flame.projects.current_project.current_workspace.desktop
+        ws = flame.project.current_project.current_workspace
+        desk = ws.desktop
         reel_groups = []
         for rg in desk.reel_groups:
             rg_name = rg.name.get_value() if hasattr(rg.name, 'get_value') else str(rg.name)
@@ -131,6 +132,75 @@ async def list_desktop() -> str:
 
         result = {
             'reel_groups': reel_groups,
+            'batch_groups': batch_groups,
+        }
+        print(json.dumps(result))
+    """)
+    return json.dumps(data, indent=2)
+
+
+# ── Tool: flame_context ─────────────────────────────────────────────────
+
+
+async def get_context() -> str:
+    """Get current Flame context: project, workspace, desktop, and full reel contents.
+
+    Returns a complete snapshot of what Flame is currently showing:
+    - Project name and path
+    - Current workspace name
+    - Current desktop name
+    - Every reel group → reel → clip/sequence (by name, type, tracks)
+    - Batch group names
+
+    Use this tool first whenever you need to locate media in Flame or
+    diagnose why a search isn't finding expected clips. It uses
+    flame.project (singular) which is correct for Flame 2026.
+    """
+    data = await bridge.execute_json("""
+        import flame, json
+
+        def _name(obj):
+            try:
+                return str(obj.name).strip("'")
+            except Exception:
+                return str(obj)
+
+        proj = flame.project.current_project
+        ws   = proj.current_workspace
+        desk = ws.desktop
+
+        reel_groups = []
+        for rg in desk.reel_groups:
+            reels = []
+            for r in rg.reels:
+                items = []
+                for c in list(r.clips) + list(r.sequences):
+                    entry = {'name': _name(c), 'type': type(c).__name__}
+                    if hasattr(c, 'versions'):
+                        try:
+                            tracks = list(c.versions[0].tracks)
+                            entry['tracks'] = len(tracks)
+                            segs = []
+                            for t in tracks:
+                                for s in t.segments:
+                                    sn = _name(s)
+                                    if sn:
+                                        segs.append(sn)
+                            entry['segments'] = segs
+                        except Exception:
+                            pass
+                    items.append(entry)
+                reels.append({'name': _name(r), 'items': items})
+            reel_groups.append({'name': _name(rg), 'reels': reels})
+
+        batch_groups = [_name(bg) for bg in desk.batch_groups]
+
+        result = {
+            'project':      _name(proj),
+            'project_folder': str(proj.project_folder),
+            'workspace':    _name(ws),
+            'desktop':      _name(desk),
+            'reel_groups':  reel_groups,
             'batch_groups': batch_groups,
         }
         print(json.dumps(result))

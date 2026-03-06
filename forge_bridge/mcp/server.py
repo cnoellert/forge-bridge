@@ -205,6 +205,14 @@ try:
     mcp.tool(name="flame_list_libraries", annotations={"readOnlyHint": True})(flame_project.list_libraries)
     mcp.tool(name="flame_list_desktop",   annotations={"readOnlyHint": True})(flame_project.list_desktop)
     mcp.tool(name="flame_find_media",     annotations={"readOnlyHint": True})(flame_project.find_media)
+    mcp.tool(
+        name="flame_context",
+        annotations={
+            "title": "Get current Flame context — project, workspace, desktop, all reel contents",
+            "readOnlyHint": True,
+            "idempotentHint": True,
+        },
+    )(flame_project.get_context)
 
     mcp.tool(name="flame_get_sequence_segments",
              annotations={"title": "Get all segments with FORGE metadata", "readOnlyHint": True}

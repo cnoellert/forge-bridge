@@ -274,3 +274,176 @@ else:
         print(json.dumps(result))
 '''
     return await bridge.execute_and_read(code)
+
+
+# ── Assemble Published Sequence ─────────────────────────────────────────
+
+
+class AssemblePublishedSequence(BaseModel):
+    """Assemble a *_published sequence from per-shot _export_tmp_publish sequences.
+
+    After plate exports complete, this tool rebuilds the published sequence so
+    that V1.1 references source openclips (with multi-version alt grade support)
+    and V2.1 references batch outputs.
+
+    Strategy:
+    - The first shot's _export_tmp_publish seq is renamed to <base>_published
+      and becomes the assembled base (clean — no alt tracks).
+    - Remaining shots are assembled via copy_to_media_panel + overwrite() at
+      their original timeline record_in positions.
+    - All other _export_tmp_publish seqs are deleted.
+
+    Key API constraints discovered in production (Flame 2026):
+    - flame.delete(PySegment/PyTrack) on active sequences CRASHES Flame.
+    - seg.source_in is read-only — can't be set after placement.
+    - copy_to_media_panel preserves source_in/handles; import_clips does not.
+    - copy_to_media_panel reports 1 version via Python API but the underlying
+      openclip multi-version structure (alt grades) is preserved on disk and
+      accessible via Flame's version switcher UI.
+    """
+    source_sequence_name: str = Field(
+        ..., description="Name of the source sequence (pre-publish, e.g. 'test long').",
+    )
+    published_sequence_name: str = Field(
+        ..., description="Name of the target published sequence (e.g. 'test long_published').",
+    )
+    reel_name: Optional[str] = Field(
+        default=None, description="Reel to search in. If omitted, searches all reels.",
+    )
+
+
+async def assemble_published_sequence(params: AssemblePublishedSequence) -> str:
+    """Assemble the published sequence from _export_tmp_publish sequences."""
+    src_name = params.source_sequence_name
+    pub_name = params.published_sequence_name
+    reel_filter = params.reel_name
+
+    code = f'''
+import flame, json
+
+src_name    = {src_name!r}
+pub_name    = {pub_name!r}
+reel_filter = {reel_filter!r}
+
+def _find_seqs():
+    """Return (source_seq, all_tmp_seqs, scratch_reel)."""
+    source_seq   = None
+    tmp_seqs     = []
+    scratch_reel = None
+    suffix       = "_export_tmp_publish"
+    for rg in flame.project.current_project.current_workspace.desktop.reel_groups:
+        for reel in rg.reels:
+            if reel_filter and str(reel.name).strip("'") != reel_filter:
+                continue
+            scratch_reel = reel
+            for item in list(reel.sequences):
+                n = str(item.name).strip("'")
+                if n == src_name:
+                    source_seq = item
+                elif n.endswith(suffix):
+                    tmp_seqs.append(item)
+    return source_seq, tmp_seqs, scratch_reel
+
+source_seq, tmp_seqs, scratch_reel = _find_seqs()
+
+if source_seq is None:
+    print(json.dumps({{"error": f"Source sequence '{{src_name}}' not found"}}))
+elif not tmp_seqs:
+    print(json.dumps({{"error": "No _export_tmp_publish sequences found — run plate export first"}}))
+elif scratch_reel is None:
+    print(json.dumps({{"error": "No reel found"}}))
+else:
+    # Collect shot timings from the source sequence (track-0, V1)
+    import re
+    shot_timings = []
+    seen = set()
+    try:
+        for seg in source_seq.versions[0].tracks[0].segments:
+            sn = str(seg.name).strip("'")
+            if not sn:
+                continue
+            m = re.match(r'^([A-Za-z]+_\\d+)_', sn)
+            if not m:
+                continue
+            shot = m.group(1)
+            if shot in seen:
+                continue
+            seen.add(shot)
+            shot_timings.append({{
+                "shot_name":  shot,
+                "seg_name":   sn,
+                "record_in":  seg.record_in,
+                "record_out": seg.record_out,
+            }})
+    except Exception as e:
+        print(json.dumps({{"error": f"Failed to collect shot timings: {{e}}"}}))
+        raise SystemExit
+
+    # Build map: shot_name → publish seq
+    publish_seqs = {{}}
+    for tmp in tmp_seqs:
+        n = str(tmp.name).strip("'")
+        # n is e.g. "SHOT_020_graded_L01_export_tmp_publish"
+        m = re.match(r'^([A-Za-z]+_\\d+)_', n)
+        if m:
+            publish_seqs[m.group(1)] = tmp
+
+    ordered = [t for t in shot_timings if t["shot_name"] in publish_seqs]
+    if not ordered:
+        print(json.dumps({{"error": "No shot_timings matched any publish seq"}}))
+        raise SystemExit
+
+    # Use first shot's publish seq as assembled base (rename it)
+    first_shot = ordered[0]["shot_name"]
+    assembled  = publish_seqs.pop(first_shot)
+    assembled.name = pub_name
+    placed = 1
+
+    errors = []
+
+    # Assemble remaining shots
+    for info in ordered[1:]:
+        shot   = info["shot_name"]
+        tmp_s  = publish_seqs.get(shot)
+        if tmp_s is None:
+            errors.append(f"No publish seq for {{shot}}")
+            continue
+        try:
+            for vi, ver in enumerate(tmp_s.versions):
+                for ti, tr in enumerate(ver.tracks):
+                    for seg in tr.segments:
+                        sn = str(seg.name).strip("'")
+                        if not sn:
+                            continue
+                        clip = seg.copy_to_media_panel(scratch_reel)
+                        try:
+                            ok = assembled.overwrite(clip, info["record_in"], vi * 10 + ti)
+                            if not ok:
+                                errors.append(f"overwrite returned False: {{sn}}")
+                        finally:
+                            flame.delete(clip, confirm=False)
+            placed += 1
+        except Exception as e:
+            errors.append(f"{{shot}}: {{e}}")
+
+    # Delete tmp seqs (skip assembled base)
+    deleted = 0
+    for tmp in tmp_seqs:
+        if tmp is assembled:
+            continue
+        try:
+            flame.delete(tmp, confirm=False)
+            deleted += 1
+        except Exception as e:
+            errors.append(f"cleanup: {{e}}")
+
+    print(json.dumps({{
+        "ok":      len(errors) == 0,
+        "placed":  placed,
+        "deleted": deleted,
+        "errors":  errors,
+        "assembled_sequence": pub_name,
+    }}))
+'''
+    return await bridge.execute_and_read(code)
+

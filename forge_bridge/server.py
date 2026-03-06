@@ -274,6 +274,17 @@ mcp.tool(
     },
 )(publish.publish_sequence)
 
+mcp.tool(
+    name="flame_assemble_published_sequence",
+    annotations={
+        "title": "Assemble Published Sequence from Plate Exports",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)(publish.assemble_published_sequence)
+
 
 # ── Entry Point ─────────────────────────────────────────────────────────
 
