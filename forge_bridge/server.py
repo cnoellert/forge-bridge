@@ -125,6 +125,17 @@ mcp.tool(
     },
 )(timeline.bulk_rename_segments)
 
+mcp.tool(
+    name="flame_get_sequence_editing_guide",
+    annotations={
+        "title": "Get Sequence Editing Guide (Flame 2026 API Patterns)",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)(timeline.get_sequence_editing_guide)
+
 # ── Batch Tools ─────────────────────────────────────────────────────────
 
 mcp.tool(

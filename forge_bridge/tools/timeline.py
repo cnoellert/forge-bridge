@@ -564,3 +564,186 @@ else:
         print(json.dumps(result))
 """, main_thread=True)
     return json.dumps(data, indent=2)
+
+
+# ── Sequence Editing Guide ──────────────────────────────────────────────
+
+
+class GetSequenceEditingGuide(BaseModel):
+    """Return the authoritative guide for editing sequences together in Flame 2026.
+
+    Returns a structured recipe covering:
+    - How to assemble clips into a sequence using overwrite()
+    - Which copy method to use (copy_to_media_panel vs import_clips) and why
+    - How to handle source timecode / handles correctly
+    - Known crashes and gotchas (flame.delete on active sequences, etc.)
+    - Openclip version switching and nbTicks
+    - Cleanup patterns
+
+    Use this tool before writing any sequence assembly code to ensure you
+    follow the correct API patterns and avoid known crashes.
+    """
+    topic: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional topic filter. One of: 'overwrite', 'copy_methods', "
+            "'timecode', 'openclip', 'crashes', 'cleanup', 'full'. "
+            "Defaults to 'full' (all topics)."
+        ),
+    )
+
+
+async def get_sequence_editing_guide(params: GetSequenceEditingGuide) -> str:
+    """Return the Flame 2026 sequence editing guide."""
+
+    guide = {
+        "overwrite": {
+            "title": "Assembling clips into a sequence with overwrite()",
+            "summary": (
+                "PySequence.overwrite(clip, record_in, track_index) places a PyClip "
+                "at a specific timeline position. record_in is a PyTime or timecode "
+                "string (e.g. '10:00:00+12'). track_index is 0-based int."
+            ),
+            "example": (
+                "clip = seg.copy_to_media_panel(scratch_reel)\n"
+                "ok = assembled_seq.overwrite(clip, record_in='10:00:00+12', track_index=0)\n"
+                "flame.delete(clip, confirm=False)  # clean up scratch clip"
+            ),
+            "gotchas": [
+                "overwrite() uses the clip's source_in/source_out as already set — "
+                "you cannot pass a separate source offset.",
+                "Returns bool. False means the overwrite failed silently.",
+                "track_index must exist in the sequence — you cannot overwrite onto "
+                "a track that has no content yet.",
+            ],
+        },
+        "copy_methods": {
+            "title": "copy_to_media_panel vs import_clips",
+            "table": {
+                "copy_to_media_panel": {
+                    "preserves_source_in_handles": True,
+                    "preserves_openclip_versions": "API says 1 version, but full structure works in Flame UI",
+                    "use_for": "V1 assembly — always use this for sequence-to-sequence copying",
+                },
+                "import_clips": {
+                    "preserves_source_in_handles": False,
+                    "preserves_openclip_versions": True,
+                    "use_for": "DO NOT use for assembly — loses source_in offset (places from frame 0)",
+                },
+            },
+            "recommendation": (
+                "Always use copy_to_media_panel when assembling segments from "
+                "one sequence into another. Although the Python API reports "
+                "len(clip.versions) == 1, the openclip file on disk retains its "
+                "full multi-version structure and Flame's version switcher works correctly."
+            ),
+        },
+        "timecode": {
+            "title": "Source timecode, handles, and source_in",
+            "key_facts": [
+                "seg.source_in is READ-ONLY after placement — cannot be set.",
+                "seg.mark_in / seg.mark_out on PyClip are also NOT settable.",
+                "The source_in is baked into the clip at export time by Flame's exporter.",
+                "copy_to_media_panel preserves the original source_in — this is why "
+                "it must be used instead of import_clips.",
+                "import_clips always starts at frame 0 of the media, discarding "
+                "the original source offset and handles.",
+            ],
+            "openclip_timecode": {
+                "nbTicks": (
+                    "Camera timecode as absolute frame count at project frame rate. "
+                    "Flame uses this to reconcile the openclip startFrame (sequential, "
+                    "e.g. 1) with the EXR's embedded timecode (e.g. 09:55:27:08). "
+                    "If nbTicks=0 and the EXR has embedded TC, Flame ADDS the EXR "
+                    "frame count to startFrame — nonsense value like 857457."
+                ),
+                "fix": (
+                    "When injecting an alt grade into an existing openclip, read "
+                    "nbTicks from the v00 feed XML and apply the same value to the "
+                    "alt version (same camera roll = same TC base)."
+                ),
+            },
+        },
+        "openclip": {
+            "title": "Openclip XML structure and version switching",
+            "structure": {
+                "feeds_currentVersion": "Controls which version loads by default",
+                "versions_currentVersion": "Must match feeds_currentVersion",
+                "feed_vuid": "e.g. v00, v01 — matches version uid",
+                "version_n": "Display name shown in Flame's version switcher UI",
+                "startFrame": "Sequential export frame number — always 1 from preset",
+                "nbTicks": "Camera TC as absolute frame count — MUST match v00 when injecting alt",
+                "colourSpace": (
+                    "Reflects the SOURCE / INPUT colorspace of the media (e.g. ACEScg). "
+                    "Do NOT overwrite with display/output space — Flame uses this "
+                    "to know the media's native space."
+                ),
+            },
+            "mismatched_xml_tag": (
+                "Flame writes <name type=\"string\">VALUE</n> — mismatched open/close tags. "
+                "Fix before parsing with ElementTree:\n"
+                "  content = re.sub(r'(<name type=\"string\">[^<]*)</n>', r'\\1</n>', content)"
+            ),
+            "fmt_from_segment_gotcha": (
+                "seg.get_colour_space() returns the INPUT media colorspace, not the "
+                "export output colorspace. Use the segment's actual source CS — "
+                "not the display/publish CS — when writing openclip colourSpace."
+            ),
+        },
+        "crashes": {
+            "title": "Known Flame 2026 crashes and unsafe operations",
+            "crash_list": [
+                {
+                    "operation": "flame.delete(PySegment, confirm=False)",
+                    "context": "Segment is in an active sequence",
+                    "result": "Flame crashes immediately — no exception, hard crash",
+                    "workaround": "Build sequence correctly from start. Never delete segments post-assembly.",
+                },
+                {
+                    "operation": "flame.delete(PyTrack, confirm=False)",
+                    "context": "Track is in an active sequence",
+                    "result": "Flame crashes immediately",
+                    "workaround": "Same — do not attempt track removal on active sequences.",
+                },
+            ],
+            "safe_deletes": [
+                "flame.delete(PyClip, confirm=False)  # scratch reel clips — safe",
+                "flame.delete(PySequence, confirm=False)  # whole sequences — safe",
+            ],
+        },
+        "cleanup": {
+            "title": "Cleanup patterns after assembly",
+            "patterns": [
+                {
+                    "what": "Scratch clips used for overwrite()",
+                    "how": "flame.delete(clip, confirm=False) immediately after overwrite()",
+                },
+                {
+                    "what": "_export_tmp_publish sequences",
+                    "how": (
+                        "Delete all EXCEPT the one renamed as the assembled base. "
+                        "Use identity check (is), not name equality (==)."
+                    ),
+                },
+            ],
+            "assembled_base_pattern": (
+                "# The first _export_tmp_publish seq is RENAMED as the published seq.\n"
+                "# It remains in all_tmp_seqs — skip it by object identity, not name.\n"
+                "for tmp in all_tmp_seqs:\n"
+                "    if tmp is assembled:  # identity, not ==\n"
+                "        continue\n"
+                "    flame.delete(tmp, confirm=False)"
+            ),
+        },
+    }
+
+    topic = (params.topic or "full").lower()
+    if topic == "full":
+        return json.dumps(guide, indent=2)
+    elif topic in guide:
+        return json.dumps({topic: guide[topic]}, indent=2)
+    else:
+        return json.dumps({
+            "error": f"Unknown topic '{topic}'",
+            "available_topics": list(guide.keys()) + ["full"],
+        }, indent=2)
