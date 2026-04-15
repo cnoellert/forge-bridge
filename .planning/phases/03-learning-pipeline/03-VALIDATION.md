@@ -2,8 +2,8 @@
 phase: 3
 slug: learning-pipeline
 status: draft
-nyquist_compliant: false
-wave_0_complete: false
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-04-14
 ---
 
@@ -38,11 +38,11 @@ created: 2026-04-14
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 03-01-01 | 01 | 1 | LEARN-01 | — | N/A | unit | `python -m pytest tests/test_learning.py -x -q` | ❌ W0 | ⬜ pending |
-| 03-01-02 | 01 | 1 | LEARN-02 | — | N/A | unit | `python -m pytest tests/test_learning.py -x -q` | ❌ W0 | ⬜ pending |
-| 03-02-01 | 02 | 2 | LEARN-03, LEARN-04 | — | N/A | unit | `python -m pytest tests/test_synthesizer.py -x -q` | ❌ W0 | ⬜ pending |
-| 03-02-02 | 02 | 2 | LEARN-05 | — | N/A | unit | `python -m pytest tests/test_synthesizer.py -x -q` | ❌ W0 | ⬜ pending |
-| 03-03-01 | 03 | 2 | LEARN-06, LEARN-07 | — | N/A | unit | `python -m pytest tests/test_probation.py -x -q` | ❌ W0 | ⬜ pending |
+| 03-01-01 | 01 | 1 | LEARN-01, LEARN-02, LEARN-03, LEARN-04, LEARN-05, LEARN-06 | — | N/A | unit | `python -m pytest tests/test_execution_log.py -x -q` | TDD inline | ⬜ pending |
+| 03-01-02 | 01 | 1 | LEARN-11 | — | N/A | unit | `python -m pytest tests/test_execution_log.py tests/test_core.py -x -q` | TDD inline | ⬜ pending |
+| 03-02-01 | 02 | 2 | LEARN-07, LEARN-08, LEARN-09 | — | N/A | unit | `python -m pytest tests/test_synthesizer.py -x -q` | TDD inline | ⬜ pending |
+| 03-03-01 | 03 | 2 | LEARN-10 | — | N/A | unit | `python -m pytest tests/test_probation.py -x -q` | TDD inline | ⬜ pending |
+| 03-03-02 | 03 | 2 | LEARN-10 | — | N/A | unit | `python -m pytest tests/test_watcher.py tests/test_probation.py -x -q` | tests/test_watcher.py exists | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -50,9 +50,12 @@ created: 2026-04-14
 
 ## Wave 0 Requirements
 
-- [ ] `tests/test_learning.py` — stubs for LEARN-01, LEARN-02
-- [ ] `tests/test_synthesizer.py` — stubs for LEARN-03, LEARN-04, LEARN-05
-- [ ] `tests/test_probation.py` — stubs for LEARN-06, LEARN-07
+All plans in this phase use TDD (`tdd="true"` on tasks). Tests are written first as part of each task's RED-GREEN-REFACTOR cycle. No separate Wave 0 plan is needed.
+
+- [x] `tests/test_execution_log.py` — created inline by 03-01 Task 1 (TDD)
+- [x] `tests/test_synthesizer.py` — created inline by 03-02 Task 1 (TDD)
+- [x] `tests/test_probation.py` — created inline by 03-03 Task 1 (TDD)
+- [x] `tests/test_core.py` — exists from Phase 1/2
 
 *Existing infrastructure covers framework and fixtures.*
 
@@ -69,11 +72,11 @@ created: 2026-04-14
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 5s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Feedback latency < 5s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** approved — TDD tasks create tests inline before implementation
