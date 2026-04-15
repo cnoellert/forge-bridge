@@ -28,15 +28,16 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. `LLMRouter.acomplete()` completes a request asynchronously and returns a string response without blocking the event loop
   4. `forge://llm/health` MCP resource returns which backends (local Ollama, cloud Claude) are available
   5. All MCP tool inputs pass through Pydantic models — invalid inputs are rejected before any Flame code executes
-**Plans:** 6/6 plans complete
+**Plans:** 7 plans (6 complete + 1 gap closure)
 
 Plans:
-- [ ] 01-01-PLAN.md — Fix pyproject.toml, bump bridge timeout, create Wave 0 test scaffolds
-- [ ] 01-02-PLAN.md — Promote llm_router.py to async forge_bridge/llm/ package
-- [ ] 01-03-PLAN.md — Add LLM health check and forge://llm/health MCP resource
-- [ ] 01-04-PLAN.md — Port 8 timeline functions and verify publish.py
-- [ ] 01-05-PLAN.md — Port batch.py additions, create reconform.py and switch_grade.py
-- [ ] 01-06-PLAN.md — Verify Pydantic coverage and register all new MCP tools
+- [x] 01-01-PLAN.md — Fix pyproject.toml, bump bridge timeout, create Wave 0 test scaffolds
+- [x] 01-02-PLAN.md — Promote llm_router.py to async forge_bridge/llm/ package
+- [x] 01-03-PLAN.md — Add LLM health check and forge://llm/health MCP resource
+- [x] 01-04-PLAN.md — Port 8 timeline functions and verify publish.py
+- [x] 01-05-PLAN.md — Port batch.py additions, create reconform.py and switch_grade.py
+- [x] 01-06-PLAN.md — Verify Pydantic coverage and register all new MCP tools
+- [ ] 01-07-PLAN.md — Gap closure: register publish tools, unskip and fix Wave 0 tests
 
 ### Phase 2: MCP Server Rebuild
 **Goal**: The MCP server has a clean pluggable API, namespace-separated tool registry, and downstream consumers can inject tools via register_tools() without forking server.py
@@ -67,6 +68,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Tool Parity & LLM Router | 6/6 | Complete   | 2026-04-15 |
+| 1. Tool Parity & LLM Router | 6/7 | Gap closure pending | 2026-04-15 |
 | 2. MCP Server Rebuild | 0/TBD | Not started | - |
 | 3. Learning Pipeline | 0/TBD | Not started | - |
