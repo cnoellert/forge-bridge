@@ -1,3 +1,19 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: planning
+stopped_at: Completed 01-tool-parity-llm-router/01-02-PLAN.md
+last_updated: "2026-04-15T01:57:30.053Z"
+last_activity: 2026-04-14 — Roadmap created, ready to plan Phase 1
+progress:
+  total_phases: 3
+  completed_phases: 0
+  total_plans: 6
+  completed_plans: 1
+  percent: 17
+---
+
 # Project State
 
 ## Project Reference
@@ -14,7 +30,7 @@ Plan: 0 of TBD in current phase
 Status: Ready to plan
 Last activity: 2026-04-14 — Roadmap created, ready to plan Phase 1
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██░░░░░░░░] 17%
 
 ## Performance Metrics
 
@@ -34,6 +50,7 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: —
 
 *Updated after each plan completion*
+| Phase 01-tool-parity-llm-router P02 | 2min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -46,6 +63,9 @@ Recent decisions affecting current work:
 - LLM router in forge_bridge/llm/ as shared infrastructure for synthesizer and any tool needing generation
 - Optional deps via pyproject.toml extras — base install stays lean, [llm] adds openai/anthropic
 - Synthesizer uses LLM router with sensitive=True (always routes to local Ollama, never sends production code to cloud)
+- [Phase 01-tool-parity-llm-router]: acomplete() is the primary LLM API; sync complete() is for non-async callers only (asyncio.run())
+- [Phase 01-tool-parity-llm-router]: Lazy imports inside _get_local_client()/_get_cloud_client() so base install works without openai/anthropic
+- [Phase 01-tool-parity-llm-router]: FORGE_SYSTEM_PROMPT env var added to make VFX system prompt configurable
 
 ### Pending Todos
 
@@ -58,6 +78,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-14
-Stopped at: Roadmap created, STATE.md initialized
+Last session: 2026-04-15T01:57:30.051Z
+Stopped at: Completed 01-tool-parity-llm-router/01-02-PLAN.md
 Resume file: None

@@ -21,10 +21,10 @@ Requirements for this milestone (Phases 0-3). Each maps to roadmap phases.
 
 ### LLM Router
 
-- [ ] **LLM-01**: Promote llm_router.py to forge_bridge/llm/ package with router.py
-- [ ] **LLM-02**: Add async acomplete() using AsyncOpenAI for local Ollama and AsyncAnthropic for cloud Claude
-- [ ] **LLM-03**: Keep sync complete() as convenience wrapper
-- [ ] **LLM-04**: Extract hardcoded system prompt and infrastructure hostnames (assist-01, portofino) into configuration (env vars)
+- [x] **LLM-01**: Promote llm_router.py to forge_bridge/llm/ package with router.py
+- [x] **LLM-02**: Add async acomplete() using AsyncOpenAI for local Ollama and AsyncAnthropic for cloud Claude
+- [x] **LLM-03**: Keep sync complete() as convenience wrapper
+- [x] **LLM-04**: Extract hardcoded system prompt and infrastructure hostnames (assist-01, portofino) into configuration (env vars)
 - [ ] **LLM-05**: Move openai and anthropic to optional dependencies in pyproject.toml (pip install forge-bridge[llm])
 - [ ] **LLM-06**: Add health check reporting which backends are available (async and sync)
 - [ ] **LLM-07**: Expose LLM health check as MCP resource (forge://llm/health)
@@ -100,10 +100,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TOOL-07 | Phase 1 | Pending |
 | TOOL-08 | Phase 1 | Pending |
 | TOOL-09 | Phase 1 | Pending |
-| LLM-01 | Phase 1 | Pending |
-| LLM-02 | Phase 1 | Pending |
-| LLM-03 | Phase 1 | Pending |
-| LLM-04 | Phase 1 | Pending |
+| LLM-01 | Phase 1 | Complete |
+| LLM-02 | Phase 1 | Complete |
+| LLM-03 | Phase 1 | Complete |
+| LLM-04 | Phase 1 | Complete |
 | LLM-05 | Phase 1 | Pending |
 | LLM-06 | Phase 1 | Pending |
 | LLM-07 | Phase 1 | Pending |
