@@ -12,11 +12,11 @@ Requirements for this milestone (Phases 0-3). Each maps to roadmap phases.
 - [x] **TOOL-01**: Update tools/timeline.py with projekt-forge's expanded version (disconnect_segments, inspect_sequence_versions, create_version, reconstruct_track, clone_version, replace_segment_media, scan_roles, assign_roles)
 - [x] **TOOL-02**: Update tools/batch.py with projekt-forge additions (inspect_batch_xml, prune_batch_xml)
 - [x] **TOOL-03**: Update tools/publish.py with projekt-forge additions (rename_segments)
-- [ ] **TOOL-04**: Update tools/project.py with Pydantic models from projekt-forge
-- [ ] **TOOL-05**: Update tools/utility.py with Pydantic models from projekt-forge
+- [x] **TOOL-04**: Update tools/project.py with Pydantic models from projekt-forge
+- [x] **TOOL-05**: Update tools/utility.py with Pydantic models from projekt-forge
 - [x] **TOOL-06**: Add tools/reconform.py from projekt-forge
 - [x] **TOOL-07**: Add tools/switch_grade.py from projekt-forge
-- [ ] **TOOL-08**: Add Pydantic input models for all existing and new MCP tools
+- [x] **TOOL-08**: Add Pydantic input models for all existing and new MCP tools
 - [x] **TOOL-09**: Bump bridge.py default timeout from 30s to 60s
 
 ### LLM Router
@@ -94,11 +94,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TOOL-01 | Phase 1 | Complete |
 | TOOL-02 | Phase 1 | Complete |
 | TOOL-03 | Phase 1 | Complete |
-| TOOL-04 | Phase 1 | Pending |
-| TOOL-05 | Phase 1 | Pending |
+| TOOL-04 | Phase 1 | Complete |
+| TOOL-05 | Phase 1 | Complete |
 | TOOL-06 | Phase 1 | Complete |
 | TOOL-07 | Phase 1 | Complete |
-| TOOL-08 | Phase 1 | Pending |
+| TOOL-08 | Phase 1 | Complete |
 | TOOL-09 | Phase 1 | Complete |
 | LLM-01 | Phase 1 | Complete |
 | LLM-02 | Phase 1 | Complete |

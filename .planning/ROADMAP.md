@@ -12,7 +12,7 @@ Starting from a working Flame HTTP bridge and MCP server, this milestone builds 
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Tool Parity & LLM Router** - Bring Flame tools to projekt-forge parity and promote llm_router.py to a production async package
+- [x] **Phase 1: Tool Parity & LLM Router** - Bring Flame tools to projekt-forge parity and promote llm_router.py to a production async package (completed 2026-04-15)
 - [ ] **Phase 2: MCP Server Rebuild** - Rebuild MCP server with pluggable API, namespace separation, and Pydantic validation
 - [ ] **Phase 3: Learning Pipeline** - Port FlameSavant learning loop — execution log, skill synthesizer, registry watcher, probation system
 
@@ -28,7 +28,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. `LLMRouter.acomplete()` completes a request asynchronously and returns a string response without blocking the event loop
   4. `forge://llm/health` MCP resource returns which backends (local Ollama, cloud Claude) are available
   5. All MCP tool inputs pass through Pydantic models — invalid inputs are rejected before any Flame code executes
-**Plans:** 5/6 plans executed
+**Plans:** 6/6 plans complete
 
 Plans:
 - [ ] 01-01-PLAN.md — Fix pyproject.toml, bump bridge timeout, create Wave 0 test scaffolds
@@ -67,6 +67,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Tool Parity & LLM Router | 5/6 | In Progress|  |
+| 1. Tool Parity & LLM Router | 6/6 | Complete   | 2026-04-15 |
 | 2. MCP Server Rebuild | 0/TBD | Not started | - |
 | 3. Learning Pipeline | 0/TBD | Not started | - |

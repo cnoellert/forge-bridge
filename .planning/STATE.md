@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Completed 01-03-PLAN.md
-last_updated: "2026-04-15T02:03:20.771Z"
+stopped_at: Completed 01-06-PLAN.md
+last_updated: "2026-04-15T02:08:42.872Z"
 last_activity: 2026-04-14 — Roadmap created, ready to plan Phase 1
 progress:
   total_phases: 3
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 6
-  completed_plans: 5
+  completed_plans: 6
   percent: 17
 ---
 
@@ -55,6 +55,7 @@ Progress: [██░░░░░░░░] 17%
 | Phase 01 P04 | 3m | 2 tasks | 2 files |
 | Phase 01 P05 | 275 | 2 tasks | 8 files |
 | Phase 01-tool-parity-llm-router P03 | 5 | 2 tasks | 3 files |
+| Phase 01-tool-parity-llm-router P06 | 2min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -80,6 +81,8 @@ Recent decisions affecting current work:
 - [Phase 01]: Fixed broken from forge_mcp import bridge across all tool files — forge_mcp does not exist in standalone repo
 - [Phase 01-tool-parity-llm-router]: register_llm_resources(mcp) follows module-level registration pattern — called once before main()
 - [Phase 01-tool-parity-llm-router]: get_router() lazy-imported inside async resource handler to avoid circular imports
+- [Phase 01-tool-parity-llm-router]: Active MCP server is forge_bridge/mcp/server.py not forge_bridge/server.py — new tool registrations target the active server
+- [Phase 01-tool-parity-llm-router]: forge_bridge/__main__.py fixed from broken forge_mcp import to forge_bridge.mcp.server
 
 ### Pending Todos
 
@@ -92,6 +95,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-15T02:03:20.770Z
-Stopped at: Completed 01-03-PLAN.md
+Last session: 2026-04-15T02:08:42.871Z
+Stopped at: Completed 01-06-PLAN.md
 Resume file: None
