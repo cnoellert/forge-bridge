@@ -395,6 +395,41 @@ try:
         },
     )(flame_switch_grade_mod.query_alternatives)
 
+    # ── Publish Tools ──────────────────────────────────────────
+
+    mcp.tool(
+        name="flame_rename_segments",
+        annotations={
+            "title": "Rename Segments on Sequence",
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )(flame_publish.rename_segments)
+
+    mcp.tool(
+        name="flame_publish_sequence",
+        annotations={
+            "title": "Publish Sequence",
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": True,
+        },
+    )(flame_publish.publish_sequence)
+
+    mcp.tool(
+        name="flame_assemble_published_sequence",
+        annotations={
+            "title": "Assemble Published Sequence",
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        },
+    )(flame_publish.assemble_published_sequence)
+
 except ImportError:
     logger.warning("Flame HTTP bridge tools not available — forge_bridge.tools not found")
 
