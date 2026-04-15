@@ -39,9 +39,7 @@ created: 2026-04-14
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
 | TBD | TBD | TBD | TOOL-01–09 | unit | `pytest tests/test_tools.py` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | LLM-01–04 | unit | `pytest tests/test_llm_router.py` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | LLM-05,08 | unit | `pytest tests/test_packaging.py` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | LLM-06,07 | unit | `pytest tests/test_llm_health.py` | ❌ W0 | ⬜ pending |
+| TBD | TBD | TBD | LLM-01–08 | unit | `pytest tests/test_llm.py` | ❌ W0 | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -50,9 +48,7 @@ created: 2026-04-14
 ## Wave 0 Requirements
 
 - [ ] `tests/test_tools.py` — stubs for TOOL-01 through TOOL-09
-- [ ] `tests/test_llm_router.py` — stubs for LLM-01 through LLM-04
-- [ ] `tests/test_packaging.py` — stubs for LLM-05, LLM-08
-- [ ] `tests/test_llm_health.py` — stubs for LLM-06, LLM-07
+- [ ] `tests/test_llm.py` — stubs for LLM-01 through LLM-08
 - [ ] `tests/conftest.py` — shared fixtures (mock bridge, mock LLM backends)
 
 ---
