@@ -22,7 +22,6 @@ import pytest
 
 # ── LLM-01 — Package structure and importability ─────────────────────────────
 
-@pytest.mark.skip(reason="Wave 0 stub — unskip when forge_bridge/llm/router.py created")
 def test_llm_package_structure():
     """forge_bridge.llm.router must export LLMRouter and get_router."""
     from forge_bridge.llm.router import LLMRouter, get_router
@@ -33,7 +32,6 @@ def test_llm_package_structure():
 
 # ── LLM-02 — acomplete is async ───────────────────────────────────────────────
 
-@pytest.mark.skip(reason="Wave 0 stub — unskip when LLMRouter.acomplete implemented")
 def test_acomplete_is_coroutine():
     """LLMRouter.acomplete must be an async coroutine function."""
     import asyncio
@@ -47,7 +45,6 @@ def test_acomplete_is_coroutine():
 
 # ── LLM-03 — complete is sync ─────────────────────────────────────────────────
 
-@pytest.mark.skip(reason="Wave 0 stub — unskip when LLMRouter.complete implemented")
 def test_complete_sync_wrapper():
     """LLMRouter.complete must exist and must NOT be a coroutine function."""
     import asyncio
@@ -62,7 +59,6 @@ def test_complete_sync_wrapper():
 
 # ── LLM-04 — Env var overrides ────────────────────────────────────────────────
 
-@pytest.mark.skip(reason="Wave 0 stub — unskip when env var wiring implemented in llm/router.py")
 def test_env_var_override(monkeypatch):
     """Router must read FORGE_LOCAL_LLM_URL, FORGE_LOCAL_MODEL, FORGE_CLOUD_MODEL,
     FORGE_SYSTEM_PROMPT from environment, not hard-coded defaults."""
@@ -79,12 +75,11 @@ def test_env_var_override(monkeypatch):
     assert router_mod.LOCAL_BASE_URL == "http://test-host:11434/v1"
     assert router_mod.LOCAL_MODEL == "test-local-model"
     assert router_mod.CLOUD_MODEL == "test-cloud-model"
-    assert router_mod.FORGE_SYSTEM_PROMPT == "Custom system prompt"
+    assert router_mod.SYSTEM_PROMPT == "Custom system prompt"
 
 
 # ── LLM-05 — Optional import guard ───────────────────────────────────────────
 
-@pytest.mark.skip(reason="Wave 0 stub — unskip when llm/router.py has lazy import guard")
 def test_optional_import_guard():
     """Importing forge_bridge.llm.router must NOT raise ImportError even without
     openai or anthropic installed at module level.
@@ -119,7 +114,6 @@ def test_optional_import_guard():
 
 # ── LLM-06 — ahealth_check shape ─────────────────────────────────────────────
 
-@pytest.mark.skip(reason="Wave 0 stub — unskip when ahealth_check() implemented")
 async def test_health_check_shape():
     """ahealth_check() must return a dict with keys: local, cloud, local_model, cloud_model."""
     from forge_bridge.llm.router import LLMRouter
@@ -134,12 +128,11 @@ async def test_health_check_shape():
 
 # ── LLM-07 — MCP resource registration ───────────────────────────────────────
 
-@pytest.mark.skip(reason="Wave 0 stub — unskip when register_llm_resources() implemented")
 def test_health_resource_registered():
     """register_llm_resources(mcp) must register a resource at forge://llm/health."""
     from unittest.mock import MagicMock
 
-    from forge_bridge.llm.router import register_llm_resources
+    from forge_bridge.llm.health import register_llm_resources
 
     mock_mcp = MagicMock()
     register_llm_resources(mock_mcp)

@@ -28,15 +28,14 @@ import pytest
 
 # ── TOOL-01..05 — Timeline exports ────────────────────────────────────────────
 
-@pytest.mark.skip(reason="Wave 0 stub — unskip when TOOL-01/02/03/04/05 implemented")
 def test_timeline_exports():
     """Verify timeline module exports all required functions."""
     from forge_bridge.tools import timeline
 
     expected = [
-        "get_sequence_info",
+        "get_sequence_segments",
         "set_segment_attribute",
-        "bulk_rename_segments",
+        "rename_shots",
         "get_sequence_editing_guide",
         "disconnect_segments",
         "inspect_sequence_versions",
@@ -54,7 +53,6 @@ def test_timeline_exports():
 
 # ── TOOL-06 — Batch exports ───────────────────────────────────────────────────
 
-@pytest.mark.skip(reason="Wave 0 stub — unskip when TOOL-06 fully implemented")
 def test_batch_exports():
     """Verify batch module exports all required functions."""
     from forge_bridge.tools import batch
@@ -78,7 +76,6 @@ def test_batch_exports():
 
 # ── TOOL-07 — Publish exports ─────────────────────────────────────────────────
 
-@pytest.mark.skip(reason="Wave 0 stub — unskip when TOOL-07 implemented")
 def test_publish_exports():
     """Verify publish module exports all required functions."""
     from forge_bridge.tools import publish
@@ -96,7 +93,6 @@ def test_publish_exports():
 
 # ── TOOL-08 — Reconform exports ───────────────────────────────────────────────
 
-@pytest.mark.skip(reason="Wave 0 stub — unskip when TOOL-08 (reconform) implemented")
 def test_reconform_exports():
     """Verify reconform module exists and exports reconform_sequence."""
     from forge_bridge.tools import reconform
@@ -108,7 +104,6 @@ def test_reconform_exports():
 
 # ── TOOL-09 — Switch grade exports ───────────────────────────────────────────
 
-@pytest.mark.skip(reason="Wave 0 stub — unskip when TOOL-09 (switch_grade) implemented")
 def test_switch_grade_exports():
     """Verify switch_grade module exists and exports switch_grade."""
     from forge_bridge.tools import switch_grade as sg_module
@@ -120,16 +115,18 @@ def test_switch_grade_exports():
 
 # ── Pydantic model coverage ───────────────────────────────────────────────────
 
-@pytest.mark.skip(reason="Wave 0 stub — unskip when Pydantic model coverage complete")
 def test_project_models():
     """Verify project.py Pydantic models exist for all parameterized functions."""
     from pydantic import BaseModel
 
     from forge_bridge.tools import project
 
-    # Every parameterized function in project.py must have a BaseModel input type
+    # Every parameterized function defined in project.py must have a BaseModel input type
     import inspect
     for name, fn in inspect.getmembers(project, inspect.isfunction):
+        # Skip functions imported from other modules (e.g. Field from pydantic)
+        if getattr(fn, "__module__", None) != project.__name__:
+            continue
         sig = inspect.signature(fn)
         params = list(sig.parameters.values())
         if not params:
@@ -147,7 +144,6 @@ def test_project_models():
         )
 
 
-@pytest.mark.skip(reason="Wave 0 stub — unskip when Pydantic model coverage complete")
 def test_utility_models():
     """Verify utility.py Pydantic models exist for all parameterized functions."""
     from pydantic import BaseModel
@@ -156,6 +152,9 @@ def test_utility_models():
 
     import inspect
     for name, fn in inspect.getmembers(utility, inspect.isfunction):
+        # Skip functions imported from other modules
+        if getattr(fn, "__module__", None) != utility.__name__:
+            continue
         sig = inspect.signature(fn)
         params = list(sig.parameters.values())
         if not params:
@@ -173,28 +172,39 @@ def test_utility_models():
         )
 
 
-@pytest.mark.skip(reason="Wave 0 stub — unskip when Pydantic coverage audit complete")
 def test_pydantic_coverage():
     """Verify all parameterized tool functions have a Pydantic BaseModel as first argument."""
     import inspect
+    import typing
 
     from pydantic import BaseModel
 
-    from forge_bridge.tools import batch, project, publish, timeline, utility
+    from forge_bridge.tools import batch, project, publish, reconform, switch_grade, timeline, utility
 
-    modules = [timeline, batch, publish, project, utility]
+    modules = [timeline, batch, publish, project, utility, reconform, switch_grade]
     failures = []
 
     for mod in modules:
+        # Resolve string annotations (from __future__ import annotations) per module
         for name, fn in inspect.getmembers(mod, inspect.isfunction):
             if name.startswith("_"):
                 continue
+            # Skip functions imported from other modules (e.g. Field from pydantic)
+            if getattr(fn, "__module__", None) != mod.__name__:
+                continue
+            # Resolve annotations, falling back to raw signature if get_type_hints fails
+            try:
+                hints = typing.get_type_hints(fn)
+            except Exception:
+                hints = {}
             sig = inspect.signature(fn)
             params = [p for p in sig.parameters.values()
                       if p.name not in ("self", "cls")]
             if not params:
                 continue
-            first_ann = params[0].annotation
+            first_param = params[0]
+            # Prefer resolved hint over raw annotation (handles string annotations)
+            first_ann = hints.get(first_param.name, first_param.annotation)
             if first_ann is inspect.Parameter.empty:
                 failures.append(f"{mod.__name__}.{name}: missing type annotation")
                 continue
