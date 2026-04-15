@@ -747,3 +747,837 @@ async def get_sequence_editing_guide(params: GetSequenceEditingGuide) -> str:
             "error": f"Unknown topic '{topic}'",
             "available_topics": list(guide.keys()) + ["full"],
         }, indent=2)
+
+
+# ── Tool: flame_inspect_sequence_versions ─────────────────────────────
+#
+# Editorial note (probed 2026-03-20, Flame 2026.2.1):
+#   - seq.versions returns a list of PyVersion objects (index-only — no name attr)
+#   - Each PyVersion has .tracks (list of PyTrack)
+#   - PyVersion has NO name attribute — versions are referenced by index only
+#   - create_version() creates a BLANK version (1 empty track, 1 gap segment)
+#   - seq.tracks returns None — ALWAYS use seq.versions[N].tracks
+#   - seg.record_in / record_out / source_in / source_out are PyTime objects
+#     PyTime API: .timecode (str "01:00:00+00"), .frame (int), .frame_rate
+#     NOT PyAttribute — get_value() does not exist on PyTime
+#   - Empty segments (name == "") are gap fillers between clips
+#     Skip them during reconstruction; Flame creates equivalent gaps automatically
+
+
+class InspectVersionsInput(BaseModel):
+    sequence_name: str = Field(..., description="Exact sequence name")
+
+
+async def inspect_sequence_versions(params: InspectVersionsInput) -> str:
+    """Inspect all versions, tracks, and segments on a sequence.
+
+    Returns the full editorial structure:
+    - Number of versions (PyVersion objects, index-only — no name attribute)
+    - For each version: all tracks with segment names, record positions,
+      source timecodes, and whether each segment is a real clip or a gap
+
+    This is the starting point before any version creation or track
+    reconstruction work. Run this first to understand what exists.
+
+    Key Flame facts:
+    - Versions have NO name attribute — referenced by index only
+    - seq.tracks returns None — always use seq.versions[N].tracks
+    - Empty segment name ("") = gap/filler — not real media
+    - seg.record_in/source_in are PyTime: use .timecode for string, .frame for int
+    """
+    data = await bridge.execute_json(f"""
+import flame, json
+
+def _find_seq(name):
+    desk = flame.projects.current_project.current_workspace.desktop
+    for rg in desk.reel_groups:
+        for reel in rg.reels:
+            for s in (reel.sequences or []):
+                if s.name.get_value() == name:
+                    return s
+    return None
+
+seq = _find_seq({params.sequence_name!r})
+if not seq:
+    print(json.dumps({{"error": "Sequence not found: " + {params.sequence_name!r}}}))
+else:
+    result = {{
+        "sequence": {params.sequence_name!r},
+        "frame_rate": str(seq.frame_rate),
+        "duration": seq.duration.timecode,
+        "num_versions": len(seq.versions),
+        "versions": []
+    }}
+    for vi, ver in enumerate(seq.versions):
+        v_info = {{"version_index": vi, "num_tracks": len(ver.tracks), "tracks": []}}
+        for ti, track in enumerate(ver.tracks):
+            segs = []
+            for seg in track.segments:
+                name = seg.name.get_value()
+                segs.append({{
+                    "name": name,
+                    "is_gap": name == "",
+                    "rec_in": seg.record_in.timecode,
+                    "rec_out": seg.record_out.timecode,
+                    "src_in": seg.source_in.timecode,
+                    "src_out": seg.source_out.timecode,
+                    "rec_in_frame": seg.record_in.frame,
+                    "rec_out_frame": seg.record_out.frame,
+                }})
+            real_segs = sum(1 for s in segs if not s["is_gap"])
+            v_info["tracks"].append({{
+                "track_index": ti,
+                "num_segments": len(segs),
+                "real_segments": real_segs,
+                "gap_segments": len(segs) - real_segs,
+                "segments": segs
+            }})
+        result["versions"].append(v_info)
+    print(json.dumps(result, indent=2))
+""")
+    return json.dumps(data, indent=2)
+
+
+# ── Tool: flame_create_version ────────────────────────────────────────
+
+
+class CreateVersionInput(BaseModel):
+    sequence_name: str = Field(..., description="Exact sequence name")
+
+
+async def create_version(params: CreateVersionInput) -> str:
+    """Create a new blank version on a sequence.
+
+    Returns the index of the newly created version and its initial state.
+
+    Important facts about what you get:
+    - A blank PyVersion with NO name (versions have no name attribute in Flame)
+    - 1 empty track with 1 gap segment spanning the full sequence duration
+    - Content from existing versions is NOT copied — the new version is empty
+    - Version is referenced by its index (len(seq.versions) - 1 after creation)
+
+    To populate the new version with content from an existing version,
+    use flame_reconstruct_track or flame_clone_version.
+
+    Runs on Flame's main thread.
+    """
+    data = await bridge.execute_json(f"""
+import flame, json, threading
+
+def _find_seq(name):
+    desk = flame.projects.current_project.current_workspace.desktop
+    for rg in desk.reel_groups:
+        for reel in rg.reels:
+            for s in (reel.sequences or []):
+                if s.name.get_value() == name:
+                    return s
+    return None
+
+seq = _find_seq({params.sequence_name!r})
+if not seq:
+    print(json.dumps({{"error": "Sequence not found: " + {params.sequence_name!r}}}))
+else:
+    result = {{}}
+    event = threading.Event()
+
+    def _do():
+        try:
+            before_count = len(seq.versions)
+            new_ver = seq.create_version()
+            new_idx = len(seq.versions) - 1
+            t0 = new_ver.tracks[0]
+            result.update({{
+                "ok": True,
+                "new_version_index": new_idx,
+                "versions_before": before_count,
+                "versions_after": len(seq.versions),
+                "initial_tracks": len(new_ver.tracks),
+                "initial_segments": len(t0.segments),
+                "note": "Version is blank — use flame_reconstruct_track to populate"
+            }})
+        except Exception as e:
+            result["error"] = str(e)
+        event.set()
+
+    flame.schedule_idle_event(_do)
+    event.wait(timeout=10)
+    print(json.dumps(result))
+""", main_thread=True)
+    return json.dumps(data, indent=2)
+
+
+# ── Tool: flame_reconstruct_track ─────────────────────────────────────
+
+
+class ReconstructTrackInput(BaseModel):
+    sequence_name: str = Field(..., description="Exact sequence name")
+    source_version_index: int = Field(..., description="Version index to copy from (0-based)")
+    source_track_index: int = Field(..., description="Track index within source version (0-based)")
+    target_version_index: int = Field(..., description="Version index to copy into (0-based)")
+    target_track_index: int = Field(
+        0,
+        description="Track index within target version (0-based). Default 0."
+    )
+    scratch_reel_name: str = Field(
+        "Reel A",
+        description="Name of a reel to use as scratch space for copy_to_media_panel. "
+                    "Clips placed here are deleted after reconstruction."
+    )
+
+
+async def reconstruct_track(params: ReconstructTrackInput) -> str:
+    """Copy all segments from one version's track onto another version's track.
+
+    This is the core stream publishing primitive — proven to produce
+    bit-for-bit identical timing and source references.
+
+    Method (the only correct approach):
+      1. For each real (non-gap) segment on the source track:
+         a. seg.copy_to_media_panel(scratch_reel) → PyClip
+            Preserves source_in/source_out exactly (verified in production)
+         b. seq.overwrite(clip, seg.record_in, target_track)
+            Places clip at same record position on target track
+         c. flame.delete(clip) — clean up scratch reel immediately
+      2. Gap segments are skipped — Flame fills gaps automatically
+
+    Key constraints proven in production:
+    - seq.overwrite() requires PyTime for position — NOT int, NOT str
+      seg.record_in is already PyTime — pass it directly
+    - source_in is READ-ONLY after placement — carried through copy_to_media_panel
+    - import_clips() LOSES source_in — do NOT use for reconstruction
+    - Reconstruction fidelity: 100% on 8-segment test (name, rec_in, rec_out,
+      src_in, src_out all match after reconstruction)
+
+    Runs on Flame's main thread.
+    """
+    data = await bridge.execute_json(f"""
+import flame, json, threading
+
+def _find_seq(name):
+    desk = flame.projects.current_project.current_workspace.desktop
+    for rg in desk.reel_groups:
+        for reel in rg.reels:
+            for s in (reel.sequences or []):
+                if s.name.get_value() == name:
+                    return s, reel
+    return None, None
+
+def _find_reel(name):
+    desk = flame.projects.current_project.current_workspace.desktop
+    for rg in desk.reel_groups:
+        for reel in rg.reels:
+            if reel.name.get_value() == name:
+                return reel
+    return None
+
+seq, _ = _find_seq({params.sequence_name!r})
+scratch_reel = _find_reel({params.scratch_reel_name!r})
+
+if not seq:
+    print(json.dumps({{"error": "Sequence not found: " + {params.sequence_name!r}}}))
+elif not scratch_reel:
+    print(json.dumps({{"error": "Scratch reel not found: " + {params.scratch_reel_name!r}}}))
+else:
+    result = {{"placed": [], "skipped": [], "errors": []}}
+    event = threading.Event()
+
+    def _do():
+        try:
+            src_ver = seq.versions[{params.source_version_index}]
+            src_track = src_ver.tracks[{params.source_track_index}]
+            tgt_ver = seq.versions[{params.target_version_index}]
+            tgt_track = tgt_ver.tracks[{params.target_track_index}]
+
+            scratch_clips = []
+            for seg in src_track.segments:
+                name = seg.name.get_value()
+                if not name:
+                    result["skipped"].append({{"rec_in": seg.record_in.timecode, "reason": "gap"}})
+                    continue
+                try:
+                    clip = seg.copy_to_media_panel(scratch_reel)
+                    scratch_clips.append(clip)
+                    seq.overwrite(clip, seg.record_in, tgt_track)
+                    result["placed"].append({{
+                        "name": name,
+                        "rec_in": seg.record_in.timecode,
+                        "rec_out": seg.record_out.timecode,
+                        "src_in": seg.source_in.timecode,
+                    }})
+                except Exception as e:
+                    result["errors"].append({{"name": name, "error": str(e)}})
+
+            # Verify fidelity
+            mismatches = []
+            tgt_segs = [s for s in tgt_track.segments if s.name.get_value()]
+            src_segs = [s for s in src_track.segments if s.name.get_value()]
+            for s0, s1 in zip(src_segs, tgt_segs):
+                if (s0.record_in.timecode != s1.record_in.timecode or
+                    s0.source_in.timecode != s1.source_in.timecode):
+                    mismatches.append(s0.name.get_value())
+            result["fidelity_mismatches"] = mismatches
+            result["fidelity_ok"] = len(mismatches) == 0
+
+            # Clean up scratch clips
+            for clip in scratch_clips:
+                try:
+                    flame.delete(clip, confirm=False)
+                except Exception:
+                    pass
+
+            result["segments_placed"] = len(result["placed"])
+            result["segments_skipped"] = len(result["skipped"])
+
+        except Exception as e:
+            result["error"] = str(e)
+        event.set()
+
+    flame.schedule_idle_event(_do)
+    event.wait(timeout=60)
+    print(json.dumps(result))
+""", main_thread=True)
+    return json.dumps(data, indent=2)
+
+
+# ── Tool: flame_clone_version ─────────────────────────────────────────
+
+
+class CloneVersionInput(BaseModel):
+    sequence_name: str = Field(..., description="Exact sequence name")
+    source_version_index: int = Field(
+        0,
+        description="Version index to clone from. Default 0 (first version)."
+    )
+    scratch_reel_name: str = Field(
+        "Reel A",
+        description="Reel to use as scratch space during reconstruction."
+    )
+
+
+async def clone_version(params: CloneVersionInput) -> str:
+    """Create a new version on a sequence and reconstruct all tracks from a source version.
+
+    This is the stream fork operation — creates an independent copy of an
+    existing version that can be worked on without affecting the source.
+
+    Internally calls create_version() then reconstruct_track() for every
+    track in the source version. Additional tracks beyond the default are
+    created on the new version via create_track() before reconstruction.
+
+    The new version is appended at the end of seq.versions. It has no
+    name (Flame's PyVersion has no name attribute).
+
+    Returns:
+    - new_version_index: index of the created version
+    - tracks_cloned: number of tracks reconstructed
+    - per-track placed/skipped/fidelity summary
+
+    Runs on Flame's main thread.
+    """
+    data = await bridge.execute_json(f"""
+import flame, json, threading
+
+def _find_seq(name):
+    desk = flame.projects.current_project.current_workspace.desktop
+    for rg in desk.reel_groups:
+        for reel in rg.reels:
+            for s in (reel.sequences or []):
+                if s.name.get_value() == name:
+                    return s
+    return None
+
+def _find_reel(name):
+    desk = flame.projects.current_project.current_workspace.desktop
+    for rg in desk.reel_groups:
+        for reel in rg.reels:
+            if reel.name.get_value() == name:
+                return reel
+    return None
+
+seq = _find_seq({params.sequence_name!r})
+scratch_reel = _find_reel({params.scratch_reel_name!r})
+
+if not seq:
+    print(json.dumps({{"error": "Sequence not found: " + {params.sequence_name!r}}}))
+elif not scratch_reel:
+    print(json.dumps({{"error": "Scratch reel not found: " + {params.scratch_reel_name!r}}}))
+else:
+    result = {{"tracks": [], "errors": []}}
+    event = threading.Event()
+
+    def _do():
+        try:
+            src_ver = seq.versions[{params.source_version_index}]
+            src_tracks = src_ver.tracks
+
+            # Create blank version — comes with 1 track
+            new_ver = seq.create_version()
+            new_idx = len(seq.versions) - 1
+            result["new_version_index"] = new_idx
+
+            # Create additional tracks if source has more than 1
+            while len(new_ver.tracks) < len(src_tracks):
+                new_ver.create_track()
+
+            # Reconstruct each track
+            scratch_clips_all = []
+            for ti, src_track in enumerate(src_tracks):
+                tgt_track = new_ver.tracks[ti]
+                placed = []
+                skipped = []
+                t_errors = []
+                scratch_clips = []
+
+                for seg in src_track.segments:
+                    name = seg.name.get_value()
+                    if not name:
+                        skipped.append(seg.record_in.timecode)
+                        continue
+                    try:
+                        clip = seg.copy_to_media_panel(scratch_reel)
+                        scratch_clips.append(clip)
+                        scratch_clips_all.append(clip)
+                        seq.overwrite(clip, seg.record_in, tgt_track)
+                        placed.append({{
+                            "name": name,
+                            "rec_in": seg.record_in.timecode,
+                            "src_in": seg.source_in.timecode,
+                        }})
+                    except Exception as e:
+                        t_errors.append({{"name": name, "error": str(e)}})
+
+                # Fidelity check
+                tgt_segs = [s for s in tgt_track.segments if s.name.get_value()]
+                src_segs = [s for s in src_track.segments if s.name.get_value()]
+                mismatches = []
+                for s0, s1 in zip(src_segs, tgt_segs):
+                    if (s0.record_in.timecode != s1.record_in.timecode or
+                        s0.source_in.timecode != s1.source_in.timecode):
+                        mismatches.append(s0.name.get_value())
+
+                result["tracks"].append({{
+                    "track_index": ti,
+                    "segments_placed": len(placed),
+                    "segments_skipped": len(skipped),
+                    "fidelity_ok": len(mismatches) == 0,
+                    "mismatches": mismatches,
+                    "errors": t_errors,
+                }})
+
+            # Clean up all scratch clips
+            for clip in scratch_clips_all:
+                try:
+                    flame.delete(clip, confirm=False)
+                except Exception:
+                    pass
+
+            result["tracks_cloned"] = len(src_tracks)
+            result["source_version_index"] = {params.source_version_index}
+
+        except Exception as e:
+            result["error"] = str(e)
+        event.set()
+
+    flame.schedule_idle_event(_do)
+    event.wait(timeout=120)
+    print(json.dumps(result))
+""", main_thread=True)
+    return json.dumps(data, indent=2)
+
+
+# ── Tool: flame_disconnect_segments ──────────────────────────────────
+
+
+class DisconnectSegmentsInput(BaseModel):
+    """Input for disconnecting segments."""
+
+    reel_name: str = Field(
+        ...,
+        description="Name of the reel containing sequences (e.g. 'Sequences').",
+    )
+    sequence_name: Optional[str] = Field(
+        default=None,
+        description="If provided, only disconnect segments in this sequence. "
+        "If omitted, disconnect all segments in every sequence in the reel.",
+    )
+
+
+async def disconnect_segments(params: DisconnectSegmentsInput) -> str:
+    """Remove all segment connections from sequences in a reel.
+
+    Calls seg.remove_connection() unconditionally on every non-gap segment.
+    The connected_segments() API does not reliably report connections, so
+    we cannot gate on it — just call remove_connection() on everything.
+
+    Iterates all versions (not just versions[0]) to catch segments added
+    by PyExporter or other workflows.
+
+    Reopen the sequence in Flame after running to refresh the UI.
+
+    Runs on Flame's main thread. Returns count of processed segments
+    per sequence.
+    """
+    seq_filter = params.sequence_name
+    data = await bridge.execute_json(f"""
+import flame, json, threading
+
+event = threading.Event()
+result = {{"sequences": [], "total_processed": 0, "errors": []}}
+
+def _do():
+    try:
+        desk = flame.projects.current_project.current_workspace.desktop
+        for rg in desk.reel_groups:
+            for reel in rg.reels:
+                if reel.name.get_value() != {params.reel_name!r}:
+                    continue
+                for seq in reel.sequences:
+                    seq_name = seq.name.get_value()
+                    seq_filter = {seq_filter!r}
+                    if seq_filter and seq_name != seq_filter:
+                        continue
+                    count = 0
+                    for ver in seq.versions:
+                        for t in ver.tracks:
+                            for seg in t.segments:
+                                src = str(seg.source_name) if seg.source_name else ""
+                                if not src:
+                                    continue
+                                try:
+                                    seg.remove_connection()
+                                    count += 1
+                                except Exception as e:
+                                    result["errors"].append(
+                                        str(seg.name.get_value()) + ": " + str(e)
+                                    )
+                    result["sequences"].append(
+                        {{"name": seq_name, "processed": count}}
+                    )
+                    result["total_processed"] += count
+    except Exception as e:
+        result["errors"].append(str(e))
+    event.set()
+
+flame.schedule_idle_event(_do)
+event.wait(timeout=30)
+print(json.dumps(result))
+""", main_thread=True)
+    return json.dumps(data, indent=2)
+
+
+# ── Tool: flame_replace_segment_media ─────────────────────────────────
+
+
+class ReplaceSegmentMediaInput(BaseModel):
+    sequence_name: str = Field(..., description="Exact sequence name")
+    segment_name: str = Field(..., description="Name of the segment to relink")
+    new_media_path: str = Field(
+        ...,
+        description="Absolute path to the replacement media file or frame sequence",
+    )
+
+
+async def replace_segment_media(params: ReplaceSegmentMediaInput) -> str:
+    """Replace a segment's source media via smart_replace_media.
+
+    Imports the new media as a temporary clip, calls
+    smart_replace_media on the target segment, then cleans up.
+    The segment keeps its name, position, and editorial timing —
+    only the underlying source file changes.
+
+    Use this to relink media to a new location (e.g. moving a clip
+    from prep/ to footage/stock/ so role detection works correctly).
+    """
+    data = await bridge.execute_json(f"""
+import flame, json, os
+
+seq_name = {params.sequence_name!r}
+seg_name = {params.segment_name!r}
+new_path = {params.new_media_path!r}
+
+if not os.path.exists(new_path):
+    print(json.dumps({{"error": f"File not found: {{new_path}}"}}))
+else:
+    desk = flame.projects.current_project.current_workspace.desktop
+    seq = None
+    for rg in desk.reel_groups:
+        for reel in rg.reels:
+            for s in (reel.sequences or []):
+                if str(s.name).strip("'") == seq_name:
+                    seq = s
+                    break
+            if seq: break
+        if seq: break
+
+    if not seq:
+        print(json.dumps({{"error": f"Sequence not found: {{seq_name}}"}}))
+    else:
+        target_seg = None
+        for ver in seq.versions:
+            for track in ver.tracks:
+                for seg in track.segments:
+                    if str(seg.name).strip("'") == seg_name:
+                        target_seg = seg
+                        break
+                if target_seg: break
+            if target_seg: break
+
+        if not target_seg:
+            print(json.dumps({{"error": f"Segment not found: {{seg_name}}"}}))
+        else:
+            old_fp = str(target_seg.file_path).strip("'") if target_seg.file_path else ''
+            rg0 = desk.reel_groups[0]
+            scratch = rg0.reels[-1]
+            imported = flame.import_clips(new_path, scratch)
+            clip = scratch.clips[-1]
+            target_seg.smart_replace_media(clip)
+            new_fp = str(target_seg.file_path).strip("'") if target_seg.file_path else ''
+            try:
+                flame.delete(clip, confirm=False)
+            except Exception:
+                pass
+            print(json.dumps({{
+                "segment": seg_name,
+                "old_path": old_fp,
+                "new_path": new_fp,
+                "success": new_fp != old_fp,
+            }}))
+""", main_thread=True)
+    return json.dumps(data, indent=2)
+
+
+# ── Tool: flame_scan_roles ────────────────────────────────────────────
+
+
+class ScanRolesInput(BaseModel):
+    """Scan segments for their detected/tagged roles."""
+    sequence_names: list[str] = Field(
+        ..., description="Sequence names to scan. Scans all tracks of the last version.",
+    )
+    reel_group: str = Field(
+        default="", description="Reel group name. Empty = search all reel groups.",
+    )
+    reel_name: str = Field(
+        default="", description="Reel name. Empty = search all reels.",
+    )
+
+
+async def scan_roles(params: ScanRolesInput) -> str:
+    """Scan segments and report their current role assignments.
+
+    For each non-gap segment, reports:
+    - tagged_role: existing forge:{role} tag (highest priority)
+    - detected_role: auto-detected from file path, source name, segment name
+    - effective_role: tagged_role if present, else detected_role
+
+    Use this to audit role assignments before publish, or to identify
+    segments with "unknown" roles that need manual assignment.
+    """
+    data = await bridge.execute_json(f"""
+import flame, json, re
+
+FOOTAGE_ROLES = ['graded', 'raw', 'denoised', 'flat', 'external', 'scans', 'stock', 'source']
+NON_FOOTAGE_ROLES = ['graphics', 'reference', 'comp']
+ALL_KNOWN = set(FOOTAGE_ROLES + NON_FOOTAGE_ROLES)
+_GRAPHICS_KW = ('legal', 'super', 'title', 'logo', 'endcard', 'end_card',
+                'slate', 'card', 'bug', 'watermark', 'bumper', 'graphic')
+_REF_KW = ('offline', 'ref', 'proxy')
+
+def _detect_role(fp, src, sn):
+    fp = (fp or '').lower()
+    src = (src or '').lower()
+    sn = (sn or '').lower()
+    m = re.match(r'^[a-z0-9]+_\\d+_([a-z][a-z0-9]*)_', sn)
+    if m and m.group(1) in ALL_KNOWN:
+        return m.group(1)
+    if fp:
+        m2 = re.search(r'footage/([^/]+)/', fp)
+        if m2 and m2.group(1) in set(FOOTAGE_ROLES):
+            return m2.group(1)
+    if any(kw in fp for kw in ('/render/', '/comp/', '/output/', '/cg/')):
+        return 'comp'
+    combined = fp + ' ' + src + ' ' + sn
+    if any(kw in combined for kw in _GRAPHICS_KW):
+        return 'graphics'
+    if any(kw in combined for kw in _REF_KW):
+        return 'reference'
+    if fp.endswith(('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.psd')):
+        return 'graphics'
+    if fp.endswith(('.mov', '.mp4', '.mxf')):
+        return 'stock'
+    if 'footage/' in fp:
+        return 'source'
+    return 'unknown'
+
+def _get_forge_tag(tags):
+    for t in (tags or []):
+        if t.startswith('forge:'):
+            role = t[len('forge:'):]
+            if role in ALL_KNOWN:
+                return role
+    return None
+
+desk = flame.projects.current_project.current_workspace.desktop
+seq_names = {params.sequence_names!r}
+rg_filter = {params.reel_group!r}
+reel_filter = {params.reel_name!r}
+
+sequences = []
+for rg in desk.reel_groups:
+    if rg_filter and rg.name.get_value() != rg_filter:
+        continue
+    for reel in rg.reels:
+        if reel_filter and reel.name.get_value() != reel_filter:
+            continue
+        for seq in (reel.sequences or []):
+            if seq.name.get_value() in seq_names:
+                sequences.append(seq)
+
+entries = []
+for seq in sequences:
+    sname = seq.name.get_value()
+    ver = seq.versions[-1]
+    for ti, track in enumerate(ver.tracks):
+        for seg in (track.segments or []):
+            seg_name = seg.name.get_value() if seg.name else ''
+            if not seg_name:
+                continue
+            fp = ''
+            try:
+                fp = str(seg.file_path).strip("'\\"") if seg.file_path else ''
+            except Exception:
+                pass
+            src = ''
+            try:
+                src = str(seg.source_name).strip("'\\"") if seg.source_name else ''
+            except Exception:
+                pass
+            tags = []
+            try:
+                tags = seg.tags.get_value() or []
+            except Exception:
+                pass
+            tagged = _get_forge_tag(tags)
+            detected = _detect_role(fp, src, seg_name)
+            entries.append({{
+                'sequence': sname,
+                'segment': seg_name,
+                'track': ti,
+                'tagged_role': tagged,
+                'detected_role': detected,
+                'effective_role': tagged or detected,
+                'source_name': src,
+                'file_path': fp[-80:] if len(fp) > 80 else fp,
+            }})
+
+unknown_count = sum(1 for e in entries if e['effective_role'] == 'unknown')
+tagged_count = sum(1 for e in entries if e['tagged_role'])
+print(json.dumps({{
+    'total_segments': len(entries),
+    'unknown_count': unknown_count,
+    'tagged_count': tagged_count,
+    'segments': entries,
+}}))
+""")
+    return json.dumps(data, indent=2)
+
+
+# ── Tool: flame_assign_roles ─────────────────────────────────────────
+
+
+class AssignRolesInput(BaseModel):
+    """Assign forge role tags to segments."""
+    sequence_names: list[str] = Field(
+        ..., description="Sequence names containing the target segments.",
+    )
+    assignments: dict[str, str] = Field(
+        ..., description="Map of segment_name → role to assign. "
+        "Valid roles: graded, raw, denoised, flat, external, scans, stock, "
+        "source, graphics, reference, comp.",
+    )
+    reel_group: str = Field(
+        default="", description="Reel group name. Empty = search all.",
+    )
+    reel_name: str = Field(
+        default="", description="Reel name. Empty = search all.",
+    )
+
+
+async def assign_roles(params: AssignRolesInput) -> str:
+    """Assign forge:{role} tags to segments by name.
+
+    Writes persistent forge:role tags that the publish pipeline and
+    role detection system use as highest-priority role source.
+    Replaces any existing forge:role tag on the segment.
+
+    Typical workflow:
+    1. flame_scan_roles → identify segments with "unknown" roles
+    2. flame_assign_roles → assign correct roles
+    3. Re-run publish or reconform with correct role detection
+    """
+    data = await bridge.execute_json(f"""
+import flame, json
+
+FOOTAGE_ROLES = ['graded', 'raw', 'denoised', 'flat', 'external', 'scans', 'stock', 'source']
+NON_FOOTAGE_ROLES = ['graphics', 'reference', 'comp']
+ALL_KNOWN = set(FOOTAGE_ROLES + NON_FOOTAGE_ROLES)
+ROLE_TAGS = tuple('forge:' + r for r in ALL_KNOWN)
+
+desk = flame.projects.current_project.current_workspace.desktop
+seq_names = {params.sequence_names!r}
+assignments = {params.assignments!r}
+rg_filter = {params.reel_group!r}
+reel_filter = {params.reel_name!r}
+
+# Validate roles
+invalid = [r for r in assignments.values() if r not in ALL_KNOWN]
+if invalid:
+    print(json.dumps({{'error': 'Invalid roles: ' + ', '.join(set(invalid))}}))
+else:
+    sequences = []
+    for rg in desk.reel_groups:
+        if rg_filter and rg.name.get_value() != rg_filter:
+            continue
+        for reel in rg.reels:
+            if reel_filter and reel.name.get_value() != reel_filter:
+                continue
+            for seq in (reel.sequences or []):
+                if seq.name.get_value() in seq_names:
+                    sequences.append(seq)
+
+    applied = []
+    not_found = []
+    errors = []
+
+    for seg_name, role in assignments.items():
+        found = False
+        for seq in sequences:
+            ver = seq.versions[-1]
+            for track in ver.tracks:
+                for seg in (track.segments or []):
+                    if seg.name.get_value() == seg_name:
+                        found = True
+                        try:
+                            existing = seg.tags.get_value() or []
+                            filtered = [t for t in existing if t not in ROLE_TAGS]
+                            filtered.append('forge:' + role)
+                            seg.tags.set_value(filtered)
+                            applied.append({{'segment': seg_name, 'role': role}})
+                        except Exception as e:
+                            errors.append({{'segment': seg_name, 'error': str(e)}})
+                        break
+                if found:
+                    break
+            if found:
+                break
+        if not found:
+            not_found.append(seg_name)
+
+    print(json.dumps({{
+        'applied': len(applied),
+        'not_found': not_found,
+        'errors': errors,
+        'details': applied,
+    }}))
+""", main_thread=True)
+    return json.dumps(data, indent=2)
