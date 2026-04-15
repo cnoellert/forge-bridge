@@ -5,7 +5,7 @@ from typing import Optional, List
 
 from pydantic import BaseModel, Field
 
-from forge_mcp import bridge
+from forge_bridge import bridge
 
 
 # ── Tool: flame_list_batch_nodes ────────────────────────────────────────
@@ -439,3 +439,66 @@ async def get_write_file_path(params: GetWriteFilePathInput) -> str:
             print(json.dumps({{'error': str(e)}}))
     """)
     return json.dumps(data, indent=2)
+
+
+# ── Tool: flame_inspect_batch_xml ─────────────────────────────────────
+
+
+class InspectBatchXmlInput(BaseModel):
+    """Input for inspecting a batch setup XML file on disk."""
+
+    batch_path: str = Field(
+        ..., description="Full path to a .batch file on disk. "
+        "e.g. '/PROJEKTS/012_12_12/_04_shots/ABC_010/comp/flame/batch/ABC_010_v00.batch'"
+    )
+
+
+async def inspect_batch_xml(params: InspectBatchXmlInput) -> str:
+    """Inspect a Flame batch setup XML file on disk (no Flame connection needed).
+
+    Returns node list, connections/topology, and identifies dangling nodes.
+    Useful for understanding batch structure before or after publish.
+
+    NOTE: Requires forge_batch_xml script from flame_hooks/forge_tools/forge_publish_shots/scripts/.
+    This dependency is not yet available in standalone forge-bridge.
+    """
+    raise RuntimeError(
+        "inspect_batch_xml requires forge_batch_xml script from flame_hooks. "
+        "This dependency is not yet available in standalone forge-bridge. "
+        "To use this tool, port forge_batch_xml from the projekt-forge flame_hooks directory."
+    )
+
+
+# ── Tool: flame_prune_batch_xml ───────────────────────────────────────
+
+
+class PruneBatchXmlInput(BaseModel):
+    """Input for pruning junk nodes from batch XML."""
+
+    batch_path: str = Field(
+        default="",
+        description="Full path to a specific .batch file. "
+        "If empty, uses shot_dir to find all .batch files."
+    )
+    shot_dir: str = Field(
+        default="",
+        description="Shot directory to prune all batches in. "
+        "e.g. '/PROJEKTS/012_12_12/_04_shots/ABC_010'. "
+        "Ignored if batch_path is provided."
+    )
+
+
+async def prune_batch_xml(params: PruneBatchXmlInput) -> str:
+    """Prune junk nodes (Resize, MUX) from published batch XML on disk.
+
+    Removes passthrough nodes from PyExporter and wires clips directly
+    to the Write File node. No Flame connection needed.
+
+    NOTE: Requires forge_batch_prune script from flame_hooks/forge_tools/forge_publish_shots/scripts/.
+    This dependency is not yet available in standalone forge-bridge.
+    """
+    raise RuntimeError(
+        "prune_batch_xml requires forge_batch_prune script from flame_hooks. "
+        "This dependency is not yet available in standalone forge-bridge. "
+        "To use this tool, port forge_batch_prune from the projekt-forge flame_hooks directory."
+    )

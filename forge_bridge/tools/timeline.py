@@ -23,7 +23,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from forge_mcp import bridge
+from forge_bridge import bridge
 
 
 # ── Shared helpers ─────────────────────────────────────────────────────

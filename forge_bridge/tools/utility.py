@@ -4,7 +4,7 @@ import json
 
 from pydantic import BaseModel, Field
 
-from forge_mcp import bridge
+from forge_bridge import bridge
 
 
 # ── Tool: flame_execute_python ──────────────────────────────────────────

@@ -10,7 +10,7 @@ Post-conform workflow:
 from pydantic import BaseModel, Field
 from typing import Optional
 
-from forge_mcp import bridge
+from forge_bridge import bridge
 
 
 # ── Input Models ────────────────────────────────────────────────────────
@@ -152,7 +152,7 @@ else:
 
 async def rename_segments(params: RenameSegments) -> str:
     # Verified identical to projekt-forge 2026-04-14
-    # Differences: standalone uses 'from forge_mcp import bridge' (correct for this repo);
+    # Differences: standalone uses 'from forge_bridge import bridge' (correct for this repo);
     # projekt-forge uses 'from forge_bridge import bridge'. Logic is otherwise identical:
     # same iteration pattern (all tracks across all versions), same fallback role ('graded'),
     # same threading.Event pattern, same bridge.execute_and_read() call.

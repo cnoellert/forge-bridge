@@ -734,7 +734,7 @@ import json
 print(json.dumps(snap()))
 """
     try:
-        from forge_mcp import bridge
+        from forge_bridge import bridge
         data = await bridge.execute_json(code)
         sequences = data if isinstance(data, list) else []
 
