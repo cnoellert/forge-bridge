@@ -188,9 +188,9 @@ class TestSynthesize:
         from forge_bridge.learning import synthesizer
         monkeypatch.setattr(synthesizer, "SYNTHESIZED_DIR", tmp_path)
 
-        # Pre-write the file with identical content
+        # Pre-write the file with identical content (stripped, as synthesizer writes it)
         out = tmp_path / "synth_get_shot_name.py"
-        out.write_text(VALID_SYNTH_CODE)
+        out.write_text(VALID_SYNTH_CODE.strip())
 
         mock_router = MagicMock()
         mock_router.acomplete = AsyncMock(return_value=VALID_SYNTH_CODE)
