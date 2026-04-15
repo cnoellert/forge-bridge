@@ -167,3 +167,51 @@ def test_log_directory_created_automatically(tmp_path):
     log = ExecutionLog(log_path=log_path)
     log.record("x = 1")
     assert log_path.exists()
+
+
+# --- bridge.py callback hook tests ---
+
+
+def test_set_execution_callback_sets_callback():
+    """set_execution_callback(fn) sets the module-level callback."""
+    import forge_bridge.bridge as bridge_mod
+    from forge_bridge.bridge import set_execution_callback
+
+    original = bridge_mod._on_execution_callback
+    try:
+        def my_fn(code, resp):
+            pass
+
+        set_execution_callback(my_fn)
+        assert bridge_mod._on_execution_callback is my_fn
+    finally:
+        bridge_mod._on_execution_callback = original
+
+
+def test_set_execution_callback_clears_with_none():
+    """set_execution_callback(None) clears the callback."""
+    import forge_bridge.bridge as bridge_mod
+    from forge_bridge.bridge import set_execution_callback
+
+    original = bridge_mod._on_execution_callback
+    try:
+        set_execution_callback(lambda c, r: None)
+        assert bridge_mod._on_execution_callback is not None
+        set_execution_callback(None)
+        assert bridge_mod._on_execution_callback is None
+    finally:
+        bridge_mod._on_execution_callback = original
+
+
+def test_set_execution_callback_default_clears():
+    """set_execution_callback() with no args clears callback (default None)."""
+    import forge_bridge.bridge as bridge_mod
+    from forge_bridge.bridge import set_execution_callback
+
+    original = bridge_mod._on_execution_callback
+    try:
+        set_execution_callback(lambda c, r: None)
+        set_execution_callback()  # no args
+        assert bridge_mod._on_execution_callback is None
+    finally:
+        bridge_mod._on_execution_callback = original

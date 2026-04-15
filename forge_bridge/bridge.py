@@ -13,7 +13,7 @@ import json
 import os
 import textwrap
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import httpx
 
@@ -22,6 +22,14 @@ BRIDGE_PORT = int(os.environ.get("FORGE_BRIDGE_PORT", "9999"))
 BRIDGE_TIMEOUT = int(os.environ.get("FORGE_BRIDGE_TIMEOUT", "60"))
 
 BRIDGE_URL = f"http://{BRIDGE_HOST}:{BRIDGE_PORT}"
+
+_on_execution_callback: Optional[Callable] = None
+
+
+def set_execution_callback(fn: Optional[Callable] = None) -> None:
+    """Set (or clear) the execution callback. Pass None to disable."""
+    global _on_execution_callback
+    _on_execution_callback = fn
 
 
 def configure(host: str = None, port: int = None, timeout: int = None):
@@ -114,13 +122,21 @@ async def execute(code: str, *, main_thread: bool = False) -> BridgeResponse:
     except Exception as e:
         raise BridgeConnectionError(f"Bridge communication error: {e}")
 
-    return BridgeResponse(
+    response = BridgeResponse(
         stdout=data.get("stdout", ""),
         stderr=data.get("stderr", ""),
         result=data.get("result"),
         error=data.get("error"),
         traceback=data.get("traceback"),
     )
+
+    if _on_execution_callback is not None:
+        try:
+            _on_execution_callback(code, response)
+        except Exception:
+            pass  # never let callback errors break bridge operation
+
+    return response
 
 
 async def execute_and_read(code: str, *, main_thread: bool = False) -> str:
