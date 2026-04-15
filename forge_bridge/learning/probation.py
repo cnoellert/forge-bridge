@@ -10,6 +10,7 @@ from __future__ import annotations
 import functools
 import logging
 import os
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
@@ -73,6 +74,10 @@ class ProbationTracker:
         if src.exists():
             self._quarantine_dir.mkdir(parents=True, exist_ok=True)
             dest = self._quarantine_dir / f"{tool_name}.py"
+            if dest.exists():
+                # Avoid overwriting a previously quarantined file — add timestamp suffix
+                ts = int(time.time())
+                dest = self._quarantine_dir / f"{tool_name}_{ts}.py"
             src.rename(dest)
             logger.warning("Quarantined tool %s -> %s", tool_name, dest)
         else:
