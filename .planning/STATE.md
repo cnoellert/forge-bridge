@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Completed 02-03-PLAN.md
-last_updated: "2026-04-15T03:13:59.663Z"
+stopped_at: Completed 02-02-PLAN.md
+last_updated: "2026-04-15T03:14:22.395Z"
 last_activity: 2026-04-14 — Roadmap created, ready to plan Phase 1
 progress:
   total_phases: 3
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 10
-  completed_plans: 9
+  completed_plans: 10
   percent: 17
 ---
 
@@ -59,6 +59,7 @@ Progress: [██░░░░░░░░] 17%
 | Phase 01-tool-parity-llm-router P07 | 155s | 2 tasks | 3 files |
 | Phase 02-mcp-server-rebuild P01 | 2min | 2 tasks | 3 files |
 | Phase 02-mcp-server-rebuild P03 | 2min | 2 tasks | 4 files |
+| Phase 02-mcp-server-rebuild P02 | 8min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -93,6 +94,8 @@ Recent decisions affecting current work:
 - [Phase 02-mcp-server-rebuild]: SHA-256 polling (5s interval) chosen over filesystem events — no platform-specific dependencies, consistent cross-platform behavior
 - [Phase 02-mcp-server-rebuild]: watcher.py imports register_tool inline inside _scan_once() to avoid circular import at module load time
 - [Phase 02-mcp-server-rebuild]: _lifespan defined before mcp = FastMCP() — Python resolves _startup/_shutdown at call time not definition time
+- [Phase 02-mcp-server-rebuild]: register_builtins() is now fully populated — all ~42 builtin tools route through registry with source='builtin'; server.py has zero direct mcp.tool() calls
+- [Phase 02-mcp-server-rebuild]: forge_bridge.mcp public API: register_tools and get_mcp importable from package __init__ for downstream consumers
 
 ### Pending Todos
 
@@ -105,6 +108,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-15T03:13:59.662Z
-Stopped at: Completed 02-03-PLAN.md
+Last session: 2026-04-15T03:14:22.394Z
+Stopped at: Completed 02-02-PLAN.md
 Resume file: None
