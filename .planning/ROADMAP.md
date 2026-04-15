@@ -64,7 +64,12 @@ Plans:
   2. After a code pattern crosses the promotion threshold (default 3), the synthesizer generates a Python async MCP tool, validates it (ast.parse + signature check + dry-run), and writes it to mcp/synthesized/
   3. A newly synthesized tool appears in the MCP tool list under synth_* prefix without a server restart
   4. A synthesized tool that fails probation (breach of failure threshold) is quarantined and removed from the tool list without being deleted from disk
-**Plans**: TBD
+**Plans:** 3 plans
+
+Plans:
+- [ ] 03-01-PLAN.md — Execution log with AST normalization, JSONL persistence, and bridge callback
+- [ ] 03-02-PLAN.md — Skill synthesizer with LLM integration and 3-stage validation
+- [ ] 03-03-PLAN.md — Probation system with failure tracking and watcher integration
 
 ## Progress
 
@@ -75,4 +80,4 @@ Phases execute in numeric order: 1 → 2 → 3
 |-------|----------------|--------|-----------|
 | 1. Tool Parity & LLM Router | 7/7 | Complete   | 2026-04-15 |
 | 2. MCP Server Rebuild | 3/3 | Complete   | 2026-04-15 |
-| 3. Learning Pipeline | 0/TBD | Not started | - |
+| 3. Learning Pipeline | 0/3 | Not started | - |
