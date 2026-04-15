@@ -17,7 +17,7 @@ Requirements for this milestone (Phases 0-3). Each maps to roadmap phases.
 - [ ] **TOOL-06**: Add tools/reconform.py from projekt-forge
 - [ ] **TOOL-07**: Add tools/switch_grade.py from projekt-forge
 - [ ] **TOOL-08**: Add Pydantic input models for all existing and new MCP tools
-- [ ] **TOOL-09**: Bump bridge.py default timeout from 30s to 60s
+- [x] **TOOL-09**: Bump bridge.py default timeout from 30s to 60s
 
 ### LLM Router
 
@@ -25,10 +25,10 @@ Requirements for this milestone (Phases 0-3). Each maps to roadmap phases.
 - [x] **LLM-02**: Add async acomplete() using AsyncOpenAI for local Ollama and AsyncAnthropic for cloud Claude
 - [x] **LLM-03**: Keep sync complete() as convenience wrapper
 - [x] **LLM-04**: Extract hardcoded system prompt and infrastructure hostnames (assist-01, portofino) into configuration (env vars)
-- [ ] **LLM-05**: Move openai and anthropic to optional dependencies in pyproject.toml (pip install forge-bridge[llm])
+- [x] **LLM-05**: Move openai and anthropic to optional dependencies in pyproject.toml (pip install forge-bridge[llm])
 - [ ] **LLM-06**: Add health check reporting which backends are available (async and sync)
 - [ ] **LLM-07**: Expose LLM health check as MCP resource (forge://llm/health)
-- [ ] **LLM-08**: Fix duplicate dependency declarations in pyproject.toml
+- [x] **LLM-08**: Fix duplicate dependency declarations in pyproject.toml
 
 ### Learning Pipeline
 
@@ -99,15 +99,15 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TOOL-06 | Phase 1 | Pending |
 | TOOL-07 | Phase 1 | Pending |
 | TOOL-08 | Phase 1 | Pending |
-| TOOL-09 | Phase 1 | Pending |
+| TOOL-09 | Phase 1 | Complete |
 | LLM-01 | Phase 1 | Complete |
 | LLM-02 | Phase 1 | Complete |
 | LLM-03 | Phase 1 | Complete |
 | LLM-04 | Phase 1 | Complete |
-| LLM-05 | Phase 1 | Pending |
+| LLM-05 | Phase 1 | Complete |
 | LLM-06 | Phase 1 | Pending |
 | LLM-07 | Phase 1 | Pending |
-| LLM-08 | Phase 1 | Pending |
+| LLM-08 | Phase 1 | Complete |
 | LEARN-01 | Phase 3 | Pending |
 | LEARN-02 | Phase 3 | Pending |
 | LEARN-03 | Phase 3 | Pending |

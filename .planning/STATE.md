@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Completed 01-tool-parity-llm-router/01-02-PLAN.md
-last_updated: "2026-04-15T01:57:30.053Z"
+stopped_at: Completed 01-tool-parity-llm-router/01-01-PLAN.md
+last_updated: "2026-04-15T01:58:14.685Z"
 last_activity: 2026-04-14 — Roadmap created, ready to plan Phase 1
 progress:
   total_phases: 3
   completed_phases: 0
   total_plans: 6
-  completed_plans: 1
+  completed_plans: 2
   percent: 17
 ---
 
@@ -51,6 +51,7 @@ Progress: [██░░░░░░░░] 17%
 
 *Updated after each plan completion*
 | Phase 01-tool-parity-llm-router P02 | 2min | 2 tasks | 3 files |
+| Phase 01-tool-parity-llm-router P01 | 2m | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -66,6 +67,9 @@ Recent decisions affecting current work:
 - [Phase 01-tool-parity-llm-router]: acomplete() is the primary LLM API; sync complete() is for non-async callers only (asyncio.run())
 - [Phase 01-tool-parity-llm-router]: Lazy imports inside _get_local_client()/_get_cloud_client() so base install works without openai/anthropic
 - [Phase 01-tool-parity-llm-router]: FORGE_SYSTEM_PROMPT env var added to make VFX system prompt configurable
+- [Phase 01-tool-parity-llm-router]: openai and anthropic moved to [llm] optional extra; base pip install stays lean
+- [Phase 01-tool-parity-llm-router]: BRIDGE_TIMEOUT default raised from 30s to 60s to handle longer Flame operations
+- [Phase 01-tool-parity-llm-router]: Wave 0 stub pattern established: skipped tests as living documentation of what each plan must implement
 
 ### Pending Todos
 
@@ -78,6 +82,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-15T01:57:30.051Z
-Stopped at: Completed 01-tool-parity-llm-router/01-02-PLAN.md
+Last session: 2026-04-15T01:58:14.683Z
+Stopped at: Completed 01-tool-parity-llm-router/01-01-PLAN.md
 Resume file: None

@@ -28,7 +28,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. `LLMRouter.acomplete()` completes a request asynchronously and returns a string response without blocking the event loop
   4. `forge://llm/health` MCP resource returns which backends (local Ollama, cloud Claude) are available
   5. All MCP tool inputs pass through Pydantic models — invalid inputs are rejected before any Flame code executes
-**Plans:** 1/6 plans executed
+**Plans:** 2/6 plans executed
 
 Plans:
 - [ ] 01-01-PLAN.md — Fix pyproject.toml, bump bridge timeout, create Wave 0 test scaffolds
@@ -67,6 +67,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Tool Parity & LLM Router | 1/6 | In Progress|  |
+| 1. Tool Parity & LLM Router | 2/6 | In Progress|  |
 | 2. MCP Server Rebuild | 0/TBD | Not started | - |
 | 3. Learning Pipeline | 0/TBD | Not started | - |
