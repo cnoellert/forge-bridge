@@ -19,7 +19,7 @@ import httpx
 
 BRIDGE_HOST = os.environ.get("FORGE_BRIDGE_HOST", "127.0.0.1")
 BRIDGE_PORT = int(os.environ.get("FORGE_BRIDGE_PORT", "9999"))
-BRIDGE_TIMEOUT = int(os.environ.get("FORGE_BRIDGE_TIMEOUT", "30"))
+BRIDGE_TIMEOUT = int(os.environ.get("FORGE_BRIDGE_TIMEOUT", "60"))
 
 BRIDGE_URL = f"http://{BRIDGE_HOST}:{BRIDGE_PORT}"
 

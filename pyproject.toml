@@ -23,6 +23,10 @@ dependencies = [
 forge-bridge = "forge_bridge.__main__:main"
 
 [project.optional-dependencies]
+llm = [
+    "openai>=1.0",
+    "anthropic>=0.25",
+]
 dev = [
     "pytest",
     "pytest-asyncio",
