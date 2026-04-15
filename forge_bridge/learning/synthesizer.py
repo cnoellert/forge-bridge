@@ -13,11 +13,13 @@ import importlib.util
 import inspect
 import logging
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Optional
 from unittest.mock import AsyncMock, patch
 
+from forge_bridge.learning.manifest import manifest_register
 from forge_bridge.learning.watcher import SYNTHESIZED_DIR  # shared constant — watcher watches this dir
 
 logger = logging.getLogger(__name__)
@@ -56,17 +58,50 @@ Output only the function definition."""
 
 def _extract_function(raw: str) -> str:
     """Strip markdown code fences from LLM output if present."""
-    if "```" in raw:
-        # Find content between first ``` and last ```
-        parts = raw.split("```")
-        if len(parts) >= 3:
-            code_block = parts[1]
-            # Remove optional language tag on first line
-            lines = code_block.split("\n", 1)
-            if len(lines) > 1 and lines[0].strip().isalpha():
-                code_block = lines[1]
-            return code_block.strip()
+    # Use regex with DOTALL | MULTILINE for robust fence extraction
+    match = re.search(r"```(?:\w*)\n(.*?)```", raw, re.DOTALL | re.MULTILINE)
+    if match:
+        return match.group(1).strip()
     return raw.strip()
+
+
+# AST node names considered dangerous for synthesized tool code.
+_DANGEROUS_CALLS: frozenset[str] = frozenset({
+    "eval", "exec", "__import__", "compile", "execfile",
+})
+
+_DANGEROUS_ATTR_CALLS: dict[str, frozenset[str]] = {
+    "os": frozenset({"system", "popen", "exec", "execvp", "execvpe", "remove", "unlink", "rmdir"}),
+    "subprocess": frozenset({"run", "call", "check_call", "check_output", "Popen", "getoutput"}),
+    "shutil": frozenset({"rmtree", "move", "copy", "copy2"}),
+}
+
+
+def _check_safety(tree: ast.Module) -> bool:
+    """Return True if the AST contains no dangerous calls, False otherwise.
+
+    Scans for:
+    - Bare dangerous calls: eval(), exec(), __import__(), compile()
+    - Dangerous attribute calls: os.system(), subprocess.run(), shutil.rmtree(), etc.
+    - open() calls that are not calling bridge functions
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            # Check bare name calls: eval(...), exec(...), __import__(...)
+            if isinstance(node.func, ast.Name) and node.func.id in _DANGEROUS_CALLS:
+                return False
+            # Check open() — only allowed inside forge_bridge.bridge calls
+            if isinstance(node.func, ast.Name) and node.func.id == "open":
+                return False
+            # Check attribute calls: os.system(...), subprocess.run(...)
+            if isinstance(node.func, ast.Attribute):
+                attr_name = node.func.attr
+                if isinstance(node.func.value, ast.Name):
+                    module_name = node.func.value.id
+                    if module_name in _DANGEROUS_ATTR_CALLS:
+                        if attr_name in _DANGEROUS_ATTR_CALLS[module_name]:
+                            return False
+    return True
 
 
 def _check_signature(tree: ast.Module) -> Optional[str]:
@@ -208,6 +243,11 @@ async def synthesize(
         logger.warning("Synthesis failed: signature validation failed")
         return None
 
+    # Stage 2b: Safety check — reject dangerous calls before execution
+    if not _check_safety(tree):
+        logger.warning("Synthesis failed: code contains dangerous calls")
+        return None
+
     # Stage 3: Dry run
     if not await _dry_run(fn_code, fn_name):
         logger.warning("Synthesis failed: dry-run raised an exception")
@@ -228,5 +268,6 @@ async def synthesize(
     # Write output
     SYNTHESIZED_DIR.mkdir(parents=True, exist_ok=True)
     output_path.write_text(fn_code)
+    manifest_register(output_path)
     logger.info(f"Synthesized tool written: {output_path}")
     return output_path
