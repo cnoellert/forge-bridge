@@ -17,11 +17,30 @@ from typing import Any, Callable, Optional
 
 import httpx
 
-BRIDGE_HOST = os.environ.get("FORGE_BRIDGE_HOST", "127.0.0.1")
-BRIDGE_PORT = int(os.environ.get("FORGE_BRIDGE_PORT", "9999"))
-BRIDGE_TIMEOUT = int(os.environ.get("FORGE_BRIDGE_TIMEOUT", "60"))
+@dataclass(frozen=True)
+class _BridgeConfig:
+    """Immutable bridge connection settings — swapped atomically."""
+    host: str = "127.0.0.1"
+    port: int = 9999
+    timeout: int = 60
 
-BRIDGE_URL = f"http://{BRIDGE_HOST}:{BRIDGE_PORT}"
+    @property
+    def url(self) -> str:
+        return f"http://{self.host}:{self.port}"
+
+
+# Module-level config — read via _config, replaced atomically by configure().
+_config = _BridgeConfig(
+    host=os.environ.get("FORGE_BRIDGE_HOST", "127.0.0.1"),
+    port=int(os.environ.get("FORGE_BRIDGE_PORT", "9999")),
+    timeout=int(os.environ.get("FORGE_BRIDGE_TIMEOUT", "60")),
+)
+
+# Legacy module-level names for backward compatibility (read-only references).
+BRIDGE_HOST = _config.host
+BRIDGE_PORT = _config.port
+BRIDGE_TIMEOUT = _config.timeout
+BRIDGE_URL = _config.url
 
 _on_execution_callback: Optional[Callable] = None
 
@@ -33,15 +52,22 @@ def set_execution_callback(fn: Optional[Callable] = None) -> None:
 
 
 def configure(host: str = None, port: int = None, timeout: int = None):
-    """Override bridge connection settings. Call before any tool use."""
-    global BRIDGE_HOST, BRIDGE_PORT, BRIDGE_TIMEOUT, BRIDGE_URL
-    if host is not None:
-        BRIDGE_HOST = host
-    if port is not None:
-        BRIDGE_PORT = port
-    if timeout is not None:
-        BRIDGE_TIMEOUT = timeout
-    BRIDGE_URL = f"http://{BRIDGE_HOST}:{BRIDGE_PORT}"
+    """Override bridge connection settings. Call before any tool use.
+
+    Builds a new frozen _BridgeConfig and swaps the module-level reference
+    atomically, avoiding torn reads from concurrent threads.
+    """
+    global _config, BRIDGE_HOST, BRIDGE_PORT, BRIDGE_TIMEOUT, BRIDGE_URL
+    _config = _BridgeConfig(
+        host=host if host is not None else _config.host,
+        port=port if port is not None else _config.port,
+        timeout=timeout if timeout is not None else _config.timeout,
+    )
+    # Keep legacy module-level names in sync for backward compatibility.
+    BRIDGE_HOST = _config.host
+    BRIDGE_PORT = _config.port
+    BRIDGE_TIMEOUT = _config.timeout
+    BRIDGE_URL = _config.url
 
 
 @dataclass
@@ -101,22 +127,25 @@ async def execute(code: str, *, main_thread: bool = False) -> BridgeResponse:
     """
     code = textwrap.dedent(code).strip()
 
+    # Snapshot config atomically to avoid torn reads
+    cfg = _config
+
     try:
-        async with httpx.AsyncClient(timeout=BRIDGE_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=cfg.timeout) as client:
             resp = await client.post(
-                f"{BRIDGE_URL}/exec",
+                f"{cfg.url}/exec",
                 json={"code": code, "main_thread": main_thread},
             )
             resp.raise_for_status()
             data = resp.json()
     except httpx.ConnectError:
         raise BridgeConnectionError(
-            f"Cannot reach FORGE Bridge at {BRIDGE_URL}. "
+            f"Cannot reach FORGE Bridge at {cfg.url}. "
             "Is Flame running with the bridge hook loaded?"
         )
     except httpx.TimeoutException:
         raise BridgeConnectionError(
-            f"FORGE Bridge at {BRIDGE_URL} timed out after {BRIDGE_TIMEOUT}s. "
+            f"FORGE Bridge at {cfg.url} timed out after {cfg.timeout}s. "
             "The Flame operation may still be running."
         )
     except Exception as e:
