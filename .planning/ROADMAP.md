@@ -48,7 +48,12 @@ Plans:
   2. A downstream consumer (e.g. projekt-forge) can call `register_tools(mcp, [fn1, fn2])` before `mcp.run()` and see those tools in the tool list
   3. Every tool in the tool list carries a _source field with value builtin, synthesized, or user-taught
   4. `mcp.add_tool()` / `remove_tool()` successfully registers and deregisters tools at runtime without server restart
-**Plans**: TBD
+**Plans:** 3 plans
+
+Plans:
+- [ ] 02-01-PLAN.md — Create registry.py with namespace enforcement, source tagging, and Wave 0 test scaffolds
+- [ ] 02-02-PLAN.md — Rebuild server.py to route all registrations through registry, export public API
+- [ ] 02-03-PLAN.md — Create synthesized tool watcher with lifespan integration
 
 ### Phase 3: Learning Pipeline
 **Goal**: The bridge observes repeated Flame operations, synthesizes them into reusable MCP tools, hot-registers them in the live server, and tracks their reliability via a probation system
@@ -69,5 +74,5 @@ Phases execute in numeric order: 1 → 2 → 3
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Tool Parity & LLM Router | 7/7 | Complete   | 2026-04-15 |
-| 2. MCP Server Rebuild | 0/TBD | Not started | - |
+| 2. MCP Server Rebuild | 0/3 | In progress | - |
 | 3. Learning Pipeline | 0/TBD | Not started | - |
