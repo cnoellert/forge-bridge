@@ -12,6 +12,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from forge_bridge.learning.manifest import manifest_verify, MANIFEST_PATH
+
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
@@ -53,10 +55,13 @@ def _scan_once(
     seen: dict[str, str],
     synthesized_dir: Path,
     tracker: "ProbationTracker | None" = None,
+    manifest_path: Path = MANIFEST_PATH,
 ) -> None:
     """Single scan pass — detect new, changed, and deleted files."""
     if not synthesized_dir.exists():
         return
+
+    from forge_bridge.mcp.registry import register_tool
 
     current_stems: set[str] = set()
     for path in sorted(synthesized_dir.glob("*.py")):
@@ -66,6 +71,10 @@ def _scan_once(
         current_stems.add(stem)
         digest = _sha256(path)
         if seen.get(stem) == digest:
+            continue
+        # Manifest check — reject files not registered by the synthesizer
+        if not manifest_verify(path, manifest_path=manifest_path):
+            logger.warning(f"Skipping {stem}: not in manifest or hash mismatch")
             continue
         # New or changed file — (re)load
         if stem in seen:
@@ -78,7 +87,6 @@ def _scan_once(
             continue
         if tracker is not None:
             fn = tracker.wrap(fn, stem, mcp)
-        from forge_bridge.mcp.registry import register_tool
         try:
             register_tool(mcp, fn, name=stem, source="synthesized")
             seen[stem] = digest
