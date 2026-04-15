@@ -51,9 +51,9 @@ Plans:
 **Plans:** 3/3 plans complete
 
 Plans:
-- [ ] 02-01-PLAN.md — Create registry.py with namespace enforcement, source tagging, and Wave 0 test scaffolds
-- [ ] 02-02-PLAN.md — Rebuild server.py to route all registrations through registry, export public API
-- [ ] 02-03-PLAN.md — Create synthesized tool watcher with lifespan integration
+- [x] 02-01-PLAN.md — Create registry.py with namespace enforcement, source tagging, and Wave 0 test scaffolds
+- [x] 02-02-PLAN.md — Rebuild server.py to route all registrations through registry, export public API
+- [x] 02-03-PLAN.md — Create synthesized tool watcher with lifespan integration
 
 ### Phase 3: Learning Pipeline
 **Goal**: The bridge observes repeated Flame operations, synthesizes them into reusable MCP tools, hot-registers them in the live server, and tracks their reliability via a probation system
