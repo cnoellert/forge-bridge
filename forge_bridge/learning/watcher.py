@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
+    from forge_bridge.learning.probation import ProbationTracker
+
 logger = logging.getLogger(__name__)
 
 # Default: ~/.forge-bridge/synthesized/
@@ -28,6 +30,7 @@ async def watch_synthesized_tools(
     mcp: "FastMCP",
     synthesized_dir: Path | None = None,
     poll_interval: float = _POLL_INTERVAL,
+    tracker: "ProbationTracker | None" = None,
 ) -> None:
     """Asyncio polling loop: hot-load new/changed synthesized tools."""
     synth_dir = synthesized_dir or SYNTHESIZED_DIR
@@ -36,7 +39,7 @@ async def watch_synthesized_tools(
     while True:
         await asyncio.sleep(poll_interval)
         try:
-            _scan_once(mcp, seen, synth_dir)
+            _scan_once(mcp, seen, synth_dir, tracker=tracker)
         except Exception:
             logger.exception("Error in synthesized tool watcher")
 
@@ -49,6 +52,7 @@ def _scan_once(
     mcp: "FastMCP",
     seen: dict[str, str],
     synthesized_dir: Path,
+    tracker: "ProbationTracker | None" = None,
 ) -> None:
     """Single scan pass — detect new, changed, and deleted files."""
     if not synthesized_dir.exists():
@@ -72,6 +76,8 @@ def _scan_once(
         fn = _load_fn(path, stem)
         if fn is None:
             continue
+        if tracker is not None:
+            fn = tracker.wrap(fn, stem, mcp)
         from forge_bridge.mcp.registry import register_tool
         try:
             register_tool(mcp, fn, name=stem, source="synthesized")

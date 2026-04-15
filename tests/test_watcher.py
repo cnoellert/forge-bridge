@@ -1,7 +1,9 @@
 """Tests for forge_bridge.learning.watcher — synthesized tool hot-loading."""
 import pytest
+from unittest.mock import MagicMock, patch
 from mcp.server.fastmcp import FastMCP
 from forge_bridge.learning.watcher import _scan_once, _load_fn
+from forge_bridge.learning.probation import ProbationTracker
 
 
 @pytest.fixture
@@ -86,3 +88,32 @@ class TestWatcherEdgeCases:
         _scan_once(fresh_mcp, seen, synth_dir)
         assert "synth_mismatch" not in fresh_mcp._tool_manager._tools
         assert "synth_mismatch" not in seen
+
+
+class TestWatcherTrackerIntegration:
+    def test_tracker_none_no_wrapping(self, fresh_mcp, synth_dir):
+        """When tracker is None, tools are registered without wrapping."""
+        seen = {}
+        _write_tool(synth_dir, "synth_plain")
+        _scan_once(fresh_mcp, seen, synth_dir, tracker=None)
+        assert "synth_plain" in fresh_mcp._tool_manager._tools
+        assert "synth_plain" in seen
+
+    def test_tracker_wraps_before_registration(self, fresh_mcp, synth_dir, tmp_path):
+        """When tracker is provided, wrap() is called before register_tool."""
+        quarantine = tmp_path / "quarantined"
+        tracker = ProbationTracker(
+            failure_threshold=3,
+            synth_dir=synth_dir,
+            quarantine_dir=quarantine,
+        )
+        seen = {}
+        _write_tool(synth_dir, "synth_tracked")
+
+        with patch.object(tracker, "wrap", wraps=tracker.wrap) as mock_wrap:
+            _scan_once(fresh_mcp, seen, synth_dir, tracker=tracker)
+            mock_wrap.assert_called_once()
+            call_args = mock_wrap.call_args
+            assert call_args[0][1] == "synth_tracked"  # tool_name arg
+
+        assert "synth_tracked" in fresh_mcp._tool_manager._tools
