@@ -2,7 +2,7 @@
 
 ## What This Is
 
-forge-bridge is protocol-agnostic middleware for post-production pipelines — a communication bus with a canonical vocabulary that any endpoint (Flame, Maya, editorial systems, LLM agents) can connect to. This project consolidates the standalone forge-bridge as the canonical pip-installable package, brings it to parity with the evolved tools in projekt-forge, adds a learning pipeline ported from FlameSavant that auto-promotes repeated operations into reusable skills, and makes the MCP server pluggable so projekt-forge can extend it as a downstream dependency.
+forge-bridge is protocol-agnostic middleware for post-production pipelines — a communication bus with a canonical vocabulary that any endpoint (Flame, Maya, editorial systems, LLM agents) can connect to. As of v1.0, it ships as a standalone pip-installable package with full Flame tool parity (matching projekt-forge), an LLM-powered learning pipeline that auto-promotes repeated operations into reusable MCP tools, and a pluggable MCP server that downstream consumers can extend.
 
 ## Core Value
 
@@ -12,40 +12,33 @@ Make forge-bridge the single canonical package (`pip install forge-bridge`) that
 
 ### Validated
 
-<!-- Shipped and confirmed valuable — inferred from existing codebase. -->
-
 - ✓ HTTP bridge running inside Flame on port 9999, accepting Python code via POST /exec — existing
 - ✓ MCP server exposing Flame tools (project, timeline, batch, publish, utility) to LLM agents — existing
-- ✓ Canonical vocabulary layer with entities (Project, Sequence, Shot, Version, Media, Layer, Stack, Asset) and traits (Versionable, Locatable, Relational) — existing
+- ✓ Canonical vocabulary layer with entities and traits — existing
 - ✓ WebSocket server with wire protocol, connection management, and event-driven pub/sub — existing
 - ✓ PostgreSQL persistence for entities, relationships, events, and registry — existing
 - ✓ Async/sync client pair for connecting to forge-bridge server — existing
 - ✓ Flame endpoint that syncs Flame segments to forge-bridge shots bidirectionally — existing
 - ✓ Registry system for roles and relationship types with orphan protection — existing
-- ✓ LLM router with sensitivity-based routing between local Ollama and cloud Claude — existing (llm_router.py, untracked)
+- ✓ Flame tools updated to parity with projekt-forge (reconform, switch_grade, expanded timeline/batch/publish) — v1.0
+- ✓ Pydantic models for tool input validation — v1.0
+- ✓ LLM router promoted to forge_bridge/llm/ with async API, configurable system prompt, optional deps — v1.0
+- ✓ LLM router health check exposed as MCP resource (forge://llm/health) — v1.0
+- ✓ MCP server rebuilt with flame_*/forge_* namespace, synthesized tool registration, pluggable tool API — v1.0
+- ✓ Pluggable tool registration API (register_tools()) for downstream consumers — v1.0
+- ✓ Learning pipeline: execution log with JSONL persistence, replay on startup, intent tracking — v1.0
+- ✓ Learning pipeline: skill synthesizer targeting Python MCP tools, using LLM router as backend — v1.0
+- ✓ Learning pipeline: registry watcher for dynamic tool registration — v1.0
+- ✓ Learning pipeline: probation system for synthesized tools (success/failure tracking, quarantine) — v1.0
+- ✓ Learning pipeline wired into bridge.py as optional hook — v1.0
 
 ### Active
 
-<!-- Current scope. Building toward these. Phases 0-3. -->
-
-- [ ] Flame tools updated to parity with projekt-forge (reconform, switch_grade, expanded timeline/batch/publish)
-- [ ] Pydantic models for tool input validation
-- [ ] LLM router promoted to forge_bridge/llm/ with async API, configurable system prompt, optional deps
-- [ ] LLM router health check exposed as MCP resource
-- [x] Learning pipeline: execution log with JSONL persistence, replay on startup, intent tracking — Validated in Phase 3: Learning Pipeline
-- [x] Learning pipeline: skill synthesizer targeting Python MCP tools, using LLM router as backend — Validated in Phase 3: Learning Pipeline
-- [x] Learning pipeline: registry watcher for dynamic tool registration — Validated in Phase 2: MCP Server Rebuild
-- [x] Learning pipeline: probation system for synthesized tools (success/failure tracking) — Validated in Phase 3: Learning Pipeline
-- [x] Learning pipeline wired into bridge.py as optional hook — Validated in Phase 3: Learning Pipeline
-- [ ] MCP server rebuilt with flame_*/forge_* namespace, synthesized tool registration, pluggable tool API
-- [ ] Pluggable tool registration API (register_tools()) for downstream consumers like projekt-forge
+- [ ] Rewire projekt-forge to consume forge-bridge as pip dependency
+- [ ] Learning pipeline integration in projekt-forge (override LLM, enrich prompts, persist to forge DB)
 
 ### Out of Scope
 
-<!-- Explicit boundaries. Phases 4-5 are a separate project in projekt-forge. -->
-
-- Rewiring projekt-forge to consume forge-bridge as dependency — Phase 4, separate GSD project
-- Learning pipeline integration in projekt-forge (override LLM, enrich prompts, persist to forge DB) — Phase 5, separate GSD project
 - Forge-specific tools (catalog, orchestrate, scan, seed) — belong in projekt-forge
 - Forge-specific CLI, config, database (users/roles/invites), scanner, seeder — belong in projekt-forge
 - Authentication — deferred, local-only for now
@@ -54,11 +47,11 @@ Make forge-bridge the single canonical package (`pip install forge-bridge`) that
 
 ## Context
 
-- forge-bridge diverged into two codebases: standalone (has vocabulary/WebSocket/store) and projekt-forge (has evolved CLI/tools/DB). This project merges the best of both into standalone.
-- FlameSavant (Josh's project, JavaScript) has a learning pipeline (ExecutionLog, SkillSynthesizer, RegistryWatcher) that will be ported to Python with improvements. Source: `/Users/cnoellert/Documents/GitHub/FlameSavant/src/learning/` and `/Users/cnoellert/Documents/GitHub/FlameSavant/src/agents/SkillSynthesizer.js`
-- projekt-forge tools to pull from: `/Users/cnoellert/Documents/GitHub/projekt-forge/forge_bridge/tools/`
-- The existing `llm_router.py` (untracked) has working sensitivity-based routing but needs async support, configurable prompts, and optional dependencies before promotion.
-- Local LLM (Ollama on assist-01, qwen2.5-coder:32b) changes economics — synthesis becomes free, enabling lower promotion thresholds and re-synthesis on failure.
+- v1.0 shipped: 19,003 LOC Python, 159 tests passing, 66 commits across 3 phases
+- forge-bridge is now the canonical standalone package. projekt-forge integration is next.
+- FlameSavant learning pipeline successfully ported from JavaScript to Python with improvements (AST normalization, manifest-based file validation, safety blocklist)
+- Live-tested end-to-end: Flame execution -> JSONL log -> promotion -> qwen2.5-coder:32b synthesis -> validated MCP tool on disk
+- Local LLM (Ollama on assist-01, qwen2.5-coder:32b) confirmed working for synthesis
 
 ## Constraints
 
@@ -72,11 +65,14 @@ Make forge-bridge the single canonical package (`pip install forge-bridge`) that
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Phases 0-3 only in this project | Phases 4-5 require changes in projekt-forge repo | — Pending |
+| Phases 1-3 only in this project | Phases 4-5 require changes in projekt-forge repo | ✓ Shipped v1.0 |
 | Port FlameSavant learning pipeline from JS to Python | Same concepts, different language — Python matches forge-bridge's ecosystem | ✓ Complete (Phase 3) |
-| LLM router in forge_bridge/llm/ | Shared infrastructure for synthesizer and any tool needing generation | — Pending |
-| Optional deps via pyproject.toml extras | Users who don't need LLM features shouldn't install openai/anthropic | — Pending |
+| LLM router in forge_bridge/llm/ | Shared infrastructure for synthesizer and any tool needing generation | ✓ Complete (Phase 1) |
+| Optional deps via pyproject.toml extras | Users who don't need LLM features shouldn't install openai/anthropic | ✓ Complete (Phase 1) |
 | Synthesizer uses LLM router (not direct API calls) | Single point of control for model selection, sensitivity routing, cost management | ✓ Complete (Phase 3) |
+| Namespace-enforcing registry with source tagging | Prevents tool name collisions, enables provenance tracking | ✓ Complete (Phase 2) |
+| Manifest-based file validation in watcher | Prevents arbitrary code execution from rogue files in synthesized dir | ✓ Complete (Phase 3, code review fix) |
+| Synthesized tools must use bridge.execute(), never import flame | Tools run in MCP server process, not inside Flame — discovered during live testing | ✓ Complete (Phase 3, live test fix) |
 
 ---
-*Last updated: 2026-04-15 after Phase 3 completion*
+*Last updated: 2026-04-15 after v1.0 milestone*
