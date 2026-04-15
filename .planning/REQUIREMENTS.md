@@ -47,8 +47,8 @@ Requirements for this milestone (Phases 0-3). Each maps to roadmap phases.
 ### MCP Server & Pluggability
 
 - [x] **MCP-01**: Rebuild mcp/server.py with flame_*/forge_*/synth_* namespace separation
-- [ ] **MCP-02**: Dynamic tool registration using FastMCP add_tool()/remove_tool() for synthesized tools
-- [ ] **MCP-03**: Create forge_bridge/learning/watcher.py — asyncio polling on mcp/synthesized/, importlib hot-load
+- [x] **MCP-02**: Dynamic tool registration using FastMCP add_tool()/remove_tool() for synthesized tools
+- [x] **MCP-03**: Create forge_bridge/learning/watcher.py — asyncio polling on mcp/synthesized/, importlib hot-load
 - [x] **MCP-04**: Expose register_tools(mcp) pluggable API for downstream consumers (projekt-forge)
 - [x] **MCP-05**: Source tagging on all tools (_source: builtin/synthesized/user-taught) visible to LLM agents
 - [x] **MCP-06**: Synthesized tools use synth_* prefix, enforced at synthesis time against reserved name set
@@ -120,8 +120,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | LEARN-10 | Phase 3 | Pending |
 | LEARN-11 | Phase 3 | Pending |
 | MCP-01 | Phase 2 | Complete |
-| MCP-02 | Phase 2 | Pending |
-| MCP-03 | Phase 2 | Pending |
+| MCP-02 | Phase 2 | Complete |
+| MCP-03 | Phase 2 | Complete |
 | MCP-04 | Phase 2 | Complete |
 | MCP-05 | Phase 2 | Complete |
 | MCP-06 | Phase 2 | Complete |

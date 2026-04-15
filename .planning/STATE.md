@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Completed 02-01-PLAN.md
-last_updated: "2026-04-15T03:09:57.856Z"
+stopped_at: Completed 02-03-PLAN.md
+last_updated: "2026-04-15T03:13:59.663Z"
 last_activity: 2026-04-14 — Roadmap created, ready to plan Phase 1
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 10
-  completed_plans: 8
+  completed_plans: 9
   percent: 17
 ---
 
@@ -58,6 +58,7 @@ Progress: [██░░░░░░░░] 17%
 | Phase 01-tool-parity-llm-router P06 | 2min | 2 tasks | 2 files |
 | Phase 01-tool-parity-llm-router P07 | 155s | 2 tasks | 3 files |
 | Phase 02-mcp-server-rebuild P01 | 2min | 2 tasks | 3 files |
+| Phase 02-mcp-server-rebuild P03 | 2min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -89,6 +90,9 @@ Recent decisions affecting current work:
 - [Phase 02-mcp-server-rebuild]: register_builtins() is a stub in Plan 01 — filled when server.py is rebuilt in Plan 02
 - [Phase 02-mcp-server-rebuild]: meta={'_source': source} is the source tagging mechanism for MCP tools — surfaced in tools/list response
 - [Phase 02-mcp-server-rebuild]: synth_ prefix exclusively reserved for source='synthesized' — ValueError raised for all other sources
+- [Phase 02-mcp-server-rebuild]: SHA-256 polling (5s interval) chosen over filesystem events — no platform-specific dependencies, consistent cross-platform behavior
+- [Phase 02-mcp-server-rebuild]: watcher.py imports register_tool inline inside _scan_once() to avoid circular import at module load time
+- [Phase 02-mcp-server-rebuild]: _lifespan defined before mcp = FastMCP() — Python resolves _startup/_shutdown at call time not definition time
 
 ### Pending Todos
 
@@ -101,6 +105,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-15T03:09:57.854Z
-Stopped at: Completed 02-01-PLAN.md
+Last session: 2026-04-15T03:13:59.662Z
+Stopped at: Completed 02-03-PLAN.md
 Resume file: None
