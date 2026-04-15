@@ -151,6 +151,11 @@ else:
 
 
 async def rename_segments(params: RenameSegments) -> str:
+    # Verified identical to projekt-forge 2026-04-14
+    # Differences: standalone uses 'from forge_mcp import bridge' (correct for this repo);
+    # projekt-forge uses 'from forge_bridge import bridge'. Logic is otherwise identical:
+    # same iteration pattern (all tracks across all versions), same fallback role ('graded'),
+    # same threading.Event pattern, same bridge.execute_and_read() call.
     """Rename all segments using shot_name + role + layer template."""
 
     # Role override as string 'None' for the bridge code to handle
