@@ -7,6 +7,7 @@ promotion counters without re-triggering synthesis.
 from __future__ import annotations
 
 import ast
+import fcntl
 import hashlib
 import json
 import logging
@@ -128,8 +129,12 @@ class ExecutionLog:
 
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with open(self._path, "a") as fp:
-            fp.write(json.dumps(rec) + "\n")
-            fp.flush()
+            fcntl.flock(fp, fcntl.LOCK_EX)
+            try:
+                fp.write(json.dumps(rec) + "\n")
+                fp.flush()
+            finally:
+                fcntl.flock(fp, fcntl.LOCK_UN)
 
         if self._counters[h] >= self._threshold and h not in self._promoted:
             return True
@@ -145,8 +150,12 @@ class ExecutionLog:
         }
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with open(self._path, "a") as fp:
-            fp.write(json.dumps(rec) + "\n")
-            fp.flush()
+            fcntl.flock(fp, fcntl.LOCK_EX)
+            try:
+                fp.write(json.dumps(rec) + "\n")
+                fp.flush()
+            finally:
+                fcntl.flock(fp, fcntl.LOCK_UN)
 
     def get_code(self, code_hash: str) -> Optional[str]:
         """Return the raw code for a given hash, or None."""
