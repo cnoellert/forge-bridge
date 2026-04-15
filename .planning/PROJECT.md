@@ -32,11 +32,11 @@ Make forge-bridge the single canonical package (`pip install forge-bridge`) that
 - [ ] Pydantic models for tool input validation
 - [ ] LLM router promoted to forge_bridge/llm/ with async API, configurable system prompt, optional deps
 - [ ] LLM router health check exposed as MCP resource
-- [ ] Learning pipeline: execution log with JSONL persistence, replay on startup, intent tracking
-- [ ] Learning pipeline: skill synthesizer targeting Python MCP tools, using LLM router as backend
-- [ ] Learning pipeline: registry watcher for dynamic tool registration
-- [ ] Learning pipeline: probation system for synthesized tools (success/failure tracking)
-- [ ] Learning pipeline wired into bridge.py as optional hook
+- [x] Learning pipeline: execution log with JSONL persistence, replay on startup, intent tracking — Validated in Phase 3: Learning Pipeline
+- [x] Learning pipeline: skill synthesizer targeting Python MCP tools, using LLM router as backend — Validated in Phase 3: Learning Pipeline
+- [x] Learning pipeline: registry watcher for dynamic tool registration — Validated in Phase 2: MCP Server Rebuild
+- [x] Learning pipeline: probation system for synthesized tools (success/failure tracking) — Validated in Phase 3: Learning Pipeline
+- [x] Learning pipeline wired into bridge.py as optional hook — Validated in Phase 3: Learning Pipeline
 - [ ] MCP server rebuilt with flame_*/forge_* namespace, synthesized tool registration, pluggable tool API
 - [ ] Pluggable tool registration API (register_tools()) for downstream consumers like projekt-forge
 
@@ -73,10 +73,10 @@ Make forge-bridge the single canonical package (`pip install forge-bridge`) that
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
 | Phases 0-3 only in this project | Phases 4-5 require changes in projekt-forge repo | — Pending |
-| Port FlameSavant learning pipeline from JS to Python | Same concepts, different language — Python matches forge-bridge's ecosystem | — Pending |
+| Port FlameSavant learning pipeline from JS to Python | Same concepts, different language — Python matches forge-bridge's ecosystem | ✓ Complete (Phase 3) |
 | LLM router in forge_bridge/llm/ | Shared infrastructure for synthesizer and any tool needing generation | — Pending |
 | Optional deps via pyproject.toml extras | Users who don't need LLM features shouldn't install openai/anthropic | — Pending |
-| Synthesizer uses LLM router (not direct API calls) | Single point of control for model selection, sensitivity routing, cost management | — Pending |
+| Synthesizer uses LLM router (not direct API calls) | Single point of control for model selection, sensitivity routing, cost management | ✓ Complete (Phase 3) |
 
 ---
-*Last updated: 2026-04-14 after initialization*
+*Last updated: 2026-04-15 after Phase 3 completion*
