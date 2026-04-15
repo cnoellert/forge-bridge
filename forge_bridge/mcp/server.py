@@ -199,6 +199,10 @@ try:
     from forge_bridge.tools import batch as flame_batch
     from forge_bridge.tools import utility as flame_utility
     from forge_bridge.tools import publish as flame_publish
+    from forge_bridge.tools import reconform as flame_reconform
+    from forge_bridge.tools import switch_grade as flame_switch_grade_mod
+
+    # ── Project & Workspace ─────────────────────────────────────
 
     mcp.tool(name="flame_ping",        annotations={"readOnlyHint": True})(flame_utility.ping)
     mcp.tool(name="flame_get_project", annotations={"readOnlyHint": True})(flame_project.get_project)
@@ -213,6 +217,8 @@ try:
             "idempotentHint": True,
         },
     )(flame_project.get_context)
+
+    # ── Timeline ────────────────────────────────────────────────
 
     mcp.tool(name="flame_get_sequence_segments",
              annotations={"title": "Get all segments with FORGE metadata", "readOnlyHint": True}
@@ -238,8 +244,163 @@ try:
              annotations={"title": "Set an attribute on a single segment", "readOnlyHint": False}
              )(flame_timeline.set_segment_attribute)
 
+    # ── Timeline (new — Plan 04/05) ─────────────────────────────
+
+    mcp.tool(
+        name="flame_disconnect_segments",
+        annotations={
+            "title": "Disconnect Segments from Source Media",
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )(flame_timeline.disconnect_segments)
+
+    mcp.tool(
+        name="flame_inspect_sequence_versions",
+        annotations={
+            "title": "Inspect Sequence Versions",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )(flame_timeline.inspect_sequence_versions)
+
+    mcp.tool(
+        name="flame_create_version",
+        annotations={
+            "title": "Create Sequence Version",
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        },
+    )(flame_timeline.create_version)
+
+    mcp.tool(
+        name="flame_reconstruct_track",
+        annotations={
+            "title": "Reconstruct Track from Segments",
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )(flame_timeline.reconstruct_track)
+
+    mcp.tool(
+        name="flame_clone_version",
+        annotations={
+            "title": "Clone Sequence Version",
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        },
+    )(flame_timeline.clone_version)
+
+    mcp.tool(
+        name="flame_replace_segment_media",
+        annotations={
+            "title": "Replace Segment Media",
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )(flame_timeline.replace_segment_media)
+
+    mcp.tool(
+        name="flame_scan_roles",
+        annotations={
+            "title": "Scan Track Roles",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )(flame_timeline.scan_roles)
+
+    mcp.tool(
+        name="flame_assign_roles",
+        annotations={
+            "title": "Assign Roles to Tracks",
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )(flame_timeline.assign_roles)
+
+    # ── Batch (new — Plan 04) ───────────────────────────────────
+
+    mcp.tool(
+        name="flame_inspect_batch_xml",
+        annotations={
+            "title": "Inspect Batch XML",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )(flame_batch.inspect_batch_xml)
+
+    mcp.tool(
+        name="flame_prune_batch_xml",
+        annotations={
+            "title": "Prune Batch XML",
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )(flame_batch.prune_batch_xml)
+
+    # ── Reconform Tools ─────────────────────────────────────────
+
+    mcp.tool(
+        name="flame_reconform_sequence",
+        annotations={
+            "title": "Reconform Sequence",
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        },
+    )(flame_reconform.reconform_sequence)
+
+    # ── Grade Tools ─────────────────────────────────────────────
+
+    mcp.tool(
+        name="flame_switch_grade",
+        annotations={
+            "title": "Switch Grade on Shot",
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )(flame_switch_grade_mod.switch_grade)
+
+    mcp.tool(
+        name="flame_query_alternatives",
+        annotations={
+            "title": "Query Grade Alternatives",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )(flame_switch_grade_mod.query_alternatives)
+
 except ImportError:
     logger.warning("Flame HTTP bridge tools not available — forge_bridge.tools not found")
+
+# ── LLM Resources ───────────────────────────────────────────────────────
+from forge_bridge.llm.health import register_llm_resources
+register_llm_resources(mcp)
 
 # ── Publish workflow tools (forge-bridge state, no Flame dependency) ──
 
