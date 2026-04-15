@@ -68,8 +68,8 @@ Plans:
 
 Plans:
 - [x] 03-01-PLAN.md — Execution log with AST normalization, JSONL persistence, and bridge callback
-- [ ] 03-02-PLAN.md — Skill synthesizer with LLM integration and 3-stage validation
-- [ ] 03-03-PLAN.md — Probation system with failure tracking and watcher integration
+- [x] 03-02-PLAN.md — Skill synthesizer with LLM integration and 3-stage validation
+- [x] 03-03-PLAN.md — Probation system with failure tracking and watcher integration
 
 ## Progress
 
