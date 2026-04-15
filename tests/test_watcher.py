@@ -1,58 +1,88 @@
-"""
-Wave 0 test scaffolds for forge_bridge.learning.watcher — asyncio file watcher.
-
-These tests are SKIPPED stubs — implementation lands in Plan 03.
-They serve as living documentation of the behaviours Plan 03 must satisfy.
-
-Requirements covered:
-    MCP-03  Asyncio polling watcher: hot-load new/changed synthesized tools
-            from mcp/synthesized/ using importlib; remove tools when file disappears.
-"""
-
+"""Tests for forge_bridge.learning.watcher — synthesized tool hot-loading."""
 import pytest
-
-# Uncomment when watcher is implemented in Plan 03:
-# from forge_bridge.learning.watcher import watch_synthesized_tools, _scan_once
-
-
-@pytest.mark.skip(reason="Implemented in Plan 03")
-def test_watcher_loads_new_file():
-    """Watcher detects a new .py file in synthesized/ and calls add_tool.
-
-    Scenario:
-        1. Start with an empty synthesized/ directory.
-        2. Drop a valid synth_my_tool.py containing `def synth_my_tool() -> str: ...`
-        3. Call _scan_once(mcp, seen={}).
-        4. Assert 'synth_my_tool' is present in mcp._tool_manager._tools.
-        5. Assert seen['synth_my_tool'] matches the file's SHA-256 digest.
-    """
-    pass
+from mcp.server.fastmcp import FastMCP
+from forge_bridge.learning.watcher import _scan_once, _load_fn
 
 
-@pytest.mark.skip(reason="Implemented in Plan 03")
-def test_watcher_reloads_changed_file():
-    """Watcher detects a changed .py file and re-registers the updated tool.
-
-    Scenario:
-        1. Register an initial version of synth_my_tool via _scan_once.
-        2. Overwrite the file with a new implementation (different bytes = new hash).
-        3. Call _scan_once again with the existing seen dict.
-        4. Assert the tool in mcp._tool_manager._tools reflects the updated function
-           (e.g. check return annotation or docstring changed).
-        5. Assert seen['synth_my_tool'] is updated to the new SHA-256 digest.
-    """
-    pass
+@pytest.fixture
+def synth_dir(tmp_path):
+    """Create a temporary synthesized directory."""
+    d = tmp_path / "synthesized"
+    d.mkdir()
+    return d
 
 
-@pytest.mark.skip(reason="Implemented in Plan 03")
-def test_watcher_removes_deleted_file():
-    """Watcher removes a tool from the registry when its .py file is deleted.
+@pytest.fixture
+def fresh_mcp():
+    return FastMCP("test_watcher")
 
-    Scenario:
-        1. Register synth_my_tool via _scan_once (tool present in mcp._tool_manager._tools).
-        2. Delete the file from synthesized/.
-        3. Call _scan_once again.
-        4. Assert 'synth_my_tool' is absent from mcp._tool_manager._tools.
-        5. Assert 'synth_my_tool' is absent from the seen dict.
-    """
-    pass
+
+def _write_tool(synth_dir, name, body="return 'ok'"):
+    """Write a minimal tool .py file."""
+    code = f"def {name}() -> str:\n    \"\"\"Test tool.\"\"\"\n    {body}\n"
+    path = synth_dir / f"{name}.py"
+    path.write_text(code)
+    return path
+
+
+class TestWatcherLoadsNewFile:
+    def test_new_file_registers_tool(self, fresh_mcp, synth_dir):
+        seen = {}
+        _write_tool(synth_dir, "synth_hello")
+        _scan_once(fresh_mcp, seen, synth_dir)
+        assert "synth_hello" in fresh_mcp._tool_manager._tools
+        assert "synth_hello" in seen
+
+    def test_new_file_has_synthesized_source(self, fresh_mcp, synth_dir):
+        seen = {}
+        _write_tool(synth_dir, "synth_tagged")
+        _scan_once(fresh_mcp, seen, synth_dir)
+        tool = fresh_mcp._tool_manager._tools["synth_tagged"]
+        assert tool.meta == {"_source": "synthesized"}
+
+
+class TestWatcherReloadsChangedFile:
+    def test_changed_file_updates_tool(self, fresh_mcp, synth_dir):
+        seen = {}
+        _write_tool(synth_dir, "synth_evolve", body="return 'v1'")
+        _scan_once(fresh_mcp, seen, synth_dir)
+        old_hash = seen["synth_evolve"]
+        # Modify the file
+        _write_tool(synth_dir, "synth_evolve", body="return 'v2'")
+        _scan_once(fresh_mcp, seen, synth_dir)
+        assert seen["synth_evolve"] != old_hash
+        assert "synth_evolve" in fresh_mcp._tool_manager._tools
+
+
+class TestWatcherRemovesDeletedFile:
+    def test_deleted_file_removes_tool(self, fresh_mcp, synth_dir):
+        seen = {}
+        path = _write_tool(synth_dir, "synth_goodbye")
+        _scan_once(fresh_mcp, seen, synth_dir)
+        assert "synth_goodbye" in fresh_mcp._tool_manager._tools
+        # Delete the file
+        path.unlink()
+        _scan_once(fresh_mcp, seen, synth_dir)
+        assert "synth_goodbye" not in fresh_mcp._tool_manager._tools
+        assert "synth_goodbye" not in seen
+
+
+class TestWatcherEdgeCases:
+    def test_skips_dunder_files(self, fresh_mcp, synth_dir):
+        seen = {}
+        (synth_dir / "__init__.py").write_text("")
+        _scan_once(fresh_mcp, seen, synth_dir)
+        assert len(seen) == 0
+
+    def test_nonexistent_dir_is_noop(self, fresh_mcp, tmp_path):
+        seen = {}
+        _scan_once(fresh_mcp, seen, tmp_path / "does_not_exist")
+        assert len(seen) == 0
+
+    def test_file_without_matching_callable_skipped(self, fresh_mcp, synth_dir):
+        seen = {}
+        # File has wrong function name
+        (synth_dir / "synth_mismatch.py").write_text("def other_name() -> str:\n    return 'x'\n")
+        _scan_once(fresh_mcp, seen, synth_dir)
+        assert "synth_mismatch" not in fresh_mcp._tool_manager._tools
+        assert "synth_mismatch" not in seen
