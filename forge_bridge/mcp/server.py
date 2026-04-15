@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from contextlib import asynccontextmanager
 
 from mcp.server.fastmcp import FastMCP
 
@@ -57,6 +58,31 @@ def get_client() -> AsyncClient:
 
 
 # ─────────────────────────────────────────────────────────────
+# Server lifespan — connect client, start watcher, clean up on exit
+# ─────────────────────────────────────────────────────────────
+
+@asynccontextmanager
+async def _lifespan(mcp_server: FastMCP):
+    """Server lifespan: connect client, start watcher, clean up on exit."""
+    # Connect to forge-bridge
+    await _startup()
+
+    # Launch synthesized tool watcher as background task
+    from forge_bridge.learning.watcher import watch_synthesized_tools
+    watcher_task = asyncio.create_task(watch_synthesized_tools(mcp_server))
+
+    try:
+        yield
+    finally:
+        watcher_task.cancel()
+        try:
+            await watcher_task
+        except asyncio.CancelledError:
+            pass
+        await _shutdown()
+
+
+# ─────────────────────────────────────────────────────────────
 # MCP server definition
 # ─────────────────────────────────────────────────────────────
 
@@ -67,6 +93,7 @@ mcp = FastMCP(
         "Use forge_* tools to query and modify shots, sequences, versions, "
         "and media. Use flame_* tools for direct Flame API operations."
     ),
+    lifespan=_lifespan,
 )
 
 # ── forge-bridge tools (pipeline state) ──────────────────────
