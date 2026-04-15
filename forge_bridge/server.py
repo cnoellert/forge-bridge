@@ -28,6 +28,7 @@ import sys
 from mcp.server.fastmcp import FastMCP
 
 from forge_mcp.tools import project, timeline, batch, utility, publish
+from forge_bridge.llm.health import register_llm_resources
 
 # ── Server ──────────────────────────────────────────────────────────────
 
@@ -295,6 +296,9 @@ mcp.tool(
         "openWorldHint": False,
     },
 )(publish.assemble_published_sequence)
+
+# ── LLM Resources ──────────────────────────────────────────────────────
+register_llm_resources(mcp)
 
 
 # ── Entry Point ─────────────────────────────────────────────────────────
