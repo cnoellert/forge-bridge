@@ -26,8 +26,8 @@ Requirements for this milestone (Phases 0-3). Each maps to roadmap phases.
 - [x] **LLM-03**: Keep sync complete() as convenience wrapper
 - [x] **LLM-04**: Extract hardcoded system prompt and infrastructure hostnames (assist-01, portofino) into configuration (env vars)
 - [x] **LLM-05**: Move openai and anthropic to optional dependencies in pyproject.toml (pip install forge-bridge[llm])
-- [ ] **LLM-06**: Add health check reporting which backends are available (async and sync)
-- [ ] **LLM-07**: Expose LLM health check as MCP resource (forge://llm/health)
+- [x] **LLM-06**: Add health check reporting which backends are available (async and sync)
+- [x] **LLM-07**: Expose LLM health check as MCP resource (forge://llm/health)
 - [x] **LLM-08**: Fix duplicate dependency declarations in pyproject.toml
 
 ### Learning Pipeline
@@ -105,8 +105,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | LLM-03 | Phase 1 | Complete |
 | LLM-04 | Phase 1 | Complete |
 | LLM-05 | Phase 1 | Complete |
-| LLM-06 | Phase 1 | Pending |
-| LLM-07 | Phase 1 | Pending |
+| LLM-06 | Phase 1 | Complete |
+| LLM-07 | Phase 1 | Complete |
 | LLM-08 | Phase 1 | Complete |
 | LEARN-01 | Phase 3 | Pending |
 | LEARN-02 | Phase 3 | Pending |
