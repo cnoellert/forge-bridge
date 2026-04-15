@@ -45,8 +45,10 @@ Write a single async Python function that:
 - Has typed parameters (str, int, float, bool) extracted from the code literals
 - Has a return type annotation (-> str or -> dict)
 - Has a docstring explaining what it does
-- Calls forge_bridge.bridge.execute() or execute_json() internally
+- MUST call forge_bridge.bridge.execute() or execute_json() to run Flame code — this tool runs in the MCP server, NOT inside Flame, so it cannot `import flame` directly
 - Contains no module-level imports (put imports inside the function body)
+- NEVER import flame — instead, build the Flame code as a string and pass it to execute(code_string)
+- Import bridge functions INSIDE the function body: `from forge_bridge.bridge import execute, execute_json, execute_and_read`
 
 Output only the function definition."""
 
