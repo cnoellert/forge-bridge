@@ -131,3 +131,58 @@ def test_dynamic_registration():
 
     # Tool should be gone
     assert "flame_dynamic" not in mcp._tool_manager._tools
+
+
+def test_register_tools_builtin_source():
+    """PKG-01: register_tools(source='builtin') is accepted and the tool's
+    _source metadata is 'builtin' for downstream builtin callers."""
+    mcp = _fresh_mcp()
+
+    def my_tool() -> str:
+        """A downstream-supplied tool."""
+        return "ok"
+
+    register_tools(mcp, [my_tool], prefix="forge_", source="builtin")
+
+    # Tool registered under the expected name and carries source=builtin metadata
+    registered = mcp._tool_manager._tools
+    assert "forge_my_tool" in registered
+    tool = registered["forge_my_tool"]
+    # FastMCP stores meta on the tool object; check meta._source
+    assert tool.meta == {"_source": "builtin"}
+
+
+def test_register_tools_post_run_guard():
+    """API-05: register_tools raises RuntimeError when _server_started is True."""
+    import forge_bridge.mcp.server as server_mod
+    mcp = _fresh_mcp()
+
+    def my_tool() -> str:
+        """Late tool."""
+        return "late"
+
+    original = server_mod._server_started
+    try:
+        server_mod._server_started = True
+        with pytest.raises(RuntimeError, match="cannot be called after the MCP server has started"):
+            register_tools(mcp, [my_tool], prefix="forge_")
+    finally:
+        server_mod._server_started = original
+
+
+def test_register_tools_pre_run_ok():
+    """API-05: register_tools succeeds when _server_started is False (default)."""
+    import forge_bridge.mcp.server as server_mod
+    mcp = _fresh_mcp()
+
+    def my_tool() -> str:
+        """Early tool."""
+        return "early"
+
+    original = server_mod._server_started
+    try:
+        server_mod._server_started = False
+        register_tools(mcp, [my_tool], prefix="forge_")  # must not raise
+        assert "forge_my_tool" in mcp._tool_manager._tools
+    finally:
+        server_mod._server_started = original
