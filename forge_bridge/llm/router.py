@@ -3,7 +3,7 @@ forge_bridge.llm.router
 -----------------------
 Async LLM router for forge-bridge.
 
-Routes LLM requests to local (Ollama on assist-01) or cloud (Anthropic Claude)
+Routes LLM requests to local Ollama or cloud Anthropic Claude
 based on data sensitivity.
 
 Sensitive data (shot names, client info, file paths, SQL, openclip XML) -> local
@@ -16,7 +16,7 @@ Usage:
 
     # Sensitive -- stays on local network (async)
     result = await router.acomplete(
-        "Write a regex to extract shot name from: ACM_0010_comp_v003",
+        "Write a regex to extract shot name from: PROJ_0010_comp_v003",
         sensitive=True
     )
 
@@ -34,42 +34,31 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Endpoints & models
-# ---------------------------------------------------------------------------
-
-LOCAL_BASE_URL = os.environ.get("FORGE_LOCAL_LLM_URL", "http://assist-01:11434/v1")
-LOCAL_MODEL    = os.environ.get("FORGE_LOCAL_MODEL",   "qwen2.5-coder:32b")
-CLOUD_MODEL    = os.environ.get("FORGE_CLOUD_MODEL",   "claude-opus-4-6")
-
 # Default system prompt injected into every local call.
 # Keeps Flame/pipeline context in scope without repeating it per-call.
+# Deployment-specific strings (hostnames, DB creds, machine specs) are excluded —
+# callers that need them can pass system_prompt= to LLMRouter() or acomplete().
 _DEFAULT_SYSTEM_PROMPT = """
-You are a VFX pipeline assistant embedded in FORGE, a suite of Autodesk Flame
+You are a VFX pipeline assistant embedded in a toolkit of Autodesk Flame
 Python tools for shot management and publishing.
 
 Key context:
 - Flame version: 2026, Python API via `import flame`
-- Shot naming convention: {project}_{shot}_{layer}_v{version}  e.g. ACM_0010_comp_v003
+- Shot naming convention: {project}_{shot}_{layer}_v{version}  e.g. PROJ_0010_comp_v003
 - Openclip files: XML-based multi-version containers written by Flame's MIO
   reader. Use Flame's native bracket notation [0991-1017] for frame ranges,
   NOT printf %04d notation.
-- forge_bridge PostgreSQL on portofino: host=localhost port=7533 user=forge db=forge_bridge
-- Desktop: Flame on portofino (MacBook Pro, macOS, Apple Silicon)
-- Render: flame-01 (Threadripper, Linux, RTX A5000 Ada) via Backburner / cmdjob
 
 Respond with concise, production-ready Python unless asked otherwise.
 """.strip()
 
-SYSTEM_PROMPT = os.environ.get("FORGE_SYSTEM_PROMPT", _DEFAULT_SYSTEM_PROMPT)
-
 
 class LLMRouter:
     """
-    Two-tier async LLM router for FORGE pipeline tools.
+    Two-tier async LLM router for forge-bridge pipeline tools.
 
     Tier 1 (sensitive=True, default):
-        -> Ollama on assist-01 (local network, no data egress)
+        -> local Ollama (local network, no data egress)
         -> Model: qwen2.5-coder:32b
 
     Tier 2 (sensitive=False):
@@ -77,14 +66,35 @@ class LLMRouter:
         -> Model: claude-opus-4-6
 
     Environment overrides:
-        FORGE_LOCAL_LLM_URL    default: http://assist-01:11434/v1
+        FORGE_LOCAL_LLM_URL    default: http://localhost:11434/v1
         FORGE_LOCAL_MODEL      default: qwen2.5-coder:32b
         FORGE_CLOUD_MODEL      default: claude-opus-4-6
         FORGE_SYSTEM_PROMPT    default: built-in VFX pipeline prompt
         ANTHROPIC_API_KEY      required for cloud calls
+
+    Constructor kwargs override env vars, which override hardcoded defaults.
+    Env reads happen at instance construction time, not at module import.
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        local_url: str | None = None,
+        local_model: str | None = None,
+        cloud_model: str | None = None,
+        system_prompt: str | None = None,
+    ) -> None:
+        self.local_url = local_url or os.environ.get(
+            "FORGE_LOCAL_LLM_URL", "http://localhost:11434/v1"
+        )
+        self.local_model = local_model or os.environ.get(
+            "FORGE_LOCAL_MODEL", "qwen2.5-coder:32b"
+        )
+        self.cloud_model = cloud_model or os.environ.get(
+            "FORGE_CLOUD_MODEL", "claude-opus-4-6"
+        )
+        self.system_prompt = system_prompt or os.environ.get(
+            "FORGE_SYSTEM_PROMPT", _DEFAULT_SYSTEM_PROMPT
+        )
         self._local_client: Optional["AsyncOpenAI"] = None  # type: ignore[name-defined]
         self._cloud_client: Optional["AsyncAnthropic"] = None  # type: ignore[name-defined]
 
@@ -106,7 +116,7 @@ class LLMRouter:
             prompt:      The user message / task description.
             sensitive:   True (default) -> local model (no data egress).
                          False -> Claude cloud.
-            system:      Override system prompt. If None, uses SYSTEM_PROMPT
+            system:      Override system prompt. If None, uses self.system_prompt
                          for local calls, minimal prompt for cloud calls.
             temperature: Sampling temperature. Default 0.1 for deterministic
                          pipeline code generation.
@@ -150,8 +160,8 @@ class LLMRouter:
         status = {
             "local": False,
             "cloud": False,
-            "local_model": LOCAL_MODEL,
-            "cloud_model": CLOUD_MODEL,
+            "local_model": self.local_model,
+            "cloud_model": self.cloud_model,
         }
         try:
             client = self._get_local_client()
@@ -185,7 +195,7 @@ class LLMRouter:
                     "Install LLM support: pip install forge-bridge[llm]"
                 )
             self._local_client = AsyncOpenAI(
-                base_url=LOCAL_BASE_URL,
+                base_url=self.local_url,
                 api_key="ollama",  # Ollama ignores the key but AsyncOpenAI client requires one
             )
         return self._local_client
@@ -210,7 +220,7 @@ class LLMRouter:
         self, prompt: str, system: Optional[str], temperature: float
     ) -> str:
         client = self._get_local_client()
-        sys_msg = system if system is not None else SYSTEM_PROMPT
+        sys_msg = system if system is not None else self.system_prompt
         messages = []
         if sys_msg:
             messages.append({"role": "system", "content": sys_msg})
@@ -218,13 +228,13 @@ class LLMRouter:
 
         try:
             resp = await client.chat.completions.create(
-                model=LOCAL_MODEL,
+                model=self.local_model,
                 messages=messages,
                 temperature=temperature,
             )
             return resp.choices[0].message.content
         except Exception as e:
-            raise RuntimeError(f"Local LLM call failed ({LOCAL_BASE_URL}): {e}")
+            raise RuntimeError(f"Local LLM call failed ({self.local_url}): {e}")
 
     async def _async_cloud(
         self, prompt: str, system: Optional[str], temperature: float
@@ -234,7 +244,7 @@ class LLMRouter:
 
         try:
             resp = await client.messages.create(
-                model=CLOUD_MODEL,
+                model=self.cloud_model,
                 max_tokens=4096,
                 system=sys_msg,
                 messages=[{"role": "user", "content": prompt}],
@@ -245,7 +255,7 @@ class LLMRouter:
 
 
 # ---------------------------------------------------------------------------
-# Convenience singleton -- import and use directly in FORGE tools
+# Convenience singleton -- import and use directly in forge-bridge tools
 # ---------------------------------------------------------------------------
 _router: Optional[LLMRouter] = None
 
