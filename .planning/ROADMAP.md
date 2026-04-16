@@ -39,9 +39,9 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
   4. Calling `register_tools()` after `mcp.run()` raises `RuntimeError` with a clear message
   5. `grep -r "portofino\|assist-01\|ACM_" forge_bridge/` returns no matches
 **Plans**: 4 plans
-  - [ ] 04-01-PLAN.md — LLMRouter injection + publish.py scrub (API-02, PKG-03)
-  - [ ] 04-02-PLAN.md — MCP lifecycle rename + post-run guard (API-04, API-05, PKG-01)
-  - [ ] 04-03-PLAN.md — SkillSynthesizer class + test migration (API-03)
+  - [x] 04-01-PLAN.md — LLMRouter injection + publish.py scrub (API-02, PKG-03)
+  - [x] 04-02-PLAN.md — MCP lifecycle rename + post-run guard (API-04, API-05, PKG-01)
+  - [x] 04-03-PLAN.md — SkillSynthesizer class + test migration (API-03)
   - [ ] 04-04-PLAN.md — Public API surface + version bump + cross-cutting tests (API-01, API-04, API-05, PKG-02, PKG-03)
 
 ### Phase 5: Import Rewiring
