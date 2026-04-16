@@ -40,10 +40,10 @@ Make forge-bridge the single canonical package (`pip install forge-bridge`) that
 - ✓ Learning pipeline: registry watcher for dynamic tool registration — v1.0
 - ✓ Learning pipeline: probation system for synthesized tools (success/failure tracking, quarantine) — v1.0
 - ✓ Learning pipeline wired into bridge.py as optional hook — v1.0
+- ✓ Public API surface hardened: 11-name `__all__` barrel, injectable `LLMRouter`, public `startup_bridge`/`shutdown_bridge`, `register_tools()` post-run guard, `pyproject.toml` 1.0.0, PKG-03 grep gate clean — v1.1 (Phase 4)
 
 ### Active
 
-- [ ] Harden forge-bridge's public API surface for external consumption
 - [ ] Rewire projekt-forge to consume forge-bridge as pip dependency
 - [ ] Learning pipeline integration in projekt-forge (override LLM, enrich prompts, persist to forge DB)
 
@@ -83,6 +83,9 @@ Make forge-bridge the single canonical package (`pip install forge-bridge`) that
 | Namespace-enforcing registry with source tagging | Prevents tool name collisions, enables provenance tracking | ✓ Complete (Phase 2) |
 | Manifest-based file validation in watcher | Prevents arbitrary code execution from rogue files in synthesized dir | ✓ Complete (Phase 3, code review fix) |
 | Synthesized tools must use bridge.execute(), never import flame | Tools run in MCP server process, not inside Flame — discovered during live testing | ✓ Complete (Phase 3, live test fix) |
+| Inject `LLMRouter` config via constructor kwargs with arg→env→default precedence | Downstream consumers (projekt-forge) need deterministic config without env-var side effects | ✓ Complete (Phase 4) |
+| `register_tools()` post-run guard + public `startup_bridge`/`shutdown_bridge` | Clear lifecycle contract for pluggable MCP consumers; prevents silent no-op registrations | ✓ Complete (Phase 4) |
+| Clean break on API renames (no aliases, no `_module_level_synthesize`) | Pre-1.0 — no external consumers yet, aliases are dead weight | ✓ Complete (Phase 4) |
 
 ## Evolution
 
@@ -102,4 +105,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-15 after v1.1 milestone start*
+*Last updated: 2026-04-16 after Phase 4 (API Surface Hardening) completion*
