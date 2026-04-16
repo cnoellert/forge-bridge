@@ -57,25 +57,76 @@ def test_complete_sync_wrapper():
         "LLMRouter.complete must be synchronous (not async)"
 
 
-# ── LLM-04 — Env var overrides ────────────────────────────────────────────────
+# ── LLM-04 — Env var overrides and injected config ───────────────────────────
 
-def test_env_var_override(monkeypatch):
-    """Router must read FORGE_LOCAL_LLM_URL, FORGE_LOCAL_MODEL, FORGE_CLOUD_MODEL,
-    FORGE_SYSTEM_PROMPT from environment, not hard-coded defaults."""
+
+def test_env_fallback_at_init_time(monkeypatch):
+    """LLMRouter() reads env vars inside __init__, not at module import time."""
     monkeypatch.setenv("FORGE_LOCAL_LLM_URL", "http://test-host:11434/v1")
     monkeypatch.setenv("FORGE_LOCAL_MODEL", "test-local-model")
     monkeypatch.setenv("FORGE_CLOUD_MODEL", "test-cloud-model")
     monkeypatch.setenv("FORGE_SYSTEM_PROMPT", "Custom system prompt")
 
-    # Force module reload so env vars are picked up
-    import importlib
-    import forge_bridge.llm.router as router_mod
-    importlib.reload(router_mod)
+    from forge_bridge.llm.router import LLMRouter
+    router = LLMRouter()
+    assert router.local_url == "http://test-host:11434/v1"
+    assert router.local_model == "test-local-model"
+    assert router.cloud_model == "test-cloud-model"
+    assert router.system_prompt == "Custom system prompt"
 
-    assert router_mod.LOCAL_BASE_URL == "http://test-host:11434/v1"
-    assert router_mod.LOCAL_MODEL == "test-local-model"
-    assert router_mod.CLOUD_MODEL == "test-cloud-model"
-    assert router_mod.SYSTEM_PROMPT == "Custom system prompt"
+
+def test_injected_arg_beats_env(monkeypatch):
+    """Explicit __init__ arg wins over env var (D-06 precedence)."""
+    monkeypatch.setenv("FORGE_LOCAL_LLM_URL", "http://env-value:11434/v1")
+    from forge_bridge.llm.router import LLMRouter
+    router = LLMRouter(local_url="http://injected:11434/v1")
+    assert router.local_url == "http://injected:11434/v1"
+
+
+def test_default_fallback(monkeypatch):
+    """LLMRouter() with no args and no env uses hardcoded defaults."""
+    for key in ("FORGE_LOCAL_LLM_URL", "FORGE_LOCAL_MODEL",
+                "FORGE_CLOUD_MODEL", "FORGE_SYSTEM_PROMPT"):
+        monkeypatch.delenv(key, raising=False)
+    from forge_bridge.llm.router import LLMRouter
+    router = LLMRouter()
+    assert router.local_url == "http://localhost:11434/v1"
+    assert router.local_model == "qwen2.5-coder:32b"
+    assert router.cloud_model == "claude-opus-4-6"
+    assert "Flame" in router.system_prompt  # generic prompt intact
+
+
+def test_router_accepts_injected_config():
+    """All four kwargs accepted and wired to instance attributes (D-05)."""
+    from forge_bridge.llm.router import LLMRouter
+    router = LLMRouter(
+        local_url="http://x:11434",
+        local_model="m1",
+        cloud_model="m2",
+        system_prompt="custom",
+    )
+    assert router.local_url == "http://x:11434"
+    assert router.local_model == "m1"
+    assert router.cloud_model == "m2"
+    assert router.system_prompt == "custom"
+
+
+def test_default_prompt_has_generic_flame_context(monkeypatch):
+    """Default system prompt keeps Flame markers, drops forge-specific strings."""
+    for key in ("FORGE_LOCAL_LLM_URL", "FORGE_LOCAL_MODEL",
+                "FORGE_CLOUD_MODEL", "FORGE_SYSTEM_PROMPT"):
+        monkeypatch.delenv(key, raising=False)
+    from forge_bridge.llm.router import LLMRouter
+    prompt = LLMRouter().system_prompt
+    # Keeps
+    assert "Flame" in prompt
+    assert "import flame" in prompt
+    assert "{project}_{shot}_{layer}_v{version}" in prompt
+    assert "[0991-1017]" in prompt
+    # Purges
+    for token in ("portofino", "assist-01", "ACM_", "flame-01",
+                  "Backburner", "cmdjob"):
+        assert token not in prompt, f"Default prompt still contains {token!r}"
 
 
 # ── LLM-05 — Optional import guard ───────────────────────────────────────────
