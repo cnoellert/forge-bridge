@@ -147,6 +147,13 @@ def test_optional_import_guard():
             saved[pkg] = sys.modules.pop(pkg)
         sys.modules[pkg] = None  # type: ignore[assignment]  # blocks import
 
+    # Save and restore forge_bridge.llm.router so the module-level _router singleton
+    # is not replaced by a fresh module object after reimport. Without this, any
+    # consumer that imported get_router from the original module object (e.g. the
+    # synthesizer) and any new import of forge_bridge.llm.router would refer to
+    # different module objects, breaking singleton identity.
+    saved_router_mod = sys.modules.get("forge_bridge.llm.router")
+
     try:
         if "forge_bridge.llm.router" in sys.modules:
             del sys.modules["forge_bridge.llm.router"]
@@ -161,6 +168,11 @@ def test_optional_import_guard():
                 sys.modules[pkg] = saved[pkg]
             else:
                 sys.modules.pop(pkg, None)
+        # Restore the original module object to avoid breaking singleton identity
+        if saved_router_mod is not None:
+            sys.modules["forge_bridge.llm.router"] = saved_router_mod
+        else:
+            sys.modules.pop("forge_bridge.llm.router", None)
 
 
 # ── LLM-06 — ahealth_check shape ─────────────────────────────────────────────
