@@ -53,7 +53,12 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
   2. `python -c "import forge_bridge; print(forge_bridge.__file__)"` resolves to a site-packages path, not the projekt-forge source tree
   3. projekt-forge's forge-specific tools (catalog, orchestrate, scan, seed) are registered and visible to MCP clients via `register_tools()`
   4. All existing projekt-forge tests pass after the rewire with no changes to test logic
-**Plans**: TBD
+**Plans**: 5 plans (strictly sequential waves 0→1→2→3→4; Wave 0 lands in forge-bridge repo, Waves 1-4 land in projekt-forge repo)
+  - [ ] 05-00-PLAN.md — Wave 0 (forge-bridge repo): v1.0.1 patch release (protocol builders, ref_msg_id fix, timeline gap-fill, tag+push) (RWR-01 prereq)
+  - [ ] 05-01-PLAN.md — Wave A (projekt-forge repo): rename forge_bridge/→projekt_forge/ + internal import sweep + pyproject.toml + dev-loop doc (RWR-01)
+  - [ ] 05-02-PLAN.md — Wave B (projekt-forge repo): add pip dep; delete D-08 duplicates; flip canonical imports; atomic RWR-02 commit (RWR-01, RWR-02)
+  - [ ] 05-03-PLAN.md — Wave C (projekt-forge repo): rebuild server/mcp.py around get_mcp()+register_tools; wire __main__.py to canonical lifespan (RWR-03)
+  - [ ] 05-04-PLAN.md — Wave D (projekt-forge repo): conftest autouse guard asserting forge_bridge resolves to site-packages (RWR-04)
 
 ### Phase 6: Learning Pipeline Integration
 **Goal**: projekt-forge's startup wires forge-bridge's learning pipeline with forge's own LLM config, log path, and storage callback — so synthesis uses forge's Ollama instance and logs persist separately from the standalone bridge process
@@ -74,5 +79,5 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 | 2. MCP Server Rebuild | v1.0 | 3/3 | Complete | 2026-04-15 |
 | 3. Learning Pipeline | v1.0 | 3/3 | Complete | 2026-04-15 |
 | 4. API Surface Hardening | v1.1 | 0/4 | Planning complete | - |
-| 5. Import Rewiring | v1.1 | 0/TBD | Not started | - |
+| 5. Import Rewiring | v1.1 | 0/5 | Planning complete | - |
 | 6. Learning Pipeline Integration | v1.1 | 0/TBD | Not started | - |
