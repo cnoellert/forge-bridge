@@ -4,6 +4,15 @@
 
 forge-bridge is protocol-agnostic middleware for post-production pipelines — a communication bus with a canonical vocabulary that any endpoint (Flame, Maya, editorial systems, LLM agents) can connect to. As of v1.0, it ships as a standalone pip-installable package with full Flame tool parity (matching projekt-forge), an LLM-powered learning pipeline that auto-promotes repeated operations into reusable MCP tools, and a pluggable MCP server that downstream consumers can extend.
 
+## Current Milestone: v1.1 projekt-forge Integration
+
+**Goal:** Make projekt-forge consume forge-bridge as a pip dependency — replacing duplicated code with imports and wiring the learning pipeline into forge's infrastructure — without breaking either system's existing functionality.
+
+**Target features:**
+- Harden forge-bridge's public API surface for external consumption
+- Rewire projekt-forge to import from forge-bridge instead of duplicating
+- Integrate learning pipeline into projekt-forge (override LLM, enrich prompts, persist to forge DB)
+
 ## Core Value
 
 Make forge-bridge the single canonical package (`pip install forge-bridge`) that ships independently with full Flame tool parity, an LLM-powered learning pipeline, and a pluggable MCP server — so projekt-forge can consume it rather than duplicate it.
@@ -34,6 +43,7 @@ Make forge-bridge the single canonical package (`pip install forge-bridge`) that
 
 ### Active
 
+- [ ] Harden forge-bridge's public API surface for external consumption
 - [ ] Rewire projekt-forge to consume forge-bridge as pip dependency
 - [ ] Learning pipeline integration in projekt-forge (override LLM, enrich prompts, persist to forge DB)
 
@@ -74,5 +84,22 @@ Make forge-bridge the single canonical package (`pip install forge-bridge`) that
 | Manifest-based file validation in watcher | Prevents arbitrary code execution from rogue files in synthesized dir | ✓ Complete (Phase 3, code review fix) |
 | Synthesized tools must use bridge.execute(), never import flame | Tools run in MCP server process, not inside Flame — discovered during live testing | ✓ Complete (Phase 3, live test fix) |
 
+## Evolution
+
+This document evolves at phase transitions and milestone boundaries.
+
+**After each phase transition** (via `/gsd-transition`):
+1. Requirements invalidated? → Move to Out of Scope with reason
+2. Requirements validated? → Move to Validated with phase reference
+3. New requirements emerged? → Add to Active
+4. Decisions to log? → Add to Key Decisions
+5. "What This Is" still accurate? → Update if drifted
+
+**After each milestone** (via `/gsd-complete-milestone`):
+1. Full review of all sections
+2. Core Value check — still the right priority?
+3. Audit Out of Scope — reasons still valid?
+4. Update Context with current state
+
 ---
-*Last updated: 2026-04-15 after v1.0 milestone*
+*Last updated: 2026-04-15 after v1.1 milestone start*
