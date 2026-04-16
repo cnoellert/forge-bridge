@@ -48,6 +48,7 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────
 
 _client: AsyncClient | None = None
+_server_started: bool = False
 
 
 def get_client() -> AsyncClient:
@@ -67,8 +68,10 @@ def get_client() -> AsyncClient:
 @asynccontextmanager
 async def _lifespan(mcp_server: FastMCP):
     """Server lifespan: connect client, start watcher, clean up on exit."""
+    global _server_started
     # Connect to forge-bridge
-    await _startup()
+    await startup_bridge()
+    _server_started = True  # D-14: trips the register_tools() guard
 
     # Launch synthesized tool watcher as background task
     from forge_bridge.learning.watcher import watch_synthesized_tools
@@ -82,7 +85,8 @@ async def _lifespan(mcp_server: FastMCP):
             await watcher_task
         except asyncio.CancelledError:
             pass
-        await _shutdown()
+        await shutdown_bridge()
+        _server_started = False  # reset for clean teardown / test isolation
 
 
 # ─────────────────────────────────────────────────────────────
@@ -107,12 +111,22 @@ register_builtins(mcp)
 # Startup / shutdown
 # ─────────────────────────────────────────────────────────────
 
-async def _startup() -> None:
-    """Connect to forge-bridge server before serving MCP requests."""
+async def startup_bridge(
+    server_url: str | None = None,
+    client_name: str | None = None,
+) -> None:
+    """Connect to forge-bridge server before serving MCP requests.
+
+    Args:
+        server_url: WebSocket URL of the forge-bridge server.
+                    Defaults to $FORGE_BRIDGE_URL or ws://127.0.0.1:9998.
+        client_name: Identifier for this MCP client.
+                     Defaults to $FORGE_MCP_CLIENT_NAME or mcp_claude.
+    """
     global _client
 
-    server_url  = os.environ.get("FORGE_BRIDGE_URL", "ws://127.0.0.1:9998")
-    client_name = os.environ.get("FORGE_MCP_CLIENT_NAME", "mcp_claude")
+    server_url = server_url or os.environ.get("FORGE_BRIDGE_URL", "ws://127.0.0.1:9998")
+    client_name = client_name or os.environ.get("FORGE_MCP_CLIENT_NAME", "mcp_claude")
 
     _client = AsyncClient(
         client_name=client_name,
@@ -133,7 +147,8 @@ async def _startup() -> None:
         )
 
 
-async def _shutdown() -> None:
+async def shutdown_bridge() -> None:
+    """Disconnect from forge-bridge server and clean up."""
     global _client
     if _client:
         await _client.stop()
