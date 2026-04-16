@@ -1,137 +1,203 @@
-# Feature Landscape
+# Feature Research
 
-**Domain:** Learning pipeline systems, LLM routers, and pluggable MCP servers for post-production pipeline middleware
-**Researched:** 2026-04-14
-**Confidence:** MEDIUM — based on direct code inspection of FlameSavant (source system), existing forge-bridge codebase, and established patterns from MCP SDK/FastMCP. Web search unavailable; findings cross-referenced against in-repo evidence.
+**Domain:** Cross-repo pip dependency consumption and learning pipeline integration for a downstream Python application
+**Researched:** 2026-04-15
+**Confidence:** HIGH — based on direct code inspection of both repos, pyproject.toml analysis, and verified Python packaging best practices
 
 ---
 
-## Table Stakes
+## Context: What This Milestone Actually Is
 
-Features users (LLM agents, downstream consumers like projekt-forge) expect. Missing = the system does not fulfil its stated purpose.
+forge-bridge v1.1 is NOT a new product feature. It is an integration milestone with three concrete sub-goals:
+
+1. **Harden forge-bridge's public API surface** so projekt-forge can import from it safely
+2. **Rewire projekt-forge** to import from `forge-bridge` (pip dep) instead of duplicating code
+3. **Wire the learning pipeline into projekt-forge** — LLM override, prompt enrichment, DB persistence
+
+The "features" here are engineering contracts, not user-visible capabilities. The audience for FEATURES.md in this context is: what must forge-bridge expose, and what must projekt-forge consume, for both repos to remain independently deployable and testable.
+
+---
+
+## Table Stakes (Expected Behaviors for Cross-Repo Pip Consumption)
+
+Features a downstream pip consumer expects. Missing these = integration is fragile or impossible.
 
 | Feature | Why Expected | Complexity | Notes |
 |---------|--------------|------------|-------|
-| Execution logging with JSONL persistence | Learning pipelines must survive restarts; replay-on-startup requires durable log | Low | Established in FlameSavant `ExecutionLog.js`. Append-only JSONL at `~/.forge/executions.jsonl`. Cap stored output to avoid unbounded growth. |
-| Code normalisation + hash fingerprinting | Pattern deduplication across semantically equivalent executions (different literals, same structure) | Low | Strip string/number literals, collapse whitespace, SHA-256 first 16 hex chars. Proven in FlameSavant. |
-| Promotion threshold counter | Engine for deciding when a pattern has been seen enough to synthesise | Low | In-memory counter keyed by hash; configurable threshold (FlameSavant uses 3). Returns `promoted=True` signal to caller. |
-| Replay on startup | Rebuild in-memory counters from JSONL without re-executing code | Low | Linear scan of log file on init; re-hydrate `_counts` map from records. Required for threshold survival across restarts. |
-| LLM backend abstraction | Synthesiser and any other generation need must not depend on a specific provider | Medium | Single `complete(prompt, sensitive, system, temperature)` call surface; provider swap is config, not code change. |
-| Sensitivity-based routing | Production pipelines contain sensitive data (shot names, file paths, SQL, openclip XML) that must not egress to cloud | Low | `sensitive=True` → local Ollama; `sensitive=False` → cloud Claude. Existing in `llm_router.py` but sync-only. |
-| Async completion API | MCP tools are async; synthesiser runs inside the async tool pipeline | Medium | Existing `llm_router.py` is sync-only — blocking `asyncio` event loop in async context. Must be `async def complete(...)`. |
-| Health check endpoint | Agents need to know if backends are reachable before committing to a synthesis attempt | Low | `health_check() → dict` already exists; needs async counterpart and MCP resource exposure. |
-| Skill synthesis from examples | Core learning outcome: turn repeated ad-hoc code into a reusable, parameterised MCP tool | High | LLM generates Python function; validation required before registration. Source: FlameSavant `SkillSynthesizer.js`. |
-| Synthesised tool validation | LLM output is untrusted; syntactically broken or wrongly-shaped tools must be rejected before registration | Medium | At minimum: parse Python (compile()), verify function signature matches MCP tool pattern, confirm required fields present. |
-| Dynamic MCP tool registration | Synthesised tools must appear in the MCP tool list without a process restart | High | FastMCP supports `mcp.tool()` decorator; dynamic registration requires calling this at runtime rather than at import time. Tools must survive the stdio transport loop. |
-| Probation / success tracking | Synthesised tools need a trial period; failed calls should not silently stay registered | Medium | Track call count and failure count per synthesised tool. Demote or quarantine on repeated failure. |
-| `register_tools(mcp)` pluggable API | projekt-forge and other downstream consumers need to add their own tools to the shared MCP server | Medium | Single function that accepts the FastMCP instance and registers additional tools. No fork of server.py needed. |
-| Configurable system prompt | Different callers (synthesiser vs interactive agent vs project-specific tools) need different pipeline context | Low | Pass `system` override to `complete()`; default to `FORGE_SYSTEM_PROMPT` for local, minimal prompt for cloud. Already present in `llm_router.py`. |
-| Optional dependency installation | `openai` and `anthropic` are not needed by consumers who only use the WebSocket bridge or MCP without LLM features | Low | Move to `pyproject.toml` extras group (e.g. `pip install forge-bridge[llm]`). Currently hard dependencies — must change. |
+| Stable public API surface via `__init__.py` exports | Consumers import from package root; anything not in `__all__` or top-level `__init__` is internal and may change | LOW | forge-bridge's top-level `forge_bridge/__init__.py` currently has one line: a docstring. No exports declared. Must add explicit `__all__` and re-export key symbols. |
+| `configure()` callable before first use | projekt-forge connects to a different host/port than the default 127.0.0.1:9999 (render node vs. desktop) | LOW | `bridge.configure()` already exists. Needs to be re-exported from package root and documented as stable API. |
+| `register_tools()` and `get_mcp()` as stable entry points | projekt-forge adds forge-specific tools (catalog, orchestrate, scan, seed) to the shared MCP server without forking server.py | LOW | Already implemented in `forge_bridge/mcp/__init__.py`. Needs to appear in top-level exports and have integration-level test coverage. |
+| `set_execution_callback()` as stable hook | projekt-forge wires its own execution observer (learning pipeline integration point) without modifying bridge.py | LOW | Already exists in bridge.py. Is not currently exported from package root. Must be promoted to stable API. |
+| pyproject.toml extras maintained for optional deps | Consumers who don't need LLM features (e.g. a plain Flame tool user) should not be forced to install openai/anthropic | LOW | Already implemented as `[project.optional-dependencies] llm = [...]`. Must remain — do not collapse into main dependencies. |
+| LLM router importable as standalone component | projekt-forge needs to override the LLM backend (use its own Ollama config, its own DB connection) without inheriting forge-bridge defaults | MEDIUM | `from forge_bridge.llm.router import LLMRouter` must work and LLMRouter must accept constructor injection (base_url, model, system_prompt) rather than relying solely on env vars. |
+| Learning pipeline components importable independently | projekt-forge wires ExecutionLog, SkillSynthesizer, and ProbationTracker against its own DB without activating forge-bridge's full server | MEDIUM | Currently each component is importable from `forge_bridge.learning.*`. Must remain importable without triggering MCP server startup side-effects. |
+| No side effects at import time | `import forge_bridge` must not start servers, connect to databases, or read files | LOW | Critical for downstream consumers who control their own startup lifecycle. Current server.py and mcp/server.py both have module-level `mcp = FastMCP(...)` instantiation — harmless if not called, but must be verified. |
+| Documented migration path for duplicated code | projekt-forge's `forge_bridge/bridge.py`, `forge_bridge/tools/*` are duplicates of forge-bridge equivalents. The removal path must be unambiguous. | MEDIUM | At minimum: which modules to delete, which imports to change, which tests to re-point. This is implementation guidance, not a code feature, but it must exist before anyone touches the code. |
 
 ---
 
-## Differentiators
+## Differentiators (Integration Value-Add)
 
-Features that create competitive advantage for this specific use case. Not expected by default, but meaningful when present.
+Features that make the integration more than a simple re-import.
 
 | Feature | Value Proposition | Complexity | Notes |
 |---------|-------------------|------------|-------|
-| Intent tracking on executions | Log not just "what ran" but "why it ran" (user intent string) | Low | Enrich `ExecutionLog` record with optional `intent: str` field. Enables better synthesis prompts: "Write a skill for: [intent]". |
-| Re-synthesis on failure | When a synthesised tool fails probation, attempt to regenerate it using the failure context | High | Local LLM makes this economically viable (cost ≈ $0). Pass original examples + error trace to synthesiser. FlameSavant does not implement this — it's an improvement. |
-| LLM router exposed as MCP resource | Agents can query backend health and model selection without a tool call | Low | FastMCP `@mcp.resource("llm://health")` returning current backend status, active model names. |
-| Namespace partitioning for tool names | `flame_*` for Flame HTTP tools, `forge_*` for pipeline state tools, `skill_*` for synthesised tools | Low | Already partially implemented (flame_/forge_). Extending to `skill_*` prefix for synthesised tools gives agents clear semantic cues about tool provenance. |
-| User-taught skill path | Beyond auto-synthesis: expose a "save this code as a named skill" pathway | Medium | Maps to FlameSavant `synthesizeFromDescription`. Requires a dedicated MCP tool: `forge_save_skill(name, description, code)`. |
-| Synthesiser targeting Python not JS | All synthesis output is Python MCP tool functions (not JS CommonJS modules like FlameSavant) | Medium | Python tools register directly into FastMCP at runtime. No intermediate file format; function object is the artefact. |
-| Per-tool `_source` tagging | Distinguish built-in tools from synthesised tools from user-taught tools in the registry | Low | Simple metadata on the registered tool object. Lets agents and downstream consumers reason about tool provenance. |
-| Pydantic input models for all tools | Structured validation before any Flame or forge-bridge call | Low | projekt-forge already does this (see `reconform.py`). Missing from current `forge_bridge/tools/`. Prevents silent bad-input errors. |
-| Synthesis prompt includes execution intent | Enrich synthesis prompt with intent strings when available | Low | `"User intent: ${intent}\nExamples:\n${examples}"` produces better named, better described skills than raw code examples alone. |
+| LLM router constructor injection (not env-var-only) | projekt-forge has its own Ollama on assist-01 and its own model preferences. If forge-bridge's router only reads env vars, projekt-forge must set global env vars (fragile in multi-process deployments). Constructor injection lets each consumer own its router config. | MEDIUM | `LLMRouter(base_url=..., model=..., system_prompt=...)` — fall back to env vars when constructor args are None. Clean override semantics. |
+| Execution log path overridable at construction | projekt-forge persists execution data in its own Postgres DB and its own filesystem layout. The log path `~/.forge-bridge/executions.jsonl` is a forge-bridge default that projekt-forge should not be forced to use. | LOW | `ExecutionLog(log_path=Path(...))` already accepts a path argument. The default is fine for standalone use. Document that downstream consumers should pass their own path. |
+| Learning pipeline wiring via callback, not subclassing | projekt-forge integrates by providing a callback to `set_execution_callback()` — no subclassing, no monkey-patching | LOW | The callback pattern is already in place. What's missing is documentation and a reference integration. The feature is: write the integration example that projekt-forge implements. |
+| Synthesized tool output dir overridable | projekt-forge may want synthesized tools in a project-specific location, not `~/.forge-bridge/synthesized/` | LOW | `watch_synthesized_tools(synthesized_dir=Path(...))` already accepts override. Document this as an integration point. |
+| Parallel LLM prompt enrichment from forge DB | projekt-forge has richer project/shot context in Postgres than forge-bridge's generic system prompt provides. Enriched prompts produce better synthesized tools. | HIGH | This is the most complex integration feature. projekt-forge intercepts synthesis calls and prepends shot/project context from its DB before invoking forge-bridge's LLMRouter. Requires a synthesis prompt hook (inject before LLM call). Not currently supported — needs a `pre_synthesis_hook` callback on SkillSynthesizer. |
+| Tool provenance visible in MCP tool metadata | Agents calling MCP tools benefit from knowing whether a tool is builtin, synthesized, or forge-specific. The `_source` tag on registered tools already supports this. | LOW | Already implemented in registry.py. The differentiator is exposing this through the MCP tool description/annotation so agents see it without calling a separate introspection tool. |
 
 ---
 
 ## Anti-Features
 
-Things to deliberately NOT build in this milestone.
+Features that seem natural but create architectural problems.
 
 | Anti-Feature | Why Avoid | What to Do Instead |
 |--------------|-----------|-------------------|
-| Execution log in Postgres | Postgres adds schema migration burden and a runtime dependency for what is essentially a local append-only journal | Use JSONL file at `~/.forge/executions.jsonl` — fast, portable, survives DB downtime, consistent with FlameSavant's proven approach |
-| Sandboxed Python execution of synthesised tools | Sandboxing Python is complex (seccomp, sub-interpreter), provides false security for trusted local tools, and breaks Flame API access which requires the main process | Apply structural validation (compile(), signature check) and rely on probation tracking for quality control. Document that synthesised tools run in process. |
-| LLM router calling cloud for sensitive operations | Data governance violation — client shot names, file paths, SQL are in scope | Hard-code the routing rule: `sensitive=True` never reaches cloud. Make this non-configurable at the routing layer. |
-| Blocking (sync) LLM calls in async context | `asyncio.get_event_loop().run_until_complete()` inside an async tool will deadlock or produce unexpected behaviour | Implement async-native `complete()` using `asyncio.to_thread()` for the blocking OpenAI/Anthropic client calls until native async clients are wired. |
-| Auto-purge of synthesised skills | Automatic deletion of underperforming skills risks losing captured knowledge | Flag for review (quarantine status), never auto-delete. The human or downstream consumer decides removal. |
-| forge-specific tools (catalog, orchestrate, scan, seed) | These belong in projekt-forge, not forge-bridge | Implement pluggable `register_tools()` so projekt-forge adds its own tools without forking the server |
-| Authentication in this milestone | Local-only deployment, deferred by explicit design decision | Framework already exists (client_name in hello). Do not implement in Phases 0-3. |
-| HTTP mode for MCP server as primary transport | stdio is the MCP standard for Claude Desktop / agent integration; HTTP mode is a debug aid | Keep `--http` flag for testing but do not design synthesised tool registration around it |
+| Merge forge-bridge and projekt-forge into a monorepo | Tempting once they depend on each other, but forge-bridge must remain independently deployable (no forge DB, no forge CLI) | Keep separate repos. Use pip editable install during development (`pip install -e /path/to/forge-bridge`). CI in projekt-forge installs forge-bridge from git or TestPyPI. |
+| projekt-forge importing private internals (`forge_bridge._*`) | Private symbols may change without notice. Integration on private internals breaks silently. | Harden the public API first. Any symbol projekt-forge needs that isn't exported is a signal to promote it, not to hack around it. |
+| Vendoring forge-bridge inside projekt-forge | Copies diverge immediately. Bug fixes in forge-bridge don't propagate. Defeats the whole purpose of extraction. | Always consume via pip. `pip install -e .` for local dev, pinned version for production. |
+| Shared database between forge-bridge and projekt-forge | forge-bridge has its own PostgreSQL schema (entities, relationships, events, registry). projekt-forge has its own schema (projects, shots, media, users). Merging schemas creates migration coupling. | Keep separate schemas, possibly same Postgres instance. forge-bridge's schema is an independent service boundary. |
+| Learning pipeline activation on every import | If `import forge_bridge.learning` starts watchers, opens file handles, or connects to DB, it breaks consumers who only want specific components | Lazy activation only. Components must be instantiated explicitly by the consumer. No module-level singleton initialization. |
+| Blocking LLM calls in projekt-forge's async handlers | projekt-forge uses asyncio throughout. Calling sync LLM completions inside async handlers blocks the event loop. | Use `LLMRouter.acomplete()`. If the router only has sync `complete()`, the consumer must wrap with `asyncio.to_thread()` — document this explicitly. |
+| Auto-wiring learning pipeline in forge-bridge server startup | If forge-bridge's `__main__.py` activates the learning pipeline unconditionally, projekt-forge (which starts its own server) gets double-wiring | `set_execution_callback()` must default to None (already does). Server startup must not set a callback unless explicitly configured. Consumer owns the wiring. |
+| Namespace collision between forge-bridge and projekt-forge tools | Both repos have tools named things like `flame_publish_sequence`. If both register against the same MCP instance, the second registration overwrites the first. | Namespace enforcement via registry.py's `_VALID_PREFIXES` already blocks this. projekt-forge registers under `forge_*` prefixes. forge-bridge's builtins use `flame_*` and `forge_*` prefixes for its own tools. The split must be documented and tested. |
 
 ---
 
 ## Feature Dependencies
 
 ```
-Async LLM router
-  → Skill synthesiser (synthesiser calls router)
-  → LLM health check MCP resource (needs async health_check)
+Stable public API (`__init__.py` exports)
+  └──required by──> projekt-forge import rewiring
+  └──required by──> Cross-repo integration tests
 
-Execution log (JSONL)
-  → Replay on startup (reads log)
-  → Promotion threshold counter (reads/writes in-memory counts)
-  → Promotion counter → Skill synthesiser trigger (promoted=True signals synthesis)
+configure() re-exported from package root
+  └──required by──> projekt-forge startup (non-default host/port)
 
-Skill synthesiser
-  → Synthesised tool validation (syntactic check before write)
-  → Dynamic MCP tool registration (validated tool is registered)
-  → Dynamic registration → Probation tracker (new tool needs tracking)
+set_execution_callback() re-exported from package root
+  └──required by──> Learning pipeline wiring in projekt-forge
+      └──required by──> LLM override in projekt-forge
+      └──required by──> Prompt enrichment from forge DB
 
-Probation tracker
-  → Re-synthesis on failure (failure events trigger re-synthesis path)
+LLMRouter constructor injection
+  └──required by──> LLM override in projekt-forge
+      └──required by──> Prompt enrichment hook
 
-register_tools(mcp) API
-  → Depends on: dynamic tool registration working at all
-  → Used by: projekt-forge (Phase 4, out of scope here)
+pre_synthesis_hook on SkillSynthesizer
+  └──required by──> Prompt enrichment from forge DB (highest complexity)
+  └──depends on──> SkillSynthesizer existing (v1.0 complete)
 
-Optional LLM deps
-  → Must be done before: any release where downstream consumers don't need LLM features
-  → Blocks nothing functionally, but is a packaging correctness fix
+register_tools() / get_mcp() stable exports
+  └──required by──> projekt-forge registering its own tools
+  └──required by──> Integration tests that verify tool registration
 
-Pydantic input models
-  → Independent; can be added per-tool during flame parity work
-  → Required before: any probation tracking (need structured failure attribution)
-
-Intent tracking
-  → Depends on: execution log (adds a field)
-  → Used by: synthesis prompt builder (optional enrichment, gracefully absent)
+Cross-repo integration tests
+  └──required by──> Confidence that both repos work together
+  └──depends on──> Stable API surface (all items above)
 ```
+
+### Dependency Notes
+
+- **Stable API surface** is the unblocking item. Everything else in this milestone depends on knowing which symbols are stable contracts vs. internal implementation details. Start here.
+- **LLM override** (constructor injection) is independent of the import rewiring. Can be done in parallel.
+- **Prompt enrichment** is the highest complexity item and the only one that requires a new feature in forge-bridge (pre_synthesis_hook). Block it on everything else.
+- **Import rewiring** in projekt-forge (deleting duplicated files, fixing imports) is purely mechanical once the API surface is stable. Low risk, medium effort.
 
 ---
 
-## MVP Recommendation
+## MVP Definition
 
-The minimum set that makes the learning pipeline functional end-to-end:
+### Launch With (v1.1)
 
-1. **Async LLM router** — everything downstream is blocked on this. Promote `llm_router.py` to `forge_bridge/llm/router.py` with `async def complete()`.
-2. **Execution log with JSONL persistence + replay** — durability and threshold state survival across restarts.
-3. **Promotion counter → skill synthesis trigger** — the core loop: record → count → synthesise.
-4. **Skill synthesiser targeting Python MCP tools** — port FlameSavant's `SkillSynthesizer` to Python; validate and register output.
-5. **Dynamic MCP tool registration** — synthesised tools must appear without restart.
-6. **Probation tracking** — basic success/failure counter; quarantine on threshold.
-7. **`register_tools(mcp)` API** — pluggable registration so projekt-forge can extend without forking.
+Minimum viable integration — projekt-forge consumes forge-bridge and learning pipeline is wired.
 
-Defer:
-- **Re-synthesis on failure** — valuable but complex; defer to after probation is working.
-- **User-taught skill path** — nice-to-have; defer to after automatic synthesis is stable.
-- **Intent tracking** — low complexity but low urgency; add as enrichment once basic log is working.
-- **`_source` tagging** — one-liner addition; include in synthesis step (low cost).
+- [ ] **Stable `__init__.py` exports** — `configure`, `set_execution_callback`, `register_tools`, `get_mcp`, `BridgeResponse`, `BridgeError`, `BridgeConnectionError` re-exported from package root. `__all__` declared.
+- [ ] **LLMRouter constructor injection** — `LLMRouter(base_url, model, system_prompt)` with env-var fallback. Documents the override contract.
+- [ ] **projekt-forge import rewiring** — delete duplicated `forge_bridge/bridge.py`, `forge_bridge/tools/*.py` (non-forge-specific), replace with `from forge_bridge import ...`. Done in projekt-forge repo.
+- [ ] **Learning pipeline wired in projekt-forge** — projekt-forge startup calls `set_execution_callback(callback)` where callback records to projekt-forge's storage.
+- [ ] **Cross-repo integration smoke test** — pytest fixture that installs forge-bridge as editable dep and verifies: configure(), tool registration, and execution callback fire correctly from projekt-forge's call sites.
+
+### Add After Validation (v1.1.x)
+
+- [ ] **Prompt enrichment hook** (`pre_synthesis_hook` on SkillSynthesizer) — add only once basic wiring is confirmed working. High complexity, high payoff.
+- [ ] **Synthesized tool output dir override** documented and tested in projekt-forge context.
+- [ ] **Tool provenance in MCP annotations** — surface `_source` tag in tool description strings.
+
+### Future Consideration (v2+)
+
+- [ ] **Shared synthesis manifest** — projekt-forge and forge-bridge sharing a synthesized tool registry (complex schema and lifecycle questions, defer).
+- [ ] **Re-synthesis on failure with forge DB context** — failure re-synthesis enriched with project/shot data from forge Postgres.
+- [ ] **Authentication** — explicitly deferred by design decision, not needed in local-first deployment.
+
+---
+
+## Feature Prioritization Matrix
+
+| Feature | User Value | Implementation Cost | Priority |
+|---------|------------|---------------------|----------|
+| Stable `__init__.py` exports | HIGH — unblocks all other items | LOW — declare exports, no logic change | P1 |
+| configure() re-export | HIGH — projekt-forge breaks without it | LOW — one-liner re-export | P1 |
+| set_execution_callback() re-export | HIGH — integration hook | LOW — one-liner re-export | P1 |
+| register_tools() / get_mcp() re-export | HIGH — enables forge tool registration | LOW — already in mcp/__init__.py | P1 |
+| LLMRouter constructor injection | HIGH — LLM override without env var hacks | MEDIUM — refactor constructor, maintain fallback | P1 |
+| Import rewiring in projekt-forge | HIGH — eliminates drift risk | MEDIUM — mechanical but broad file changes | P1 |
+| Learning pipeline wiring (callback) | HIGH — core milestone goal | MEDIUM — write integration code in projekt-forge | P1 |
+| Cross-repo integration smoke tests | HIGH — confidence in correctness | MEDIUM — pytest fixture + editable install setup | P1 |
+| pre_synthesis_hook on SkillSynthesizer | MEDIUM — better synthesis quality | HIGH — new API surface in forge-bridge | P2 |
+| Synthesized dir override (documented) | LOW — only needed for custom deployments | LOW — already implemented, needs docs/tests | P2 |
+| Tool provenance in MCP annotations | LOW — agent convenience | LOW — string formatting in registration | P3 |
+
+---
+
+## Cross-Repo Testing Strategy
+
+This section is specific to this integration milestone and has no equivalent in the prior v1.0 research.
+
+**Standard pattern for Python cross-repo integration:**
+
+```bash
+# In projekt-forge dev environment:
+pip install -e /path/to/forge-bridge          # editable install for dev
+pip install -e /path/to/forge-bridge[llm]     # with LLM extras
+
+# In CI (GitHub Actions / local CI):
+pip install forge-bridge @ git+https://github.com/cnoellert/forge-bridge.git@main
+```
+
+**What to test at integration boundary:**
+
+| Test Type | What It Verifies | Where It Lives |
+|-----------|-----------------|----------------|
+| Import smoke test | `from forge_bridge import configure, set_execution_callback, register_tools` succeeds | projekt-forge tests/ |
+| configure() override test | Setting non-default host/port propagates to HTTP calls | projekt-forge tests/ |
+| callback wiring test | Execution callback fires with correct code + response args | projekt-forge tests/ |
+| tool registration test | `register_tools(get_mcp(), [my_fn], prefix="forge_")` registers and is discoverable | projekt-forge tests/ |
+| LLM override test | `LLMRouter(base_url="http://assist-01:11434/v1")` uses the injected URL | projekt-forge tests/ |
+| No-side-effects test | `import forge_bridge` does not start servers or open DB connections | forge-bridge tests/ |
+
+**Avoid:** Running projekt-forge's full integration test suite as part of forge-bridge CI. That creates a circular dependency. forge-bridge CI tests only forge-bridge. projekt-forge CI tests the integration.
 
 ---
 
 ## Sources
 
-- Direct code inspection: `/Users/cnoellert/Documents/GitHub/FlameSavant/src/learning/ExecutionLog.js` — execution log design (HIGH confidence, primary source)
-- Direct code inspection: `/Users/cnoellert/Documents/GitHub/FlameSavant/src/learning/RegistryWatcher.js` — hot-reload registry watcher (HIGH confidence, primary source)
-- Direct code inspection: `/Users/cnoellert/Documents/GitHub/FlameSavant/src/agents/SkillSynthesizer.js` — synthesiser design, validation patterns, prompt structure (HIGH confidence, primary source)
-- Direct code inspection: `/Users/cnoellert/Documents/GitHub/forge-bridge/forge_bridge/llm_router.py` — existing sync LLM router, sensitivity routing (HIGH confidence, in-repo)
-- Direct code inspection: `/Users/cnoellert/Documents/GitHub/forge-bridge/forge_bridge/mcp/server.py` — current MCP registration model (HIGH confidence, in-repo)
-- Direct code inspection: `/Users/cnoellert/Documents/GitHub/projekt-forge/forge_bridge/tools/reconform.py` — Pydantic model usage, tool patterns (HIGH confidence, upstream source)
-- `.planning/PROJECT.md` — scope definition, validated/active requirements (HIGH confidence, authoritative for this project)
-- `.planning/codebase/ARCHITECTURE.md` — current system structure (HIGH confidence, in-repo)
-- `pyproject.toml` — dependency packaging structure, optional dep gap (HIGH confidence, in-repo)
+- Direct code inspection: `/Users/cnoellert/Documents/GitHub/forge-bridge/forge_bridge/__init__.py` — current state: one-line docstring, no exports (HIGH confidence)
+- Direct code inspection: `/Users/cnoellert/Documents/GitHub/forge-bridge/forge_bridge/bridge.py` — configure(), set_execution_callback(), BridgeResponse, BridgeError (HIGH confidence)
+- Direct code inspection: `/Users/cnoellert/Documents/GitHub/forge-bridge/forge_bridge/mcp/__init__.py` — register_tools(), get_mcp() already implemented (HIGH confidence)
+- Direct code inspection: `/Users/cnoellert/Documents/GitHub/forge-bridge/forge_bridge/llm/router.py` — LLMRouter env-var-only config, no constructor injection (HIGH confidence)
+- Direct code inspection: `/Users/cnoellert/Documents/GitHub/forge-bridge/pyproject.toml` — optional deps correctly configured (HIGH confidence)
+- Direct code inspection: `/Users/cnoellert/Documents/GitHub/projekt-forge/forge_bridge/bridge.py` — exists as duplicate, imports `from forge_bridge import bridge` internally (HIGH confidence)
+- Direct code inspection: `/Users/cnoellert/Documents/GitHub/projekt-forge/forge_bridge/server/mcp.py` — imports all tools directly, no use of forge-bridge's register_tools() (HIGH confidence)
+- Direct code inspection: `/Users/cnoellert/Documents/GitHub/projekt-forge/pyproject.toml` — no forge-bridge dependency listed (HIGH confidence, confirms work not yet done)
+- Python Packaging User Guide — public API surface, __all__, SemVer: https://packaging.python.org/en/latest/discussions/versioning/
+- Real Python — public API surface best practices: https://realpython.com/ref/best-practices/public-api-surface/
+- setuptools entry_points documentation — plugin/callback registration patterns: https://setuptools.pypa.io/en/latest/userguide/entry_point.html
+- pytest good integration practices — editable install cross-repo testing: https://docs.pytest.org/en/stable/explanation/goodpractices.html
+
+---
+*Feature research for: forge-bridge v1.1 projekt-forge integration*
+*Researched: 2026-04-15*

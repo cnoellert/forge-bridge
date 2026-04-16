@@ -1,214 +1,228 @@
-# Technology Stack
+# Stack Research
 
-**Project:** forge-bridge learning pipeline milestone
-**Researched:** 2026-04-14
-**Scope:** New components only — learning pipeline, LLM router promotion, pluggable MCP server
+**Domain:** pip-library packaging + cross-repo integration + learning pipeline DB adapter
+**Researched:** 2026-04-15
+**Scope:** v1.1 ONLY — new capabilities for making forge-bridge consumable as a pip dependency by projekt-forge, and integrating the learning pipeline into projekt-forge's DB/config/LLM infrastructure. Does NOT re-research validated v1.0 stack.
+**Confidence:** HIGH (both codebases read directly, patterns drawn from authoritative sources)
 
 ---
 
-## What This Covers
+## Context
 
-Three new subsystems added to the existing forge-bridge package:
+forge-bridge v1.0 validated stack (not re-researched):
+- FastMCP, Pydantic, asyncio, JSONL persistence, httpx, websockets
+- SQLAlchemy 2.0 + asyncpg + alembic for forge-bridge's own store
+- pyproject.toml with hatchling, optional [llm] extras, 159 tests passing
 
-1. **LLM Router** (`forge_bridge/llm/`) — promote `llm_router.py` from untracked scratch file to supported async module
-2. **Learning Pipeline** (`forge_bridge/learning/`) — port FlameSavant ExecutionLog + SkillSynthesizer + RegistryWatcher from JavaScript to Python
-3. **Pluggable MCP Server** (`forge_bridge/mcp/`) — expose `register_tools()` API so downstream consumers (projekt-forge) can extend the server
-
-Does NOT cover the existing WebSocket server, PostgreSQL store, vocabulary layer, or Flame endpoint — those are already resolved in `.planning/codebase/STACK.md`.
+This file covers only the **new** capabilities needed for v1.1:
+1. Hardening forge-bridge's public API surface for external consumption
+2. Rewiring projekt-forge to consume forge-bridge as a pip dependency
+3. Integrating the learning pipeline into projekt-forge's existing infrastructure
 
 ---
 
 ## Recommended Stack
 
-### LLM Router — Async Promotion
+### Core Technologies
 
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| `openai` (AsyncOpenAI) | 2.29.0 (installed) | Local Ollama + any OpenAI-compatible endpoint | `AsyncOpenAI` is a drop-in async counterpart to the existing `OpenAI` client. Verified present in `.venv`. |
-| `anthropic` (AsyncAnthropic) | 0.86.0 (installed) | Claude cloud calls | `AsyncAnthropic` is confirmed in `anthropic/_client.py`. Same pattern as AsyncOpenAI. |
+| Technology | Version | Purpose | Why Recommended |
+|------------|---------|---------|-----------------|
+| Python `__init__.py` with `__all__` | stdlib | Public API surface declaration | Standard Python contract — what is in `__all__` is the stable surface. Currently `forge_bridge/__init__.py` is a one-line docstring. Promoting this to a real re-export module lets projekt-forge use `from forge_bridge import LLMRouter` without caring about submodule layout, and signals clearly what is private. |
+| `typing.Protocol` | stdlib 3.8+ | DB adapter interface for learning pipeline | Structural typing — projekt-forge defines a `SQLExecutionLogBackend` that satisfies the same Protocol as the existing `ExecutionLog` (JSONL). No import coupling, no inheritance from forge-bridge types. The Protocol lives in `forge_bridge/learning/execution_log.py` and costs zero lines in the consumer. |
+| pyproject.toml `[project.optional-dependencies]` | hatchling (existing) | Consumer-facing extras | Already in use for `[llm]`. No new mechanism needed. Add a `[forge]` group only if projekt-forge's integration triggers a new forge-bridge dep that standalone users should not pay for. Current assessment: not needed for v1.1. |
+| Semantic versioning (`1.1.0`) | hatchling (existing) | Stability contract with projekt-forge | projekt-forge pins `forge-bridge>=1.0,<2.0` in its pyproject.toml. SemVer means minor additions are backwards-compatible; major bumps signal API breaks. forge-bridge's version currently reads `0.1.0` in pyproject.toml — needs bumping to `1.0.0` as part of v1.0 milestone completion before projekt-forge can sensibly pin it. |
 
-**What changes:** `LLMRouter` gets an `async def complete_async(...)` method alongside the existing sync `complete()`. Both delegate to private `_local_complete_async` / `_cloud_complete_async` that instantiate `AsyncOpenAI` / `AsyncAnthropic` lazily (same optional-import guard pattern already in place).
+### Supporting Libraries
 
-**What does NOT change:** The sync `complete()` method stays. MCP tools call `complete_async()`; any non-async callers use `complete()`. No new packages needed — both async clients are already declared in `pyproject.toml` and installed.
+| Library | Version | Purpose | When to Use |
+|---------|---------|---------|-------------|
+| `pyyaml>=6.0` | 6.0 (already in projekt-forge) | Read `/opt/forge/config.yaml` | Do NOT add to forge-bridge. Already in projekt-forge's dependencies. projekt-forge reads its YAML config and translates values to env vars before constructing forge-bridge components. forge-bridge reads configuration exclusively via `os.environ.get()`. |
+| `packaging>=23.0` | 23.0+ | Runtime version compatibility guard | Do not add now. Belongs in CI version matrix tests, not runtime code. Add only if a concrete backward-compat check is needed. |
+| SQLAlchemy `DeclarativeBase` (separate) | 2.0 (existing in both) | Learning pipeline log table in projekt-forge DB | Each package keeps its own `DeclarativeBase`. Do not share. forge-bridge has `forge_bridge/store/session.py` with its own `Base`; projekt-forge has `forge_bridge/db/engine.py` with its own `Base`. If projekt-forge wants SQL-persisted execution logs it defines its own `DBExecutionLog` ORM model on its `Base` and implements the `ExecutionLogBackend` Protocol. |
 
-**Optional dependency handling:** `openai` and `anthropic` must move from hard `dependencies` to `[project.optional-dependencies]` under an `llm` extra. Currently both are listed twice as hard deps (bug in `pyproject.toml` line 18 and 22). Fix during promotion.
+### Development Tools
 
----
-
-### Learning Pipeline
-
-#### Execution Log
-
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| stdlib `json` | 3.10+ | JSONL serialization | Sufficient for append-only log records. No external package needed. |
-| stdlib `hashlib` | 3.10+ | SHA-256 code fingerprinting | Direct port of FlameSavant's `sha256(normalise(code))` pattern. |
-| stdlib `re` | 3.10+ | Code normalization (strip literals) | Port of JS regex normalizer. |
-| `asyncio.to_thread` | 3.10+ | Non-blocking file append | Python 3.10 stdlib. Wraps synchronous `open(mode='a')` so disk writes don't block the event loop. Better than adding `aiofiles` for a single use case. |
-
-**Pattern:** `ExecutionLog` is a class with an in-memory `dict[str, PromotionEntry]` plus JSONL append. On startup, replay existing `.jsonl` file to rebuild the count table. Promotion threshold (default 3) returns `promoted=True` from `record()` to trigger synthesis — identical to FlameSavant.
-
-**Storage location:** `~/.forge-bridge/executions.jsonl` (user home, not project dir). Configurable via `FORGE_LEARNING_DIR` env var.
-
-**Why not a database:** The execution log is append-only observational data. JSONL is crash-safe (partial writes don't corrupt earlier records), portable, and requires zero schema. The PostgreSQL store is for canonical pipeline entities; this log is ephemeral instrumentation.
-
-#### Skill Synthesizer
-
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| stdlib `ast` | 3.10+ | Validate LLM-generated Python source | `ast.parse()` catches syntax errors without executing. Safer than `compile()` + `exec()` for a first-pass check. |
-| stdlib `types` + `FunctionType` | 3.10+ | Execute and validate synthesized tool function | After AST validation, exec in isolated namespace to confirm the function is callable with expected signature. |
-| `pydantic` (BaseModel) | 2.12.5 (installed) | Skill manifest schema | Synthesized skills have a `SkillManifest` (name, description, parameters, source_hash). Pydantic ensures the LLM output matches required shape before writing. Already installed as FastMCP dependency. |
-| LLM Router (`forge_bridge/llm/`) | internal | LLM call for synthesis | Synthesizer calls `router.complete_async(prompt, sensitive=True)` — always local because synthesis prompts contain pipeline code. |
-
-**Synthesis output:** Python function files written to `~/.forge-bridge/skills/<skill_name>.py`. Each file contains a `def build_code(**params) -> str` that returns Flame Python code with parameters substituted. No dynamic `importlib` — the synthesizer writes the file and the RegistryWatcher loads it.
-
-**Validation sequence:**
-1. Strip markdown fences from LLM output
-2. `ast.parse(source)` — syntax check
-3. `exec(compile(source, ...), namespace)` — load into isolated dict
-4. Confirm `build_code` callable exists in namespace
-5. Call `build_code(**{k: "_test_" for k in params})` — runtime shape check
-6. If all pass, write to skills dir
-
-**Why not restrict to ast-only:** AST validation catches syntax but not runtime errors (e.g., undefined names inside the function). The exec-into-namespace pattern catches more failure modes without giving the LLM-generated code access to the real process namespace.
-
-#### Probation System
-
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| `sqlalchemy[asyncio]` | 2.0+ (existing) | Probation record persistence | Probation state (success_count, failure_count, status) belongs in the PostgreSQL store alongside other pipeline entities. Reuses existing `AsyncSession`. |
-| stdlib `dataclasses` or `pydantic` | 3.10+ / 2.12.5 | In-memory probation entry | Lightweight — no new package. |
-
-**Probation model:** `SkillProbation(skill_name, source_hash, success_count, failure_count, status: probation|promoted|retired)`. Promoted when success_count >= threshold; retired when failure_count exceeds limit. Wired into bridge.py as an optional post-execution hook.
-
-#### Registry Watcher
-
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| stdlib `asyncio` + polling | 3.10+ | Watch skills directory for new .py files | No external package needed for a small directory. 500ms polling via `asyncio.sleep(0.5)` in a background task. Simpler than `watchfiles` which adds a Rust extension dep. |
-| stdlib `importlib` | 3.10+ | Load skill modules | `importlib.util.spec_from_file_location` + `module_from_spec` — standard pattern for dynamic module loading in Python. |
-| `FastMCP.add_tool()` / `remove_tool()` | MCP SDK (installed) | Register/deregister synthesized tools | Confirmed in `mcp/server/fastmcp/tools/tool_manager.py` — `add_tool(fn, name=...)` and `remove_tool(name)` exist and work at runtime. |
-
-**Why polling over watchfiles:** The skills directory has at most tens of files and changes rarely (only when the synthesizer runs). `watchfiles` (Rust-backed inotify/FSEvents wrapper) is appropriate for high-frequency watching. For this use case, polling is simpler, dependency-free, and the 500ms latency is unnoticeable for synthesized tool registration.
-
-**Watcher lifecycle:** Started as `asyncio.create_task()` during MCP server lifespan startup. Scans directory mtime, compares against known mtimes, loads new/changed files. Emits log entries on `skill-added` / `skill-updated` / `skill-error` via a simple callback list (no EventEmitter dependency needed in Python — just a `list[Callable]`).
+| Tool | Purpose | Notes |
+|------|---------|-------|
+| `pip install -e /path/to/forge-bridge[llm]` | Cross-repo editable install for development | Standard editable install from local path. No new tooling. During v1.1 development, projekt-forge's venv installs forge-bridge this way. In production, pin to a PyPI release or a git tag. |
+| `pytest` with both repos | Cross-package integration testing | No shared test infrastructure needed for v1.1. Each repo runs its own tests. Integration is validated by projekt-forge's tests importing from `forge_bridge` (the pip package). |
 
 ---
 
-### Pluggable MCP Server
+## Installation
 
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| `FastMCP` (`mcp`) | Installed (protocol 2025-11-25) | Server instance shared across register calls | `FastMCP.add_tool()` is a public runtime API confirmed in source. Tools can be registered after server construction, before `mcp.run()`. |
-| Python function protocol | stdlib | `register_tools(mcp: FastMCP) -> None` | The pluggable API is a callable convention, not a framework. Downstream consumers (projekt-forge) call `register_tools(mcp)` to inject their tools before the server starts. No abstract base class needed — duck typing is sufficient. |
+```bash
+# In projekt-forge's virtualenv — install forge-bridge as editable dependency during development
+pip install -e /path/to/forge-bridge[llm]
 
-**Pattern:**
-```python
-# forge_bridge/mcp/server.py
-def create_server() -> FastMCP:
-    mcp = FastMCP("forge_bridge", ...)
-    _register_builtin_tools(mcp)
-    return mcp
+# In projekt-forge's pyproject.toml (after publishing to PyPI or private index)
+# forge-bridge>=1.0,<2.0
 
-# In __main__.py
-mcp = create_server()
-# Downstream can call mcp.add_tool(...) before mcp.run()
+# forge-bridge itself — no new packages required for v1.1
+# The existing dependency set handles all new capabilities
 ```
-
-**Why not sub-server composition:** FastMCP has no `mount()` or `include_server()` for composing multiple FastMCP instances. The only runtime extension point is `add_tool()` / `remove_tool()` directly on the instance. Confirmed by reading `server.py` source — no composition API exists.
-
-**Synthesized tool registration:** When RegistryWatcher loads a new skill, it calls `mcp.add_tool(build_mcp_tool_fn(skill), name=skill.name)`. When a skill is retired (probation failure), it calls `mcp.remove_tool(skill.name)`. This means synthesized tools appear/disappear in the live MCP tool list without restart — the MCP protocol re-advertises the tool list on each `tools/list` call.
-
----
-
-## New Package Dependencies
-
-All additions are minimal. The learning pipeline is almost entirely stdlib.
-
-| Package | Extra | Reason | Where to add |
-|---------|-------|---------|-------------|
-| `pydantic>=2.0` | none | SkillManifest schema, already installed transitively | Make explicit in `dependencies` (it's already there via mcp) |
-| `openai>=1.0` | `llm` | LLM router local calls | Move from `dependencies` to `[project.optional-dependencies].llm` |
-| `anthropic>=0.25` | `llm` | LLM router cloud calls | Same — move to `llm` extra |
-
-**No new packages** are required for the execution log, skill synthesizer, registry watcher, or probation system. Everything is stdlib + packages already installed.
-
----
-
-## pyproject.toml Changes
-
-```toml
-[project]
-dependencies = [
-    "httpx>=0.27",
-    "websockets>=13.0",
-    "mcp[cli]>=1.0",
-    "sqlalchemy[asyncio]>=2.0",
-    "asyncpg>=0.29",
-    "alembic>=1.13",
-    "psycopg2-binary>=2.9",
-    "pydantic>=2.0",   # make explicit — already installed via mcp
-]
-
-[project.optional-dependencies]
-llm = [
-    "openai>=1.0",
-    "anthropic>=0.25",
-]
-dev = [
-    "pytest",
-    "pytest-asyncio",
-    "ruff",
-]
-```
-
-**Note:** `openai` and `anthropic` are currently duplicated as hard deps (bug). Moving them to `[llm]` extra makes forge-bridge installable without LLM packages by default — required by the standalone independence constraint.
 
 ---
 
 ## Alternatives Considered
 
-| Category | Recommended | Alternative | Why Not |
-|----------|-------------|-------------|---------|
-| Async file I/O | `asyncio.to_thread` wrapping sync `open()` | `aiofiles>=23.0` | `aiofiles` is cleaner API but adds a dep for one use case. Python 3.10+ `asyncio.to_thread` is sufficient. |
-| Directory watching | stdlib polling | `watchfiles>=0.19` | `watchfiles` is appropriate for high-change directories; skills dir changes at most a few times per session. Polling at 500ms is adequate and dep-free. |
-| Skill validation | `ast.parse` + exec in isolated namespace | `RestrictedPython` | `RestrictedPython` is designed for untrusted user code in multi-tenant systems. Skills are LLM-generated but trusted-enough for this pipeline context. Full sandboxing adds complexity without meaningful security benefit here. |
-| Probation persistence | PostgreSQL via existing SQLAlchemy | JSONL flat file | Probation state is relational (joins with skill registry, queried by name). SQL is the right tool. JSONL would require manual query logic. |
-| LLM routing | Custom `LLMRouter` class | `litellm` | `litellm` provides a unified interface across 100+ LLM providers. Valuable for general-purpose routing, but the sensitivity-based two-tier routing here is bespoke to forge's data-egress policy. `litellm` would add ~50MB of dependencies for a routing pattern that fits in 50 lines. |
+| Recommended | Alternative | When to Use Alternative |
+|-------------|-------------|-------------------------|
+| `typing.Protocol` for ExecutionLogBackend | `abc.ABC` with abstract methods | Use ABC when you need shared default implementations or want to enforce `super().__init__()`. For a pure interface (just a contract), Protocol avoids import coupling entirely — projekt-forge never needs to import anything from forge-bridge to satisfy the interface. |
+| Separate `DeclarativeBase` per package | Shared Base class | Share a Base only when two packages are always co-deployed and their Alembic migration histories are jointly managed. projekt-forge has 4 migrations (003 adds users/roles/invites, 004 adds content_hash), forge-bridge has 2 migrations for its vocabulary store. Independent histories, independent `Base` instances. Never share across a pip dependency boundary. |
+| Env var configuration pass-through | Config file parsing inside forge-bridge | forge-bridge already reads `FORGE_BRIDGE_URL`, `FORGE_LOCAL_LLM_URL`, `FORGE_SYSTEM_PROMPT`, etc. projekt-forge's `config/forge_config.py` reads `/opt/forge/config.yaml` and should map those values to env vars before constructing forge-bridge components. Keeps forge-bridge stdlib-friendly and runnable without `/opt/forge/config.yaml`. |
+| Optional `router=` param on `synthesize()` | Mutating `get_router()` singleton | `get_router()` is a module-level singleton. If projekt-forge calls `get_router()` after forge-bridge sets it up with the wrong system prompt, all subsequent calls use that wrong config. Passing an explicit `LLMRouter` instance to `synthesize()` is the clean path — no shared mutable state. One-line change: `synthesize(..., router: LLMRouter | None = None)` with fallback to `get_router()`. |
+| JSONL default, SQL opt-in via Protocol | SQL-only execution log | JSONL is already implemented, tested, and live. Changing the default breaks all current standalone users. Adding SQL as an opt-in via Protocol adds zero breaking changes. |
 
 ---
 
-## Confidence Assessment
+## What NOT to Use
 
-| Area | Confidence | Basis |
-|------|------------|-------|
-| FastMCP `add_tool()` / `remove_tool()` API | HIGH | Read directly from installed source: `mcp/server/fastmcp/tools/tool_manager.py` and `server.py` |
-| `AsyncOpenAI` / `AsyncAnthropic` availability | HIGH | Confirmed in `openai/_client.py` (class line 461) and `anthropic/_client.py` (class line 293) |
-| openai SDK version | HIGH | Read from `openai/_version.py`: 2.29.0 |
-| anthropic SDK version | HIGH | Read from `anthropic/_version.py`: 0.86.0 |
-| pydantic version | HIGH | Read from `pydantic/version.py`: 2.12.5 |
-| MCP protocol version | HIGH | Read from `mcp/types.py`: LATEST_PROTOCOL_VERSION = "2025-11-25" |
-| Stdlib sufficiency for JSONL log | HIGH | Python 3.10+ stdlib — no ambiguity |
-| Polling vs watchfiles recommendation | MEDIUM | Based on use-case analysis; watchfiles would also work fine if preference changes |
-| No FastMCP server composition API | HIGH | Searched `server.py` for `mount`, `include_server`, `import_server`, `merge`, `compose` — none found |
+| Avoid | Why | Use Instead |
+|-------|-----|-------------|
+| Importing from `forge_bridge.db` or `forge_bridge.store` in projekt-forge | Those are forge-bridge's internal persistence layers for vocabulary entities and the wire protocol store. They are not part of the public API surface. | projekt-forge's own `forge_pipeline.db` (after module rename) for its own models |
+| `pydantic.BaseSettings` in forge-bridge for config | Adds `pydantic-settings` as a mandatory dep, breaking the minimal install story. | `os.environ.get()` with defaults — already the consistent pattern throughout forge-bridge |
+| Circular imports: forge-bridge importing from forge_pipeline | Breaks the dependency graph. forge-bridge is the library; projekt-forge is the consumer. | One-way only: projekt-forge imports from `forge_bridge`, never the reverse |
+| Mutating the `get_router()` singleton from projekt-forge startup | If both forge-bridge's internal tools and projekt-forge's learning pipeline call `get_router()`, and projekt-forge has mutated it, forge-bridge's internal LLM health check resource shows projekt-forge's config, not the canonical one. | projekt-forge instantiates its own `LLMRouter` from env vars set before import, and passes it explicitly to `synthesize()` |
+| `importlib.metadata` version guards at runtime | Startup overhead for a check that belongs in CI | Pin `forge-bridge>=1.0,<2.0` in projekt-forge's pyproject.toml and enforce in CI |
+
+---
+
+## Stack Patterns by Variant
+
+**Hardening forge-bridge's public API surface (Phase: API hardening):**
+
+Declare `forge_bridge/__init__.py` as the single stable re-export module:
+
+```python
+# forge_bridge/__init__.py
+from forge_bridge.bridge import (
+    BridgeResponse, BridgeError, BridgeConnectionError,
+    configure, execute, execute_json, execute_and_read, ping,
+    set_execution_callback,
+)
+from forge_bridge.llm import LLMRouter, get_router
+from forge_bridge.mcp import register_tools, get_mcp
+from forge_bridge.learning.execution_log import ExecutionLog
+from forge_bridge.learning.synthesizer import synthesize
+from forge_bridge.learning.probation import ProbationTracker
+
+__all__ = [
+    "BridgeResponse", "BridgeError", "BridgeConnectionError",
+    "configure", "execute", "execute_json", "execute_and_read",
+    "ping", "set_execution_callback",
+    "LLMRouter", "get_router",
+    "register_tools", "get_mcp",
+    "ExecutionLog", "synthesize", "ProbationTracker",
+]
+```
+
+Everything not in `__all__` is internal — projekt-forge never imports from submodules directly.
+
+**DB adapter pattern for learning pipeline (Phase: Learning pipeline integration):**
+
+Define a `Protocol` in `forge_bridge/learning/execution_log.py`:
+
+```python
+class ExecutionLogBackend(Protocol):
+    def record(self, code: str, intent: str | None = None) -> bool: ...
+    def mark_promoted(self, code_hash: str) -> None: ...
+    def get_code(self, code_hash: str) -> str | None: ...
+    def get_count(self, code_hash: str) -> int: ...
+```
+
+`ExecutionLog` (JSONL) already satisfies this structurally — no changes to its implementation.
+
+projekt-forge defines `SQLExecutionLogBackend` implementing the same Protocol, backed by its own `DBExecutionLog` ORM model on its `Base`.
+
+Wire-in at projekt-forge startup via the existing hook:
+
+```python
+# In projekt-forge startup
+from forge_bridge import set_execution_callback
+sql_backend = SQLExecutionLogBackend(session_factory)
+set_execution_callback(sql_backend.record_from_bridge)
+```
+
+**LLM router override in projekt-forge (Phase: LLM integration):**
+
+Do not mutate the singleton. Use env vars + explicit instantiation:
+
+```python
+# In projekt-forge startup (before any forge_bridge import triggers LLM init)
+import os
+os.environ["FORGE_SYSTEM_PROMPT"] = forge_specific_prompt
+os.environ["FORGE_LOCAL_LLM_URL"] = config["local_llm_url"]
+os.environ["FORGE_LOCAL_MODEL"] = "qwen2.5-coder:32b"
+
+from forge_bridge import LLMRouter
+forge_router = LLMRouter()   # picks up env vars at construction time
+
+# Pass explicitly to synthesize instead of relying on singleton
+from forge_bridge.learning.synthesizer import synthesize
+await synthesize(code, intent=intent, count=count, router=forge_router)
+```
+
+Requires one change to `synthesize()`: add `router: LLMRouter | None = None` with `get_router()` fallback.
+
+**projekt-forge module rename (Phase: Rewiring):**
+
+After adding `forge-bridge` to projekt-forge's pyproject.toml:
+
+1. Rename `forge_bridge/` -> `forge_pipeline/` inside projekt-forge repo
+2. Update all internal `from forge_bridge.db` -> `from forge_pipeline.db` imports
+3. The pip-installed `forge_bridge` package takes that namespace
+4. No collision: `forge_bridge` (pip) and `forge_pipeline` (local) are distinct top-level packages
+
+---
+
+## Version Compatibility
+
+| Package A | Compatible With | Notes |
+|-----------|-----------------|-------|
+| forge-bridge `>=1.0,<2.0` | projekt-forge dependency pin | SemVer contract. Minor additions are additive and backwards-compatible. Major bump signals API break. pyproject.toml currently says `0.1.0` — must bump to `1.0.0` as part of closing the v1.0 milestone before projekt-forge can sensibly pin it. |
+| SQLAlchemy `2.0` (forge-bridge store/) | SQLAlchemy `2.0` (projekt-forge db/) | Same major version in both. No conflict when co-installed. Both use `asyncpg` driver. Both use separate `DeclarativeBase` instances — metadata is not shared and migrations run independently. |
+| alembic `>=1.13` (forge-bridge) | alembic `>=1.13` (projekt-forge) | Each package has its own `alembic.ini` and `versions/` directory, targeting different database schemas. Independent migration histories. |
+| `openai>=1.0` (forge-bridge `[llm]` extra) | projekt-forge (no direct openai usage) | forge-bridge uses the openai client as an OpenAI-compatible Ollama adapter. No version conflict with anthropic. |
+
+---
+
+## Key Integration Seams
+
+The four specific code points that v1.1 must address (not just stack, but where the integration attaches):
+
+### 1. `forge_bridge/__init__.py` — Public API declaration
+Currently a one-line docstring. Becomes the stable re-export module (see pattern above).
+Location: `/Users/cnoellert/Documents/GitHub/forge-bridge/forge_bridge/__init__.py`
+
+### 2. `forge_bridge/bridge.py:set_execution_callback` — Learning pipeline injection
+Already exists and tested. projekt-forge calls this with its `SQLExecutionLogBackend`.
+Callback signature: `(code: str, response: BridgeResponse) -> None` — already defined.
+No API changes needed on forge-bridge's side.
+
+### 3. `forge_bridge/learning/synthesizer.py:synthesize()` — LLM router injection
+Add `router: LLMRouter | None = None` parameter. Fall back to `get_router()` if None.
+One-line change. Lets projekt-forge pass its pre-configured router.
+
+### 4. `forge_bridge/mcp/__init__.py:register_tools` — Tool registration
+Already public and tested. projekt-forge calls `register_tools(get_mcp(), [...])` to add
+`forge_catalog`, `forge_orchestrate`, etc. before `mcp.run()`.
+No changes needed. Document in public API.
 
 ---
 
 ## Sources
 
-- Installed MCP SDK source: `/Users/cnoellert/Documents/GitHub/forge-bridge/.venv/lib/python3.13/site-packages/mcp/`
-  - `server/fastmcp/tools/tool_manager.py` — `add_tool()`, `remove_tool()`
-  - `server/fastmcp/server.py` — `FastMCP.add_tool()`, `FastMCP.remove_tool()`, no composition API
-  - `types.py` — `LATEST_PROTOCOL_VERSION = "2025-11-25"`
-  - `shared/version.py` — `SUPPORTED_PROTOCOL_VERSIONS` includes 2025-06-18, 2025-11-25
-- Installed OpenAI SDK: `.venv/lib/python3.13/site-packages/openai/_version.py` (2.29.0), `_client.py` (AsyncOpenAI confirmed)
-- Installed Anthropic SDK: `.venv/lib/python3.13/site-packages/anthropic/_version.py` (0.86.0), `_client.py` (AsyncAnthropic confirmed)
-- Installed Pydantic: `.venv/lib/python3.13/site-packages/pydantic/version.py` (2.12.5)
-- FlameSavant source (ported design): `/Users/cnoellert/Documents/GitHub/FlameSavant/src/learning/ExecutionLog.js`, `RegistryWatcher.js`, `src/agents/SkillSynthesizer.js`
-- Existing llm_router.py: `/Users/cnoellert/Documents/GitHub/forge-bridge/forge_bridge/llm_router.py`
-- pyproject.toml: `/Users/cnoellert/Documents/GitHub/forge-bridge/pyproject.toml`
+- Direct codebase read: forge-bridge `/Users/cnoellert/Documents/GitHub/forge-bridge/` — HIGH confidence
+- Direct codebase read: projekt-forge `/Users/cnoellert/Documents/GitHub/projekt-forge/` — HIGH confidence
+- [Python packaging optional dependencies](https://www.pyopensci.org/python-package-guide/package-structure-code/declare-dependencies.html) — HIGH confidence
+- [Python public API surface — Real Python](https://realpython.com/ref/best-practices/public-api-surface/) — HIGH confidence
+- [SQLAlchemy 2.0 multiple declarative bases](https://github.com/sqlalchemy/sqlalchemy/discussions/10519) — MEDIUM confidence (community discussion, consistent with docs)
+- [Dependency inversion in Python](https://www.lpld.io/articles/how-to-depend-on-abstractions-rather-than-implementations-in-python/) — HIGH confidence
+- [Recursive optional deps — Hynek Schlawack](https://hynek.me/articles/python-recursive-optional-dependencies/) — HIGH confidence
+- [PEP 440 version specifiers](https://packaging.python.org/en/latest/specifications/version-specifiers/) — HIGH confidence
 
 ---
 
-*Stack research: 2026-04-14*
+*Stack research for: forge-bridge v1.1 projekt-forge integration*
+*Researched: 2026-04-15*
