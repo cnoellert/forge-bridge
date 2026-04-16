@@ -57,28 +57,28 @@ Requirements for projekt-forge integration. Each maps to roadmap phases.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| API-01 | — | Pending |
-| API-02 | — | Pending |
-| API-03 | — | Pending |
-| API-04 | — | Pending |
-| API-05 | — | Pending |
-| PKG-01 | — | Pending |
-| PKG-02 | — | Pending |
-| PKG-03 | — | Pending |
-| RWR-01 | — | Pending |
-| RWR-02 | — | Pending |
-| RWR-03 | — | Pending |
-| RWR-04 | — | Pending |
-| LRN-01 | — | Pending |
-| LRN-02 | — | Pending |
-| LRN-03 | — | Pending |
-| LRN-04 | — | Pending |
+| API-01 | Phase 4 | Pending |
+| API-02 | Phase 4 | Pending |
+| API-03 | Phase 4 | Pending |
+| API-04 | Phase 4 | Pending |
+| API-05 | Phase 4 | Pending |
+| PKG-01 | Phase 4 | Pending |
+| PKG-02 | Phase 4 | Pending |
+| PKG-03 | Phase 4 | Pending |
+| RWR-01 | Phase 5 | Pending |
+| RWR-02 | Phase 5 | Pending |
+| RWR-03 | Phase 5 | Pending |
+| RWR-04 | Phase 5 | Pending |
+| LRN-01 | Phase 6 | Pending |
+| LRN-02 | Phase 6 | Pending |
+| LRN-03 | Phase 6 | Pending |
+| LRN-04 | Phase 6 | Pending |
 
 **Coverage:**
 - v1.1 requirements: 16 total
-- Mapped to phases: 0
-- Unmapped: 16 ⚠️
+- Mapped to phases: 16
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-04-15*
-*Last updated: 2026-04-15 after initial definition*
+*Last updated: 2026-04-15 after roadmap creation*
