@@ -90,12 +90,26 @@ def register_tools(
     not appear in the client's tool list until the client reconnects (no
     ToolListChangedNotification is sent by this function).
 
+    Raises:
+        RuntimeError: If called after mcp.run() has started. All tool
+                      registration must happen before the server starts.
+
     Args:
         mcp:    The live FastMCP instance.
         fns:    List of callables to register.
         prefix: Prefix prepended to each fn.__name__ to form the tool name.
         source: Source tag for all tools in this batch.
     """
+    # Lazy import avoids the server.py -> registry.py -> server.py cycle.
+    # Accessing _server_started through the module captures the *current*
+    # value, not a stale snapshot (see RESEARCH.md R-5).
+    import forge_bridge.mcp.server as _server
+    if _server._server_started:
+        raise RuntimeError(
+            "register_tools() cannot be called after the MCP server has started. "
+            "Register all tools before calling mcp.run()."
+        )
+
     for fn in fns:
         name = f"{prefix}{fn.__name__}" if prefix else fn.__name__
         register_tool(mcp, fn, name=name, source=source)
