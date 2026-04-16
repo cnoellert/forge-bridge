@@ -7,6 +7,8 @@ Post-conform workflow:
 3. publish_sequence → export via PyExporter with preset
 """
 
+import os
+
 from pydantic import BaseModel, Field
 from typing import Optional
 
@@ -63,8 +65,11 @@ class PublishSequence(BaseModel):
         description="Absolute path to the export preset XML.",
     )
     output_directory: str = Field(
-        default="/mnt/portofino",
-        description="Root output directory. Preset namePattern adds subdirs.",
+        default_factory=lambda: os.environ.get("FORGE_PUBLISH_ROOT", "/mnt/publish"),
+        description=(
+            "Root output directory. Preset namePattern adds subdirs. "
+            "Defaults to $FORGE_PUBLISH_ROOT or /mnt/publish if unset."
+        ),
     )
     foreground: bool = Field(
         default=True,
