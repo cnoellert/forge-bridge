@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, patch
 
 from forge_bridge.learning.manifest import manifest_register
 from forge_bridge.learning.watcher import SYNTHESIZED_DIR  # shared constant — watcher watches this dir
+from forge_bridge.llm.router import LLMRouter, get_router
 
 logger = logging.getLogger(__name__)
 
@@ -192,84 +193,103 @@ async def _dry_run(fn_code: str, fn_name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-async def synthesize(
-    raw_code: str,
-    intent: Optional[str],
-    count: int,
-) -> Optional[Path]:
-    """Generate a synthesized MCP tool from an observed code pattern.
+class SkillSynthesizer:
+    """Generates MCP tools from observed code patterns via LLM synthesis.
 
     Args:
-        raw_code: The observed Python code pattern.
-        intent: User-provided description of what the code does.
-        count: Number of times this pattern was observed.
-
-    Returns:
-        Path to the written synth_*.py file, or None if synthesis/validation failed.
+        router: LLMRouter instance. Defaults to the shared get_router() singleton.
+        synthesized_dir: Directory to write synthesized tools to.
+                         Defaults to forge_bridge.learning.watcher.SYNTHESIZED_DIR
+                         (~/.forge-bridge/synthesized).
     """
-    # Lazy import to avoid circular deps at module load time
-    from forge_bridge.llm.router import get_router
 
-    # Build prompt
-    prompt = SYNTH_PROMPT.format(
-        count=count,
-        intent=intent or "unknown",
-        code=raw_code,
-    )
+    def __init__(
+        self,
+        router: LLMRouter | None = None,
+        synthesized_dir: Path | None = None,
+    ) -> None:
+        # Eager fallback at init: get_router() is itself lazy, so this just
+        # returns the shared singleton or constructs it.
+        self._router = router if router is not None else get_router()
+        # synthesized_dir=None falls back to the module-level SYNTHESIZED_DIR constant
+        self._synthesized_dir = synthesized_dir if synthesized_dir is not None else SYNTHESIZED_DIR
 
-    # Call LLM
-    try:
-        raw = await get_router().acomplete(
-            prompt,
-            sensitive=True,
-            system=SYNTH_SYSTEM,
-            temperature=0.1,
+    async def synthesize(
+        self,
+        raw_code: str,
+        intent: Optional[str],
+        count: int,
+    ) -> Optional[Path]:
+        """Generate a synthesized MCP tool from an observed code pattern.
+
+        Args:
+            raw_code: The observed Python code pattern.
+            intent: User-provided description of what the code does.
+            count: Number of times this pattern was observed.
+
+        Returns:
+            Path to the written synth_*.py file, or None if synthesis/validation failed.
+        """
+        # Build prompt
+        prompt = SYNTH_PROMPT.format(
+            count=count,
+            intent=intent or "unknown",
+            code=raw_code,
         )
-    except RuntimeError:
-        logger.warning("LLM unavailable — skipping synthesis")
-        return None
 
-    # Extract function from LLM response
-    fn_code = _extract_function(raw)
-
-    # Stage 1: Parse
-    try:
-        tree = ast.parse(fn_code)
-    except SyntaxError:
-        logger.warning("Synthesis failed: syntax error in LLM output")
-        return None
-
-    # Stage 2: Signature check
-    fn_name = _check_signature(tree)
-    if fn_name is None:
-        logger.warning("Synthesis failed: signature validation failed")
-        return None
-
-    # Stage 2b: Safety check — reject dangerous calls before execution
-    if not _check_safety(tree):
-        logger.warning("Synthesis failed: code contains dangerous calls")
-        return None
-
-    # Stage 3: Dry run
-    if not await _dry_run(fn_code, fn_name):
-        logger.warning("Synthesis failed: dry-run raised an exception")
-        return None
-
-    # Check for name collision
-    output_path = SYNTHESIZED_DIR / f"{fn_name}.py"
-    if output_path.exists():
-        existing_hash = hashlib.sha256(output_path.read_text().encode()).hexdigest()
-        new_hash = hashlib.sha256(fn_code.encode()).hexdigest()
-        if existing_hash == new_hash:
-            logger.info(f"Identical synthesized tool already exists: {output_path}")
-            return output_path
-        else:
-            logger.warning(f"Name collision for {fn_name} — existing file has different content")
+        # Call LLM
+        try:
+            raw = await self._router.acomplete(
+                prompt,
+                sensitive=True,
+                system=SYNTH_SYSTEM,
+                temperature=0.1,
+            )
+        except RuntimeError:
+            logger.warning("LLM unavailable — skipping synthesis")
             return None
 
-    # Write output
-    SYNTHESIZED_DIR.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(fn_code)
-    manifest_register(output_path)
-    logger.info(f"Synthesized tool written: {output_path}")
-    return output_path
+        # Extract function from LLM response
+        fn_code = _extract_function(raw)
+
+        # Stage 1: Parse
+        try:
+            tree = ast.parse(fn_code)
+        except SyntaxError:
+            logger.warning("Synthesis failed: syntax error in LLM output")
+            return None
+
+        # Stage 2: Signature check
+        fn_name = _check_signature(tree)
+        if fn_name is None:
+            logger.warning("Synthesis failed: signature validation failed")
+            return None
+
+        # Stage 2b: Safety check — reject dangerous calls before execution
+        if not _check_safety(tree):
+            logger.warning("Synthesis failed: code contains dangerous calls")
+            return None
+
+        # Stage 3: Dry run
+        if not await _dry_run(fn_code, fn_name):
+            logger.warning("Synthesis failed: dry-run raised an exception")
+            return None
+
+        # Check for name collision
+        output_path = self._synthesized_dir / f"{fn_name}.py"
+        if output_path.exists():
+            existing_hash = hashlib.sha256(output_path.read_text().encode()).hexdigest()
+            new_hash = hashlib.sha256(fn_code.encode()).hexdigest()
+            if existing_hash == new_hash:
+                logger.info(f"Identical synthesized tool already exists: {output_path}")
+                return output_path
+            else:
+                logger.warning(f"Name collision for {fn_name} — existing file has different content")
+                return None
+
+        # Write output
+        self._synthesized_dir.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(fn_code)
+        manifest_register(output_path)
+        logger.info(f"Synthesized tool written: {output_path}")
+        return output_path

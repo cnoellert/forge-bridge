@@ -138,99 +138,108 @@ class TestDryRun:
 
 
 # ---------------------------------------------------------------------------
-# synthesize() tests
+# SkillSynthesizer tests
 # ---------------------------------------------------------------------------
 
-class TestSynthesize:
+class TestSkillSynthesizer:
     @pytest.mark.asyncio
-    async def test_returns_path_on_valid_llm_output(self, tmp_path, monkeypatch):
-        from forge_bridge.learning import synthesizer
-        monkeypatch.setattr(synthesizer, "SYNTHESIZED_DIR", tmp_path)
+    async def test_returns_path_on_valid_llm_output(self, tmp_path):
+        from forge_bridge.learning.synthesizer import SkillSynthesizer
 
         mock_router = MagicMock()
         mock_router.acomplete = AsyncMock(return_value=VALID_SYNTH_CODE)
 
-        with patch("forge_bridge.llm.router.get_router", return_value=mock_router):
-            result = await synthesizer.synthesize("some code", "get shot name", 5)
+        synth = SkillSynthesizer(router=mock_router, synthesized_dir=tmp_path)
+        result = await synth.synthesize("some code", "get shot name", 5)
 
         assert result is not None
         assert result.exists()
         assert result.name == "synth_get_shot_name.py"
 
     @pytest.mark.asyncio
-    async def test_returns_none_on_syntax_error(self, tmp_path, monkeypatch):
-        from forge_bridge.learning import synthesizer
-        monkeypatch.setattr(synthesizer, "SYNTHESIZED_DIR", tmp_path)
-
+    async def test_returns_none_on_syntax_error(self, tmp_path):
+        from forge_bridge.learning.synthesizer import SkillSynthesizer
         mock_router = MagicMock()
         mock_router.acomplete = AsyncMock(return_value="def this is not valid python(")
-
-        with patch("forge_bridge.llm.router.get_router", return_value=mock_router):
-            result = await synthesizer.synthesize("some code", "intent", 3)
-
+        synth = SkillSynthesizer(router=mock_router, synthesized_dir=tmp_path)
+        result = await synth.synthesize("some code", "intent", 3)
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_llm_unavailable(self, tmp_path, monkeypatch):
-        from forge_bridge.learning import synthesizer
-        monkeypatch.setattr(synthesizer, "SYNTHESIZED_DIR", tmp_path)
-
+    async def test_returns_none_when_llm_unavailable(self, tmp_path):
+        from forge_bridge.learning.synthesizer import SkillSynthesizer
         mock_router = MagicMock()
         mock_router.acomplete = AsyncMock(side_effect=RuntimeError("LLM unavailable"))
-
-        with patch("forge_bridge.llm.router.get_router", return_value=mock_router):
-            result = await synthesizer.synthesize("some code", "intent", 3)
-
+        synth = SkillSynthesizer(router=mock_router, synthesized_dir=tmp_path)
+        result = await synth.synthesize("some code", "intent", 3)
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_skips_identical_existing_file(self, tmp_path, monkeypatch):
-        from forge_bridge.learning import synthesizer
-        monkeypatch.setattr(synthesizer, "SYNTHESIZED_DIR", tmp_path)
-
-        # Pre-write the file with identical content (stripped, as synthesizer writes it)
+    async def test_skips_identical_existing_file(self, tmp_path):
+        from forge_bridge.learning.synthesizer import SkillSynthesizer
         out = tmp_path / "synth_get_shot_name.py"
         out.write_text(VALID_SYNTH_CODE.strip())
-
         mock_router = MagicMock()
         mock_router.acomplete = AsyncMock(return_value=VALID_SYNTH_CODE)
-
-        with patch("forge_bridge.llm.router.get_router", return_value=mock_router):
-            result = await synthesizer.synthesize("some code", "intent", 3)
-
-        assert result == out  # returns existing path
+        synth = SkillSynthesizer(router=mock_router, synthesized_dir=tmp_path)
+        result = await synth.synthesize("some code", "intent", 3)
+        assert result == out
 
     @pytest.mark.asyncio
-    async def test_rejects_collision_different_content(self, tmp_path, monkeypatch):
-        from forge_bridge.learning import synthesizer
-        monkeypatch.setattr(synthesizer, "SYNTHESIZED_DIR", tmp_path)
-
-        # Pre-write a DIFFERENT file with the same name
+    async def test_rejects_collision_different_content(self, tmp_path):
+        from forge_bridge.learning.synthesizer import SkillSynthesizer
         out = tmp_path / "synth_get_shot_name.py"
         out.write_text("# different content\n")
-
         mock_router = MagicMock()
         mock_router.acomplete = AsyncMock(return_value=VALID_SYNTH_CODE)
-
-        with patch("forge_bridge.llm.router.get_router", return_value=mock_router):
-            result = await synthesizer.synthesize("some code", "intent", 3)
-
+        synth = SkillSynthesizer(router=mock_router, synthesized_dir=tmp_path)
+        result = await synth.synthesize("some code", "intent", 3)
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_calls_router_with_sensitive_true(self, tmp_path, monkeypatch):
-        from forge_bridge.learning import synthesizer
-        monkeypatch.setattr(synthesizer, "SYNTHESIZED_DIR", tmp_path)
-
+    async def test_calls_router_with_sensitive_true(self, tmp_path):
+        from forge_bridge.learning.synthesizer import SkillSynthesizer
         mock_router = MagicMock()
         mock_router.acomplete = AsyncMock(return_value=VALID_SYNTH_CODE)
-
-        with patch("forge_bridge.llm.router.get_router", return_value=mock_router):
-            await synthesizer.synthesize("some code", "intent", 3)
-
+        synth = SkillSynthesizer(router=mock_router, synthesized_dir=tmp_path)
+        await synth.synthesize("some code", "intent", 3)
         mock_router.acomplete.assert_called_once()
         call_kwargs = mock_router.acomplete.call_args
         assert call_kwargs.kwargs.get("sensitive") is True or call_kwargs[1].get("sensitive") is True
+
+    def test_router_injection(self):
+        """D-17: router kwarg stored on self; None falls back to get_router()."""
+        from forge_bridge.learning.synthesizer import SkillSynthesizer
+        mock_router = MagicMock()
+        synth = SkillSynthesizer(router=mock_router)
+        assert synth._router is mock_router
+
+        # Default path: None falls back to get_router()
+        from forge_bridge.llm.router import get_router
+        synth2 = SkillSynthesizer()
+        assert synth2._router is get_router()
+
+    def test_synth_dir_injection(self, tmp_path):
+        """D-17: synthesized_dir kwarg stored on self; None falls back to SYNTHESIZED_DIR."""
+        from forge_bridge.learning.synthesizer import SkillSynthesizer, SYNTHESIZED_DIR
+        synth = SkillSynthesizer(synthesized_dir=tmp_path)
+        assert synth._synthesized_dir == tmp_path
+
+        synth_default = SkillSynthesizer()
+        assert synth_default._synthesized_dir is SYNTHESIZED_DIR
+
+
+# ---------------------------------------------------------------------------
+# D-19 regression guard: module-level synthesize() must be gone
+# ---------------------------------------------------------------------------
+
+def test_module_level_synthesize_removed():
+    """D-19: module-level async def synthesize(...) is removed (no backward-compat alias)."""
+    from forge_bridge.learning import synthesizer
+    assert not hasattr(synthesizer, "synthesize"), (
+        "Module-level synthesize() must be removed per D-19 clean-break. "
+        "If present, SkillSynthesizer.synthesize is the replacement."
+    )
 
 
 # ---------------------------------------------------------------------------
