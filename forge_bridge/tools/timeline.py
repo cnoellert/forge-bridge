@@ -285,13 +285,41 @@ else:
                 for track in ver.tracks:
                     tracks.append(track)
 
-            # Pass 1: assign shot names on background track, build bg_map
-            bg_map   = []   # [(shot_name, record_in_str, record_out_str)]
-            shot_num = start
+            # Pass 1: assign shot names on background track, build bg_map.
+            # When T0 has a gap, scan upward tracks (T1, T2, ...) for a real
+            # segment covering the gap range and use it as the gap fill.
+            # This prevents silent shot-number skips when T0 has a hole but
+            # an upper track covers the cut.
+            bg_map     = []   # [(shot_name, record_in_str, record_out_str)]
+            gap_fills  = set()  # id() of segments used as gap fills
+            shot_num   = start
             for seg in tracks[0].segments:
                 src = str(seg.source_name) if seg.source_name else ''
                 if not src:
-                    bg_map.append((None, str(seg.record_in), str(seg.record_out)))
+                    # Gap on T0 — scan upward tracks for a real segment
+                    gap_in  = str(seg.record_in)
+                    gap_out = str(seg.record_out)
+                    fill_seg = None
+                    for fti in range(1, len(tracks)):
+                        for fseg in tracks[fti].segments:
+                            fsrc = str(fseg.source_name) if fseg.source_name else ''
+                            if not fsrc:
+                                continue
+                            if gap_in <= str(fseg.record_in) <= gap_out:
+                                fill_seg = fseg
+                                break
+                        if fill_seg:
+                            break
+                    if fill_seg is not None:
+                        num_str   = str(shot_num * increment).zfill(padding)
+                        shot_name = f"{{prefix}}_{{num_str}}"
+                        fill_seg.shot_name.set_value(shot_name)
+                        bg_map.append((shot_name, gap_in, gap_out))
+                        gap_fills.add(id(fill_seg))
+                        result['shots_assigned'] += 1
+                        shot_num += 1
+                    else:
+                        bg_map.append((None, gap_in, gap_out))
                     continue
                 num_str   = str(shot_num * increment).zfill(padding)
                 shot_name = f"{{prefix}}_{{num_str}}"
@@ -305,6 +333,9 @@ else:
                 for seg in tracks[ti].segments:
                     src = str(seg.source_name) if seg.source_name else ''
                     if not src:
+                        continue
+                    if id(seg) in gap_fills:
+                        # Already named in Pass 1 as a T0 gap fill — skip
                         continue
                     seg_in = str(seg.record_in)
                     for bg_shot, bg_in, bg_out in bg_map:
