@@ -115,6 +115,11 @@ class MsgType:
     QUERY_DEPENDENCIES = "query.dependencies"  # what does X depend on?
     QUERY_SHOT_STACK   = "query.shot_stack"    # all layers for a shot
     QUERY_EVENTS       = "query.events"        # recent event log
+    QUERY_LINEAGE      = "query.lineage"       # full lineage traversal for an entity
+    QUERY_SHOT_DEPS    = "query.shot_deps"     # dependency graph for a shot
+
+    # Media
+    MEDIA_SCAN = "media.scan"   # trigger a filesystem scan for a project/role/shot
 
     # Subscriptions
     SUBSCRIBE   = "subscribe"    # client → server: I want events for project X
@@ -290,13 +295,35 @@ def entity_get(entity_id: str) -> Message:
     return Message({"type": MsgType.ENTITY_GET, "id": _new_id(), "entity_id": entity_id})
 
 
-def entity_list(entity_type: str, project_id: str) -> Message:
-    return Message({
+def entity_list(
+    entity_type: str,
+    project_id: str,
+    *,
+    shot_id: str | None = None,
+    role: str | None = None,
+    source_name: str | None = None,
+) -> Message:
+    """List entities of a given type within a project.
+
+    Optional narrowing kwargs (keyword-only to preserve backward compat
+    with existing 2-arg positional call sites):
+        shot_id:     restrict results to a single shot
+        role:        restrict to one role (e.g. "plate", "graded")
+        source_name: restrict to a single source/media name
+    """
+    payload: dict = {
         "type":        MsgType.ENTITY_LIST,
         "id":          _new_id(),
         "entity_type": entity_type,
         "project_id":  project_id,
-    })
+    }
+    if shot_id is not None:
+        payload["shot_id"] = shot_id
+    if role is not None:
+        payload["role"] = role
+    if source_name is not None:
+        payload["source_name"] = source_name
+    return Message(payload)
 
 
 # Graph messages
@@ -354,6 +381,46 @@ def query_events(
         "project_id": project_id,
         "entity_id":  entity_id,
         "limit":      limit,
+    })
+
+
+def query_lineage(entity_id: str) -> Message:
+    """Full lineage traversal (both ancestors and descendants) for an entity."""
+    return Message({
+        "type":      MsgType.QUERY_LINEAGE,
+        "id":        _new_id(),
+        "entity_id": entity_id,
+    })
+
+
+def query_shot_deps(shot_id: str) -> Message:
+    """Dependency graph for a single shot (layers, versions, sources)."""
+    return Message({
+        "type":    MsgType.QUERY_SHOT_DEPS,
+        "id":      _new_id(),
+        "shot_id": shot_id,
+    })
+
+
+def media_scan(
+    project_name: str,
+    role: str,
+    shot_name: str,
+    project_id: str,
+) -> Message:
+    """Trigger a media scan for a specific project/role/shot.
+
+    The server-side scanner consumes this message, walks the filesystem
+    under the project's role directory, and emits media.discovered events
+    for any new media found.
+    """
+    return Message({
+        "type":         MsgType.MEDIA_SCAN,
+        "id":           _new_id(),
+        "project_name": project_name,
+        "role":         role,
+        "shot_name":    shot_name,
+        "project_id":   project_id,
     })
 
 
