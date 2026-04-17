@@ -54,7 +54,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
   3. projekt-forge's forge-specific tools (catalog, orchestrate, scan, seed) are registered and visible to MCP clients via `register_tools()`
   4. All existing projekt-forge tests pass after the rewire with no changes to test logic
 **Plans**: 5 plans (strictly sequential waves 0→1→2→3→4; Wave 0 lands in forge-bridge repo, Waves 1-4 land in projekt-forge repo)
-  - [ ] 05-00-PLAN.md — Wave 0 (forge-bridge repo): v1.0.1 patch release (protocol builders, ref_msg_id fix, timeline gap-fill, tag+push) (RWR-01 prereq)
+  - [x] 05-00-PLAN.md — Wave 0 (forge-bridge repo): v1.0.1 patch release (protocol builders, ref_msg_id fix, timeline gap-fill, tag+push) (RWR-01 prereq)
   - [ ] 05-01-PLAN.md — Wave A (projekt-forge repo): rename forge_bridge/→projekt_forge/ + internal import sweep + pyproject.toml + dev-loop doc (RWR-01)
   - [ ] 05-02-PLAN.md — Wave B (projekt-forge repo): add pip dep; delete D-08 duplicates; flip canonical imports; atomic RWR-02 commit (RWR-01, RWR-02)
   - [ ] 05-03-PLAN.md — Wave C (projekt-forge repo): rebuild server/mcp.py around get_mcp()+register_tools; wire __main__.py to canonical lifespan (RWR-03)

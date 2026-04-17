@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: projekt-forge Integration
 status: executing
-stopped_at: Phase 5 context gathered
-last_updated: "2026-04-16T22:20:28.642Z"
-last_activity: 2026-04-16
+stopped_at: Completed 05-00-PLAN.md (v1.0.1 released + pushed to origin)
+last_updated: "2026-04-16T00:00:00.000Z"
+last_activity: 2026-04-16 -- Phase 05 Plan 00 complete (v1.0.1 tag on origin)
 progress:
   total_phases: 3
   completed_phases: 1
-  total_plans: 4
-  completed_plans: 4
-  percent: 100
+  total_plans: 9
+  completed_plans: 5
+  percent: 56
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-15)
 
 **Core value:** Make forge-bridge the single canonical pip package so projekt-forge can consume it rather than duplicate it
-**Current focus:** Phase 04 — api-surface-hardening
+**Current focus:** Phase 05 — import-rewiring
 
 ## Current Position
 
-Phase: 5
-Plan: Not started
-Status: Executing Phase 04
-Last activity: 2026-04-16
+Phase: 05 (import-rewiring) — EXECUTING
+Plan: 2 of 5 (next: 05-01)
+Status: Executing Phase 05
+Last activity: 2026-04-16 -- Plan 05-00 complete: forge-bridge v1.0.1 tagged and pushed to origin
 
-Progress: [░░░░░░░░░░] 0% (v1.1 milestone)
+Progress: [██░░░░░░░░] 20% (v1.1 milestone — 1 of 5 Phase 5 plans done)
 
 ## Performance Metrics
 
@@ -58,6 +58,8 @@ Recent decisions affecting current work:
 - [v1.0 Phase 3]: Synthesized tools must use bridge.execute(), never import flame — tools run in MCP server process, not inside Flame
 - [v1.0 Phase 3]: Manifest-based file validation in watcher prevents arbitrary code execution from rogue synthesized files
 - [v1.1 Roadmap]: Phase ordering is strict — Phase 5 cannot start until Phase 4 is complete; Phase 6 cannot start until both are done
+- [Plan 05-00]: Four projekt-forge fixes ported upstream (query_lineage/query_shot_deps/media_scan builders, entity_list narrowing, ref_msg_id correlation fallback, timeline T0 gap-fill) — released as forge-bridge v1.0.1 so projekt-forge can delete local duplicates in Wave B
+- [Plan 05-00]: `project_name` kwarg on AsyncClient.__init__ stays in projekt-forge fork (NOT upstreamed) — forge-specific multi-project routing, per RESEARCH §D-09b
 
 ### Pending Todos
 
@@ -79,6 +81,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-16T22:20:28.636Z
-Stopped at: Phase 5 context gathered
-Resume file: .planning/phases/05-import-rewiring/05-CONTEXT.md
+Last session: 2026-04-16T23:59:00.000Z
+Stopped at: Completed 05-00-PLAN.md — v1.0.1 released + pushed to origin
+Resume file: .planning/phases/05-import-rewiring/05-01-PLAN.md
