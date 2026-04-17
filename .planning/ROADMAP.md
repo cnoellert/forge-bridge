@@ -58,7 +58,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
   - [x] 05-01-PLAN.md — Wave A (projekt-forge repo): rename forge_bridge/→projekt_forge/ + internal import sweep + pyproject.toml + dev-loop doc (RWR-01)
   - [x] 05-02-PLAN.md — Wave B (projekt-forge repo): add pip dep; delete D-08 duplicates; flip canonical imports; atomic RWR-02 commit (RWR-01, RWR-02)
   - [x] 05-03-PLAN.md — Wave C (projekt-forge repo): rebuild server/mcp.py around get_mcp()+register_tools; wire __main__.py to canonical lifespan (RWR-03)
-  - [ ] 05-04-PLAN.md — Wave D (projekt-forge repo): conftest autouse guard asserting forge_bridge resolves to site-packages (RWR-04)
+  - [x] 05-04-PLAN.md — Wave D (projekt-forge repo): conftest autouse guard asserting forge_bridge resolves to site-packages (RWR-04)
 
 ### Phase 6: Learning Pipeline Integration
 **Goal**: projekt-forge's startup wires forge-bridge's learning pipeline with forge's own LLM config, log path, and storage callback — so synthesis uses forge's Ollama instance and logs persist separately from the standalone bridge process

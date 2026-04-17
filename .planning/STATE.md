@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: projekt-forge Integration
 status: executing
-stopped_at: Completed 05-03-PLAN.md -- projekt-forge Wave C atomic commit 2722e23 landed (projekt_forge/server/mcp.py collapsed 560->45 lines around get_mcp()+register_tools prefix=forge_ source=builtin; __main__.py rewired to canonical lifespan with new _run_mcp_only helper; server/__init__.py main re-export dropped); pytest tests/ green at 414 passed + 3 xfailed
-last_updated: "2026-04-17T04:47:00.744Z"
+stopped_at: Completed 05-04-PLAN.md -- Phase 5 CLOSED. projekt-forge Wave D atomic commit 7014c17 landed (tests/conftest.py appended with autouse session-scoped fixture assert_forge_bridge_from_site_packages asserting forge_bridge resolves to site-packages + no local forge_bridge/ at repo root). Full projekt-forge suite green 414 passed + 3 xfailed. All four RWR requirements complete (RWR-01/02/03/04); four wave commits visible in projekt-forge origin/main..HEAD. Ready for /gsd-verify-work on Phase 5 and Phase 6 kickoff.
+last_updated: "2026-04-17T04:51:12Z"
 last_activity: 2026-04-17
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 9
-  completed_plans: 8
-  percent: 89
+  completed_plans: 9
+  percent: 100
 ---
 
 # Project State
@@ -25,12 +25,12 @@ See: .planning/PROJECT.md (updated 2026-04-15)
 
 ## Current Position
 
-Phase: 05 (import-rewiring) — EXECUTING
-Plan: 5 of 5 (next: 05-04)
-Status: Executing Phase 05
-Last activity: 2026-04-17 -- Plan 05-03 complete: projekt-forge Wave C atomic commit 2722e23 in projekt-forge (projekt_forge/server/mcp.py 560->45 lines via get_mcp()+register_tools; __main__.py rewired to canonical lifespan; server/__init__.py main re-export dropped); pytest tests/ green at 414 passed + 3 xfailed
+Phase: 05 (import-rewiring) — COMPLETE
+Plan: 5 of 5 (all plans complete — ready for /gsd-verify-work and Phase 6 kickoff)
+Status: Phase 05 CLOSED
+Last activity: 2026-04-17 -- Plan 05-04 complete: projekt-forge Wave D atomic commit 7014c17 landed (tests/conftest.py appended with RWR-04 autouse session fixture assert_forge_bridge_from_site_packages — dual assertion: site-packages resolution + defensive no-local-dir check); pytest tests/ green at 414 passed + 3 xfailed; four Phase 5 wave commits (A:137aac3, B:9856376+4d2b579 precondition, C:2722e23, D:7014c17) in projekt-forge origin/main..HEAD
 
-Progress: [█████████░] 89% (v1.1 milestone — 4 of 5 Phase 5 plans done)
+Progress: [██████████] 100% (v1.1 milestone — 5 of 5 Phase 5 plans done)
 
 ## Performance Metrics
 
@@ -52,6 +52,7 @@ Progress: [█████████░] 89% (v1.1 milestone — 4 of 5 Phase 
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
 | Phase 05 P03 | ~15min | 2 tasks | 3 files |
+| Phase 05 P04 | ~12min | 1 task  | 1 file  |
 
 ## Accumulated Context
 
@@ -75,6 +76,9 @@ Recent decisions affecting current work:
 - [Phase 05]: [Plan 05-03]: Expanded Task 2 scope to cover projekt_forge/server/__init__.py as a Rule 3 blocking auto-fix -- the package __init__ re-exported 'main' from server.mcp which Task 1 explicitly removed, so without the three-file atomic commit the package becomes unimportable mid-wave. The alternative (split the __init__ fix into a separate commit) would have broken RWR-03's atomic-commit requirement.
 - [Phase 05]: [Plan 05-03]: Introduced _run_mcp_only(args) helper in __main__.py instead of leaving the two 'from projekt_forge.server.mcp import main as mcp_main' callers dangling -- the helper configures the bridge via forge_bridge.bridge.configure and calls mcp.run() directly, so the canonical FastMCP lifespan owns startup_bridge/shutdown_bridge per Phase 4 API-04/API-05 and projekt-forge never duplicates the lifecycle.
 - [Phase 05]: [Plan 05-03]: Swept the Wave A cosmetic leftovers in __main__.py (argparse prog label, module docstring, logger channel name) from 'forge_bridge' to 'projekt_forge' in the same atomic commit as the architectural rewire -- Plan 05-01 SUMMARY flagged these as Wave C's responsibility.
+- [Phase 05]: [Plan 05-04]: D-06 editable-shadow reconciliation handled per plan STEP 4 — uninstalled the editable forge-bridge shadow (0.1.0 from /Users/cnoellert/Documents/GitHub/forge-bridge) and installed forge-bridge 1.0.1 from the git tag into site-packages before committing the fixture. The fixture's site-packages assertion is by design incompatible with the editable dev loop; if the user reinstates the editable shadow for forge-bridge development, pytest will fail with a clear remediation message. This is the guard working as intended, not a regression.
+- [Phase 05]: [Plan 05-04]: Duplicate `import pytest` omitted from the appended conftest block — plan STEP 3 explicitly permits this reconciliation when pytest is already imported at file top (it is, at line 17). `pathlib` and `forge_bridge` are new and stay inline for section cohesion per the plan's guidance. This is plan-approved, not a deviation.
+- [Phase 05]: [Plan 05-04]: projekt-forge pyproject.toml missing `tool.hatch.metadata.allow-direct-references = true` prevents `pip install -e /path/to/projekt-forge` from resolving the forge-bridge git-URL dep. Worked around in this plan by installing forge-bridge directly from its git tag. Adding the hatchling flag to projekt-forge's pyproject.toml is a projekt-forge packaging concern flagged as follow-up — out of scope for RWR-04.
 
 ### Pending Todos
 
@@ -96,6 +100,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-17T04:47:00.742Z
-Stopped at: Completed 05-03-PLAN.md -- projekt-forge Wave C atomic commit 2722e23 landed (projekt_forge/server/mcp.py collapsed 560->45 lines around get_mcp()+register_tools prefix=forge_ source=builtin; __main__.py rewired to canonical lifespan with new _run_mcp_only helper; server/__init__.py main re-export dropped); pytest tests/ green at 414 passed + 3 xfailed
+Last session: 2026-04-17T04:51:12Z
+Stopped at: Completed 05-04-PLAN.md -- Phase 5 CLOSED. projekt-forge Wave D atomic commit 7014c17 (tests/conftest.py appended with autouse session-scoped RWR-04 fixture assert_forge_bridge_from_site_packages: asserts site-packages resolution + no local forge_bridge/ at repo root). Full projekt-forge suite green 414 passed + 3 xfailed. All four RWR requirements (01/02/03/04) complete; four wave commits (A:137aac3, B:9856376+4d2b579 precondition, C:2722e23, D:7014c17) visible in projekt-forge origin/main..HEAD. D-12 long-term safety net in place. Ready for /gsd-verify-work on Phase 5.
 Resume file: None
