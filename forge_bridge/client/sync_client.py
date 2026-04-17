@@ -296,9 +296,26 @@ class SyncClient:
         self,
         entity_type: str,
         project_id:  str | uuid.UUID,
+        *,
+        shot_id:     str | None = None,
+        role:        str | None = None,
+        source_name: str | None = None,
     ) -> list[dict]:
-        """List all entities of a type in a project."""
-        result = self._run(entity_list(entity_type, str(project_id)))
+        """List entities of a type in a project.
+
+        Optional narrowing kwargs (keyword-only so existing 2-arg positional
+        calls keep working):
+            shot_id:     restrict results to entities belonging to one shot
+            role:        restrict to one role (e.g. "plate", "graded")
+            source_name: restrict to a single source/media name
+        """
+        result = self._run(entity_list(
+            entity_type,
+            str(project_id),
+            shot_id=shot_id,
+            role=role,
+            source_name=source_name,
+        ))
         return result.get("entities", [])
 
     # ── Graph ─────────────────────────────────────────────────

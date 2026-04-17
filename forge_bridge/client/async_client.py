@@ -419,8 +419,11 @@ class AsyncClient:
         msg_type = msg.type
 
         if msg_type in (MsgType.OK, MsgType.ERROR):
-            # Response to a pending request
-            msg_id = msg.msg_id
+            # Response to a pending request. Prefer ref_msg_id (the request id
+            # the server is explicitly answering) over msg.msg_id (the response's
+            # own id). Falls back to msg.msg_id for backward-compat with servers
+            # that echo the request id in the "id" field.
+            msg_id = msg.get("ref_msg_id") or msg.msg_id
             if msg_id and msg_id in self._pending:
                 self._pending[msg_id].resolve(msg)
             else:
@@ -434,8 +437,9 @@ class AsyncClient:
             await self._dispatch_event(msg)
 
         elif msg_type == MsgType.PONG:
-            # Pong is a response to a client-initiated ping request
-            msg_id = msg.msg_id
+            # Pong is a response to a client-initiated ping request. Same
+            # ref_msg_id-first fallback as ok/error responses.
+            msg_id = msg.get("ref_msg_id") or msg.msg_id
             if msg_id and msg_id in self._pending:
                 self._pending[msg_id].resolve(msg)
 
