@@ -266,6 +266,18 @@ The sync_client extensions directly mirror the protocol/builder extensions. Keep
 
 ---
 
+## D-12: Hook sys.path Collision (Discovered during Wave B Execution)
+
+During Wave B execution (plan 05-02), pytest collection failed in projekt-forge with `ModuleNotFoundError` and `AttributeError` on canonical forge_bridge symbols despite the pip package being correctly installed. Root cause: the Flame hook scripts in `flame_hooks/forge_tools/**/scripts/*.py` bootstrap their import path with `sys.path.insert(0, <scripts dir>)`, where the scripts directory contains a sibling file named `forge_bridge.py` (the in-Flame HTTP server). Inserting at position 0 makes that flat-module `forge_bridge.py` shadow the installed pip package `forge_bridge/` during import resolution — any subsequent `from forge_bridge.tools.X import Y` resolves against the flat hook module, which has no `.tools` submodule, and collection explodes.
+
+The collision was present at 17 sites across 14 hook files plus 3 test helpers: `flame_hooks/forge_tools/{forge_publish_shots, forge_publish_traffik, forge_batch_render/*, forge_denoise, forge_ingest/*, forge_layout, forge_stream (2 sites), forge_switch_grade, forge_bridge/forge_llm_test, forge_rename}/scripts/*.py` plus `tests/{test_forge_stream.py, test_catalog_client_shared.py, test_ingest_dialog_catalog.py}`. The specific line numbers are recorded in plan 05-02's SUMMARY.md.
+
+**Resolution:** flip `sys.path.insert(0, scripts_dir)` to `sys.path.append(scripts_dir)` at every site. The hook still picks up its local `forge_bridge.py` HTTP-server module when running inside Flame (Flame's own Python path puts the scripts dir ahead of site-packages), but in a pytest process the pip-installed `forge_bridge/` package wins the resolution. Committed as `fix(hooks): append forge_bridge scripts dir to sys.path` (projekt-forge 4d2b579) before the atomic RWR-02 commit, because without this precondition the RWR-02 commit cannot run its test suite.
+
+**Long-term safety net:** Plan 05-04's `conftest.py` fixture (`assert_forge_bridge_site_packages`, autouse) will fail-fast on any future regression — if anyone re-inserts the collision, every test errors at collection with a clear message instead of a cryptic `AttributeError`. The fixture is the permanent guard; the sys.path fix is the immediate unblocker.
+
+---
+
 ## v1.0.1 BLOCKER VERDICT
 
 **v1.0.1 is REQUIRED before Wave B.** The following items must be patched:
