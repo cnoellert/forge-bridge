@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: projekt-forge Integration
 status: executing
-stopped_at: Completed 05-02-PLAN.md (projekt-forge Wave B pip adoption + atomic RWR-02 delete landed)
-last_updated: "2026-04-16T12:00:00.000Z"
-last_activity: 2026-04-16 -- Phase 05 Plan 02 complete (projekt-forge Wave B, RWR-02 atomic commit 9856376, D-12 hook fix commit 4d2b579)
+stopped_at: Completed 05-03-PLAN.md -- projekt-forge Wave C atomic commit 2722e23 landed (projekt_forge/server/mcp.py collapsed 560->45 lines around get_mcp()+register_tools prefix=forge_ source=builtin; __main__.py rewired to canonical lifespan with new _run_mcp_only helper; server/__init__.py main re-export dropped); pytest tests/ green at 414 passed + 3 xfailed
+last_updated: "2026-04-17T04:47:00.744Z"
+last_activity: 2026-04-17
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 9
-  completed_plans: 7
-  percent: 78
+  completed_plans: 8
+  percent: 89
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-04-15)
 ## Current Position
 
 Phase: 05 (import-rewiring) — EXECUTING
-Plan: 4 of 5 (next: 05-03)
+Plan: 5 of 5 (next: 05-04)
 Status: Executing Phase 05
-Last activity: 2026-04-16 -- Plan 05-02 complete: projekt-forge Wave B atomic RWR-02 landed as commit 9856376 (4 duplicate modules deleted, forge-bridge pip dep added, canonical imports flipped); precondition D-12 hook sys.path fix landed as commit 4d2b579; pytest tests/ green at 414 passed + 3 xfailed (baseline 421 - 7 projekt-forge-specific switch_grade tests removed per user Option 1)
+Last activity: 2026-04-17 -- Plan 05-03 complete: projekt-forge Wave C atomic commit 2722e23 in projekt-forge (projekt_forge/server/mcp.py 560->45 lines via get_mcp()+register_tools; __main__.py rewired to canonical lifespan; server/__init__.py main re-export dropped); pytest tests/ green at 414 passed + 3 xfailed
 
-Progress: [█████░░░░░] 50% (v1.1 milestone — 3 of 5 Phase 5 plans done)
+Progress: [█████████░] 89% (v1.1 milestone — 4 of 5 Phase 5 plans done)
 
 ## Performance Metrics
 
@@ -47,7 +47,11 @@ Progress: [█████░░░░░] 50% (v1.1 milestone — 3 of 5 Phase 
 | 2. MCP Server Rebuild | 3 | Complete |
 | 3. Learning Pipeline | 3 | Complete |
 
-*v1.1 metrics will populate as plans complete*
+**v1.1 Phase 5 Metrics:**
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| Phase 05 P03 | ~15min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -68,6 +72,9 @@ Recent decisions affecting current work:
 - [Plan 05-02]: tests/test_switch_grade_mcp.py pared from 22 to 15 tests per user-approved Option 1 — deleted 7 projekt-forge-specific tests asserting on fork-only SwitchGradeInput fields (alternative_path/alternative_start_frame/alternative_duration/entity_id), server-side openclip writer (_write_openclip_server_side / forge_openclip_writer / _switch.clip naming), and UUID path construction. Rewrote 4 tests to use pip's media_path field. Coverage of pip surface maintained and expanded.
 - [Plan 05-02]: D-12 discovered during execution — Flame hook scripts' sys.path.insert(0, scripts_dir) shadows pip forge_bridge/ because scripts dir contains sibling forge_bridge.py hook module. Resolution: insert→append at 17 sites; 05-04's autouse conftest fixture is the long-term guard.
 - [Plan 05-02]: Pytest invocation standardized to `pytest tests/` (explicit path) — default `pytest` collection in projekt-forge pollutes from flame_hooks/forge_tools/forge_bridge/scripts/forge_llm_test.py (matches *_test.py AND sys.exit(1) on Ollama offline). Pre-existing issue noted in SUMMARY but not fixed in 05-02.
+- [Phase 05]: [Plan 05-03]: Expanded Task 2 scope to cover projekt_forge/server/__init__.py as a Rule 3 blocking auto-fix -- the package __init__ re-exported 'main' from server.mcp which Task 1 explicitly removed, so without the three-file atomic commit the package becomes unimportable mid-wave. The alternative (split the __init__ fix into a separate commit) would have broken RWR-03's atomic-commit requirement.
+- [Phase 05]: [Plan 05-03]: Introduced _run_mcp_only(args) helper in __main__.py instead of leaving the two 'from projekt_forge.server.mcp import main as mcp_main' callers dangling -- the helper configures the bridge via forge_bridge.bridge.configure and calls mcp.run() directly, so the canonical FastMCP lifespan owns startup_bridge/shutdown_bridge per Phase 4 API-04/API-05 and projekt-forge never duplicates the lifecycle.
+- [Phase 05]: [Plan 05-03]: Swept the Wave A cosmetic leftovers in __main__.py (argparse prog label, module docstring, logger channel name) from 'forge_bridge' to 'projekt_forge' in the same atomic commit as the architectural rewire -- Plan 05-01 SUMMARY flagged these as Wave C's responsibility.
 
 ### Pending Todos
 
@@ -89,6 +96,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-16T12:00:00.000Z
-Stopped at: Completed 05-02-PLAN.md — projekt-forge Wave B atomic RWR-02 landed (commits 4d2b579 hook fix + 9856376 RWR-02 in projekt-forge); pytest tests/ green at 414 passed + 3 xfailed
-Resume file: .planning/phases/05-import-rewiring/05-03-PLAN.md
+Last session: 2026-04-17T04:47:00.742Z
+Stopped at: Completed 05-03-PLAN.md -- projekt-forge Wave C atomic commit 2722e23 landed (projekt_forge/server/mcp.py collapsed 560->45 lines around get_mcp()+register_tools prefix=forge_ source=builtin; __main__.py rewired to canonical lifespan with new _run_mcp_only helper; server/__init__.py main re-export dropped); pytest tests/ green at 414 passed + 3 xfailed
+Resume file: None

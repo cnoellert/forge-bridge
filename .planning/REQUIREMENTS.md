@@ -25,7 +25,7 @@ Requirements for projekt-forge integration. Each maps to roadmap phases.
 
 - [ ] **RWR-01**: projekt-forge adds `forge-bridge>=1.0,<2.0` to `pyproject.toml` dependencies
 - [ ] **RWR-02**: Duplicated tool modules (`bridge.py`, `tools/*.py`) deleted from projekt-forge in same commit as pip dep addition
-- [ ] **RWR-03**: projekt-forge's forge-specific tools (catalog, orchestrate, scan, seed) registered via `register_tools()`
+- [x] **RWR-03**: projekt-forge's forge-specific tools (catalog, orchestrate, scan, seed) registered via `register_tools()`
 - [ ] **RWR-04**: `forge_bridge.__file__` resolves to site-packages (not local directory) verified in CI
 
 ### Learning Pipeline
@@ -67,7 +67,7 @@ Requirements for projekt-forge integration. Each maps to roadmap phases.
 | PKG-03 | Phase 4 | Pending |
 | RWR-01 | Phase 5 | Pending |
 | RWR-02 | Phase 5 | Pending |
-| RWR-03 | Phase 5 | Pending |
+| RWR-03 | Phase 5 | Complete |
 | RWR-04 | Phase 5 | Pending |
 | LRN-01 | Phase 6 | Pending |
 | LRN-02 | Phase 6 | Pending |
