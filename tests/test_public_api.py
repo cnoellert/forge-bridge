@@ -165,14 +165,17 @@ def test_server_started_flag_default():
 # Keeping those in test_mcp_registry.py per RESEARCH.md §Validation Architecture.
 
 
-# ── PKG-02 / D-23 — Version bump to 1.0.0 ───────────────────────────────────
+# ── PKG-02 / D-23 — Version pin ─────────────────────────────────────────────
+# Phase 4 (D-23) pinned version = "1.0.0".
+# Phase 5-00 v1.0.1 patch release bumps to "1.0.1" (protocol builders,
+# ref_msg_id correlation fix, timeline gap-fill).
 
 def test_package_version():
-    """pyproject.toml version is 1.0.0 for Phase 4 (D-23)."""
+    """pyproject.toml version is 1.0.1 after Phase 5-00 v1.0.1 patch release."""
     pyproject = Path(__file__).parent.parent / "pyproject.toml"
     content = pyproject.read_text()
-    assert 'version = "1.0.0"' in content, (
-        f"pyproject.toml must declare version = \"1.0.0\" per PKG-02."
+    assert 'version = "1.0.1"' in content, (
+        'pyproject.toml must declare version = "1.0.1" per Phase 5-00 patch release.'
     )
 
 
