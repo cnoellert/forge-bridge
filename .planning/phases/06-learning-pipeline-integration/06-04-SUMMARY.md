@@ -42,8 +42,10 @@ decisions:
 metrics:
   duration: "~25 minutes (projekt-forge edits + v1.1.0 install + test cycle + hatchling fix)"
   completed: "2026-04-18"
-  tasks_complete: 3_of_4
-  checkpoint_pending: true
+  tasks_complete: 4_of_4
+  checkpoint_pending: false
+  checkpoint_approved_by: cnoellert
+  checkpoint_approved_at: "2026-04-18"
 ---
 
 # Phase 6 Plan 04: Consumer wiring — projekt-forge consumes forge-bridge v1.1.0 learning pipeline
@@ -145,7 +147,7 @@ Concretely: SC #3 ("An execution routed through projekt-forge fires the storage 
 - [x] `python -c "import ast; ast.parse(...)"` → parses
 - [x] `pytest tests/test_learning_wiring.py -x -v` → 8/8 passed
 - [x] `pytest tests/ -x` → 422 passed, 3 xfailed (no regressions; RWR-04 guard green)
-- [ ] **Task 4 checkpoint (blocking)** — live-startup human verification remains. Orchestrator will present the checkpoint; continuation agent will mark this when approved.
+- [x] **Task 4 checkpoint (blocking)** — approved by cnoellert on 2026-04-18. Live-startup smoke test in `forge` conda env emitted all 3 expected INFO lines (LLMRouter configured, ExecutionLog configured, learning pipeline initialized); forge-bridge full suite 219 passed; projekt-forge full suite 425 passed once run in the correct env (initial 1 failure in conda `base` was an env gap — `aiosqlite` missing from projekt-forge's declared deps — not a Phase 6 regression).
 
 ## Known Stubs
 
