@@ -69,7 +69,11 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
   2. projekt-forge startup constructs `LLMRouter` with values from `forge_config.yaml` (not env vars) and synthesis requests route to forge's configured Ollama instance
   3. An execution routed through projekt-forge fires the registered storage callback and the event appears in projekt-forge's storage, not only in the JSONL file
   4. A synthesis triggered via projekt-forge passes through the `pre_synthesis_hook` and the enriched prompt is visible in synthesis logs
-**Plans**: TBD
+**Plans**: 4 plans
+  - [ ] 06-01-PLAN.md — ExecutionLog.set_storage_callback() + ExecutionRecord dataclass (LRN-02 bridge-side)
+  - [ ] 06-02-PLAN.md — SkillSynthesizer pre_synthesis_hook + PreSynthesisContext dataclass (LRN-04 bridge-side)
+  - [ ] 06-03-PLAN.md — Re-export new public symbols in forge_bridge/__init__.py + bump version to 1.1.0 (LRN-02, LRN-04)
+  - [ ] 06-04-PLAN.md — projekt-forge consumer wiring: init_learning_pipeline() in __main__.py (LRN-01, LRN-02, LRN-03, LRN-04)
 
 ## Progress
 
@@ -80,4 +84,4 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 | 3. Learning Pipeline | v1.0 | 3/3 | Complete | 2026-04-15 |
 | 4. API Surface Hardening | v1.1 | 4/4 | Complete | 2026-04-15 |
 | 5. Import Rewiring | v1.1 | 5/5 | Complete | 2026-04-18 |
-| 6. Learning Pipeline Integration | v1.1 | 0/TBD | Not started | - |
+| 6. Learning Pipeline Integration | v1.1 | 0/4 | Planned | - |
