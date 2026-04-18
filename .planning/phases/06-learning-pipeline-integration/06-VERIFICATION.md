@@ -1,9 +1,10 @@
 ---
 phase: 06-learning-pipeline-integration
 verified: 2026-04-17T00:00:00Z
-status: human_needed
-score: 15/15 must-haves verified (automated)
+status: passed
+score: 15/15 must-haves verified + 3/3 human-UAT items passed (2026-04-18)
 overrides_applied: 0
+human_uat_resolved_at: "2026-04-18T08:30:00Z"
 human_verification:
   - test: "SC #1 — live cross-process log isolation"
     expected: "Running two forge-bridge processes simultaneously (one standalone via `python -m forge_bridge`, one via projekt-forge with FORGE_PROJECT_ROOT set) writes to two distinct JSONL paths with no cross-contamination of promotion counts."
@@ -20,8 +21,8 @@ human_verification:
 
 **Phase Goal:** projekt-forge's startup wires forge-bridge's learning pipeline with forge's own LLM config, log path, and storage callback — so synthesis uses forge's Ollama instance and logs persist separately from the standalone bridge process
 
-**Verified:** 2026-04-17
-**Status:** human_needed
+**Verified:** 2026-04-17 (automated) + 2026-04-18 (human UAT: 3/3 passed — see 06-HUMAN-UAT.md)
+**Status:** passed
 **Re-verification:** No — initial verification
 
 ## Goal Achievement
