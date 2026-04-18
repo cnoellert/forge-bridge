@@ -224,3 +224,47 @@ def test_synthesizer_module_level_synthesize_removed():
         "Module-level synthesize() must be removed per D-19. "
         "Use SkillSynthesizer().synthesize() instead."
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 public-API additions (LRN-02 + LRN-04)
+# ---------------------------------------------------------------------------
+
+
+def test_phase6_symbols_importable_from_root():
+    """Phase 6 adds ExecutionRecord, StorageCallback, PreSynthesisContext, PreSynthesisHook."""
+    import dataclasses
+
+    import forge_bridge
+    from forge_bridge import (
+        ExecutionRecord,
+        PreSynthesisContext,
+        PreSynthesisHook,
+        StorageCallback,
+    )
+
+    # All four symbols exist at the package root.
+    for sym in (ExecutionRecord, StorageCallback, PreSynthesisContext, PreSynthesisHook):
+        assert sym is not None
+
+    # Both concrete dataclasses are frozen.
+    assert dataclasses.is_dataclass(ExecutionRecord)
+    assert ExecutionRecord.__dataclass_params__.frozen is True
+    assert dataclasses.is_dataclass(PreSynthesisContext)
+    assert PreSynthesisContext.__dataclass_params__.frozen is True
+
+    # All four symbol names appear in __all__.
+    for name in (
+        "ExecutionRecord",
+        "StorageCallback",
+        "PreSynthesisContext",
+        "PreSynthesisHook",
+    ):
+        assert name in forge_bridge.__all__, f"{name} missing from forge_bridge.__all__"
+
+
+def test_public_surface_has_15_symbols():
+    """Phase 6 grows forge_bridge.__all__ from 11 to 15 entries."""
+    import forge_bridge
+
+    assert len(forge_bridge.__all__) == 15
