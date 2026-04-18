@@ -251,3 +251,138 @@ class TestPathContract:
         from forge_bridge.learning.synthesizer import SYNTHESIZED_DIR as synth_dir
         from forge_bridge.learning.watcher import SYNTHESIZED_DIR as watch_dir
         assert synth_dir is watch_dir
+
+
+# ---------------------------------------------------------------------------
+# pre_synthesis_hook tests (LRN-04)
+# ---------------------------------------------------------------------------
+
+
+def _make_router_mock(return_text: str = VALID_SYNTH_CODE) -> MagicMock:
+    """Return a MagicMock standing in for LLMRouter with async acomplete."""
+    router = MagicMock()
+    router.acomplete = AsyncMock(return_value=return_text)
+    return router
+
+
+class TestPreSynthesisHook:
+    async def test_pre_synthesis_hook_invoked_with_intent_and_params(self, tmp_path):
+        """Hook is awaited once with (intent, {raw_code, count}) per D-09."""
+        from forge_bridge.learning.synthesizer import (
+            PreSynthesisContext,
+            SkillSynthesizer,
+        )
+
+        hook = AsyncMock(return_value=PreSynthesisContext())
+        router = _make_router_mock()
+        synth = SkillSynthesizer(
+            router=router,
+            synthesized_dir=tmp_path,
+            pre_synthesis_hook=hook,
+        )
+
+        await synth.synthesize(
+            raw_code="seg.name = 'ACM_0010'",
+            intent="rename segment",
+            count=3,
+        )
+
+        assert hook.await_count == 1
+        args, _kwargs = hook.await_args
+        assert args[0] == "rename segment"
+        assert isinstance(args[1], dict)
+        assert args[1]["raw_code"] == "seg.name = 'ACM_0010'"
+        assert args[1]["count"] == 3
+
+    async def test_pre_synthesis_hook_none_is_noop(self, tmp_path):
+        """Synthesizer with pre_synthesis_hook=None behaves exactly as pre-LRN-04."""
+        from forge_bridge.learning.synthesizer import SYNTH_SYSTEM, SkillSynthesizer
+
+        router = _make_router_mock()
+        synth = SkillSynthesizer(router=router, synthesized_dir=tmp_path)
+
+        out = await synth.synthesize(raw_code="x = 1", intent=None, count=3)
+
+        assert out is not None
+        # The system prompt passed to acomplete must equal SYNTH_SYSTEM verbatim.
+        _args, kwargs = router.acomplete.await_args
+        assert kwargs["system"] == SYNTH_SYSTEM
+
+    async def test_pre_synthesis_context_extra_context_appended_to_system(
+        self, tmp_path
+    ):
+        """ctx.extra_context is appended to the system prompt (D-11 additive)."""
+        from forge_bridge.learning.synthesizer import (
+            PreSynthesisContext,
+            SkillSynthesizer,
+        )
+
+        async def hook(_intent, _params):
+            return PreSynthesisContext(extra_context="XTRA_MARKER_STRING")
+
+        router = _make_router_mock()
+        synth = SkillSynthesizer(
+            router=router,
+            synthesized_dir=tmp_path,
+            pre_synthesis_hook=hook,
+        )
+
+        await synth.synthesize(raw_code="x = 1", intent="t", count=3)
+
+        _args, kwargs = router.acomplete.await_args
+        assert "XTRA_MARKER_STRING" in kwargs["system"]
+
+    async def test_pre_synthesis_context_constraints_injected(self, tmp_path):
+        """ctx.constraints render as a 'Constraints:' block in the system prompt."""
+        from forge_bridge.learning.synthesizer import (
+            PreSynthesisContext,
+            SkillSynthesizer,
+        )
+
+        async def hook(_intent, _params):
+            return PreSynthesisContext(constraints=["do not import flame"])
+
+        router = _make_router_mock()
+        synth = SkillSynthesizer(
+            router=router,
+            synthesized_dir=tmp_path,
+            pre_synthesis_hook=hook,
+        )
+
+        await synth.synthesize(raw_code="x = 1", intent="t", count=3)
+
+        _args, kwargs = router.acomplete.await_args
+        assert "Constraints:" in kwargs["system"]
+        assert "- do not import flame" in kwargs["system"]
+
+    async def test_pre_synthesis_hook_exception_falls_back_to_empty_context(
+        self, tmp_path, caplog
+    ):
+        """When the hook raises, synthesis continues with default PreSynthesisContext()."""
+        import logging
+
+        from forge_bridge.learning.synthesizer import SYNTH_SYSTEM, SkillSynthesizer
+
+        async def hook(_intent, _params):
+            raise RuntimeError("db offline")
+
+        router = _make_router_mock()
+        synth = SkillSynthesizer(
+            router=router,
+            synthesized_dir=tmp_path,
+            pre_synthesis_hook=hook,
+        )
+
+        with caplog.at_level(logging.WARNING, logger="forge_bridge.learning.synthesizer"):
+            out = await synth.synthesize(raw_code="x = 1", intent="t", count=3)
+
+        # Synthesis still completed.
+        assert out is not None
+        # System prompt fell back to SYNTH_SYSTEM verbatim (no Constraints block).
+        _args, kwargs = router.acomplete.await_args
+        assert kwargs["system"] == SYNTH_SYSTEM
+        assert "Constraints:" not in kwargs["system"]
+        # Fallback warning logged.
+        assert any(
+            "pre_synthesis_hook raised" in rec.message for rec in caplog.records
+        )
