@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: projekt-forge Integration
-status: Phase 05 VERIFIED — ready to plan Phase 6
-stopped_at: "Phase 5 UAT complete — 6/6 tests passed. Cold install from v1.0.1 tag, full public API surface, protocol builders + entity_list narrowing, projekt-forge suite 414 passed + 3 xfailed against pip site-packages, RWR-04 guard fired on real-world drift (a stale pre-rename forge_bridge/ fossil had resurfaced untracked at projekt-forge repo root — moved to /tmp, tests back to green), and projekt-forge MCP --help exits 0. Minor follow-up logged: forge_bridge.__version__ attribute not exposed on package root (v1.0.2 candidate). Ready to plan Phase 6 once SQL-backend-for-ExecutionLog scope question is answered."
-last_updated: "2026-04-18T00:22:46.478Z"
+status: planning
+stopped_at: Phase 6 context gathered — 4 decisions locked (storage callback, pre-synthesis hook, LLMRouter DI, per-process log paths)
+last_updated: "2026-04-18T04:48:13.629Z"
 last_activity: 2026-04-18
 progress:
   total_phases: 3
@@ -101,6 +101,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-18
-Stopped at: Phase 5 UAT verified 6/6 (cold install, public API, protocol builders + entity_list narrowing, projekt-forge suite 414 passed + 3 xfailed, RWR-04 guard fired on real-world fossil at projekt-forge repo root, MCP --help exits 0). Minor follow-up: expose forge_bridge.__version__ in v1.0.2. Ready to plan Phase 6 — open gate: SQL-backend-for-ExecutionLog scope (v1.1 or defer to v1.1.x).
-Resume file: None
+Last session: 2026-04-18T04:48:13.626Z
+Stopped at: Phase 6 context gathered — 4 decisions locked (storage callback, pre-synthesis hook, LLMRouter DI, per-process log paths)
+Resume file: .planning/phases/06-learning-pipeline-integration/06-CONTEXT.md
