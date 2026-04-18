@@ -30,10 +30,10 @@ Requirements for projekt-forge integration. Each maps to roadmap phases.
 
 ### Learning Pipeline
 
-- [ ] **LRN-01**: `ExecutionLog` path is configurable at construction (no hardcoded `~/.forge-bridge/executions.jsonl`)
-- [ ] **LRN-02**: projekt-forge startup calls `set_execution_callback()` with its own storage callback
-- [ ] **LRN-03**: projekt-forge constructs `LLMRouter` with forge config values and injects into Synthesizer
-- [ ] **LRN-04**: `SkillSynthesizer` supports a `pre_synthesis_hook` for prompt enrichment from projekt-forge's DB context
+- [x] **LRN-01**: `ExecutionLog` path is configurable at construction (no hardcoded `~/.forge-bridge/executions.jsonl`)
+- [x] **LRN-02**: projekt-forge startup calls `set_execution_callback()` with its own storage callback
+- [x] **LRN-03**: projekt-forge constructs `LLMRouter` with forge config values and injects into Synthesizer
+- [x] **LRN-04**: `SkillSynthesizer` supports a `pre_synthesis_hook` for prompt enrichment from projekt-forge's DB context
 
 ## Future Requirements
 
