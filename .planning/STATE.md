@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: projekt-forge Integration
-status: Phase 05 CLOSED
-stopped_at: "Completed 05-04-PLAN.md -- Phase 5 CLOSED. projekt-forge Wave D atomic commit 7014c17 (tests/conftest.py appended with autouse session-scoped RWR-04 fixture assert_forge_bridge_from_site_packages: asserts site-packages resolution + no local forge_bridge/ at repo root). Full projekt-forge suite green 414 passed + 3 xfailed. All four RWR requirements (01/02/03/04) complete; four wave commits (A:137aac3, B:9856376+4d2b579 precondition, C:2722e23, D:7014c17) visible in projekt-forge origin/main..HEAD. D-12 long-term safety net in place. Ready for /gsd-verify-work on Phase 5."
-last_updated: "2026-04-17T05:00:27.838Z"
-last_activity: 2026-04-17
+status: Phase 05 VERIFIED — ready to plan Phase 6
+stopped_at: "Phase 5 UAT complete — 6/6 tests passed. Cold install from v1.0.1 tag, full public API surface, protocol builders + entity_list narrowing, projekt-forge suite 414 passed + 3 xfailed against pip site-packages, RWR-04 guard fired on real-world drift (a stale pre-rename forge_bridge/ fossil had resurfaced untracked at projekt-forge repo root — moved to /tmp, tests back to green), and projekt-forge MCP --help exits 0. Minor follow-up logged: forge_bridge.__version__ attribute not exposed on package root (v1.0.2 candidate). Ready to plan Phase 6 once SQL-backend-for-ExecutionLog scope question is answered."
+last_updated: "2026-04-18T00:22:46.478Z"
+last_activity: 2026-04-18
 progress:
   total_phases: 3
   completed_phases: 2
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-15)
 
 **Core value:** Make forge-bridge the single canonical pip package so projekt-forge can consume it rather than duplicate it
-**Current focus:** Phase 05 — import-rewiring
+**Current focus:** Phase 06 — learning-pipeline-integration (Phase 5 verified 2026-04-18, 6/6 UAT)
 
 ## Current Position
 
 Phase: 6
 Plan: Not started
-Status: Phase 05 CLOSED
-Last activity: 2026-04-17
+Status: Phase 05 verified (UAT 6/6) — ready to plan Phase 6
+Last activity: 2026-04-18
 
 Progress: [██████████] 100% (v1.1 milestone — 5 of 5 Phase 5 plans done)
 
@@ -36,7 +36,7 @@ Progress: [██████████] 100% (v1.1 milestone — 5 of 5 Phase
 
 **Velocity (v1.0 baseline):**
 
-- Total plans completed: 22
+- Total plans completed: 27
 - v1.0 phases: 3 phases, 13 plans
 
 **By Phase (v1.0):**
@@ -100,6 +100,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-17T04:51:12Z
-Stopped at: Completed 05-04-PLAN.md -- Phase 5 CLOSED. projekt-forge Wave D atomic commit 7014c17 (tests/conftest.py appended with autouse session-scoped RWR-04 fixture assert_forge_bridge_from_site_packages: asserts site-packages resolution + no local forge_bridge/ at repo root). Full projekt-forge suite green 414 passed + 3 xfailed. All four RWR requirements (01/02/03/04) complete; four wave commits (A:137aac3, B:9856376+4d2b579 precondition, C:2722e23, D:7014c17) visible in projekt-forge origin/main..HEAD. D-12 long-term safety net in place. Ready for /gsd-verify-work on Phase 5.
+Last session: 2026-04-18
+Stopped at: Phase 5 UAT verified 6/6 (cold install, public API, protocol builders + entity_list narrowing, projekt-forge suite 414 passed + 3 xfailed, RWR-04 guard fired on real-world fossil at projekt-forge repo root, MCP --help exits 0). Minor follow-up: expose forge_bridge.__version__ in v1.0.2. Ready to plan Phase 6 — open gate: SQL-backend-for-ExecutionLog scope (v1.1 or defer to v1.1.x).
 Resume file: None

@@ -22,8 +22,8 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 
 **Milestone Goal:** Make projekt-forge consume forge-bridge as a pip dependency — replacing duplicated code with imports and wiring the learning pipeline into forge's infrastructure — without breaking either system's existing functionality.
 
-- [ ] **Phase 4: API Surface Hardening** — Declare forge-bridge's stable public API and prepare it for external consumption
-- [ ] **Phase 5: Import Rewiring** — Replace projekt-forge's duplicated forge-bridge code with pip dependency imports
+- [x] **Phase 4: API Surface Hardening** (4/4 plans) — completed 2026-04-15
+- [x] **Phase 5: Import Rewiring** (5/5 plans) — completed 2026-04-18
 - [ ] **Phase 6: Learning Pipeline Integration** — Wire forge-bridge's learning pipeline into projekt-forge's LLM, config, and storage infrastructure
 
 ## Phase Details
@@ -78,6 +78,6 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 | 1. Tool Parity & LLM Router | v1.0 | 7/7 | Complete | 2026-04-15 |
 | 2. MCP Server Rebuild | v1.0 | 3/3 | Complete | 2026-04-15 |
 | 3. Learning Pipeline | v1.0 | 3/3 | Complete | 2026-04-15 |
-| 4. API Surface Hardening | v1.1 | 0/4 | Planning complete | - |
-| 5. Import Rewiring | v1.1 | 0/5 | Planning complete | - |
+| 4. API Surface Hardening | v1.1 | 4/4 | Complete | 2026-04-15 |
+| 5. Import Rewiring | v1.1 | 5/5 | Complete | 2026-04-18 |
 | 6. Learning Pipeline Integration | v1.1 | 0/TBD | Not started | - |
