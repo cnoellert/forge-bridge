@@ -79,6 +79,7 @@ Recent decisions affecting current work:
 - [Phase 05]: [Plan 05-04]: D-06 editable-shadow reconciliation handled per plan STEP 4 — uninstalled the editable forge-bridge shadow (0.1.0 from /Users/cnoellert/Documents/GitHub/forge-bridge) and installed forge-bridge 1.0.1 from the git tag into site-packages before committing the fixture. The fixture's site-packages assertion is by design incompatible with the editable dev loop; if the user reinstates the editable shadow for forge-bridge development, pytest will fail with a clear remediation message. This is the guard working as intended, not a regression.
 - [Phase 05]: [Plan 05-04]: Duplicate `import pytest` omitted from the appended conftest block — plan STEP 3 explicitly permits this reconciliation when pytest is already imported at file top (it is, at line 17). `pathlib` and `forge_bridge` are new and stay inline for section cohesion per the plan's guidance. This is plan-approved, not a deviation.
 - [Phase 05]: [Plan 05-04]: projekt-forge pyproject.toml missing `tool.hatch.metadata.allow-direct-references = true` prevents `pip install -e /path/to/projekt-forge` from resolving the forge-bridge git-URL dep. Worked around in this plan by installing forge-bridge directly from its git tag. Adding the hatchling flag to projekt-forge's pyproject.toml is a projekt-forge packaging concern flagged as follow-up — out of scope for RWR-04.
+- [Phase 06 scope]: 2026-04-18 — SQL persistence backend for ExecutionLog (EXT-03) stays deferred to v1.1.x. Phase 6 focuses on LRN-01..04 wiring only: JSONL log path injection, LLMRouter construction from forge_config.yaml, storage callback hook, pre_synthesis_hook. Rationale: (1) v1.1 milestone goal is "wire it, don't redesign it" — integration, not persistence redesign; (2) projekt-forge already has its own DB layer that can consume the storage callback directly, so SQL-in-bridge isn't blocking; (3) Phase 5 scope already stretched three days — keeping Phase 6 focused minimizes schedule risk; (4) EXT-03 gets a dedicated v1.1.x patch when a consumer actually needs it.
 
 ### Pending Todos
 
@@ -88,7 +89,7 @@ None yet.
 
 - [Phase 4]: mcp/server.py lifespan refactor — promoting _startup/_shutdown to public requires confirming forge-bridge's own test suite does not depend on the private names before Phase 4 planning
 - ~~[Phase 5]: Import blast radius in projekt-forge not yet measured~~ — RESOLVED: 179 `from forge_bridge.*` imports + 8 bare-module + 30+ patch-target variants all measured and rewritten in Plan 05-01
-- [Phase 6]: DB persistence scope in v1.1 not decided — is SQL backend for ExecutionLog in v1.1 or deferred to v1.1.x? Needs explicit decision before Phase 6 planning
+- ~~[Phase 6]: DB persistence scope in v1.1 not decided~~ — RESOLVED 2026-04-18: SQL backend for ExecutionLog (EXT-03) deferred to v1.1.x; Phase 6 focuses on wiring (LRN-01..04) with JSONL + storage callback. See Decisions for rationale.
 
 ## Deferred Items
 
