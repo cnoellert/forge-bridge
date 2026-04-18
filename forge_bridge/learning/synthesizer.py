@@ -11,12 +11,14 @@ import ast
 import hashlib
 import importlib.util
 import inspect
+import json as _json  # for the tags sidecar write; rename to avoid shadowing
 import logging
 import os
 import re
 import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Awaitable, Callable, Optional
 from unittest.mock import AsyncMock, patch
 
 from forge_bridge.learning.manifest import manifest_register
@@ -52,6 +54,39 @@ Write a single async Python function that:
 - Import bridge functions INSIDE the function body: `from forge_bridge.bridge import execute, execute_json, execute_and_read`
 
 Output only the function definition."""
+
+
+# ---------------------------------------------------------------------------
+# Pre-synthesis hook contract (LRN-04)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PreSynthesisContext:
+    """Additive context returned by SkillSynthesizer's pre_synthesis_hook.
+
+    Additive-only (D-11): fields contribute to the prompt; they CANNOT
+    replace SYNTH_SYSTEM or SYNTH_PROMPT. Consumers populate only what
+    they need — all four fields default to empty.
+
+    Fields:
+        extra_context: Freeform prose appended to the system prompt after
+            any constraints block.
+        tags: "key:value" strings (K8s label convention). Stashed next to
+            the synthesized tool for later EXT-02 MCP-annotation consumption.
+        examples: Few-shot pairs, each a dict with "intent" and "code" keys.
+            Rendered as "Example intent: ...\\nExample code:\\n```python\\n...\\n```".
+        constraints: Hard rules injected into the system prompt as a
+            bulleted "Constraints:" block.
+    """
+
+    extra_context: str = ""
+    tags: list[str] = field(default_factory=list)
+    examples: list[dict] = field(default_factory=list)
+    constraints: list[str] = field(default_factory=list)
+
+
+PreSynthesisHook = Callable[[str, dict], Awaitable[PreSynthesisContext]]
 
 
 # ---------------------------------------------------------------------------
@@ -207,12 +242,15 @@ class SkillSynthesizer:
         self,
         router: LLMRouter | None = None,
         synthesized_dir: Path | None = None,
+        pre_synthesis_hook: PreSynthesisHook | None = None,
     ) -> None:
         # Eager fallback at init: get_router() is itself lazy, so this just
         # returns the shared singleton or constructs it.
         self._router = router if router is not None else get_router()
         # synthesized_dir=None falls back to the module-level SYNTHESIZED_DIR constant
         self._synthesized_dir = synthesized_dir if synthesized_dir is not None else SYNTHESIZED_DIR
+        # No fallback for pre_synthesis_hook — None stays None (no-op).
+        self._pre_synthesis_hook: PreSynthesisHook | None = pre_synthesis_hook
 
     async def synthesize(
         self,
@@ -230,19 +268,53 @@ class SkillSynthesizer:
         Returns:
             Path to the written synth_*.py file, or None if synthesis/validation failed.
         """
-        # Build prompt
-        prompt = SYNTH_PROMPT.format(
+        # Invoke pre-synthesis hook (if registered) — LRN-04.
+        # Hook receives (intent, params) per D-09 and returns PreSynthesisContext per D-10.
+        ctx: PreSynthesisContext = PreSynthesisContext()
+        if self._pre_synthesis_hook is not None:
+            try:
+                ctx = await self._pre_synthesis_hook(
+                    intent or "",
+                    {"raw_code": raw_code, "count": count},
+                )
+            except Exception:
+                logger.warning(
+                    "pre_synthesis_hook raised — falling back to empty context",
+                    exc_info=True,
+                )
+                ctx = PreSynthesisContext()
+
+        # Compose system prompt additively (D-11). Base SYNTH_SYSTEM is never replaced.
+        system_prompt = SYNTH_SYSTEM
+        if ctx.constraints:
+            constraints_block = "\n".join(f"- {c}" for c in ctx.constraints)
+            system_prompt = f"{system_prompt}\n\nConstraints:\n{constraints_block}"
+        if ctx.extra_context:
+            system_prompt = f"{system_prompt}\n\n{ctx.extra_context}"
+
+        # Build user prompt. Base SYNTH_PROMPT is never replaced; few-shot examples
+        # (if present) are prepended so the model sees them first.
+        base_prompt = SYNTH_PROMPT.format(
             count=count,
             intent=intent or "unknown",
             code=raw_code,
         )
+        if ctx.examples:
+            few_shot = "\n\n".join(
+                f"Example intent: {ex.get('intent', '')}\n"
+                f"Example code:\n```python\n{ex.get('code', '')}\n```"
+                for ex in ctx.examples
+            )
+            user_prompt = f"{few_shot}\n\n{base_prompt}"
+        else:
+            user_prompt = base_prompt
 
-        # Call LLM
+        # Call LLM with composed prompts.
         try:
             raw = await self._router.acomplete(
-                prompt,
+                user_prompt,
                 sensitive=True,
-                system=SYNTH_SYSTEM,
+                system=system_prompt,
                 temperature=0.1,
             )
         except RuntimeError:
@@ -291,5 +363,12 @@ class SkillSynthesizer:
         self._synthesized_dir.mkdir(parents=True, exist_ok=True)
         output_path.write_text(fn_code)
         manifest_register(output_path)
+
+        # Stash tags next to the synthesized tool for later EXT-02 consumption.
+        # Sidecar format: {"tags": ["key:value", ...]}. Empty tags → no sidecar.
+        if ctx.tags:
+            tags_path = output_path.with_suffix(".tags.json")
+            tags_path.write_text(_json.dumps({"tags": list(ctx.tags)}))
+
         logger.info(f"Synthesized tool written: {output_path}")
         return output_path
