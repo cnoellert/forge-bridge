@@ -70,8 +70,8 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
   3. An execution routed through projekt-forge fires the registered storage callback and the event appears in projekt-forge's storage, not only in the JSONL file
   4. A synthesis triggered via projekt-forge passes through the `pre_synthesis_hook` and the enriched prompt is visible in synthesis logs
 **Plans**: 4 plans
-  - [ ] 06-01-PLAN.md — ExecutionLog.set_storage_callback() + ExecutionRecord dataclass (LRN-02 bridge-side)
-  - [ ] 06-02-PLAN.md — SkillSynthesizer pre_synthesis_hook + PreSynthesisContext dataclass (LRN-04 bridge-side)
+  - [x] 06-01-PLAN.md — ExecutionLog.set_storage_callback() + ExecutionRecord dataclass (LRN-02 bridge-side)
+  - [x] 06-02-PLAN.md — SkillSynthesizer pre_synthesis_hook + PreSynthesisContext dataclass (LRN-04 bridge-side)
   - [ ] 06-03-PLAN.md — Re-export new public symbols in forge_bridge/__init__.py + bump version to 1.1.0 (LRN-02, LRN-04)
   - [ ] 06-04-PLAN.md — projekt-forge consumer wiring: init_learning_pipeline() in __main__.py (LRN-01, LRN-02, LRN-03, LRN-04)
 
