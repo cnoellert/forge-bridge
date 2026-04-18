@@ -7,20 +7,63 @@ promotion counters without re-triggering synthesis.
 from __future__ import annotations
 
 import ast
+import asyncio
 import fcntl
 import hashlib
+import inspect
 import json
 import logging
 import os
 import textwrap
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Awaitable, Callable, Optional, Union
 
 logger = logging.getLogger(__name__)
 
 LOG_PATH = Path.home() / ".forge-bridge" / "executions.jsonl"
+
+
+# ---------------------------------------------------------------------------
+# Storage callback contract (LRN-02)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ExecutionRecord:
+    """Payload delivered to storage callbacks after every ExecutionLog.record() write.
+
+    Mirrors the JSONL on-disk schema exactly (same field names, same types).
+    Frozen so consumer code cannot mutate state shared between the log write and
+    the callback fire.
+    """
+
+    code_hash: str
+    raw_code: str
+    intent: Optional[str]
+    timestamp: str
+    promoted: bool
+
+
+StorageCallback = Callable[[ExecutionRecord], Union[None, Awaitable[None]]]
+
+
+def _log_callback_exception(task: "asyncio.Task") -> None:
+    """done_callback for fire-and-forget async storage callbacks.
+
+    Logs exceptions raised inside the async callback without surfacing them
+    to the caller of ExecutionLog.record().
+    """
+    try:
+        exc = task.exception()
+    except asyncio.CancelledError:
+        return
+    if exc is not None:
+        logger.warning(
+            "storage_callback raised — execution log unaffected",
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
 
 
 class _LiteralStripper(ast.NodeTransformer):
@@ -68,6 +111,34 @@ class ExecutionLog:
         self._code_by_hash: dict[str, str] = {}
         self._intent_by_hash: dict[str, Optional[str]] = {}
         self._replay()
+        self._storage_callback: Optional[StorageCallback] = None
+        self._storage_callback_is_async: bool = False
+
+    def set_storage_callback(self, fn: Optional[StorageCallback]) -> None:
+        """Register (or clear with None) a single best-effort storage callback.
+
+        The JSONL log is source-of-truth; the callback is a best-effort mirror.
+        A failing callback is logged at WARNING level and never disrupts the
+        JSONL append.
+
+        The callback may be sync (returns None) or async (returns Awaitable[None]).
+        Dispatch mode is detected once here via inspect.iscoroutinefunction and
+        cached — per-record dispatch does not re-inspect.
+
+        An async callback requires record() to be called from a running event loop.
+        When no loop is present at dispatch time, asyncio.ensure_future raises
+        RuntimeError which is caught and logged as a warning.
+
+        Args:
+            fn: Callable taking an ExecutionRecord and returning None or an
+                Awaitable[None]. Pass None to clear a previously-set callback.
+        """
+        if fn is None:
+            self._storage_callback = None
+            self._storage_callback_is_async = False
+            return
+        self._storage_callback = fn
+        self._storage_callback_is_async = inspect.iscoroutinefunction(fn)
 
     def _replay(self) -> None:
         """Replay existing JSONL to rebuild in-memory state."""
@@ -119,22 +190,41 @@ class ExecutionLog:
         self._intent_by_hash[h] = intent
         self._counters[h] = self._counters.get(h, 0) + 1
 
-        rec = {
-            "code_hash": h,
-            "raw_code": code,
-            "intent": intent,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "promoted": False,
-        }
+        record = ExecutionRecord(
+            code_hash=h,
+            raw_code=code,
+            intent=intent,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            promoted=False,
+        )
 
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with open(self._path, "a") as fp:
             fcntl.flock(fp, fcntl.LOCK_EX)
             try:
-                fp.write(json.dumps(rec) + "\n")
+                fp.write(json.dumps(asdict(record)) + "\n")
                 fp.flush()
             finally:
                 fcntl.flock(fp, fcntl.LOCK_UN)
+
+        # Fire storage callback AFTER the JSONL flush completes (best-effort mirror).
+        if self._storage_callback is not None:
+            if self._storage_callback_is_async:
+                try:
+                    task = asyncio.ensure_future(self._storage_callback(record))
+                    task.add_done_callback(_log_callback_exception)
+                except RuntimeError:
+                    logger.warning(
+                        "storage_callback scheduled outside event loop — skipped"
+                    )
+            else:
+                try:
+                    self._storage_callback(record)
+                except Exception:
+                    logger.warning(
+                        "storage_callback raised — execution log unaffected",
+                        exc_info=True,
+                    )
 
         if self._counters[h] >= self._threshold and h not in self._promoted:
             return True
