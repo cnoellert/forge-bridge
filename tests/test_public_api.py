@@ -49,13 +49,13 @@ def test_public_api_importable():
 
 
 def test_all_contract():
-    """forge_bridge.__all__ matches the 11-name Phase 4 surface exactly (D-01, D-02)."""
+    """forge_bridge.__all__ matches the 15-name surface exactly (Phase 4 D-01/D-02 + Phase 6 LRN-02/LRN-04)."""
     import forge_bridge
 
     expected = {
         "LLMRouter", "get_router",
-        "ExecutionLog",
-        "SkillSynthesizer",
+        "ExecutionLog", "ExecutionRecord", "StorageCallback",
+        "SkillSynthesizer", "PreSynthesisContext", "PreSynthesisHook",
         "register_tools", "get_mcp",
         "startup_bridge", "shutdown_bridge",
         "execute", "execute_json", "execute_and_read",
@@ -66,7 +66,7 @@ def test_all_contract():
         f"  Missing:  {expected - set(forge_bridge.__all__)}"
     )
     # Size must equal the expected set (catches duplicates)
-    assert len(forge_bridge.__all__) == 11
+    assert len(forge_bridge.__all__) == 15
 
 
 def test_core_types_not_reexported():
@@ -169,13 +169,15 @@ def test_server_started_flag_default():
 # Phase 4 (D-23) pinned version = "1.0.0".
 # Phase 5-00 v1.0.1 patch release bumps to "1.0.1" (protocol builders,
 # ref_msg_id correlation fix, timeline gap-fill).
+# Phase 6-03 v1.1.0 minor release bumps to "1.1.0" (LRN-02 storage callback +
+# LRN-04 pre-synthesis hook additive API surface).
 
 def test_package_version():
-    """pyproject.toml version is 1.0.1 after Phase 5-00 v1.0.1 patch release."""
+    """pyproject.toml version is 1.1.0 after Phase 6-03 v1.1.0 minor release."""
     pyproject = Path(__file__).parent.parent / "pyproject.toml"
     content = pyproject.read_text()
-    assert 'version = "1.0.1"' in content, (
-        'pyproject.toml must declare version = "1.0.1" per Phase 5-00 patch release.'
+    assert 'version = "1.1.0"' in content, (
+        'pyproject.toml must declare version = "1.1.0" per Phase 6-03 v1.1.0 minor release.'
     )
 
 

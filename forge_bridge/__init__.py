@@ -6,7 +6,8 @@ Public API:
         # LLM routing
         LLMRouter, get_router,
         # Learning pipeline
-        ExecutionLog, SkillSynthesizer,
+        ExecutionLog, ExecutionRecord, StorageCallback,
+        SkillSynthesizer, PreSynthesisContext, PreSynthesisHook,
         # MCP server
         register_tools, get_mcp,
         # Server lifecycle
@@ -24,8 +25,16 @@ the package root to keep the consumer surface focused on operational APIs.
 from forge_bridge.llm.router import LLMRouter, get_router
 
 # Learning pipeline
-from forge_bridge.learning.execution_log import ExecutionLog
-from forge_bridge.learning.synthesizer import SkillSynthesizer
+from forge_bridge.learning.execution_log import (
+    ExecutionLog,
+    ExecutionRecord,
+    StorageCallback,
+)
+from forge_bridge.learning.synthesizer import (
+    SkillSynthesizer,
+    PreSynthesisContext,
+    PreSynthesisHook,
+)
 
 # MCP server (registry + singleton access + lifecycle)
 from forge_bridge.mcp import register_tools, get_mcp
@@ -41,7 +50,11 @@ __all__ = [
     "get_router",
     # Learning pipeline
     "ExecutionLog",
+    "ExecutionRecord",
+    "StorageCallback",
     "SkillSynthesizer",
+    "PreSynthesisContext",
+    "PreSynthesisHook",
     # MCP server
     "register_tools",
     "get_mcp",
