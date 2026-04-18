@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -215,3 +216,109 @@ def test_set_execution_callback_default_clears():
         assert bridge_mod._on_execution_callback is None
     finally:
         bridge_mod._on_execution_callback = original
+
+
+# ---------------------------------------------------------------------------
+# Storage callback tests (LRN-02)
+# ---------------------------------------------------------------------------
+
+
+def test_storage_callback_fires_on_record(tmp_path):
+    """Sync storage callback is called once per record() with an ExecutionRecord."""
+    from forge_bridge.learning.execution_log import ExecutionLog, ExecutionRecord
+
+    log_path = tmp_path / "executions.jsonl"
+    log = ExecutionLog(log_path=log_path)
+    cb = MagicMock()
+    log.set_storage_callback(cb)
+
+    log.record("print('hello')", intent="greeting")
+
+    assert cb.call_count == 1
+    arg = cb.call_args.args[0]
+    assert isinstance(arg, ExecutionRecord)
+    assert arg.raw_code == "print('hello')"
+    assert arg.intent == "greeting"
+    assert arg.promoted is False
+
+
+async def test_async_storage_callback_fires_on_record(tmp_path):
+    """Async storage callback is awaited once per record() with an ExecutionRecord."""
+    import asyncio as _asyncio
+
+    from forge_bridge.learning.execution_log import ExecutionLog, ExecutionRecord
+
+    log_path = tmp_path / "executions.jsonl"
+    log = ExecutionLog(log_path=log_path)
+    cb = AsyncMock()
+    log.set_storage_callback(cb)
+
+    log.record("x = 1")
+    # Give the fire-and-forget task a chance to run.
+    await _asyncio.sleep(0)
+
+    assert cb.await_count == 1
+    arg = cb.await_args.args[0]
+    assert isinstance(arg, ExecutionRecord)
+    assert arg.raw_code == "x = 1"
+
+
+def test_storage_callback_error_does_not_break_jsonl_write(tmp_path, caplog):
+    """A raising sync callback is isolated — JSONL still written, warning logged."""
+    import logging
+
+    from forge_bridge.learning.execution_log import ExecutionLog
+
+    log_path = tmp_path / "executions.jsonl"
+    log = ExecutionLog(log_path=log_path)
+
+    def boom(_rec):
+        raise RuntimeError("storage offline")
+
+    log.set_storage_callback(boom)
+
+    with caplog.at_level(logging.WARNING, logger="forge_bridge.learning.execution_log"):
+        log.record("x = 1")
+
+    # JSONL line still present.
+    assert log_path.exists()
+    assert log_path.read_text().strip() != ""
+    # Warning logged containing the phrase "storage_callback".
+    assert any("storage_callback" in rec.message for rec in caplog.records)
+
+
+def test_set_storage_callback_none_clears(tmp_path):
+    """set_storage_callback(None) clears a previously-registered callback."""
+    from forge_bridge.learning.execution_log import ExecutionLog
+
+    log_path = tmp_path / "executions.jsonl"
+    log = ExecutionLog(log_path=log_path)
+    cb = MagicMock()
+    log.set_storage_callback(cb)
+    log.set_storage_callback(None)
+
+    log.record("y = 2")
+
+    assert cb.call_count == 0
+
+
+def test_callback_receives_full_execution_record(tmp_path):
+    """Callback receives all 5 ExecutionRecord fields."""
+    from forge_bridge.learning.execution_log import ExecutionLog, ExecutionRecord
+
+    log_path = tmp_path / "executions.jsonl"
+    log = ExecutionLog(log_path=log_path)
+    captured: list = []
+    log.set_storage_callback(lambda rec: captured.append(rec))
+
+    log.record("z = 3", intent="test")
+
+    assert len(captured) == 1
+    rec = captured[0]
+    assert isinstance(rec, ExecutionRecord)
+    # All 5 locked fields must be populated.
+    assert isinstance(rec.code_hash, str) and len(rec.code_hash) == 64
+    assert rec.raw_code == "z = 3"
+    assert rec.intent == "test"
+    assert isinstance(rec.timestamp, str) and rec.timestamp.endswith("+00:00")
+    assert rec.promoted is False
