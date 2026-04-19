@@ -173,12 +173,27 @@ def test_server_started_flag_default():
 # LRN-04 pre-synthesis hook additive API surface).
 
 def test_package_version():
-    """pyproject.toml version is 1.1.0 after Phase 6-03 v1.1.0 minor release."""
+    """pyproject.toml version is 1.1.1 after PATCH-01 v1.1.1 patch release."""
     pyproject = Path(__file__).parent.parent / "pyproject.toml"
     content = pyproject.read_text()
-    assert 'version = "1.1.0"' in content, (
-        'pyproject.toml must declare version = "1.1.0" per Phase 6-03 v1.1.0 minor release.'
+    assert 'version = "1.1.1"' in content, (
+        'pyproject.toml must declare version = "1.1.1" per PATCH-01 v1.1.1 patch release.'
     )
+
+
+def test_version_attribute_exposed():
+    """PATCH-01: forge_bridge.__version__ is set from importlib.metadata and non-empty."""
+    from importlib.metadata import version as _pkg_version
+
+    import forge_bridge
+
+    assert hasattr(forge_bridge, "__version__"), (
+        "PATCH-01: forge_bridge must expose __version__ at the package root"
+    )
+    assert isinstance(forge_bridge.__version__, str)
+    assert forge_bridge.__version__ != ""
+    # Matches the installed-metadata version (source of truth)
+    assert forge_bridge.__version__ == _pkg_version("forge-bridge")
 
 
 # ── PKG-03 / D-10 + user resolution #1 — whole-package string scrub ────────

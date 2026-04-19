@@ -21,6 +21,13 @@ import from forge_bridge.core — these are intentionally NOT re-exported at
 the package root to keep the consumer surface focused on operational APIs.
 """
 
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
+try:
+    __version__ = _pkg_version("forge-bridge")
+except PackageNotFoundError:
+    __version__ = "0.0.0+unknown"
+
 # LLM routing
 from forge_bridge.llm.router import LLMRouter, get_router
 

@@ -43,9 +43,9 @@ Requirements for projekt-forge integration. Each maps to roadmap phases.
 - **EXT-02**: Tool provenance in MCP annotations
 - **EXT-03**: SQL persistence backend for ExecutionLog via `typing.Protocol` and separate Alembic chain
 
-### API Polish (v1.0.2 patch candidates)
+### API Polish
 
-- **PATCH-01**: Expose `forge_bridge.__version__` on the package root via `importlib.metadata.version("forge-bridge")`. Discovered during Phase 5 UAT 2026-04-18 — cold-install smoke tests expected `forge_bridge.__version__` (standard Python convention) but the attribute is not set. Non-blocking; consumers can work around via `importlib.metadata`. One-line fix in `forge_bridge/__init__.py` + pyproject.toml version bump + annotated tag.
+- ✅ **PATCH-01** (shipped in v1.1.1, 2026-04-19): Exposed `forge_bridge.__version__` on the package root via `importlib.metadata.version("forge-bridge")`. Originally discovered during Phase 5 UAT 2026-04-18 — cold-install smoke tests expected `forge_bridge.__version__` (standard Python convention) but the attribute was not set. Shipped as a one-liner in `forge_bridge/__init__.py` + pyproject.toml 1.1.0→1.1.1 + annotated tag.
 
 ## Out of Scope
 
