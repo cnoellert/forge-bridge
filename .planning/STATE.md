@@ -4,8 +4,8 @@ milestone: v1.2
 milestone_name: Observability & Provenance
 status: executing
 stopped_at: v1.1 complete — Phase 6 closed 2026-04-18; release v1.1.0 shipped; Flame hook deployed to this workstation; WR-03 conftest fix landed
-last_updated: "2026-04-19T23:17:10.164Z"
-last_activity: 2026-04-19 -- Phase 7 planning complete
+last_updated: "2026-04-19T23:23:16.944Z"
+last_activity: 2026-04-19 -- Phase 07 execution started
 progress:
   total_phases: 2
   completed_phases: 0
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-15)
 
 **Core value (v1.2):** Surface synthesis provenance and persist execution history to SQL so downstream consumers can reason about what the learning pipeline has produced and stored — without scraping JSONL
-**Current focus:** v1.2 milestone scoped; research + requirements committed; paused before roadmap creation (user interrupt — context clear)
+**Current focus:** Phase 07 — tool-provenance-in-mcp-annotations
 
 ## Current Position
 
-Phase: Not started (awaiting roadmap)
-Plan: —
-Status: Ready to execute
-Last activity: 2026-04-19 -- Phase 7 planning complete
+Phase: 07 (tool-provenance-in-mcp-annotations) — EXECUTING
+Plan: 1 of 4
+Status: Executing Phase 07
+Last activity: 2026-04-19 -- Phase 07 execution started
 
 Progress: [··········] 0% (v1.2 milestone — research + requirements done, roadmap pending)
 
