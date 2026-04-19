@@ -386,3 +386,114 @@ class TestPreSynthesisHook:
         assert any(
             "pre_synthesis_hook raised" in rec.message for rec in caplog.records
         )
+
+
+# ---------------------------------------------------------------------------
+# TestSidecarEnvelope — PROV-01 round-trip tests for .sidecar.json envelope
+# ---------------------------------------------------------------------------
+
+import json as _json_test
+from datetime import datetime as _datetime_test
+
+import forge_bridge as _forge_bridge_test
+from forge_bridge.learning.synthesizer import PreSynthesisContext
+
+
+class TestSidecarEnvelope:
+    """PROV-01 — .sidecar.json envelope shape and canonical meta keys."""
+
+    @pytest.fixture
+    def valid_fn_code(self):
+        return (
+            "async def synth_noop(x: str) -> str:\n"
+            "    \"\"\"Noop synth tool for tests.\"\"\"\n"
+            "    from forge_bridge.bridge import execute\n"
+            "    result = await execute(x)\n"
+            "    return result\n"
+        )
+
+    async def _run_synth(self, tmp_path, valid_fn_code, tags):
+        """Run one synthesize() with a mocked LLM; return output_path."""
+        from unittest.mock import AsyncMock
+        from forge_bridge.learning.synthesizer import SkillSynthesizer
+
+        router = AsyncMock()
+        router.acomplete = AsyncMock(return_value=valid_fn_code)
+
+        hook = None
+        if tags is not None:
+            async def _hook(intent, params):
+                return PreSynthesisContext(tags=tags)
+            hook = _hook
+
+        synth = SkillSynthesizer(
+            router=router,
+            synthesized_dir=tmp_path,
+            pre_synthesis_hook=hook,
+        )
+        output_path = await synth.synthesize(
+            raw_code="x = 1",
+            intent="test",
+            count=7,
+        )
+        assert output_path is not None, "synthesize() must succeed for envelope tests"
+        return output_path
+
+    async def test_sidecar_json_envelope_roundtrip(self, tmp_path, valid_fn_code):
+        output_path = await self._run_synth(
+            tmp_path, valid_fn_code, tags=["project:acme", "shot:ST01_0420"]
+        )
+        sidecar = output_path.with_suffix(".sidecar.json")
+        assert sidecar.exists()
+        loaded = _json_test.loads(sidecar.read_text())
+        assert set(loaded.keys()) == {"tags", "meta", "schema_version"}
+        assert loaded["schema_version"] == 1
+        assert loaded["tags"] == ["project:acme", "shot:ST01_0420"]
+
+    async def test_sidecar_meta_contains_all_five_canonical_keys(
+        self, tmp_path, valid_fn_code
+    ):
+        output_path = await self._run_synth(
+            tmp_path, valid_fn_code, tags=["project:acme"]
+        )
+        loaded = _json_test.loads(output_path.with_suffix(".sidecar.json").read_text())
+        meta = loaded["meta"]
+        expected_keys = {
+            "forge-bridge/origin",
+            "forge-bridge/code_hash",
+            "forge-bridge/synthesized_at",
+            "forge-bridge/version",
+            "forge-bridge/observation_count",
+        }
+        assert expected_keys.issubset(set(meta.keys()))
+        assert meta["forge-bridge/origin"] == "synthesizer"
+        assert len(meta["forge-bridge/code_hash"]) == 64
+        assert all(c in "0123456789abcdef" for c in meta["forge-bridge/code_hash"])
+        parsed = _datetime_test.fromisoformat(meta["forge-bridge/synthesized_at"])
+        assert parsed.tzinfo is not None
+        assert meta["forge-bridge/version"] == _forge_bridge_test.__version__
+        assert meta["forge-bridge/observation_count"] == 7
+
+    async def test_sidecar_written_with_empty_tags(self, tmp_path, valid_fn_code):
+        output_path = await self._run_synth(tmp_path, valid_fn_code, tags=None)
+        sidecar = output_path.with_suffix(".sidecar.json")
+        assert sidecar.exists()
+        loaded = _json_test.loads(sidecar.read_text())
+        assert loaded["tags"] == []
+        expected = {
+            "forge-bridge/origin",
+            "forge-bridge/code_hash",
+            "forge-bridge/synthesized_at",
+            "forge-bridge/version",
+            "forge-bridge/observation_count",
+        }
+        assert expected.issubset(set(loaded["meta"].keys()))
+
+    async def test_legacy_tags_json_never_written_by_writer(
+        self, tmp_path, valid_fn_code
+    ):
+        output_path = await self._run_synth(
+            tmp_path, valid_fn_code, tags=["project:acme"]
+        )
+        legacy = output_path.with_suffix(".tags.json")
+        assert not legacy.exists(), "writer must NOT produce legacy .tags.json"
