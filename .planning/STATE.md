@@ -41,14 +41,16 @@ Progress: [··········] 0% (v1.2 milestone — research + requirements 
 - `.planning/ROADMAP.md` — v1.1 archived in `<details>`; v1.2 draft scope visible (Phases 7 + 8)
 - Git: clean working tree, branch in sync with origin
 
-**What's NOT committed:**
-- `.planning/ROADMAP.md` v1.2 phase details + SC breakdown (the roadmapper's deliverable — user interrupted before it ran)
+**What IS committed:**
+- `.planning/ROADMAP.md` — Phase 7 + Phase 8 full draft (goals, SC, depends_on, suggested plan structure, cross-repo coordination, locked non-goals). Derived directly from research SUMMARY — NOT a formal gsd-roadmapper pass, but matches what the roadmapper would produce. Commit `6b40768`.
 
 **Next action (pick one):**
 
-1. **Resume roadmapper** — spawn `gsd-roadmapper` with the prompt that was prepared (in the last assistant message before the interrupt). The prompt references: PROJECT.md, REQUIREMENTS.md, all research files, config.json, v1.1-ROADMAP.md precedent. Phase numbering continues from Phase 6 → Phase 7, 8. Research pre-scopes 2 phases strictly sequential.
+1. **Ratify the draft + go straight to Phase 7 planning** — run `/gsd-plan-phase 7` directly. The draft suggests 4 plans (07-01 sidecar schema, 07-02 watcher + sanitize, 07-03 register_tool wiring + hygiene, 07-04 release). Fastest path.
 
-2. **Skip roadmap, go straight to Phase 7 planning** — run `/gsd-plan-phase 7` directly. The SUMMARY.md already breaks down Phase 7 as 4 plans (07-01 sidecar schema, 07-02 watcher + sanitize, 07-03 register_tool wiring + hygiene, 07-04 release). This is the faster path if you trust the research breakdown.
+2. **Re-derive with gsd-roadmapper** — spawn the roadmapper to produce a fresh pass; compare to the existing draft. Useful if you want a second opinion or the draft feels off.
+
+3. **Review the draft manually** — `cat .planning/ROADMAP.md` and iterate with me before committing to planning.
 
 **Key constraints for either path:**
 - Phase 7 (EXT-02) ships v1.2.0 BEFORE Phase 8 (EXT-03) starts. Hard gate, not a suggestion.
