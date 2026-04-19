@@ -58,7 +58,7 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
 
 Plans:
 - [x] 07-01-PLAN.md — Sidecar schema evolution: synthesizer writes `.sidecar.json` envelope `{"tags": [...], "meta": {...}, "schema_version": 1}` with five canonical `forge-bridge/*` meta keys; round-trip test (PROV-01)
-- [ ] 07-02-PLAN.md — Watcher read-path + `_sanitize_tag()` + size budgets + redaction allowlist; `.sidecar.json` preferred, `.tags.json` fallback; feature-detect `provenance=` in `_scan_once` (PROV-01, PROV-03)
+- [x] 07-02-PLAN.md — Watcher read-path + `_sanitize_tag()` + size budgets + redaction allowlist; `.sidecar.json` preferred, `.tags.json` fallback; feature-detect `provenance=` in `_scan_once` (PROV-01, PROV-03)
 - [ ] 07-03-PLAN.md — `register_tool(..., provenance=)` kwarg + `_meta` merge + `readOnlyHint=False` synthesized baseline + WR-01 async callback test + WR-02 `ExecutionRecord` docstring fix + README conda-env section (PROV-02, PROV-04, PROV-05, PROV-06)
 - [ ] 07-04-PLAN.md — Release ceremony: `mcp[cli]>=1.19,<2` pin, `v1.2.0` annotated tag on main, GitHub release (wheel + sdist), projekt-forge pin bump + cross-repo UAT `tools/list` diff
 
