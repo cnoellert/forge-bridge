@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Observability & Provenance
-status: awaiting_roadmap
-stopped_at: v1.2 milestone scoped + researched + REQUIREMENTS.md committed. Paused before roadmapper. Resume by spawning gsd-roadmapper (or /gsd-plan-phase 7 to skip roadmap and go straight to Phase 7 planning).
-last_updated: "2026-04-19T22:30:00.000Z"
-last_activity: 2026-04-19
+status: executing
+stopped_at: v1.1 complete — Phase 6 closed 2026-04-18; release v1.1.0 shipped; Flame hook deployed to this workstation; WR-03 conftest fix landed
+last_updated: "2026-04-19T23:17:10.164Z"
+last_activity: 2026-04-19 -- Phase 7 planning complete
 progress:
-  total_phases: 0
+  total_phases: 2
   completed_phases: 0
-  total_plans: 0
+  total_plans: 4
   completed_plans: 0
   percent: 0
 ---
@@ -27,14 +27,15 @@ See: .planning/PROJECT.md (updated 2026-04-15)
 
 Phase: Not started (awaiting roadmap)
 Plan: —
-Status: Awaiting gsd-roadmapper (12 requirements defined across PROV-01..06 + STORE-01..06; research SUMMARY recommends Phases 7 and 8, strictly sequential)
-Last activity: 2026-04-19 — REQUIREMENTS.md committed (4d1f26a), research synthesized (ae34544)
+Status: Ready to execute
+Last activity: 2026-04-19 -- Phase 7 planning complete
 
 Progress: [··········] 0% (v1.2 milestone — research + requirements done, roadmap pending)
 
 ## Session Handoff — Resume Instructions
 
 **What's committed and ready:**
+
 - `.planning/PROJECT.md` — v1.2 Current Milestone section written
 - `.planning/REQUIREMENTS.md` — 12 requirements (PROV-01..06 + STORE-01..06) with traceability table awaiting phase assignment
 - `.planning/research/` — STACK, FEATURES, ARCHITECTURE, PITFALLS, SUMMARY (all v1.2); v1.1 counterparts preserved as `*-v1.1.md`
@@ -42,6 +43,7 @@ Progress: [··········] 0% (v1.2 milestone — research + requirements 
 - Git: clean working tree, branch in sync with origin
 
 **What IS committed:**
+
 - `.planning/ROADMAP.md` — Phase 7 + Phase 8 full draft (goals, SC, depends_on, suggested plan structure, cross-repo coordination, locked non-goals). Derived directly from research SUMMARY — NOT a formal gsd-roadmapper pass, but matches what the roadmapper would produce. Commit `6b40768`.
 
 **Next action (pick one):**
@@ -53,6 +55,7 @@ Progress: [··········] 0% (v1.2 milestone — research + requirements 
 3. **Review the draft manually** — `cat .planning/ROADMAP.md` and iterate with me before committing to planning.
 
 **Key constraints for either path:**
+
 - Phase 7 (EXT-02) ships v1.2.0 BEFORE Phase 8 (EXT-03) starts. Hard gate, not a suggestion.
 - Phase 8's STORE-05 is a cross-repo plan (lands in projekt-forge at `/Users/cnoellert/Documents/GitHub/projekt-forge/`).
 - `__all__` stays at 15 during Phase 7; grows to 16 (adds `StoragePersistence`) during Phase 8.
@@ -60,6 +63,7 @@ Progress: [··········] 0% (v1.2 milestone — research + requirements 
 - Locked v1.1 non-goals carry forward: no LLMRouter hot-reload, no shared-path JSONL writers.
 
 **Critical pitfalls to surface in planning (from PITFALLS.md):**
+
 1. `_meta` vs `annotations` is NOT interchangeable — MCP spec reserves `annotations` for safety hints; provenance goes in `_meta` under `forge-bridge/*` namespace.
 2. `_sanitize_tag()` is a Phase 7 non-negotiable (prompt-injection surface via `tools/list`).
 3. Phase 8: sync SQLAlchemy callback recommended (avoids "no running loop" silent-drop).

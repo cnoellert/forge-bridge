@@ -54,13 +54,13 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
   3. A consumer-supplied tag containing control chars (`\n`, `\x00`..`\x1f`), injection markers (`ignore previous`, `<|`, `[INST]`, triple-backtick, `---`), or exceeding 64 chars is rejected at the `_sanitize_tag()` boundary with a WARNING log; every synthesized tool's `_meta` payload stays ≤ 4 KB and ≤ 16 tags per tool
   4. Every synthesized tool registered has `annotations.readOnlyHint=False` set explicitly — verifiable by inspecting the `Tool` payload returned from `tools/list` (MCP clients MUST NOT auto-approve forge-synthesized tools)
   5. projekt-forge pinned to `forge-bridge @ git+...@v1.2.0`, re-run live-UAT against assist-01 Ollama, `tools/list` diff shows only additive `_meta` changes on `synth_*` tools — no regressions on builtin `flame_*`/`forge_*` tools
-**Plans:** TBD (research suggests 4 plans — see below)
+**Plans:** 4 plans
 
-Suggested plan structure (to be ratified by `/gsd-plan-phase 7`):
-- **07-01** — Provenance contract + sidecar schema evolution: `.tags.json` → `.sidecar.json` with `{"tags": [...], "meta": {...}, "schema_version": 1}` envelope; synthesizer write-path rename + round-trip read test; CONTEXT.md decision-lock (`_meta` not `annotations`, staleness accepted as non-goal, WR-02 docstring drift fix on `ExecutionRecord` vs `mark_promoted`)
-- **07-02** — Watcher read-path + `_sanitize_tag()` helper + size budgets: `_read_sidecar()` helper in watcher prefers `.sidecar.json`, falls back to `.tags.json`; sanitization strips control chars + rejects injection markers + truncates to 64 chars; size ceilings (≤ 16 tags, ≤ 4 KB `_meta`); redaction allowlist (`project:`, `phase:`, `shot:`, `type:` → pass-through; everything else → `redacted:<sha256[:8]>`)
-- **07-03** — `register_tool(..., provenance=)` kwarg + registry meta merge + PROV-04 safety default + hygiene: internal `register_tool` grows one `provenance: dict | None` kwarg (public `register_tools` unchanged); merges into existing `meta={"_source": ...}` under `forge-bridge/*` keys; `annotations.readOnlyHint=False` baseline on synthesized tools; WR-01 async storage-callback failure-path tests; PROV-06 README conda-env section
-- **07-04** — Release ceremony: `mcp[cli]>=1.19,<2` pin bump in `pyproject.toml`, regression test suite green, annotated `v1.2.0` tag on main, wheel + sdist on GitHub release, projekt-forge pin bump to `@v1.2.0` + UAT `tools/list` diff (P-02.7)
+Plans:
+- [ ] 07-01-PLAN.md — Sidecar schema evolution: synthesizer writes `.sidecar.json` envelope `{"tags": [...], "meta": {...}, "schema_version": 1}` with five canonical `forge-bridge/*` meta keys; round-trip test (PROV-01)
+- [ ] 07-02-PLAN.md — Watcher read-path + `_sanitize_tag()` + size budgets + redaction allowlist; `.sidecar.json` preferred, `.tags.json` fallback; feature-detect `provenance=` in `_scan_once` (PROV-01, PROV-03)
+- [ ] 07-03-PLAN.md — `register_tool(..., provenance=)` kwarg + `_meta` merge + `readOnlyHint=False` synthesized baseline + WR-01 async callback test + WR-02 `ExecutionRecord` docstring fix + README conda-env section (PROV-02, PROV-04, PROV-05, PROV-06)
+- [ ] 07-04-PLAN.md — Release ceremony: `mcp[cli]>=1.19,<2` pin, `v1.2.0` annotated tag on main, GitHub release (wheel + sdist), projekt-forge pin bump + cross-repo UAT `tools/list` diff
 
 **Release artifact:** annotated `v1.2.0` tag on `main`, GitHub release with wheel + sdist. Hard gate: projekt-forge must pin `@v1.2.0` and UAT clean before Phase 8 starts.
 
