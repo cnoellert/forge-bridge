@@ -63,6 +63,35 @@ A [Model Context Protocol](https://modelcontextprotocol.io) server that wraps th
 
 ---
 
+## Conda environment
+
+forge-bridge (and its downstream consumer projekt-forge) use a shared conda environment named `forge` so the two codebases can resolve each other's editable installs without polluting the system Python.
+
+Create and activate the environment:
+
+```bash
+conda create -n forge python=3.11 -y
+conda activate forge
+```
+
+Install forge-bridge in editable mode with the test extras:
+
+```bash
+pip install -e ".[dev]"
+```
+
+Install with the optional LLM extras (for synthesis via Ollama / OpenAI / Anthropic):
+
+```bash
+pip install -e ".[dev,llm]"
+```
+
+Downstream consumers (projekt-forge, other pipeline tools) install forge-bridge as a git-URL pinned dependency inside the same conda environment — see projekt-forge's README for the pin pattern.
+
+Python 3.10 is the minimum supported version (per `pyproject.toml`); the `forge` env defaults to 3.11 to match the reference deployment on the primary workstation.
+
+---
+
 ## Quick Start
 
 ### Install the Flame hook
