@@ -55,6 +55,7 @@ def register_tool(
     name: str,
     source: str,
     annotations: dict[str, Any] | None = None,
+    provenance: dict[str, Any] | None = None,
 ) -> None:
     """Register a single tool with namespace enforcement and source tagging.
 
@@ -64,12 +65,50 @@ def register_tool(
         name:        Tool name — must start with flame_, forge_, or synth_.
         source:      One of "builtin", "synthesized", or "user-taught".
         annotations: Optional MCP tool annotations dict (readOnlyHint, etc.).
+                     For source="synthesized", readOnlyHint defaults to False
+                     per PROV-04 (synthesized tools call bridge.execute()).
+        provenance:  Optional dict of shape {"tags": [...], "meta": {...}}
+                     produced by the watcher's _read_sidecar helper.
+                     Only forge-bridge/* namespaced meta keys are forwarded
+                     to mcp.add_tool (defense-in-depth against key injection).
 
     Raises:
         ValueError: If name violates namespace rules for the given source.
     """
     _validate_name(name, source)
-    mcp.add_tool(fn, name=name, annotations=annotations, meta={"_source": source})
+
+    # Build the merged meta dict. _source is the v1.0 contract (Phase 2);
+    # forge-bridge/* keys are the v1.2 PROV-02 contract layered on top.
+    merged_meta: dict[str, Any] = {"_source": source}
+    if provenance is not None:
+        prov_meta = provenance.get("meta") or {}
+        for k, v in prov_meta.items():
+            if k.startswith("forge-bridge/"):
+                merged_meta[k] = v
+        tags = provenance.get("tags") or []
+        if tags:
+            merged_meta["forge-bridge/tags"] = list(tags)
+
+    # PROV-04 safety baseline: every synthesized tool gets readOnlyHint=False
+    # unless the caller explicitly set it. Synthesized tools call
+    # bridge.execute() which runs arbitrary Python inside Flame — MCP clients
+    # MUST NOT auto-approve them. Builtin tools keep their original hints.
+    effective_annotations: dict[str, Any] | None
+    if annotations is not None:
+        effective_annotations = dict(annotations)
+    else:
+        effective_annotations = None
+    if source == "synthesized":
+        if effective_annotations is None:
+            effective_annotations = {}
+        effective_annotations.setdefault("readOnlyHint", False)
+
+    mcp.add_tool(
+        fn,
+        name=name,
+        annotations=effective_annotations,
+        meta=merged_meta,
+    )
 
 
 def register_tools(
