@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Observability & Provenance
-status: awaiting_scope
-stopped_at: v1.1 archived 2026-04-19; v1.2 candidate scope (Phase 7 EXT-02 + Phase 8 EXT-03) pending /gsd-new-milestone
-last_updated: "2026-04-19T21:50:00.000Z"
+status: defining_requirements
+stopped_at: v1.2 milestone opened 2026-04-19; PROJECT.md updated; research decision pending, then REQUIREMENTS.md + ROADMAP.md
+last_updated: "2026-04-19T22:00:00.000Z"
 last_activity: 2026-04-19
 progress:
   total_phases: 0
@@ -20,17 +20,17 @@ progress:
 
 See: .planning/PROJECT.md (updated 2026-04-15)
 
-**Core value:** (draft for v1.2) Surface synthesis provenance and persist execution history to SQL so downstream consumers can reason about what the learning pipeline has produced and stored — without scraping JSONL
-**Current focus:** v1.2 scoping — run `/gsd-new-milestone` to formalize goal, write fresh REQUIREMENTS.md, create v1.2 roadmap
+**Core value (v1.2):** Surface synthesis provenance and persist execution history to SQL so downstream consumers can reason about what the learning pipeline has produced and stored — without scraping JSONL
+**Current focus:** v1.2 milestone opened — research decision pending, then REQUIREMENTS.md + ROADMAP.md via gsd-roadmapper
 
 ## Current Position
 
-Phase: — (awaiting v1.2 scope)
+Phase: Not started (defining requirements)
 Plan: —
-Status: v1.1 shipped; v1.2 scope draft in ROADMAP.md; `.planning/REQUIREMENTS.md` deleted (fresh one will be created by /gsd-new-milestone)
-Last activity: 2026-04-19
+Status: Defining requirements
+Last activity: 2026-04-19 — Milestone v1.2 started
 
-Progress: [··········] 0% (v1.2 not yet scoped)
+Progress: [··········] 0% (v1.2 milestone — Phases 7-8 scoped, requirements definition next)
 
 ## Performance Metrics
 

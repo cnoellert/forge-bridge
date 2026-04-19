@@ -8,11 +8,11 @@ forge-bridge is protocol-agnostic middleware for post-production pipelines — a
 
 **Shipped:** v1.1.1 (2026-04-19) — `projekt-forge Integration` milestone complete. projekt-forge now consumes forge-bridge as a pip dependency (no duplicated source), the learning pipeline is wired into projekt-forge's LLM config / per-project log paths / storage callback, and `forge_bridge.__version__` is exposed via `importlib.metadata`. Three annotated tags on origin (`v1.0.1`, `v1.1.0`, `v1.1.1`) with wheel + sdist assets on the GitHub releases. Live-verified against Ollama on assist-01 (`qwen2.5-coder:32b`). See `.planning/milestones/v1.1-ROADMAP.md` for the full archive.
 
-## Next Milestone: v1.2 Observability & Provenance (scoping)
+## Current Milestone: v1.2 Observability & Provenance
 
-**Draft goal:** Surface what forge-bridge has synthesized (tool provenance in MCP annotations) and where it has persisted executions (SQL backend for the learning-pipeline storage callback) — so downstream consumers can reason about synthesis history without scraping JSONL files.
+**Goal:** Surface what forge-bridge has synthesized (tool provenance in MCP annotations) and where it has persisted executions (SQL backend for the learning-pipeline storage callback) — so downstream consumers can reason about synthesis history without scraping JSONL files.
 
-**Candidate phases** (pending `/gsd-new-milestone` formalization):
+**Target features:**
 - **Phase 7: EXT-02 Tool provenance in MCP annotations** — lift `.tags.json` sidecars (produced by Phase 6-02) into MCP tool annotations; bundle WR-01/WR-02 code-review hygiene and README conda-env guidance
 - **Phase 8: EXT-03 SQL persistence backend for `ExecutionLog`** — define `StoragePersistence` Protocol on the bridge side; implement in projekt-forge via SQLAlchemy + Alembic
 - **Stretch / deferred:** EXT-01 (shared synthesis manifest between repos) — revisit after Phase 7 clarifies what metadata actually needs sharing
@@ -116,4 +116,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-19 — v1.1 milestone archived; v1.2 "Observability & Provenance" scoping*
+*Last updated: 2026-04-19 — v1.2 "Observability & Provenance" milestone opened (Phases 7-8 scoped)*
