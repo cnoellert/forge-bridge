@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: projekt-forge Integration
-status: executing
-stopped_at: Phase 6 context gathered — 4 decisions locked (storage callback, pre-synthesis hook, LLMRouter DI, per-process log paths)
-last_updated: "2026-04-18T15:33:05.456Z"
-last_activity: 2026-04-18
+status: milestone_complete
+stopped_at: v1.1 complete — Phase 6 closed 2026-04-18, release v1.1.0 shipped with wheel + sdist GitHub assets
+last_updated: "2026-04-19T21:45:00.000Z"
+last_activity: 2026-04-19
 progress:
-  total_phases: 3
-  completed_phases: 3
-  total_plans: 13
-  completed_plans: 13
+  total_phases: 6
+  completed_phases: 6
+  total_plans: 22
+  completed_plans: 22
   percent: 100
 ---
 
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-15)
 
 **Core value:** Make forge-bridge the single canonical pip package so projekt-forge can consume it rather than duplicate it
-**Current focus:** Phase 06 — learning-pipeline-integration
+**Current focus:** v1.1 milestone complete — candidates for next work: PATCH-01 (forge_bridge.__version__ → v1.1.1) or scope v1.2 (EXT-02, EXT-03)
 
 ## Current Position
 
-Phase: 06
-Plan: Not started
-Status: Executing Phase 06
-Last activity: 2026-04-18
+Phase: — (milestone complete)
+Plan: —
+Status: v1.1 milestone complete (22/22 plans across 6 phases)
+Last activity: 2026-04-19
 
-Progress: [██████████] 100% (v1.1 milestone — 5 of 5 Phase 5 plans done)
+Progress: [██████████] 100% (v1.1 milestone — all 6 phases, 22 plans complete)
 
 ## Performance Metrics
 
@@ -101,6 +101,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-18T04:48:13.626Z
-Stopped at: Phase 6 context gathered — 4 decisions locked (storage callback, pre-synthesis hook, LLMRouter DI, per-process log paths)
-Resume file: .planning/phases/06-learning-pipeline-integration/06-CONTEXT.md
+Last session: 2026-04-19T21:45:00.000Z
+Stopped at: v1.1 complete — Phase 6 closed 2026-04-18; release v1.1.0 shipped; Flame hook deployed to this workstation; WR-03 conftest fix landed
+Resume file: .planning/phases/06-learning-pipeline-integration/06-VERIFICATION.md

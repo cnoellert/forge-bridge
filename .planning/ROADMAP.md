@@ -3,7 +3,7 @@
 ## Milestones
 
 - ✅ **v1.0 Canonical Package & Learning Pipeline** — Phases 1-3 (shipped 2026-04-15)
-- 🚧 **v1.1 projekt-forge Integration** — Phases 4-6 (in progress)
+- ✅ **v1.1 projekt-forge Integration** — Phases 4-6 (shipped 2026-04-18)
 
 ## Phases
 
@@ -18,13 +18,13 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 
 </details>
 
-### 🚧 v1.1 projekt-forge Integration (In Progress)
+### ✅ v1.1 projekt-forge Integration (SHIPPED 2026-04-18)
 
 **Milestone Goal:** Make projekt-forge consume forge-bridge as a pip dependency — replacing duplicated code with imports and wiring the learning pipeline into forge's infrastructure — without breaking either system's existing functionality.
 
 - [x] **Phase 4: API Surface Hardening** (4/4 plans) — completed 2026-04-15
 - [x] **Phase 5: Import Rewiring** (5/5 plans) — completed 2026-04-18
-- [ ] **Phase 6: Learning Pipeline Integration** — Wire forge-bridge's learning pipeline into projekt-forge's LLM, config, and storage infrastructure
+- [x] **Phase 6: Learning Pipeline Integration** (4/4 plans) — completed 2026-04-18
 
 ## Phase Details
 
@@ -84,4 +84,4 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 | 3. Learning Pipeline | v1.0 | 3/3 | Complete | 2026-04-15 |
 | 4. API Surface Hardening | v1.1 | 4/4 | Complete | 2026-04-15 |
 | 5. Import Rewiring | v1.1 | 5/5 | Complete | 2026-04-18 |
-| 6. Learning Pipeline Integration | v1.1 | 0/4 | Planned | - |
+| 6. Learning Pipeline Integration | v1.1 | 4/4 | Complete | 2026-04-18 |
