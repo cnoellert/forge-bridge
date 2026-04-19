@@ -1,17 +1,17 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.1
-milestone_name: projekt-forge Integration
-status: milestone_complete
-stopped_at: v1.1 complete — Phase 6 closed 2026-04-18, release v1.1.0 shipped with wheel + sdist GitHub assets
-last_updated: "2026-04-19T21:45:00.000Z"
+milestone: v1.2
+milestone_name: Observability & Provenance
+status: awaiting_scope
+stopped_at: v1.1 archived 2026-04-19; v1.2 candidate scope (Phase 7 EXT-02 + Phase 8 EXT-03) pending /gsd-new-milestone
+last_updated: "2026-04-19T21:50:00.000Z"
 last_activity: 2026-04-19
 progress:
-  total_phases: 6
-  completed_phases: 6
-  total_plans: 22
-  completed_plans: 22
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -20,17 +20,17 @@ progress:
 
 See: .planning/PROJECT.md (updated 2026-04-15)
 
-**Core value:** Make forge-bridge the single canonical pip package so projekt-forge can consume it rather than duplicate it
-**Current focus:** v1.1 milestone complete — candidates for next work: PATCH-01 (forge_bridge.__version__ → v1.1.1) or scope v1.2 (EXT-02, EXT-03)
+**Core value:** (draft for v1.2) Surface synthesis provenance and persist execution history to SQL so downstream consumers can reason about what the learning pipeline has produced and stored — without scraping JSONL
+**Current focus:** v1.2 scoping — run `/gsd-new-milestone` to formalize goal, write fresh REQUIREMENTS.md, create v1.2 roadmap
 
 ## Current Position
 
-Phase: — (milestone complete)
+Phase: — (awaiting v1.2 scope)
 Plan: —
-Status: v1.1 milestone complete (22/22 plans across 6 phases)
+Status: v1.1 shipped; v1.2 scope draft in ROADMAP.md; `.planning/REQUIREMENTS.md` deleted (fresh one will be created by /gsd-new-milestone)
 Last activity: 2026-04-19
 
-Progress: [██████████] 100% (v1.1 milestone — all 6 phases, 22 plans complete)
+Progress: [··········] 0% (v1.2 not yet scoped)
 
 ## Performance Metrics
 
