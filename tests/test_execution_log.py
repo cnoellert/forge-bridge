@@ -322,3 +322,69 @@ def test_callback_receives_full_execution_record(tmp_path):
     assert rec.intent == "test"
     assert isinstance(rec.timestamp, str) and rec.timestamp.endswith("+00:00")
     assert rec.promoted is False
+
+
+# ---------------------------------------------------------------------------
+# WR-01: Async callback failure isolation tests
+# ---------------------------------------------------------------------------
+
+
+async def test_async_storage_callback_exception_isolated(tmp_path, caplog):
+    """WR-01: async callback raising is isolated — JSONL written, WARNING logged, no propagation."""
+    import asyncio as _asyncio
+    import logging
+
+    from forge_bridge.learning.execution_log import ExecutionLog
+
+    log_path = tmp_path / "executions.jsonl"
+    log = ExecutionLog(log_path=log_path)
+
+    async def boom(_rec):
+        raise RuntimeError("db down")
+
+    log.set_storage_callback(boom)
+
+    with caplog.at_level(logging.WARNING, logger="forge_bridge.learning.execution_log"):
+        # Must NOT raise — the async-callback exception is caught in the done_callback
+        log.record("z = 42", intent="async-fail-test")
+        # Yield to the event loop so the fire-and-forget task completes and
+        # _log_callback_exception runs
+        await _asyncio.sleep(0)
+        await _asyncio.sleep(0)  # one extra tick for the done_callback
+
+    # JSONL file was still written (source-of-truth invariant preserved)
+    assert log_path.exists()
+    assert "async-fail-test" in log_path.read_text()
+
+    # Exactly one WARNING was logged with "storage_callback" in it
+    storage_warnings = [
+        r for r in caplog.records
+        if r.levelno == logging.WARNING and "storage_callback" in r.message
+    ]
+    assert len(storage_warnings) >= 1, (
+        f"expected WARNING mentioning 'storage_callback', got: "
+        f"{[r.message for r in caplog.records]}"
+    )
+
+
+async def test_async_storage_callback_exception_does_not_propagate(tmp_path):
+    """WR-01: record() returns normally even if async callback raises."""
+    import asyncio as _asyncio
+
+    from forge_bridge.learning.execution_log import ExecutionLog
+
+    log_path = tmp_path / "executions.jsonl"
+    log = ExecutionLog(log_path=log_path)
+
+    async def boom(_rec):
+        raise RuntimeError("db down")
+
+    log.set_storage_callback(boom)
+
+    # record() must return normally; no exception may surface
+    result = log.record("y = 99")
+    await _asyncio.sleep(0)
+    await _asyncio.sleep(0)
+
+    # record()'s return value is a bool (did it signal promotion?) — just assert type
+    assert isinstance(result, bool)
