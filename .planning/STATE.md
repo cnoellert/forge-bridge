@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Observability & Provenance
-status: defining_requirements
-stopped_at: v1.2 milestone opened 2026-04-19; PROJECT.md updated; research decision pending, then REQUIREMENTS.md + ROADMAP.md
-last_updated: "2026-04-19T22:00:00.000Z"
+status: awaiting_roadmap
+stopped_at: v1.2 milestone scoped + researched + REQUIREMENTS.md committed. Paused before roadmapper. Resume by spawning gsd-roadmapper (or /gsd-plan-phase 7 to skip roadmap and go straight to Phase 7 planning).
+last_updated: "2026-04-19T22:30:00.000Z"
 last_activity: 2026-04-19
 progress:
   total_phases: 0
@@ -21,16 +21,47 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-15)
 
 **Core value (v1.2):** Surface synthesis provenance and persist execution history to SQL so downstream consumers can reason about what the learning pipeline has produced and stored — without scraping JSONL
-**Current focus:** v1.2 milestone opened — research decision pending, then REQUIREMENTS.md + ROADMAP.md via gsd-roadmapper
+**Current focus:** v1.2 milestone scoped; research + requirements committed; paused before roadmap creation (user interrupt — context clear)
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: Not started (awaiting roadmap)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-04-19 — Milestone v1.2 started
+Status: Awaiting gsd-roadmapper (12 requirements defined across PROV-01..06 + STORE-01..06; research SUMMARY recommends Phases 7 and 8, strictly sequential)
+Last activity: 2026-04-19 — REQUIREMENTS.md committed (4d1f26a), research synthesized (ae34544)
 
-Progress: [··········] 0% (v1.2 milestone — Phases 7-8 scoped, requirements definition next)
+Progress: [··········] 0% (v1.2 milestone — research + requirements done, roadmap pending)
+
+## Session Handoff — Resume Instructions
+
+**What's committed and ready:**
+- `.planning/PROJECT.md` — v1.2 Current Milestone section written
+- `.planning/REQUIREMENTS.md` — 12 requirements (PROV-01..06 + STORE-01..06) with traceability table awaiting phase assignment
+- `.planning/research/` — STACK, FEATURES, ARCHITECTURE, PITFALLS, SUMMARY (all v1.2); v1.1 counterparts preserved as `*-v1.1.md`
+- `.planning/ROADMAP.md` — v1.1 archived in `<details>`; v1.2 draft scope visible (Phases 7 + 8)
+- Git: clean working tree, branch in sync with origin
+
+**What's NOT committed:**
+- `.planning/ROADMAP.md` v1.2 phase details + SC breakdown (the roadmapper's deliverable — user interrupted before it ran)
+
+**Next action (pick one):**
+
+1. **Resume roadmapper** — spawn `gsd-roadmapper` with the prompt that was prepared (in the last assistant message before the interrupt). The prompt references: PROJECT.md, REQUIREMENTS.md, all research files, config.json, v1.1-ROADMAP.md precedent. Phase numbering continues from Phase 6 → Phase 7, 8. Research pre-scopes 2 phases strictly sequential.
+
+2. **Skip roadmap, go straight to Phase 7 planning** — run `/gsd-plan-phase 7` directly. The SUMMARY.md already breaks down Phase 7 as 4 plans (07-01 sidecar schema, 07-02 watcher + sanitize, 07-03 register_tool wiring + hygiene, 07-04 release). This is the faster path if you trust the research breakdown.
+
+**Key constraints for either path:**
+- Phase 7 (EXT-02) ships v1.2.0 BEFORE Phase 8 (EXT-03) starts. Hard gate, not a suggestion.
+- Phase 8's STORE-05 is a cross-repo plan (lands in projekt-forge at `/Users/cnoellert/Documents/GitHub/projekt-forge/`).
+- `__all__` stays at 15 during Phase 7; grows to 16 (adds `StoragePersistence`) during Phase 8.
+- `ExecutionRecord` frozen dataclass stays at v1.1.0 shape unless a specific plan adds a field with minor bump + migration.
+- Locked v1.1 non-goals carry forward: no LLMRouter hot-reload, no shared-path JSONL writers.
+
+**Critical pitfalls to surface in planning (from PITFALLS.md):**
+1. `_meta` vs `annotations` is NOT interchangeable — MCP spec reserves `annotations` for safety hints; provenance goes in `_meta` under `forge-bridge/*` namespace.
+2. `_sanitize_tag()` is a Phase 7 non-negotiable (prompt-injection surface via `tools/list`).
+3. Phase 8: sync SQLAlchemy callback recommended (avoids "no running loop" silent-drop).
+4. Phase 8: no retry in the storage callback, ever. Durability via JSONL + backfill.
 
 ## Performance Metrics
 
