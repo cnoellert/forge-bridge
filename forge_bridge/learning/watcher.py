@@ -8,11 +8,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import importlib.util
+import inspect
+import json as _json
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from forge_bridge.learning.manifest import manifest_verify, MANIFEST_PATH
+from forge_bridge.learning.sanitize import _sanitize_tag, apply_size_budget
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -48,6 +51,72 @@ async def watch_synthesized_tools(
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _read_sidecar(py_path: Path) -> dict | None:
+    """Load the sidecar envelope for a synthesized tool.
+
+    Prefers `<stem>.sidecar.json` (v1.2+), falls back to legacy `<stem>.tags.json`
+    (v1.1) for a grace window. Applies `_sanitize_tag` to every consumer-supplied
+    tag at the READ boundary (PROV-03 defense-in-depth), then `apply_size_budget`
+    to enforce <= 16 tags and <= 4 KB `meta`. Always prepends the literal
+    `"synthesized"` tag so clients can filter (TS-02.1).
+
+    Returns:
+        dict of shape `{"tags": [...], "meta": {...}}` on success, or None if
+        no sidecar exists OR the sidecar is malformed (non-JSON, non-dict).
+    """
+    sidecar_path = py_path.with_suffix(".sidecar.json")
+    legacy_path = py_path.with_suffix(".tags.json")
+
+    raw: dict | None = None
+    if sidecar_path.exists():
+        try:
+            loaded = _json.loads(sidecar_path.read_text())
+        except _json.JSONDecodeError:
+            logger.warning("malformed .sidecar.json for %s — skipping provenance", py_path.stem)
+            return None
+        if not isinstance(loaded, dict):
+            logger.warning(
+                ".sidecar.json for %s is not a JSON object — skipping provenance",
+                py_path.stem,
+            )
+            return None
+        raw = {
+            "tags": loaded.get("tags") or [],
+            "meta": loaded.get("meta") or {},
+        }
+    elif legacy_path.exists():
+        try:
+            loaded = _json.loads(legacy_path.read_text())
+        except _json.JSONDecodeError:
+            logger.warning("malformed .tags.json for %s — skipping provenance", py_path.stem)
+            return None
+        if not isinstance(loaded, dict):
+            logger.warning(
+                ".tags.json for %s is not a JSON object — skipping provenance",
+                py_path.stem,
+            )
+            return None
+        raw = {
+            "tags": loaded.get("tags") or [],
+            "meta": {},  # legacy shape has no meta block
+        }
+    else:
+        return None
+
+    # Sanitize each consumer tag; drop rejections silently (already logged by sanitize)
+    sanitized_tags: list[str] = []
+    for t in raw["tags"]:
+        cleaned = _sanitize_tag(t)
+        if cleaned is not None:
+            sanitized_tags.append(cleaned)
+
+    # Prepend the literal "synthesized" filter tag (TS-02.1 — unconditional)
+    tags_out = ["synthesized"] + sanitized_tags
+
+    payload = {"tags": tags_out, "meta": dict(raw["meta"])}
+    return apply_size_budget(payload)
 
 
 def _scan_once(
@@ -88,7 +157,13 @@ def _scan_once(
         if tracker is not None:
             fn = tracker.wrap(fn, stem, mcp)
         try:
-            register_tool(mcp, fn, name=stem, source="synthesized")
+            provenance = _read_sidecar(path)
+            # Feature-detect: Plan 07-03 adds `provenance` kwarg to register_tool. Until then,
+            # fall back to the no-kwarg call so Wave 2 can land independently of Wave 3.
+            if "provenance" in inspect.signature(register_tool).parameters:
+                register_tool(mcp, fn, name=stem, source="synthesized", provenance=provenance)
+            else:
+                register_tool(mcp, fn, name=stem, source="synthesized")
             seen[stem] = digest
             logger.info(f"Registered synthesized tool: {stem}")
         except ValueError as e:
