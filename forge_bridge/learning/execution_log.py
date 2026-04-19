@@ -34,7 +34,11 @@ LOG_PATH = Path.home() / ".forge-bridge" / "executions.jsonl"
 class ExecutionRecord:
     """Payload delivered to storage callbacks after every ExecutionLog.record() write.
 
-    Mirrors the JSONL on-disk schema exactly (same field names, same types).
+    Mirrors the JSONL row written by ExecutionLog.record() — same field names,
+    same types. NOT every JSONL row is an ExecutionRecord: ExecutionLog.mark_promoted()
+    writes a separate partial row of shape {code_hash, promoted, timestamp} for
+    promotion events. Readers that replay the JSONL must tolerate both row shapes.
+
     Frozen so consumer code cannot mutate state shared between the log write and
     the callback fire.
     """
