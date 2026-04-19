@@ -11,12 +11,13 @@ import ast
 import hashlib
 import importlib.util
 import inspect
-import json as _json  # for the tags sidecar write; rename to avoid shadowing
+import json as _json  # for the sidecar write; rename to avoid shadowing
 import logging
 import os
 import re
 import tempfile
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
 from unittest.mock import AsyncMock, patch
@@ -364,11 +365,26 @@ class SkillSynthesizer:
         output_path.write_text(fn_code)
         manifest_register(output_path)
 
-        # Stash tags next to the synthesized tool for later EXT-02 consumption.
-        # Sidecar format: {"tags": ["key:value", ...]}. Empty tags → no sidecar.
-        if ctx.tags:
-            tags_path = output_path.with_suffix(".tags.json")
-            tags_path.write_text(_json.dumps({"tags": list(ctx.tags)}))
+        # Sidecar envelope: {tags, meta, schema_version=1} — PROV-01 v1.2 shape.
+        # Always written for successful synthesis — `meta` provenance is non-empty
+        # by construction. v1.2 name is .sidecar.json; the legacy name is retired.
+        # Per PROV-01 / PITFALL P-02.1: provenance goes here, NOT into Tool.annotations.
+        import forge_bridge as _forge_bridge  # local import — avoid circular at module load
+
+        code_hash = hashlib.sha256(fn_code.encode()).hexdigest()
+        sidecar_envelope = {
+            "tags": list(ctx.tags),  # preserves caller order; [] if no tags
+            "meta": {
+                "forge-bridge/origin": "synthesizer",
+                "forge-bridge/code_hash": code_hash,
+                "forge-bridge/synthesized_at": datetime.now(timezone.utc).isoformat(),
+                "forge-bridge/version": _forge_bridge.__version__,
+                "forge-bridge/observation_count": count,
+            },
+            "schema_version": 1,
+        }
+        sidecar_path = output_path.with_suffix(".sidecar.json")
+        sidecar_path.write_text(_json.dumps(sidecar_envelope))
 
         logger.info(f"Synthesized tool written: {output_path}")
         return output_path
