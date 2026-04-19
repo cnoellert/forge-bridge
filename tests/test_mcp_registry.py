@@ -186,3 +186,125 @@ def test_register_tools_pre_run_ok():
         assert "forge_my_tool" in mcp._tool_manager._tools
     finally:
         server_mod._server_started = original
+
+
+# ── PROV-02 + PROV-04: Provenance merge + readOnlyHint baseline ──────────────
+
+
+import inspect
+from unittest.mock import MagicMock
+
+
+class TestProvenanceMerge:
+    """PROV-02 + PROV-04 — register_tool provenance kwarg and safety baseline."""
+
+    @pytest.fixture
+    def mock_mcp(self):
+        return MagicMock()
+
+    async def _noop(self, x: str = "") -> str:
+        """Placeholder fn for registration."""
+        return x
+
+    def test_register_tool_has_provenance_kwarg(self):
+        sig = inspect.signature(register_tool)
+        assert "provenance" in sig.parameters
+        assert sig.parameters["provenance"].default is None
+
+    def test_register_tools_signature_unchanged(self):
+        """Public API is frozen — plural register_tools has exactly 4 params."""
+        sig = inspect.signature(register_tools)
+        assert list(sig.parameters.keys()) == ["mcp", "fns", "prefix", "source"]
+
+    def test_register_tool_without_provenance_preserves_source(self, mock_mcp):
+        register_tool(mock_mcp, self._noop, name="synth_foo", source="synthesized")
+        call = mock_mcp.add_tool.call_args
+        meta = call.kwargs["meta"]
+        assert meta == {"_source": "synthesized"}
+
+    def test_register_tool_synthesized_defaults_readonly_false(self, mock_mcp):
+        """PROV-04: synthesized tools get readOnlyHint=False baseline."""
+        register_tool(mock_mcp, self._noop, name="synth_foo", source="synthesized")
+        annotations = mock_mcp.add_tool.call_args.kwargs["annotations"]
+        assert annotations == {"readOnlyHint": False}
+
+    def test_register_tool_builtin_no_readonly_baseline(self, mock_mcp):
+        """Builtin tools get no readOnlyHint baseline — caller's hints win."""
+        register_tool(
+            mock_mcp, self._noop, name="flame_ping", source="builtin",
+            annotations={"readOnlyHint": True, "idempotentHint": True},
+        )
+        annotations = mock_mcp.add_tool.call_args.kwargs["annotations"]
+        assert annotations == {"readOnlyHint": True, "idempotentHint": True}
+
+    def test_register_tool_explicit_readonly_not_overridden(self, mock_mcp):
+        """If caller explicitly sets readOnlyHint on synthesized tool, it wins."""
+        register_tool(
+            mock_mcp, self._noop, name="synth_foo", source="synthesized",
+            annotations={"readOnlyHint": True},
+        )
+        annotations = mock_mcp.add_tool.call_args.kwargs["annotations"]
+        assert annotations == {"readOnlyHint": True}
+
+    def test_register_tool_merges_provenance_into_meta(self, mock_mcp):
+        """PROV-02: five forge-bridge/* keys land in _meta alongside _source."""
+        provenance = {
+            "tags": ["synthesized", "project:acme"],
+            "meta": {
+                "forge-bridge/origin": "synthesizer",
+                "forge-bridge/code_hash": "abc",
+                "forge-bridge/synthesized_at": "2026-04-19T22:30:00+00:00",
+                "forge-bridge/version": "1.2.0",
+                "forge-bridge/observation_count": 7,
+            },
+        }
+        register_tool(
+            mock_mcp, self._noop, name="synth_foo", source="synthesized",
+            provenance=provenance,
+        )
+        meta = mock_mcp.add_tool.call_args.kwargs["meta"]
+        assert meta["_source"] == "synthesized"
+        assert meta["forge-bridge/origin"] == "synthesizer"
+        assert meta["forge-bridge/code_hash"] == "abc"
+        assert meta["forge-bridge/synthesized_at"] == "2026-04-19T22:30:00+00:00"
+        assert meta["forge-bridge/version"] == "1.2.0"
+        assert meta["forge-bridge/observation_count"] == 7
+        assert meta["forge-bridge/tags"] == ["synthesized", "project:acme"]
+
+    def test_register_tool_drops_non_forge_bridge_meta_keys(self, mock_mcp):
+        """Defense-in-depth: only forge-bridge/* namespace reaches the MCP wire."""
+        provenance = {
+            "tags": [],
+            "meta": {
+                "consumer/private": "secret",
+                "forge-bridge/origin": "synthesizer",
+                "rogue-key": "leak",
+            },
+        }
+        register_tool(
+            mock_mcp, self._noop, name="synth_foo", source="synthesized",
+            provenance=provenance,
+        )
+        meta = mock_mcp.add_tool.call_args.kwargs["meta"]
+        assert "consumer/private" not in meta
+        assert "rogue-key" not in meta
+        assert meta["forge-bridge/origin"] == "synthesizer"
+
+    def test_register_tool_empty_tags_does_not_add_tags_key(self, mock_mcp):
+        """No empty-list noise in _meta when provenance has no tags."""
+        provenance = {"tags": [], "meta": {"forge-bridge/origin": "synthesizer"}}
+        register_tool(
+            mock_mcp, self._noop, name="synth_foo", source="synthesized",
+            provenance=provenance,
+        )
+        meta = mock_mcp.add_tool.call_args.kwargs["meta"]
+        assert "forge-bridge/tags" not in meta
+
+    def test_register_tool_preserves_source_tag_with_provenance(self, mock_mcp):
+        """_source stays put even when provenance is merged on top."""
+        provenance = {"tags": ["synthesized"], "meta": {"forge-bridge/origin": "synthesizer"}}
+        register_tool(
+            mock_mcp, self._noop, name="synth_foo", source="synthesized",
+            provenance=provenance,
+        )
+        assert mock_mcp.add_tool.call_args.kwargs["meta"]["_source"] == "synthesized"
