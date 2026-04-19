@@ -4,7 +4,7 @@
 
 - ✅ **v1.0 Canonical Package & Learning Pipeline** — Phases 1-3 (shipped 2026-04-15)
 - ✅ **v1.1 projekt-forge Integration** — Phases 4-6 (shipped 2026-04-19 — v1.1.0 API release, v1.1.1 PATCH-01)
-- 🟢 **v1.2 Observability & Provenance** — Phases 7-8 (scoping; kickoff pending `/gsd-new-milestone`)
+- 🟢 **v1.2 Observability & Provenance** — Phases 7-8 (active — planning)
 
 ## Phases
 
@@ -30,16 +30,93 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
 
 </details>
 
-### 🟢 v1.2 Observability & Provenance (scoping)
+### 🟢 v1.2 Observability & Provenance (Phases 7-8)
 
-**Milestone Goal (draft):** Surface what forge-bridge has synthesized (tool provenance in MCP annotations) and where it has persisted executions (SQL backend for the learning-pipeline storage callback) — so downstream consumers can reason about synthesis history without scraping JSONL files.
+**Milestone Goal:** Surface what forge-bridge has synthesized (tool provenance in MCP annotations) and where it has persisted executions (SQL backend for the learning-pipeline storage callback) — so downstream consumers can reason about synthesis history without scraping JSONL files.
 
-Phases TBD via `/gsd-new-milestone`. Candidate scope:
+- [ ] **Phase 7: Tool Provenance in MCP Annotations (EXT-02 → v1.2.0)** — lift `.tags.json` sidecars into MCP `Tool._meta` via sidecar-schema evolution + watcher/registry wiring; bundle WR-01/WR-02 hygiene + README conda-env guidance
+- [ ] **Phase 8: SQL Persistence Protocol (EXT-03 → v1.2.1 or v1.3.0)** — define `StoragePersistence` Protocol on the bridge side + cross-repo SQLAlchemy adapter in projekt-forge; Protocol-only on bridge, all DDL in consumer
 
-- **Phase 7: Tool provenance in MCP annotations (EXT-02)** — lift `.tags.json` sidecars (produced by Phase 6-02) into MCP tool annotations; bundle WR-01/WR-02 hygiene + README conda-env guidance
-- **Phase 8: SQL persistence backend for ExecutionLog (EXT-03)** — define `StoragePersistence` Protocol on the bridge side; implement in projekt-forge via SQLAlchemy + Alembic
+**Ordering:** Strictly sequential. Phase 7 ships v1.2.0, projekt-forge pins and UATs, *then* Phase 8 starts. Matches the v1.1 Phase 5 → Phase 6 gate pattern; shared `__all__` barrel edits + potential `ExecutionRecord` evolution forbid parallelism.
 
-**Stretch / deferred:** EXT-01 (shared synthesis manifest between repos) — scope unclear; revisit after Phase 7 clarifies what metadata needs sharing.
+**Stretch / deferred:** EXT-01 (shared synthesis manifest between repos) — revisit after Phase 7 clarifies what `_meta` payload is actually consumed. DF-02.1..DF-02.3, DF-03.1..DF-03.4 — candidates for v1.3 once observability data is in production.
+
+## Phase Details
+
+### Phase 7: Tool Provenance in MCP Annotations
+
+**Goal:** Consumers calling `tools/list` over MCP see canonical provenance fields on every synthesized tool (origin, code_hash, synthesized_at, version, observation_count) under the `forge-bridge/*` namespace in `Tool._meta`, with consumer-supplied tags passing through a sanitization boundary that strips injection markers and enforces size budgets.
+**Depends on:** Phase 6 (v1.1.0 shipped — `.tags.json` sidecar write-path, `ExecutionRecord` frozen, barrel at 15 symbols)
+**Requirements:** PROV-01, PROV-02, PROV-03, PROV-04, PROV-05, PROV-06
+**Success Criteria** (what must be TRUE):
+  1. An MCP client calling `tools/list` against a forge-bridge server with synthesized tools present receives `Tool._meta` payloads keyed under `forge-bridge/origin`, `forge-bridge/code_hash`, `forge-bridge/synthesized_at`, `forge-bridge/version`, `forge-bridge/observation_count` — verifiable via `mcp==1.26.0` roundtrip on `qwen2.5-coder:32b` against assist-01
+  2. A synthesized tool registered with a `.sidecar.json` envelope (`{"tags": [...], "meta": {...}, "schema_version": 1}`) surfaces its tags on the MCP wire; a legacy `.tags.json` sidecar still loads via the backward-compat grace path; a missing sidecar registers the tool with default `_meta` and no crash
+  3. A consumer-supplied tag containing control chars (`\n`, `\x00`..`\x1f`), injection markers (`ignore previous`, `<|`, `[INST]`, triple-backtick, `---`), or exceeding 64 chars is rejected at the `_sanitize_tag()` boundary with a WARNING log; every synthesized tool's `_meta` payload stays ≤ 4 KB and ≤ 16 tags per tool
+  4. Every synthesized tool registered has `annotations.readOnlyHint=False` set explicitly — verifiable by inspecting the `Tool` payload returned from `tools/list` (MCP clients MUST NOT auto-approve forge-synthesized tools)
+  5. projekt-forge pinned to `forge-bridge @ git+...@v1.2.0`, re-run live-UAT against assist-01 Ollama, `tools/list` diff shows only additive `_meta` changes on `synth_*` tools — no regressions on builtin `flame_*`/`forge_*` tools
+**Plans:** TBD (research suggests 4 plans — see below)
+
+Suggested plan structure (to be ratified by `/gsd-plan-phase 7`):
+- **07-01** — Provenance contract + sidecar schema evolution: `.tags.json` → `.sidecar.json` with `{"tags": [...], "meta": {...}, "schema_version": 1}` envelope; synthesizer write-path rename + round-trip read test; CONTEXT.md decision-lock (`_meta` not `annotations`, staleness accepted as non-goal, WR-02 docstring drift fix on `ExecutionRecord` vs `mark_promoted`)
+- **07-02** — Watcher read-path + `_sanitize_tag()` helper + size budgets: `_read_sidecar()` helper in watcher prefers `.sidecar.json`, falls back to `.tags.json`; sanitization strips control chars + rejects injection markers + truncates to 64 chars; size ceilings (≤ 16 tags, ≤ 4 KB `_meta`); redaction allowlist (`project:`, `phase:`, `shot:`, `type:` → pass-through; everything else → `redacted:<sha256[:8]>`)
+- **07-03** — `register_tool(..., provenance=)` kwarg + registry meta merge + PROV-04 safety default + hygiene: internal `register_tool` grows one `provenance: dict | None` kwarg (public `register_tools` unchanged); merges into existing `meta={"_source": ...}` under `forge-bridge/*` keys; `annotations.readOnlyHint=False` baseline on synthesized tools; WR-01 async storage-callback failure-path tests; PROV-06 README conda-env section
+- **07-04** — Release ceremony: `mcp[cli]>=1.19,<2` pin bump in `pyproject.toml`, regression test suite green, annotated `v1.2.0` tag on main, wheel + sdist on GitHub release, projekt-forge pin bump to `@v1.2.0` + UAT `tools/list` diff (P-02.7)
+
+**Release artifact:** annotated `v1.2.0` tag on `main`, GitHub release with wheel + sdist. Hard gate: projekt-forge must pin `@v1.2.0` and UAT clean before Phase 8 starts.
+
+**UI hint:** no
+
+### Phase 8: SQL Persistence Protocol
+
+**Goal:** Consumers have a typed, documented contract (`StoragePersistence` Protocol) for mirroring `ExecutionRecord` writes into durable storage, with projekt-forge's `_persist_execution` stub replaced by a real sync-SQLAlchemy adapter that inserts rows idempotently and survives DB outages without retrying in the callback.
+**Depends on:** Phase 7 (v1.2.0 shipped, projekt-forge pin bumped + UAT clean)
+**Requirements:** STORE-01, STORE-02, STORE-03, STORE-04, STORE-05, STORE-06
+**Success Criteria** (what must be TRUE):
+  1. `from forge_bridge import StoragePersistence` succeeds in a clean virtualenv; `isinstance(fn, StoragePersistence)` returns `True` for an `async def persist(record): ...` function, `False` for a non-callable — verifiable via a contract test in `tests/learning/test_storage_protocol.py`; `__all__` grows 15 → 16
+  2. `ExecutionLog.set_storage_callback()` signature is unchanged from v1.1.0; consumers pass `backend.persist` (bound method) as the existing callable and the existing sync/async detection via `inspect.iscoroutinefunction` still works
+  3. After projekt-forge upgrades to the v1.2.1 (or v1.3.0) pin, every `ExecutionLog.record()` call results in a row in projekt-forge's `execution_log` SQL table (modulo DB outages, which are logged-and-swallowed); two forge-bridge processes writing to distinct JSONL paths produce no duplicate rows in the shared DB thanks to `on_conflict_do_nothing(index_elements=["code_hash","timestamp"])`
+  4. A simulated DB outage during a synthesis burst produces exactly one WARNING log line per failed callback (no retry stacking, no `QueuePool exhausted`); JSONL writes proceed unaffected; no async tasks stack beyond the normal steady-state count
+  5. CONTEXT.md documents the consistency model (log-authoritative, eventual, best-effort), the no-retry invariant (P-03.5), and the sync-callback recommendation (P-03.8); forge-bridge ships NO DDL, NO Alembic migrations, NO SQLAlchemy models — only the Protocol + docstring
+**Plans:** TBD (research suggests 3 plans — see below)
+
+Suggested plan structure (to be ratified by `/gsd-plan-phase 8`):
+- **08-01** — `StoragePersistence` Protocol + barrel re-export + consistency-model CONTEXT.md: new `forge_bridge/learning/storage.py` with `@runtime_checkable` Protocol (`persist`, `persist_batch`, `shutdown`); `forge_bridge/__init__.py` re-export; `__all__` grows 15 → 16; Protocol docstring carries the canonical minimal schema (columns + unique constraint + indexes); CONTEXT.md locks (a) "Protocol-only on bridge side — no DDL, no migrations" (P-03.3), (b) "eventual, best-effort, log-authoritative" consistency (P-03.2), (c) "no retry in callback, ever" (P-03.5), (d) sync-callback recommendation (P-03.8); no ExecutionRecord field additions
+- **08-02** — projekt-forge sync SQLAlchemy adapter + Alembic migration + isinstance check *(CROSS-REPO: `/Users/cnoellert/Documents/GitHub/projekt-forge/`)*: `_persist_execution` stub body swapped from logger → sync SQLAlchemy session-per-call using `sessionmaker.begin()` context manager (not `AsyncSession`); `insert(...).on_conflict_do_nothing(index_elements=["code_hash","timestamp"])` for idempotency (TS-03.3); new Alembic revision on projekt-forge's existing chain creating `execution_log` table (code_hash TEXT, timestamp TIMESTAMPTZ, raw_code TEXT, intent TEXT NULL, promoted BOOLEAN + unique (code_hash, timestamp) + indexes on code_hash and timestamp DESC); `assert isinstance(_persist_execution, StoragePersistence)` at registration; cutover-over-backfill decision ratified (P-03.4); mirrors the Phase 6 Plan 04 cross-repo pattern
+- **08-03** — Release ceremony: annotated `v1.2.1` (or `v1.3.0` if `__all__` delta is perceived as a minor-bump trigger) tag on forge-bridge `main`; projekt-forge pin bump + UAT verifying SQL rows appear after real Flame executions + `QueuePool` stays bounded under simulated DB outage; final milestone close via `/gsd-complete-milestone`
+
+**Release artifact:** annotated `v1.2.1` or `v1.3.0` tag on `main` (planning-phase decision — `__all__` delta is additive, so SemVer-minor is defensible; patch is also defensible since the Protocol is documentation). Milestone-close ceremony follows.
+
+**UI hint:** no
+
+## Cross-Repo Coordination
+
+| Phase | Plan | Repo | Notes |
+|-------|------|------|-------|
+| 7 | 07-04 | projekt-forge | pin bump `@v1.2.0` + UAT `tools/list` diff (live MCP verification against assist-01) |
+| 8 | 08-02 | projekt-forge | SQLAlchemy adapter + Alembic revision + isinstance check — **primary cross-repo deliverable** (mirrors Phase 6-04 pattern); path: `/Users/cnoellert/Documents/GitHub/projekt-forge/` |
+| 8 | 08-03 | projekt-forge | pin bump + UAT DB-write verification |
+
+Both cross-repo moments should be flagged as waves in their respective plans so phase-planning doesn't re-discover the coordination cost.
+
+## Locked Non-Goals (carried from v1.1 + added in v1.2)
+
+From v1.1:
+- **No `LLMRouter` hot-reload** — built once at consumer startup, restart to pick up config changes
+- **No shared-path JSONL writers across processes** — `fcntl.LOCK_EX` serializes writes, `_counters` is per-process state; two processes on the same file duplicate-promote
+- **No LLM config reload without restart** — ditto
+
+New in v1.2 (from REQUIREMENTS.md §"Out of Scope"):
+- **No full-text search / tsvector on `raw_code`** — JSONL `grep` is good enough for v1.2
+- **No time-series rollups / materialized views** — v1.3 dashboard concern
+- **No realtime callback streaming (WebSocket/SSE)** — local-first, consumers subscribe to their own DB's NOTIFY/LISTEN if needed
+- **No built-in Alembic migrations in forge-bridge** — Protocol-only, all DDL in projekt-forge
+- **No pluggable-backends registry** — one consumer today, YAGNI
+- **No cross-process promotion-counter sync** — v1.1 non-goal carried forward
+- **No code-signing / cryptographic provenance** — `code_hash` is integrity, not signature
+- **No placeholder sidecars for non-synthesized tools** — `_source` tag already distinguishes builtins; keep the "sidecar == synthesis artifact" contract
+- **No `_meta` provenance via `annotations`** — MCP spec reserves `annotations` for safety hints (PITFALL P-02.1)
+- **No consumer-facing `redact_fn` customization hook** — ship sane default in v1.2, reconsider in v1.3
+- **`ExecutionRecord` stays frozen at v1.1.0 shape** — any field addition requires minor bump + coordinated projekt-forge migration review (P-03.7, P-03.9)
 
 ## Progress
 
@@ -51,3 +128,5 @@ Phases TBD via `/gsd-new-milestone`. Candidate scope:
 | 4. API Surface Hardening | v1.1 | 4/4 | Complete | 2026-04-15 |
 | 5. Import Rewiring | v1.1 | 5/5 | Complete | 2026-04-18 |
 | 6. Learning Pipeline Integration | v1.1 | 4/4 | Complete | 2026-04-18 |
+| 7. Tool Provenance in MCP Annotations | v1.2 | 0/~4 | Not started | - |
+| 8. SQL Persistence Protocol | v1.2 | 0/~3 | Not started | - |
