@@ -1,228 +1,332 @@
-# Stack Research
+# Technology Stack — v1.2 Observability & Provenance (EXT-02 + EXT-03)
 
-**Domain:** pip-library packaging + cross-repo integration + learning pipeline DB adapter
-**Researched:** 2026-04-15
-**Scope:** v1.1 ONLY — new capabilities for making forge-bridge consumable as a pip dependency by projekt-forge, and integrating the learning pipeline into projekt-forge's DB/config/LLM infrastructure. Does NOT re-research validated v1.0 stack.
-**Confidence:** HIGH (both codebases read directly, patterns drawn from authoritative sources)
-
----
-
-## Context
-
-forge-bridge v1.0 validated stack (not re-researched):
-- FastMCP, Pydantic, asyncio, JSONL persistence, httpx, websockets
-- SQLAlchemy 2.0 + asyncpg + alembic for forge-bridge's own store
-- pyproject.toml with hatchling, optional [llm] extras, 159 tests passing
-
-This file covers only the **new** capabilities needed for v1.1:
-1. Hardening forge-bridge's public API surface for external consumption
-2. Rewiring projekt-forge to consume forge-bridge as a pip dependency
-3. Integrating the learning pipeline into projekt-forge's existing infrastructure
+**Project:** forge-bridge v1.2 (EXT-02 MCP tool annotations + EXT-03 SQL persistence Protocol)
+**Researched:** 2026-04-17
+**Scope:** Only the dependency / version-pin decisions needed for the two new features. See `STACK-v1.1.md` for the prior milestone's full stack.
+**Overall confidence:** HIGH
 
 ---
 
-## Recommended Stack
+## MCP annotation surface (EXT-02)
 
-### Core Technologies
+### What the spec actually says (as of 2025-06-18 revision)
 
-| Technology | Version | Purpose | Why Recommended |
-|------------|---------|---------|-----------------|
-| Python `__init__.py` with `__all__` | stdlib | Public API surface declaration | Standard Python contract — what is in `__all__` is the stable surface. Currently `forge_bridge/__init__.py` is a one-line docstring. Promoting this to a real re-export module lets projekt-forge use `from forge_bridge import LLMRouter` without caring about submodule layout, and signals clearly what is private. |
-| `typing.Protocol` | stdlib 3.8+ | DB adapter interface for learning pipeline | Structural typing — projekt-forge defines a `SQLExecutionLogBackend` that satisfies the same Protocol as the existing `ExecutionLog` (JSONL). No import coupling, no inheritance from forge-bridge types. The Protocol lives in `forge_bridge/learning/execution_log.py` and costs zero lines in the consumer. |
-| pyproject.toml `[project.optional-dependencies]` | hatchling (existing) | Consumer-facing extras | Already in use for `[llm]`. No new mechanism needed. Add a `[forge]` group only if projekt-forge's integration triggers a new forge-bridge dep that standalone users should not pay for. Current assessment: not needed for v1.1. |
-| Semantic versioning (`1.1.0`) | hatchling (existing) | Stability contract with projekt-forge | projekt-forge pins `forge-bridge>=1.0,<2.0` in its pyproject.toml. SemVer means minor additions are backwards-compatible; major bumps signal API breaks. forge-bridge's version currently reads `0.1.0` in pyproject.toml — needs bumping to `1.0.0` as part of v1.0 milestone completion before projekt-forge can sensibly pin it. |
+The current live spec is **2025-06-18** (modelcontextprotocol.io/docs/concepts/tools and `/specification/2025-06-18/server/tools`). A `Tool` object on the wire has **six** optional metadata slots, three of which are relevant here:
 
-### Supporting Libraries
+| Field | Type | Purpose |
+|-------|------|---------|
+| `name` | `str` (required) | Unique tool ID |
+| `title` | `str \| null` | Human-readable display title |
+| `description` | `str \| null` | Free-prose description |
+| `inputSchema` / `outputSchema` | JSON Schema | Arg / return validation |
+| `annotations` | `ToolAnnotations \| null` | **Fixed-shape behavioral hints only** (see below) |
+| `_meta` | `dict[str, Any] \| null` | **Freeform custom-extension bag** |
+| `icons` | `list[Icon] \| null` | UI icons |
+| `execution` | `ToolExecution \| null` | Task-support hints |
 
-| Library | Version | Purpose | When to Use |
-|---------|---------|---------|-------------|
-| `pyyaml>=6.0` | 6.0 (already in projekt-forge) | Read `/opt/forge/config.yaml` | Do NOT add to forge-bridge. Already in projekt-forge's dependencies. projekt-forge reads its YAML config and translates values to env vars before constructing forge-bridge components. forge-bridge reads configuration exclusively via `os.environ.get()`. |
-| `packaging>=23.0` | 23.0+ | Runtime version compatibility guard | Do not add now. Belongs in CI version matrix tests, not runtime code. Add only if a concrete backward-compat check is needed. |
-| SQLAlchemy `DeclarativeBase` (separate) | 2.0 (existing in both) | Learning pipeline log table in projekt-forge DB | Each package keeps its own `DeclarativeBase`. Do not share. forge-bridge has `forge_bridge/store/session.py` with its own `Base`; projekt-forge has `forge_bridge/db/engine.py` with its own `Base`. If projekt-forge wants SQL-persisted execution logs it defines its own `DBExecutionLog` ORM model on its `Base` and implements the `ExecutionLogBackend` Protocol. |
+**Critical distinction.** "Annotations" in MCP vocabulary does **not** mean "arbitrary metadata." `ToolAnnotations` is a closed schema with exactly five fields:
 
-### Development Tools
-
-| Tool | Purpose | Notes |
-|------|---------|-------|
-| `pip install -e /path/to/forge-bridge[llm]` | Cross-repo editable install for development | Standard editable install from local path. No new tooling. During v1.1 development, projekt-forge's venv installs forge-bridge this way. In production, pin to a PyPI release or a git tag. |
-| `pytest` with both repos | Cross-package integration testing | No shared test infrastructure needed for v1.1. Each repo runs its own tests. Integration is validated by projekt-forge's tests importing from `forge_bridge` (the pip package). |
-
----
-
-## Installation
-
-```bash
-# In projekt-forge's virtualenv — install forge-bridge as editable dependency during development
-pip install -e /path/to/forge-bridge[llm]
-
-# In projekt-forge's pyproject.toml (after publishing to PyPI or private index)
-# forge-bridge>=1.0,<2.0
-
-# forge-bridge itself — no new packages required for v1.1
-# The existing dependency set handles all new capabilities
+```
+ToolAnnotations:
+  title: str | null
+  readOnlyHint: bool | null
+  destructiveHint: bool | null
+  idempotentHint: bool | null
+  openWorldHint: bool | null
 ```
 
----
+These are safety/behavior hints for clients. Our provenance payload (`project`, `intent`, `code_hash`, `tags`) **does not fit here** — there is no freeform property bag inside `ToolAnnotations`, and the spec explicitly warns clients that annotations from untrusted servers must be ignored.
 
-## Alternatives Considered
+**The correct slot is `_meta`** (serialized as the literal key `_meta` on the wire; exposed as the `meta: dict[str, Any]` Python attribute on `mcp.types.Tool`, via `Field(alias='_meta')`). From the spec's `General fields: _meta` section, `_meta` is defined as *"optional metadata that can contain any key-value pairs for custom extensions"* — exactly the EXT-02 contract.
 
-| Recommended | Alternative | When to Use Alternative |
-|-------------|-------------|-------------------------|
-| `typing.Protocol` for ExecutionLogBackend | `abc.ABC` with abstract methods | Use ABC when you need shared default implementations or want to enforce `super().__init__()`. For a pure interface (just a contract), Protocol avoids import coupling entirely — projekt-forge never needs to import anything from forge-bridge to satisfy the interface. |
-| Separate `DeclarativeBase` per package | Shared Base class | Share a Base only when two packages are always co-deployed and their Alembic migration histories are jointly managed. projekt-forge has 4 migrations (003 adds users/roles/invites, 004 adds content_hash), forge-bridge has 2 migrations for its vocabulary store. Independent histories, independent `Base` instances. Never share across a pip dependency boundary. |
-| Env var configuration pass-through | Config file parsing inside forge-bridge | forge-bridge already reads `FORGE_BRIDGE_URL`, `FORGE_LOCAL_LLM_URL`, `FORGE_SYSTEM_PROMPT`, etc. projekt-forge's `config/forge_config.py` reads `/opt/forge/config.yaml` and should map those values to env vars before constructing forge-bridge components. Keeps forge-bridge stdlib-friendly and runnable without `/opt/forge/config.yaml`. |
-| Optional `router=` param on `synthesize()` | Mutating `get_router()` singleton | `get_router()` is a module-level singleton. If projekt-forge calls `get_router()` after forge-bridge sets it up with the wrong system prompt, all subsequent calls use that wrong config. Passing an explicit `LLMRouter` instance to `synthesize()` is the clean path — no shared mutable state. One-line change: `synthesize(..., router: LLMRouter | None = None)` with fallback to `get_router()`. |
-| JSONL default, SQL opt-in via Protocol | SQL-only execution log | JSONL is already implemented, tested, and live. Changing the default breaks all current standalone users. Adding SQL as an opt-in via Protocol adds zero breaking changes. |
+Verified against the installed `mcp==1.26.0` Pydantic schema — `Tool.model_fields` shows:
+- `annotations: ToolAnnotations | None = None`
+- `meta: dict[str, Any] | None = None  (alias='_meta', alias_priority=2)`
+- `title: str | None = None`
+- `icons: list[Icon] | None = None`
 
----
+### FastMCP SDK surface
 
-## What NOT to Use
+The Python SDK reached parity with the spec in stages; the critical commits + release mapping:
 
-| Avoid | Why | Use Instead |
-|-------|-----|-------------|
-| Importing from `forge_bridge.db` or `forge_bridge.store` in projekt-forge | Those are forge-bridge's internal persistence layers for vocabulary entities and the wire protocol store. They are not part of the public API surface. | projekt-forge's own `forge_pipeline.db` (after module rename) for its own models |
-| `pydantic.BaseSettings` in forge-bridge for config | Adds `pydantic-settings` as a mandatory dep, breaking the minimal install story. | `os.environ.get()` with defaults — already the consistent pattern throughout forge-bridge |
-| Circular imports: forge-bridge importing from forge_pipeline | Breaks the dependency graph. forge-bridge is the library; projekt-forge is the consumer. | One-way only: projekt-forge imports from `forge_bridge`, never the reverse |
-| Mutating the `get_router()` singleton from projekt-forge startup | If both forge-bridge's internal tools and projekt-forge's learning pipeline call `get_router()`, and projekt-forge has mutated it, forge-bridge's internal LLM health check resource shows projekt-forge's config, not the canonical one. | projekt-forge instantiates its own `LLMRouter` from env vars set before import, and passes it explicitly to `synthesize()` |
-| `importlib.metadata` version guards at runtime | Startup overhead for a check that belongs in CI | Pin `forge-bridge>=1.0,<2.0` in projekt-forge's pyproject.toml and enforce in CI |
+| Release | Date | Feature |
+|---------|------|---------|
+| **v1.7.0** | 2025-05-01 | `ToolAnnotations` param on `FastMCP.tool()` / `add_tool()` (PR #482) |
+| **v1.10.0** | 2025-06-26 | `title` param added for tools/resources/prompts (PR #972) |
+| **v1.15.0** | 2025-09-25 | SEP 973 — icons + `_meta` on types, end-to-end (PR #1357) |
+| **v1.19.0** | 2025-10-24 | **`meta: dict[str, Any]` param on `FastMCP.tool()` decorator** (PR #1463) |
+| v1.26.0 | 2026-01-24 | Backport-only release on `v1.x` branch |
+| v1.27.0 | 2026-04-02 | Backport-only release on `v1.x` branch |
 
----
-
-## Stack Patterns by Variant
-
-**Hardening forge-bridge's public API surface (Phase: API hardening):**
-
-Declare `forge_bridge/__init__.py` as the single stable re-export module:
+The signature we depend on (verified against local `mcp==1.26.0` install):
 
 ```python
-# forge_bridge/__init__.py
-from forge_bridge.bridge import (
-    BridgeResponse, BridgeError, BridgeConnectionError,
-    configure, execute, execute_json, execute_and_read, ping,
-    set_execution_callback,
+FastMCP.tool(
+    self,
+    name: str | None = None,
+    title: str | None = None,
+    description: str | None = None,
+    annotations: ToolAnnotations | None = None,
+    icons: list[Icon] | None = None,
+    meta: dict[str, Any] | None = None,       # <-- the EXT-02 attach point
+    structured_output: bool | None = None,
+) -> Callable[[AnyFunction], AnyFunction]
+```
+
+Verified end-to-end — the following roundtrips cleanly on 1.26.0:
+
+```python
+@mcp.tool(
+    name="synth_reconform_from_linked_timelines",
+    title="Reconform from Linked Timelines",
+    meta={
+        "provenance": "forge_bridge.learning",
+        "project": "alpha",
+        "intent": "reconform a shot stack",
+        "code_hash": "abc123…",
+        "tags": ["source:synthesized", "intent:reconform"],
+    },
 )
-from forge_bridge.llm import LLMRouter, get_router
-from forge_bridge.mcp import register_tools, get_mcp
-from forge_bridge.learning.execution_log import ExecutionLog
-from forge_bridge.learning.synthesizer import synthesize
-from forge_bridge.learning.probation import ProbationTracker
-
-__all__ = [
-    "BridgeResponse", "BridgeError", "BridgeConnectionError",
-    "configure", "execute", "execute_json", "execute_and_read",
-    "ping", "set_execution_callback",
-    "LLMRouter", "get_router",
-    "register_tools", "get_mcp",
-    "ExecutionLog", "synthesize", "ProbationTracker",
-]
+async def synth_reconform(...) -> str: ...
 ```
 
-Everything not in `__all__` is internal — projekt-forge never imports from submodules directly.
+### Version pin decision
 
-**DB adapter pattern for learning pipeline (Phase: Learning pipeline integration):**
+**Bump `mcp[cli]>=1.0` → `mcp[cli]>=1.19,<2` in `pyproject.toml`.**
 
-Define a `Protocol` in `forge_bridge/learning/execution_log.py`:
+Rationale:
 
-```python
-class ExecutionLogBackend(Protocol):
-    def record(self, code: str, intent: str | None = None) -> bool: ...
-    def mark_promoted(self, code_hash: str) -> None: ...
-    def get_code(self, code_hash: str) -> str | None: ...
-    def get_count(self, code_hash: str) -> int: ...
-```
+1. **Lower bound `>=1.19`** — floor is the first release shipping `meta=` on `FastMCP.tool()`. 1.18 and earlier force us into the workaround path (JSON-encoded description, which is hostile to LLM agents reading the description as free prose, and invisible to clients that only consult `_meta`).
+2. **Upper bound `<2`** — mcp `main` branch (post-v1.27) is renaming `FastMCP → MCPServer` (commit `65c614e`, 2026-01-25). Our entire `forge_bridge/mcp/server.py` is built on `from mcp.server.fastmcp import FastMCP`. v2 will be a coordinated migration, not an accidental `pip install --upgrade` breakage. Pin the major.
+3. **No migration risk from v1.0 → v1.19 on the existing `register_tools` contract.** The decorator signature added parameters; it did not remove or rename any. A quick audit of `forge_bridge/mcp/registry.py` + all builtin tool registrations would only need to verify no downstream consumer is relying on positional args beyond `name=` (which would be fragile regardless).
+4. **projekt-forge is already resolved** — since projekt-forge consumes forge-bridge via git-URL tag pin (`git+https://…@v1.1.1`), bumping the `mcp[cli]` requirement here propagates cleanly through pip's resolver.
 
-`ExecutionLog` (JSONL) already satisfies this structurally — no changes to its implementation.
+**Breaking-change hazards to validate in a Plan 07-XX task:**
+- `FastMCP("forge_bridge", instructions=…, lifespan=_lifespan)` constructor — still accepts these in 1.19+? (Spot-check: yes, `instructions` and `lifespan` are both present in 1.26.0's signature.)
+- Any direct `FastMCP._tool_manager.list_tools()` internal use anywhere? (If yes, `_tool_manager` is a private API that has churned between 1.7 and 1.26; use only public `list_tools()` RPC or `mcp.list_tools()` coroutine.)
+- The `mcp[cli]` extra has itself been reshuffled in 1.24 (2025-12-12 "transport-specific parameters moved from FastMCP constructor to run()"). Worth a CI smoke test.
 
-projekt-forge defines `SQLExecutionLogBackend` implementing the same Protocol, backed by its own `DBExecutionLog` ORM model on its `Base`.
+### Alternatives considered (and rejected)
 
-Wire-in at projekt-forge startup via the existing hook:
+| Option | Why rejected |
+|--------|-------------|
+| Embed JSON-encoded provenance in `tool.description` | Description is model-facing free prose. Embedding `{"project": …, "code_hash": …}` in it pollutes the LLM's context window and is not a machine-readable API for other clients. |
+| Use `ToolAnnotations` | Wrong slot — fixed schema, safety/behavior hints only, no freeform keys. |
+| Ship a parallel MCP resource (`forge://synth/provenance/<name>`) | Doubles the surface area. Clients listing tools still wouldn't see provenance without a second round-trip. Keep resources for things that need URIs (e.g. the source code itself); keep small structured metadata in `_meta`. |
+| Pin `mcp[cli]>=1.15` (first release with `_meta` on types) | `_meta` existed on the `Tool` type but the FastMCP decorator did not expose a `meta=` param until 1.19. Would force us into `mcp._tool_manager` internals or post-hoc mutation. |
 
-```python
-# In projekt-forge startup
-from forge_bridge import set_execution_callback
-sql_backend = SQLExecutionLogBackend(session_factory)
-set_execution_callback(sql_backend.record_from_bridge)
-```
+### Confidence
 
-**LLM router override in projekt-forge (Phase: LLM integration):**
-
-Do not mutate the singleton. Use env vars + explicit instantiation:
-
-```python
-# In projekt-forge startup (before any forge_bridge import triggers LLM init)
-import os
-os.environ["FORGE_SYSTEM_PROMPT"] = forge_specific_prompt
-os.environ["FORGE_LOCAL_LLM_URL"] = config["local_llm_url"]
-os.environ["FORGE_LOCAL_MODEL"] = "qwen2.5-coder:32b"
-
-from forge_bridge import LLMRouter
-forge_router = LLMRouter()   # picks up env vars at construction time
-
-# Pass explicitly to synthesize instead of relying on singleton
-from forge_bridge.learning.synthesizer import synthesize
-await synthesize(code, intent=intent, count=count, router=forge_router)
-```
-
-Requires one change to `synthesize()`: add `router: LLMRouter | None = None` with `get_router()` fallback.
-
-**projekt-forge module rename (Phase: Rewiring):**
-
-After adding `forge-bridge` to projekt-forge's pyproject.toml:
-
-1. Rename `forge_bridge/` -> `forge_pipeline/` inside projekt-forge repo
-2. Update all internal `from forge_bridge.db` -> `from forge_pipeline.db` imports
-3. The pip-installed `forge_bridge` package takes that namespace
-4. No collision: `forge_bridge` (pip) and `forge_pipeline` (local) are distinct top-level packages
+**HIGH.** Verified against the 2025-06-18 spec text, the SDK changelog, and the installed `mcp==1.26.0` Pydantic models. Live-tested the `meta=` parameter roundtrip on this machine.
 
 ---
 
-## Version Compatibility
+## `typing.Protocol` for `StoragePersistence` (EXT-03)
 
-| Package A | Compatible With | Notes |
-|-----------|-----------------|-------|
-| forge-bridge `>=1.0,<2.0` | projekt-forge dependency pin | SemVer contract. Minor additions are additive and backwards-compatible. Major bump signals API break. pyproject.toml currently says `0.1.0` — must bump to `1.0.0` as part of closing the v1.0 milestone before projekt-forge can sensibly pin it. |
-| SQLAlchemy `2.0` (forge-bridge store/) | SQLAlchemy `2.0` (projekt-forge db/) | Same major version in both. No conflict when co-installed. Both use `asyncpg` driver. Both use separate `DeclarativeBase` instances — metadata is not shared and migrations run independently. |
-| alembic `>=1.13` (forge-bridge) | alembic `>=1.13` (projekt-forge) | Each package has its own `alembic.ini` and `versions/` directory, targeting different database schemas. Independent migration histories. |
-| `openai>=1.0` (forge-bridge `[llm]` extra) | projekt-forge (no direct openai usage) | forge-bridge uses the openai client as an OpenAI-compatible Ollama adapter. No version conflict with anthropic. |
+### Context
+
+`ExecutionLog.set_storage_callback(fn)` (Phase 6-01, already shipped in v1.1.0) accepts a sync *or* async `Callable[[ExecutionRecord], Union[None, Awaitable[None]]]` and detects async-ness once via `inspect.iscoroutinefunction`. The callback is the storage seam. EXT-03 adds a `typing.Protocol` so consumers (projekt-forge, future adopters) have a name for the contract, not just a `Callable` type alias.
+
+### Idiomatic pattern
+
+```python
+from __future__ import annotations
+from typing import Protocol, runtime_checkable
+
+from forge_bridge.learning.execution_log import ExecutionRecord
+
+
+@runtime_checkable
+class StoragePersistence(Protocol):
+    """Mirror ExecutionLog writes into durable storage.
+
+    Implementations SHOULD be async (the callback is awaited on the
+    bridge's event loop). Sync implementations are accepted by
+    ExecutionLog.set_storage_callback() for backward compat, but
+    async is the idiomatic shape for this protocol.
+
+    Implementations MUST be side-effect-isolated — raising propagates
+    to a WARNING log but never disrupts the canonical JSONL append
+    (source-of-truth invariant, Phase 6-01).
+    """
+
+    async def __call__(self, record: ExecutionRecord) -> None: ...
+```
+
+### Why this shape
+
+| Choice | Rationale |
+|--------|-----------|
+| **Structural (`Protocol`) not nominal (`ABC`)** | Consumer code (projekt-forge's `_persist_execution`) is already a bare async function today. Nominal inheritance would force it into a class. Structural typing captures the contract without forcing inheritance. |
+| **`__call__` method (not a named method like `persist(...)`)** | Matches the existing `set_storage_callback(fn)` contract — `fn` is a plain callable, not an object with a named method. Lets consumers write `async def _persist_execution(record): ...` and pass the function directly. |
+| **`@runtime_checkable` present but advisory** | Lets forge-bridge (or consumers) do an `isinstance(fn, StoragePersistence)` sanity check at registration time. **Caveat:** per PEP 544 and verified locally, `runtime_checkable` only checks for `__call__`'s *presence*, not whether it's async. A sync function still passes `isinstance(fn, StoragePersistence)`. `ExecutionLog` already does the sync/async disambiguation via `inspect.iscoroutinefunction`; the Protocol is for documentation + optional typing, not runtime enforcement. |
+| **`ExecutionRecord` (frozen dataclass, already exists) as the arg type** | Already the shipped contract. The Protocol simply names the shape. |
+| **No generic `TypeVar`** | Single concrete record type — don't over-engineer. |
+| **Return `None` (not `None \| Awaitable[None]`)** | The async-only shape is what we *want* consumers to write. `ExecutionLog.set_storage_callback()` will still accept sync callbacks at runtime for backward compat, but the Protocol codifies the intended future form — async is how you do non-blocking I/O to a DB. |
+
+### Python version compat
+
+- **3.10 minimum (forge-bridge)**: `typing.Protocol` + `@runtime_checkable` have been stable stdlib since 3.8. Python 3.10 natively supports this pattern with no qualifications relevant to our case.
+- **3.11 (projekt-forge)**: Same stdlib Protocol works identically. No behavior difference.
+- **`typing_extensions`**: **Not needed.** The `typing_extensions` package provides Protocol performance improvements and bug fixes for Python <3.12, but they are optimizations — correctness on 3.10+ is fine without the backport. Adding a `typing_extensions` dependency for the sake of a single Protocol would be pure bloat.
+
+### What `runtime_checkable` can and cannot do
+
+Live-verified on Python 3.11:
+
+```python
+@runtime_checkable
+class StoragePersistence(Protocol):
+    async def __call__(self, record: ExecutionRecord) -> None: ...
+
+async def good(r): ...
+def bad_sync(r): return None
+
+isinstance(good, StoragePersistence)      # True  ✓
+isinstance(bad_sync, StoragePersistence)  # True  ✗ (false positive — sync passes)
+isinstance(object(), StoragePersistence)  # False ✓ (no __call__)
+```
+
+Conclusion: **`isinstance(fn, StoragePersistence)` is useful for catching the "you passed a non-callable object" case at registration time. It cannot enforce async-ness.** `ExecutionLog.set_storage_callback` already handles the sync/async distinction via `inspect.iscoroutinefunction`; the Protocol is documentation, not enforcement.
+
+### Where to put it
+
+New module `forge_bridge/learning/persistence.py`:
+
+```python
+"""Public Protocol surface for durable storage backends."""
+from __future__ import annotations
+from typing import Protocol, runtime_checkable
+
+from forge_bridge.learning.execution_log import ExecutionRecord
+
+__all__ = ["StoragePersistence"]
+
+
+@runtime_checkable
+class StoragePersistence(Protocol):
+    async def __call__(self, record: ExecutionRecord) -> None: ...
+```
+
+Re-exported from `forge_bridge/__init__.py` (pattern established in Phase 6-03 — v1.1.0 minor bump, barrel entry in `__all__`).
+
+### Version pin impact
+
+**None.** `typing.Protocol` is stdlib since 3.8; `@runtime_checkable` is stdlib since 3.8. forge-bridge is already 3.10+. No new dependency, no `typing_extensions` pin.
+
+### Confidence
+
+**HIGH.** PEP 544 verified, Python 3.10/3.11 behavior verified locally, existing `ExecutionLog` sync/async detection mechanism already aligns with the "Protocol is advisory, runtime detection is authoritative" pattern.
 
 ---
 
-## Key Integration Seams
+## Alembic chain strategy (EXT-03)
 
-The four specific code points that v1.1 must address (not just stack, but where the integration attaches):
+### Question restated
 
-### 1. `forge_bridge/__init__.py` — Public API declaration
-Currently a one-line docstring. Becomes the stable re-export module (see pattern above).
-Location: `/Users/cnoellert/Documents/GitHub/forge-bridge/forge_bridge/__init__.py`
+projekt-forge already has an Alembic migration tree for its own tables. EXT-03 adds a new table (`execution_log` or similar) for forge-bridge's `ExecutionRecord` payload. Where does that migration live — in forge-bridge (shipped with the package, layered as a separate chain) or in projekt-forge (one more revision on its existing chain)?
 
-### 2. `forge_bridge/bridge.py:set_execution_callback` — Learning pipeline injection
-Already exists and tested. projekt-forge calls this with its `SQLExecutionLogBackend`.
-Callback signature: `(code: str, response: BridgeResponse) -> None` — already defined.
-No API changes needed on forge-bridge's side.
+### What Alembic actually offers
 
-### 3. `forge_bridge/learning/synthesizer.py:synthesize()` — LLM router injection
-Add `router: LLMRouter | None = None` parameter. Fall back to `get_router()` if None.
-One-line change. Lets projekt-forge pass its pre-configured router.
+Alembic supports three distinct mechanisms that sound similar but solve different problems:
 
-### 4. `forge_bridge/mcp/__init__.py:register_tools` — Tool registration
-Already public and tested. projekt-forge calls `register_tools(get_mcp(), [...])` to add
-`forge_catalog`, `forge_orchestrate`, etc. before `mcp.run()`.
-No changes needed. Document in public API.
+| Mechanism | What it is | When to use |
+|-----------|-----------|-------------|
+| **Multiple heads** | Two revisions that share a parent; temporary state during branch work | Transient; typically resolved by `alembic merge` |
+| **Branch labels** (`branch_labels=("forge_bridge",)`) | Named branch you can target via `forge_bridge@head` | When you want one Alembic config to manage multiple independent lineages sharing the same `alembic_version` table |
+| **Multiple `version_locations`** (`path_sep`-separated dir list) | Alembic scans multiple directories for revision files | When revision files physically live in different packages |
+
+The closest thing to "a library ships its own migration chain that a host app layers in" is **branch labels + multiple `version_locations`**, combined with an independent `base` revision for the library's subtree. The `alembic_version` table stores one row per head, so multiple independent chains coexist without colliding on version numbers.
+
+Verified against the current Alembic changelog: `branch_labels` and `version_locations` have been stable since well before the 1.13 floor; current Alembic is 1.18.4 (2026-02-10); no breaking changes affecting this pattern between 1.13 → 1.18.
+
+### Recommendation: **Single chain in projekt-forge**
+
+Despite the multi-chain feature being available, **add the `execution_log` table as one more revision on projekt-forge's existing Alembic chain**. Do not ship migration files from forge-bridge.
+
+Rationale:
+
+1. **forge-bridge doesn't own the database.** forge-bridge defines the `StoragePersistence` Protocol and the `ExecutionRecord` shape — the *contract*. The schema, the engine URL, the migration cadence, the backup policy, and the alembic.ini all live in the consumer. Shipping migrations from forge-bridge would mean the bridge has an opinion on DDL it never owns at runtime.
+2. **Single consumer today.** projekt-forge is the only consumer. "Layered migration chains for pluggable library schemas" is a real pattern, but it pays off when *multiple* independent consumers need the same table. We have one. Build for the problem we have.
+3. **Recovery is cheaper with a single chain.** When projekt-forge dev wants to rebase, squash, or reset migrations during active development, they don't need to coordinate with a separate library-owned chain. One `alembic upgrade head` does everything.
+4. **Reversibility.** If EXT-01 (shared synthesis manifest) ever comes back from the deferred list and we discover *multiple* consumers want the same schema, we can lift the table definition out of projekt-forge into a forge-bridge SQLAlchemy model module and start shipping migrations from the bridge. That's a real project but the v1.1 architecture doesn't prevent it — the Protocol contract is the stable surface, the schema migration story is an implementation detail that can move.
+5. **forge-bridge's existing deps (`sqlalchemy[asyncio]>=2.0`, `alembic>=1.13`, `asyncpg>=0.29`, `psycopg2-binary>=2.9`) are already carried** from v1.0 when the bridge itself had a PostgreSQL backend. EXT-03 does not *add* any new DB deps to forge-bridge. It consumes the existing ones only if forge-bridge later needs to define SQLAlchemy models for convenience (e.g. a `declarative_base` that projekt-forge imports). Even this is optional — projekt-forge can define its own `ExecutionLogRow` ORM class matching `ExecutionRecord`'s shape.
+
+### What forge-bridge DOES ship for EXT-03
+
+- `forge_bridge.learning.persistence.StoragePersistence` — the `Protocol`.
+- (Optional, nice-to-have) `forge_bridge.learning.persistence.ExecutionLogMixin` — a SQLAlchemy declarative mixin with typed columns matching `ExecutionRecord` fields (`code_hash: Mapped[str]`, `raw_code: Mapped[str]`, `intent: Mapped[str | None]`, `timestamp: Mapped[datetime]`, `promoted: Mapped[bool]`), so projekt-forge can do:
+
+  ```python
+  class ExecutionLogRow(Base, ExecutionLogMixin):
+      __tablename__ = "execution_log"
+      id: Mapped[int] = mapped_column(primary_key=True)
+  ```
+
+  Whether to ship the mixin is a planning-phase decision. It couples the package to SQLAlchemy's ORM API, not just Core. The upside is consumers never drift from the dataclass schema.
+
+### What projekt-forge owns
+
+- The `alembic.ini`, `migrations/versions/` tree, and the new `YYYYMMDD_add_execution_log.py` revision file.
+- The `ExecutionLogRow` ORM class (or Core `Table` definition).
+- The `async def _persist_execution(record: ExecutionRecord) -> None:` implementation that opens a session, constructs the row, and commits — replacing the v1.1 logger-only stub.
+- The `StoragePersistence` isinstance check at registration: `assert isinstance(_persist_execution, StoragePersistence)` — catches regressions where the callback's signature drifts from the Protocol.
+
+### Version pins
+
+**No change to forge-bridge's alembic / sqlalchemy / asyncpg pins.** All EXT-03 DDL lives in projekt-forge; projekt-forge's own pins already carry `sqlalchemy[asyncio]>=2.0`, `asyncpg`, `alembic`.
+
+### Confidence
+
+**HIGH** on recommendation. **MEDIUM** on the ExecutionLogMixin question — that's a planning-phase judgment call that depends on how much schema drift we're willing to tolerate between the dataclass and the DB row.
+
+---
+
+## Summary of pin changes
+
+| File | Current | Proposed | Reason |
+|------|---------|----------|--------|
+| `pyproject.toml` `dependencies` | `mcp[cli]>=1.0` | `mcp[cli]>=1.19,<2` | `meta=` param on `FastMCP.tool()` landed in 1.19 (EXT-02 precondition); avoid accidental v2 upgrade (`FastMCP → MCPServer` rename on `main`) |
+| (no other dep changes) | — | — | EXT-03 Protocol is pure stdlib; Alembic work lands in projekt-forge |
+
+**No new dependencies added to forge-bridge.**
+
+---
+
+## Open questions for planning phase
+
+1. **Should EXT-02 attach provenance at synthesis time or at registration time?**
+   Today `SkillSynthesizer` writes `*.py` + `*.tags.json`; the MCP registry (`forge_bridge.learning.watcher`) separately imports the `.py` and calls `mcp.tool()(fn)`. The `meta=` has to be supplied to the decorator at registration. Does the watcher read the adjacent `.tags.json` and pass a `meta={...}` derived from it, or does the synthesizer stash a `__forge_meta__` attribute on the function itself that the watcher harvests? Either works; a planning decision, not a research decision.
+
+2. **Does EXT-02 also want `title=` and `description=` from the tags sidecar?**
+   The spec splits display title (`title`) from machine description (`description`). Our sidecar has `tags` and (via `PreSynthesisContext`) potentially `intent`. We could map `intent` → `title`, the function's docstring → `description`, and shove everything else into `meta`. Not a research gap, a UX decision.
+
+3. **Should we add `ToolAnnotations(readOnlyHint=..., destructiveHint=...)` alongside `_meta`?**
+   Synthesized tools from `SkillSynthesizer` have a safety blocklist (`_DANGEROUS_CALLS`) — by construction, none of them should be `destructiveHint=True`. A mechanical `readOnlyHint=False, destructiveHint=False` baseline for all synthesized tools would be honest and low-effort. Worth a Phase 7 plan task.
+
+4. **ExecutionLogMixin — ship or defer?**
+   See Alembic section. HIGH confidence on "single chain in projekt-forge"; MEDIUM on whether forge-bridge should also ship a SQLAlchemy mixin for schema-drift prevention. Defer to planning phase.
+
+5. **`typing_extensions` pin — really not needed?**
+   Double-checked: PEP 544 features used (`Protocol`, `@runtime_checkable`, async `__call__`) have been stable stdlib since 3.8. No `typing_extensions` required. Flagging this as "researched and confirmed negative" so the planning phase doesn't re-ask.
+
+6. **Does projekt-forge's existing `ExecutionRecord` type hint need updating once `StoragePersistence` lands?**
+   projekt-forge currently imports `ExecutionRecord` from `forge_bridge` directly (barrel re-export from v1.1.0). It should additionally import `StoragePersistence` and annotate `_persist_execution` with it. Planning item, not research.
 
 ---
 
 ## Sources
 
-- Direct codebase read: forge-bridge `/Users/cnoellert/Documents/GitHub/forge-bridge/` — HIGH confidence
-- Direct codebase read: projekt-forge `/Users/cnoellert/Documents/GitHub/projekt-forge/` — HIGH confidence
-- [Python packaging optional dependencies](https://www.pyopensci.org/python-package-guide/package-structure-code/declare-dependencies.html) — HIGH confidence
-- [Python public API surface — Real Python](https://realpython.com/ref/best-practices/public-api-surface/) — HIGH confidence
-- [SQLAlchemy 2.0 multiple declarative bases](https://github.com/sqlalchemy/sqlalchemy/discussions/10519) — MEDIUM confidence (community discussion, consistent with docs)
-- [Dependency inversion in Python](https://www.lpld.io/articles/how-to-depend-on-abstractions-rather-than-implementations-in-python/) — HIGH confidence
-- [Recursive optional deps — Hynek Schlawack](https://hynek.me/articles/python-recursive-optional-dependencies/) — HIGH confidence
-- [PEP 440 version specifiers](https://packaging.python.org/en/latest/specifications/version-specifiers/) — HIGH confidence
-
----
-
-*Stack research for: forge-bridge v1.1 projekt-forge integration*
-*Researched: 2026-04-15*
+- MCP spec (2025-06-18): https://modelcontextprotocol.io/specification/2025-06-18/server/tools
+- MCP concepts — Tools: https://modelcontextprotocol.io/docs/concepts/tools
+- mcp Python SDK releases: https://github.com/modelcontextprotocol/python-sdk/releases
+- mcp Python SDK PR #1463 "add tool metadata in FastMCP.tool decorator" (v1.19.0, Oct 2025)
+- mcp Python SDK PR #482 "Add ToolAnnotations support in FastMCP and lowlevel servers" (v1.7.0, Apr 2025)
+- mcp Python SDK PR #1357 "SEP 973 — Additional metadata + icons support" (v1.15.0, Sep 2025)
+- PyPI — mcp 1.27.0 current as of 2026-04-02: https://pypi.org/project/mcp/
+- PEP 544 — Protocols: https://peps.python.org/pep-0544/
+- Python 3.10 `typing` docs (Protocol + runtime_checkable): https://docs.python.org/3.10/library/typing.html
+- typing_extensions changelog: https://github.com/python/typing_extensions/blob/main/CHANGELOG.md (confirms backports are perf/fixes, not correctness for our pattern)
+- Alembic Branches and Multiple Heads: https://alembic.sqlalchemy.org/en/latest/branches.html
+- Alembic Tutorial — version_locations: https://alembic.sqlalchemy.org/en/latest/tutorial.html
+- Local verification: `mcp==1.26.0` on Python 3.11.x, inspected via `Tool.model_fields` and `FastMCP.tool` signature; `Protocol` + `runtime_checkable` async `__call__` isinstance behavior
