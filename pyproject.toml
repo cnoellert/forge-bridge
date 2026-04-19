@@ -45,3 +45,7 @@ target-version = "py310"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# Put the repo root on sys.path so tests exercise the local source tree, not a
+# site-packages shadow (e.g., a stale `pip install forge-bridge` pulling in an
+# older release). Replaces a sys.path.insert() hack previously in tests/conftest.py.
+pythonpath = ["."]

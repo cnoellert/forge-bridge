@@ -7,15 +7,7 @@ Fixtures:
     mock_anthropic      — patches anthropic at module level to prevent import errors
 """
 
-import sys
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-
-# Ensure the repo root is on sys.path BEFORE importing forge_bridge, so tests
-# exercise the local source rather than any site-packages shadow install.
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
 
 import pytest
 
