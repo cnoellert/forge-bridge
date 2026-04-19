@@ -67,13 +67,19 @@ A [Model Context Protocol](https://modelcontextprotocol.io) server that wraps th
 
 ### Install the Flame hook
 
-Copy `flame_hooks/forge_bridge/scripts/forge_bridge.py` to your Flame Python hooks directory:
+**One command** (works from a clone or standalone):
 
-```
-/opt/Autodesk/shared/python/forge_bridge/scripts/forge_bridge.py
+```bash
+# From a clone:
+./scripts/install-flame-hook.sh
+
+# Or standalone on any Flame workstation — no clone required:
+curl -fsSL https://raw.githubusercontent.com/cnoellert/forge-bridge/v1.1.0/scripts/install-flame-hook.sh | bash
 ```
 
-Flame will load it automatically on startup. The bridge starts on `http://127.0.0.1:9999/` by default.
+The installer copies `forge_bridge.py` into `/opt/Autodesk/shared/python/forge_bridge/scripts/` and sanity-checks the result. Override `FORGE_BRIDGE_VERSION` (default `v1.1.0`) or `FORGE_BRIDGE_HOOK_DIR` (default the Flame shared-python path) as needed.
+
+Flame will load the hook automatically on next launch. The bridge starts on `http://127.0.0.1:9999/` by default.
 
 **Environment variables:**
 ```
