@@ -171,13 +171,15 @@ def test_server_started_flag_default():
 # ref_msg_id correlation fix, timeline gap-fill).
 # Phase 6-03 v1.1.0 minor release bumps to "1.1.0" (LRN-02 storage callback +
 # LRN-04 pre-synthesis hook additive API surface).
+# Phase 7-04 v1.2.0 minor release bumps to "1.2.0" (EXT-02 Tool Provenance in
+# MCP Annotations: PROV-01..06 + mcp[cli]>=1.19,<2 pin).
 
 def test_package_version():
-    """pyproject.toml version is 1.1.1 after PATCH-01 v1.1.1 patch release."""
+    """pyproject.toml version is 1.2.0 after Phase 7-04 v1.2.0 release."""
     pyproject = Path(__file__).parent.parent / "pyproject.toml"
     content = pyproject.read_text()
-    assert 'version = "1.1.1"' in content, (
-        'pyproject.toml must declare version = "1.1.1" per PATCH-01 v1.1.1 patch release.'
+    assert 'version = "1.2.0"' in content, (
+        'pyproject.toml must declare version = "1.2.0" per Phase 7-04 v1.2.0 release.'
     )
 
 
