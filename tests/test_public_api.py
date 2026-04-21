@@ -173,13 +173,15 @@ def test_server_started_flag_default():
 # LRN-04 pre-synthesis hook additive API surface).
 # Phase 7-04 v1.2.0 minor release bumps to "1.2.0" (EXT-02 Tool Provenance in
 # MCP Annotations: PROV-01..06 + mcp[cli]>=1.19,<2 pin).
+# Phase 07.1 v1.2.1 patch release bumps to "1.2.1" (startup_bridge graceful
+# degradation hotfix; no API changes, no PROV-02 behavior change).
 
 def test_package_version():
-    """pyproject.toml version is 1.2.0 after Phase 7-04 v1.2.0 release."""
+    """pyproject.toml version is 1.2.1 after Phase 07.1 v1.2.1 hotfix release."""
     pyproject = Path(__file__).parent.parent / "pyproject.toml"
     content = pyproject.read_text()
-    assert 'version = "1.2.0"' in content, (
-        'pyproject.toml must declare version = "1.2.0" per Phase 7-04 v1.2.0 release.'
+    assert 'version = "1.2.1"' in content, (
+        'pyproject.toml must declare version = "1.2.1" per Phase 07.1 v1.2.1 hotfix.'
     )
 
 
