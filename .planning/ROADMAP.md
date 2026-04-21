@@ -60,7 +60,7 @@ Plans:
 - [x] 07-01-PLAN.md — Sidecar schema evolution: synthesizer writes `.sidecar.json` envelope `{"tags": [...], "meta": {...}, "schema_version": 1}` with five canonical `forge-bridge/*` meta keys; round-trip test (PROV-01)
 - [x] 07-02-PLAN.md — Watcher read-path + `_sanitize_tag()` + size budgets + redaction allowlist; `.sidecar.json` preferred, `.tags.json` fallback; feature-detect `provenance=` in `_scan_once` (PROV-01, PROV-03)
 - [x] 07-03-PLAN.md — `register_tool(..., provenance=)` kwarg + `_meta` merge + `readOnlyHint=False` synthesized baseline + WR-01 async callback test + WR-02 `ExecutionRecord` docstring fix + README conda-env section (PROV-02, PROV-04, PROV-05, PROV-06)
-- [ ] 07-04-PLAN.md — Release ceremony: `mcp[cli]>=1.19,<2` pin, `v1.2.0` annotated tag on main, GitHub release (wheel + sdist), projekt-forge pin bump + cross-repo UAT `tools/list` diff
+- [x] 07-04-PLAN.md — Release ceremony: `mcp[cli]>=1.19,<2` pin, `v1.2.0` annotated tag on main, GitHub release (wheel + sdist), projekt-forge pin bump + cross-repo UAT `tools/list` diff (UAT vehicle deferred to Phase 07.1 — see [07.1-UAT-EVIDENCE.md](phases/07.1-startup-bridge-graceful-degradation-hotfix-deployment-uat/07.1-UAT-EVIDENCE.md))
 
 **Release artifact:** annotated `v1.2.0` tag on `main`, GitHub release with wheel + sdist. Hard gate: projekt-forge must pin `@v1.2.0` and UAT clean before Phase 8 starts.
 
