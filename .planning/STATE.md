@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Observability & Provenance
 status: executing
-stopped_at: v1.1 complete — Phase 6 closed 2026-04-18; release v1.1.0 shipped; Flame hook deployed to this workstation; WR-03 conftest fix landed
-last_updated: "2026-04-19T23:23:16.944Z"
-last_activity: 2026-04-19 -- Phase 07 execution started
+stopped_at: Completed 07.1-02-PLAN.md — v1.2.1 tag + release live; awaiting human verification of release page before Plan 03 (projekt-forge re-pin)
+last_updated: "2026-04-21T16:21:15.742Z"
+last_activity: 2026-04-21
 progress:
-  total_phases: 2
+  total_phases: 3
   completed_phases: 0
-  total_plans: 4
-  completed_plans: 0
-  percent: 0
+  total_plans: 9
+  completed_plans: 5
+  percent: 56
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-15)
 
 **Core value (v1.2):** Surface synthesis provenance and persist execution history to SQL so downstream consumers can reason about what the learning pipeline has produced and stored — without scraping JSONL
-**Current focus:** Phase 07 — tool-provenance-in-mcp-annotations
+**Current focus:** Phase 07.1 — startup-bridge-graceful-degradation-hotfix-deployment-uat
 
 ## Current Position
 
-Phase: 07 (tool-provenance-in-mcp-annotations) — EXECUTING
-Plan: 1 of 4
-Status: Executing Phase 07
-Last activity: 2026-04-19 -- Phase 07 execution started
+Phase: 07.1 (startup-bridge-graceful-degradation-hotfix-deployment-uat) — EXECUTING
+Plan: 2 of 5
+Status: Ready to execute
+Last activity: 2026-04-21
 
 Progress: [··········] 0% (v1.2 milestone — research + requirements done, roadmap pending)
 
@@ -90,8 +90,13 @@ Progress: [··········] 0% (v1.2 milestone — research + requirements 
 |------|----------|-------|-------|
 | Phase 05 P03 | ~15min | 2 tasks | 3 files |
 | Phase 05 P04 | ~12min | 1 task  | 1 file  |
+| Phase 07.1 P02 | 9min | 2 tasks | 2 files |
 
 ## Accumulated Context
+
+### Roadmap Evolution
+
+- Phase 07.1 inserted after Phase 7: startup_bridge graceful degradation hotfix + deployment UAT (URGENT) — Phase 7 UAT surfaced a deployment-blocking bug in forge-bridge.mcp.server.startup_bridge; exception from _client.start() escapes the try/except intended to guard wait_until_connected. Latent in v1.2.0. Fix + v1.2.1 hotfix + re-UAT via real MCP client before closing v1.2 milestone.
 
 ### Decisions
 
@@ -117,6 +122,8 @@ Recent decisions affecting current work:
 - [Phase 05]: [Plan 05-04]: Duplicate `import pytest` omitted from the appended conftest block — plan STEP 3 explicitly permits this reconciliation when pytest is already imported at file top (it is, at line 17). `pathlib` and `forge_bridge` are new and stay inline for section cohesion per the plan's guidance. This is plan-approved, not a deviation.
 - [Phase 05]: [Plan 05-04]: projekt-forge pyproject.toml missing `tool.hatch.metadata.allow-direct-references = true` prevents `pip install -e /path/to/projekt-forge` from resolving the forge-bridge git-URL dep. Worked around in this plan by installing forge-bridge directly from its git tag. Adding the hatchling flag to projekt-forge's pyproject.toml is a projekt-forge packaging concern flagged as follow-up — out of scope for RWR-04.
 - [Phase 06 scope]: 2026-04-18 — SQL persistence backend for ExecutionLog (EXT-03) stays deferred to v1.1.x. Phase 6 focuses on LRN-01..04 wiring only: JSONL log path injection, LLMRouter construction from forge_config.yaml, storage callback hook, pre_synthesis_hook. Rationale: (1) v1.1 milestone goal is "wire it, don't redesign it" — integration, not persistence redesign; (2) projekt-forge already has its own DB layer that can consume the storage callback directly, so SQL-in-bridge isn't blocking; (3) Phase 5 scope already stretched three days — keeping Phase 6 focused minimizes schedule risk; (4) EXT-03 gets a dedicated v1.1.x patch when a consumer actually needs it.
+- [Phase 07.1]: v1.2.1 release ceremony mirrors Phase 7-04 v1.2.0 precedent (0987525); annotated tag v1.2.1 locks downstream identity for projekt-forge @ git+... re-pin
+- [Phase 07.1]: Historical changelog comment in tests/test_public_api.py preserved across releases (1.0.0 → 1.0.1 → 1.1.0 → 1.2.0 → 1.2.1) — minor departure from Plan 02's strict grep-zero acceptance criterion, intentional convention-preservation
 
 ### Pending Todos
 
@@ -138,6 +145,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-19T21:45:00.000Z
-Stopped at: v1.1 complete — Phase 6 closed 2026-04-18; release v1.1.0 shipped; Flame hook deployed to this workstation; WR-03 conftest fix landed
-Resume file: .planning/phases/06-learning-pipeline-integration/06-VERIFICATION.md
+Last session: 2026-04-21T16:21:15.740Z
+Stopped at: Completed 07.1-02-PLAN.md — v1.2.1 tag + release live; awaiting human verification of release page before Plan 03 (projekt-forge re-pin)
+Resume file: None
