@@ -135,9 +135,8 @@ async def startup_bridge(
         auto_reconnect=True,
     )
 
-    await _client.start()
-
     try:
+        await _client.start()
         await _client.wait_until_connected(timeout=10.0)
         logger.info(f"Connected to forge-bridge at {server_url}")
     except Exception as e:
@@ -145,6 +144,14 @@ async def startup_bridge(
             f"Could not connect to forge-bridge at {server_url}: {e}\n"
             "forge_* tools will fail. flame_* tools still work if Flame is running."
         )
+        # Best-effort cleanup — AsyncClient.stop() is idempotent on a
+        # partially-started client. Swallow cleanup errors so the warning
+        # above remains the only user-visible signal.
+        try:
+            await _client.stop()
+        except Exception:
+            pass
+        _client = None
 
 
 async def shutdown_bridge() -> None:
