@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Observability & Provenance
 status: executing
-stopped_at: Completed 07.1-02-PLAN.md — v1.2.1 tag + release live; awaiting human verification of release page before Plan 03 (projekt-forge re-pin)
-last_updated: "2026-04-21T16:21:15.742Z"
+stopped_at: Completed 07.1-03-PLAN.md
+last_updated: "2026-04-21T16:28:02.448Z"
 last_activity: 2026-04-21
 progress:
   total_phases: 3
   completed_phases: 0
   total_plans: 9
-  completed_plans: 5
-  percent: 56
+  completed_plans: 6
+  percent: 67
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-15)
 ## Current Position
 
 Phase: 07.1 (startup-bridge-graceful-degradation-hotfix-deployment-uat) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Status: Ready to execute
 Last activity: 2026-04-21
 
@@ -91,6 +91,7 @@ Progress: [··········] 0% (v1.2 milestone — research + requirements 
 | Phase 05 P03 | ~15min | 2 tasks | 3 files |
 | Phase 05 P04 | ~12min | 1 task  | 1 file  |
 | Phase 07.1 P02 | 9min | 2 tasks | 2 files |
+| Phase 07.1-startup-bridge-graceful-degradation-hotfix-deployment-uat P03 | 8min | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -124,6 +125,7 @@ Recent decisions affecting current work:
 - [Phase 06 scope]: 2026-04-18 — SQL persistence backend for ExecutionLog (EXT-03) stays deferred to v1.1.x. Phase 6 focuses on LRN-01..04 wiring only: JSONL log path injection, LLMRouter construction from forge_config.yaml, storage callback hook, pre_synthesis_hook. Rationale: (1) v1.1 milestone goal is "wire it, don't redesign it" — integration, not persistence redesign; (2) projekt-forge already has its own DB layer that can consume the storage callback directly, so SQL-in-bridge isn't blocking; (3) Phase 5 scope already stretched three days — keeping Phase 6 focused minimizes schedule risk; (4) EXT-03 gets a dedicated v1.1.x patch when a consumer actually needs it.
 - [Phase 07.1]: v1.2.1 release ceremony mirrors Phase 7-04 v1.2.0 precedent (0987525); annotated tag v1.2.1 locks downstream identity for projekt-forge @ git+... re-pin
 - [Phase 07.1]: Historical changelog comment in tests/test_public_api.py preserved across releases (1.0.0 → 1.0.1 → 1.1.0 → 1.2.0 → 1.2.1) — minor departure from Plan 02's strict grep-zero acceptance criterion, intentional convention-preservation
+- [Phase 07.1-startup-bridge-graceful-degradation-hotfix-deployment-uat]: Approved Option A editable-shadow remediation before cross-repo pin bump: pip uninstall -y forge-bridge in forge conda env, then pip install -e .[dev,test] from projekt-forge to resolve fresh from @v1.2.1 tag. Shadow source was byte-identical to tag source (HEAD f069407 is one docs-only commit ahead of v1.2.1 at abd047c), so remediation is a clean no-behavior-change operation that restores direct_url.json identity lock.
 
 ### Pending Todos
 
@@ -145,6 +147,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-21T16:21:15.740Z
-Stopped at: Completed 07.1-02-PLAN.md — v1.2.1 tag + release live; awaiting human verification of release page before Plan 03 (projekt-forge re-pin)
+Last session: 2026-04-21T16:27:56.922Z
+Stopped at: Completed 07.1-03-PLAN.md
 Resume file: None
