@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import importlib.util
-import inspect
 import json as _json
 import logging
 from pathlib import Path
@@ -158,12 +157,7 @@ def _scan_once(
             fn = tracker.wrap(fn, stem, mcp)
         try:
             provenance = _read_sidecar(path)
-            # Feature-detect: Plan 07-03 adds `provenance` kwarg to register_tool. Until then,
-            # fall back to the no-kwarg call so Wave 2 can land independently of Wave 3.
-            if "provenance" in inspect.signature(register_tool).parameters:
-                register_tool(mcp, fn, name=stem, source="synthesized", provenance=provenance)
-            else:
-                register_tool(mcp, fn, name=stem, source="synthesized")
+            register_tool(mcp, fn, name=stem, source="synthesized", provenance=provenance)
             seen[stem] = digest
             logger.info(f"Registered synthesized tool: {stem}")
         except ValueError as e:
