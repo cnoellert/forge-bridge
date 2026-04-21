@@ -78,10 +78,14 @@ Plans:
   4. projekt-forge re-pinned to `@v1.2.1` (line 25 of its pyproject.toml), reinstalled in the `forge` env, and its `pytest tests/` remains green at the 422 baseline.
   5. A real MCP client (the user's Claude Code session on Portofino, with projekt-forge registered as an MCP server) observes PROV-02 `_meta` fields (`forge-bridge/origin: synthesizer`, `code_hash`, `synthesized_at`, `version`, `observation_count`) on a freshly Ollama-synthesized `synth_*` tool — verified end-to-end with evidence captured in `07.1-UAT-EVIDENCE.md` including verbatim tool-call result objects.
   6. Phase 7 close-out unblocked: `07-04-SUMMARY.md` backfilled with pointer to 07.1 as the true UAT vehicle; `07-04` plan marked complete; Phase 7 verification pipeline can proceed.
-**Plans:** TBD (run /gsd-plan-phase 07.1 to break down)
+**Plans:** 5 plans
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 07.1 to break down)
+- [ ] 07.1-01-PLAN.md — RED/GREEN fix + regression test: failing test for startup_bridge graceful degradation (TDD RED), then try/except expansion to wrap both `_client.start()` and `wait_until_connected()` with `_client = None` nulling on failure (TDD GREEN). Covers SC1, SC2.
+- [ ] 07.1-02-PLAN.md — Release ceremony: bump pyproject.toml 1.2.0→1.2.1, update test_public_api.py version-guard, annotated `v1.2.1` tag on main, GitHub release with wheel + sdist and hotfix-framed release notes. Covers SC3.
+- [ ] 07.1-03-PLAN.md — Cross-repo re-pin: sed projekt-forge/pyproject.toml `@v1.2.0`→`@v1.2.1`, reinstall in `forge` conda env, verify site-packages resolution, regression-gate `pytest tests/` at 422-baseline. Covers SC4.
+- [ ] 07.1-04-PLAN.md — Deployment UAT via real MCP client: register projekt-forge in Claude Code via `claude mcp add` + write HANDOFF.md + STOP for user-restart; fresh session runs 6-step UAT checklist + writes verbatim 07.1-UAT-EVIDENCE.md + cleanup. Covers SC5.
+- [ ] 07.1-05-PLAN.md — Phase 7 close-out: backfill 07-04-SUMMARY.md with pointer to 07.1-UAT-EVIDENCE.md as the canonical UAT artifact; mark 07-04 complete in ROADMAP via `gsd-tools.cjs roadmap update-plan-progress`. Covers SC6.
 
 ### Phase 8: SQL Persistence Protocol
 
@@ -110,6 +114,8 @@ Suggested plan structure (to be ratified by `/gsd-plan-phase 8`):
 | Phase | Plan | Repo | Notes |
 |-------|------|------|-------|
 | 7 | 07-04 | projekt-forge | pin bump `@v1.2.0` + UAT `tools/list` diff (live MCP verification against assist-01) |
+| 07.1 | 07.1-03 | projekt-forge | pin bump `@v1.2.1` (hotfix pickup) + regression gate at 422-tests baseline |
+| 07.1 | 07.1-04 | projekt-forge | Claude Code MCP registration + live deployment UAT of PROV-02 `_meta` via real MCP client (no monkey-patches) |
 | 8 | 08-02 | projekt-forge | SQLAlchemy adapter + Alembic revision + isinstance check — **primary cross-repo deliverable** (mirrors Phase 6-04 pattern); path: `/Users/cnoellert/Documents/GitHub/projekt-forge/` |
 | 8 | 08-03 | projekt-forge | pin bump + UAT DB-write verification |
 
@@ -145,5 +151,6 @@ New in v1.2 (from REQUIREMENTS.md §"Out of Scope"):
 | 4. API Surface Hardening | v1.1 | 4/4 | Complete | 2026-04-15 |
 | 5. Import Rewiring | v1.1 | 5/5 | Complete | 2026-04-18 |
 | 6. Learning Pipeline Integration | v1.1 | 4/4 | Complete | 2026-04-18 |
-| 7. Tool Provenance in MCP Annotations | v1.2 | 0/~4 | Not started | - |
+| 7. Tool Provenance in MCP Annotations | v1.2 | 3/4 | In progress | - |
+| 07.1. startup_bridge hotfix + deployment UAT | v1.2 | 0/5 | Planned | - |
 | 8. SQL Persistence Protocol | v1.2 | 0/~3 | Not started | - |
