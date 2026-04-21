@@ -34,7 +34,7 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
 
 **Milestone Goal:** Surface what forge-bridge has synthesized (tool provenance in MCP annotations) and where it has persisted executions (SQL backend for the learning-pipeline storage callback) — so downstream consumers can reason about synthesis history without scraping JSONL files.
 
-- [ ] **Phase 7: Tool Provenance in MCP Annotations (EXT-02 → v1.2.0)** — lift `.tags.json` sidecars into MCP `Tool._meta` via sidecar-schema evolution + watcher/registry wiring; bundle WR-01/WR-02 hygiene + README conda-env guidance
+- [x] **Phase 7: Tool Provenance in MCP Annotations (EXT-02 → v1.2.0)** (4/4 plans) — completed 2026-04-21
 - [ ] **Phase 8: SQL Persistence Protocol (EXT-03 → v1.2.1 or v1.3.0)** — define `StoragePersistence` Protocol on the bridge side + cross-repo SQLAlchemy adapter in projekt-forge; Protocol-only on bridge, all DDL in consumer
 
 **Ordering:** Strictly sequential. Phase 7 ships v1.2.0, projekt-forge pins and UATs, *then* Phase 8 starts. Matches the v1.1 Phase 5 → Phase 6 gate pattern; shared `__all__` barrel edits + potential `ExecutionRecord` evolution forbid parallelism.
