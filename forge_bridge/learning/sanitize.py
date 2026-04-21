@@ -12,8 +12,16 @@ Every tag is a prompt-injection surface. This module applies:
   consumers can correlate back via their own records.
 - Size budget: <= 16 tags per tool, <= 4 KB `meta` per tool.
 
-Callers: Plan 07-02's watcher._read_sidecar; Plan 07-03's registry.register_tool
-(both go through apply_size_budget before the payload reaches mcp.add_tool).
+Callers:
+- `learning.watcher._read_sidecar` — runs `_sanitize_tag` on every consumer
+  tag AND applies `apply_size_budget` at READ time (full PROV-03 boundary).
+- `mcp.registry.register_tool` — applies `apply_size_budget` only at the
+  WRITE boundary (WR-01 defense-in-depth). Per-tag `_sanitize_tag` is NOT
+  re-applied here because tags arriving via the watcher are already
+  sanitized and include the literal `"synthesized"` filter tag (TS-02.1)
+  which would otherwise be redacted on a second pass. Non-watcher callers
+  (plugins, tests) are therefore expected to pre-sanitize tag content if
+  they care about the allowlist; the registry enforces only size/shape.
 """
 from __future__ import annotations
 

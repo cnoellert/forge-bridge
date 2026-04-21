@@ -22,6 +22,8 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from forge_bridge.learning.sanitize import apply_size_budget
+
 # Prefixes exclusively owned by the synthesis pipeline.
 # Static (builtin / user-taught) registrations are blocked from using these.
 _SYNTH_RESERVED_PREFIXES: frozenset[str] = frozenset({"synth_"})
@@ -81,11 +83,24 @@ def register_tool(
     # forge-bridge/* keys are the v1.2 PROV-02 contract layered on top.
     merged_meta: dict[str, Any] = {"_source": source}
     if provenance is not None:
-        prov_meta = provenance.get("meta") or {}
+        # Defense-in-depth (WR-01): enforce PROV-03 size budget at the write
+        # boundary, regardless of whether the watcher already ran it. A non-
+        # watcher caller (plugin, test, future synthesizer shortcut) cannot
+        # push unbounded meta bytes or tag counts onto the MCP wire this way.
+        # Per-tag content sanitization (_sanitize_tag) is NOT re-applied here
+        # because the watcher already sanitized and prepended the literal
+        # "synthesized" filter tag — re-running it would redact that literal.
+        # Content sanitization is the caller's contract at READ time; the
+        # write boundary enforces only size/shape.
+        budgeted = apply_size_budget({
+            "tags": provenance.get("tags") or [],
+            "meta": provenance.get("meta") or {},
+        })
+        prov_meta = budgeted["meta"]
         for k, v in prov_meta.items():
             if k.startswith("forge-bridge/"):
                 merged_meta[k] = v
-        tags = provenance.get("tags") or []
+        tags = budgeted["tags"]
         if tags:
             merged_meta["forge-bridge/tags"] = list(tags)
 

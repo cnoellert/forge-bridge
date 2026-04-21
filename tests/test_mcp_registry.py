@@ -308,3 +308,55 @@ class TestProvenanceMerge:
             provenance=provenance,
         )
         assert mock_mcp.add_tool.call_args.kwargs["meta"]["_source"] == "synthesized"
+
+    def test_register_tool_applies_size_budget_to_tags(self, mock_mcp):
+        """WR-01: `apply_size_budget` caps tag lists at MAX_TAGS_PER_TOOL=16
+        even when a non-watcher caller hands register_tool an unbounded list."""
+        from forge_bridge.learning.sanitize import MAX_TAGS_PER_TOOL
+
+        provenance = {
+            "tags": [f"project:t{i}" for i in range(30)],
+            "meta": {"forge-bridge/origin": "synthesizer"},
+        }
+        register_tool(
+            mock_mcp, self._noop, name="synth_foo", source="synthesized",
+            provenance=provenance,
+        )
+        meta = mock_mcp.add_tool.call_args.kwargs["meta"]
+        assert len(meta["forge-bridge/tags"]) == MAX_TAGS_PER_TOOL
+
+    def test_register_tool_applies_size_budget_to_meta(self, mock_mcp):
+        """WR-01: non-canonical meta keys are evicted to fit MAX_META_BYTES."""
+        from forge_bridge.learning.sanitize import MAX_META_BYTES
+
+        big_noise = "x" * (MAX_META_BYTES + 100)
+        provenance = {
+            "tags": [],
+            "meta": {
+                "forge-bridge/origin": "synthesizer",
+                "forge-bridge/noise": big_noise,  # non-canonical forge-bridge/* key
+            },
+        }
+        register_tool(
+            mock_mcp, self._noop, name="synth_foo", source="synthesized",
+            provenance=provenance,
+        )
+        meta = mock_mcp.add_tool.call_args.kwargs["meta"]
+        # Canonical origin key must survive; non-canonical noise must be evicted.
+        assert meta["forge-bridge/origin"] == "synthesizer"
+        assert "forge-bridge/noise" not in meta
+
+    def test_register_tool_preserves_synthesized_literal_tag(self, mock_mcp):
+        """WR-01 regression: the literal 'synthesized' filter tag (TS-02.1)
+        must pass through the write boundary unmodified — the registry does
+        NOT re-run _sanitize_tag (which would redact it)."""
+        provenance = {
+            "tags": ["synthesized", "project:acme"],
+            "meta": {"forge-bridge/origin": "synthesizer"},
+        }
+        register_tool(
+            mock_mcp, self._noop, name="synth_foo", source="synthesized",
+            provenance=provenance,
+        )
+        meta = mock_mcp.add_tool.call_args.kwargs["meta"]
+        assert meta["forge-bridge/tags"] == ["synthesized", "project:acme"]
