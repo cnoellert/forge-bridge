@@ -66,6 +66,23 @@ Plans:
 
 **UI hint:** no
 
+### Phase 07.1: startup_bridge graceful degradation hotfix + deployment UAT (INSERTED)
+
+**Goal:** Ship forge-bridge v1.2.1 whose MCP server boots cleanly when the standalone forge-bridge WebSocket server on :9998 is unreachable (honoring the existing docstring/warning-log contract of graceful degradation), then re-UAT PROV-02 via a real MCP client session instead of the monkey-patched harness used in Phase 7-04.
+**Requirements**: Defect fix — no REQ-ID (exposed during Phase 7 UAT; no matching entry in REQUIREMENTS.md)
+**Depends on:** Phase 7 (v1.2.0 released 2026-04-20)
+**Success Criteria** (what must be TRUE):
+  1. `python -m projekt_forge --no-db` (and `python -m forge_bridge`) in the `forge` conda env on Portofino boots cleanly with no process on :9998 — no exceptions escape the MCP server's lifespan, `tools/list` succeeds over stdio, `flame_ping` returns Flame's live state. NO monkey-patches or shims involved.
+  2. A regression test exists in `tests/` that FAILS against forge-bridge v1.2.0 and PASSES against the v1.2.1 fix (nyquist gate: spins up the MCP server with `FORGE_BRIDGE_URL` pointed at a dead port, asserts the server still serves a `tools/list` request).
+  3. forge-bridge v1.2.1 tagged, pushed, and released on GitHub with wheel + sdist; release notes clearly call out "hotfix" and "no PROV-02 changes".
+  4. projekt-forge re-pinned to `@v1.2.1` (line 25 of its pyproject.toml), reinstalled in the `forge` env, and its `pytest tests/` remains green at the 422 baseline.
+  5. A real MCP client (the user's Claude Code session on Portofino, with projekt-forge registered as an MCP server) observes PROV-02 `_meta` fields (`forge-bridge/origin: synthesizer`, `code_hash`, `synthesized_at`, `version`, `observation_count`) on a freshly Ollama-synthesized `synth_*` tool — verified end-to-end with evidence captured in `07.1-UAT-EVIDENCE.md` including verbatim tool-call result objects.
+  6. Phase 7 close-out unblocked: `07-04-SUMMARY.md` backfilled with pointer to 07.1 as the true UAT vehicle; `07-04` plan marked complete; Phase 7 verification pipeline can proceed.
+**Plans:** TBD (run /gsd-plan-phase 07.1 to break down)
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 07.1 to break down)
+
 ### Phase 8: SQL Persistence Protocol
 
 **Goal:** Consumers have a typed, documented contract (`StoragePersistence` Protocol) for mirroring `ExecutionRecord` writes into durable storage, with projekt-forge's `_persist_execution` stub replaced by a real sync-SQLAlchemy adapter that inserts rows idempotently and survives DB outages without retrying in the callback.
