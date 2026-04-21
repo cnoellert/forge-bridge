@@ -256,3 +256,44 @@ class TestReadSidecar:
         result = _read_sidecar(py)
         # Budget caps total tags at 16 (this includes the 'synthesized' prefix)
         assert len(result["tags"]) == 16
+
+    def test_non_list_tags_field_returns_none_with_warning(self, tmp_path, caplog):
+        """WR-02: a stringy `tags` field must not iterate per-character — reject it."""
+        import logging
+        py = tmp_path / "synth_foo.py"
+        py.write_text("async def synth_foo(): pass")
+        sidecar = tmp_path / "synth_foo.sidecar.json"
+        sidecar.write_text(_json.dumps({
+            "tags": "project:acme",  # stringly-typed — would iterate chars
+            "meta": {},
+            "schema_version": 1,
+        }))
+        with caplog.at_level(logging.WARNING, logger="forge_bridge.learning.watcher"):
+            assert _read_sidecar(py) is None
+        assert any("non-list tags field" in r.message for r in caplog.records)
+
+    def test_non_dict_meta_field_returns_none_with_warning(self, tmp_path, caplog):
+        """WR-02: a scalar `meta` field must not crash `dict(...)` — reject it."""
+        import logging
+        py = tmp_path / "synth_foo.py"
+        py.write_text("async def synth_foo(): pass")
+        sidecar = tmp_path / "synth_foo.sidecar.json"
+        sidecar.write_text(_json.dumps({
+            "tags": [],
+            "meta": 42,  # would blow up on dict(raw["meta"])
+            "schema_version": 1,
+        }))
+        with caplog.at_level(logging.WARNING, logger="forge_bridge.learning.watcher"):
+            assert _read_sidecar(py) is None
+        assert any("non-dict meta field" in r.message for r in caplog.records)
+
+    def test_legacy_tags_json_non_list_tags_returns_none(self, tmp_path, caplog):
+        """WR-02: legacy .tags.json with stringy tags is also rejected."""
+        import logging
+        py = tmp_path / "synth_foo.py"
+        py.write_text("async def synth_foo(): pass")
+        legacy = tmp_path / "synth_foo.tags.json"
+        legacy.write_text(_json.dumps({"tags": "project:legacy"}))
+        with caplog.at_level(logging.WARNING, logger="forge_bridge.learning.watcher"):
+            assert _read_sidecar(py) is None
+        assert any("non-list tags field" in r.message for r in caplog.records)

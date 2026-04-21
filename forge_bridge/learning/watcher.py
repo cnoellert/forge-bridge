@@ -81,9 +81,26 @@ def _read_sidecar(py_path: Path) -> dict | None:
                 py_path.stem,
             )
             return None
+        # Type-guard consumer-supplied fields. Without this, a non-list `tags`
+        # (e.g. `"tags": "project:acme"`) iterates CHARACTERS downstream, and a
+        # non-dict `meta` (e.g. `"meta": 42`) crashes `dict(raw["meta"])`.
+        tags_field = loaded.get("tags")
+        if tags_field is not None and not isinstance(tags_field, list):
+            logger.warning(
+                ".sidecar.json for %s has non-list tags field — skipping provenance",
+                py_path.stem,
+            )
+            return None
+        meta_field = loaded.get("meta")
+        if meta_field is not None and not isinstance(meta_field, dict):
+            logger.warning(
+                ".sidecar.json for %s has non-dict meta field — skipping provenance",
+                py_path.stem,
+            )
+            return None
         raw = {
-            "tags": loaded.get("tags") or [],
-            "meta": loaded.get("meta") or {},
+            "tags": tags_field or [],
+            "meta": meta_field or {},
         }
     elif legacy_path.exists():
         try:
@@ -97,8 +114,15 @@ def _read_sidecar(py_path: Path) -> dict | None:
                 py_path.stem,
             )
             return None
+        tags_field = loaded.get("tags")
+        if tags_field is not None and not isinstance(tags_field, list):
+            logger.warning(
+                ".tags.json for %s has non-list tags field — skipping provenance",
+                py_path.stem,
+            )
+            return None
         raw = {
-            "tags": loaded.get("tags") or [],
+            "tags": tags_field or [],
             "meta": {},  # legacy shape has no meta block
         }
     else:
