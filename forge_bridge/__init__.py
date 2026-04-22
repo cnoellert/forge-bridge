@@ -6,7 +6,7 @@ Public API:
         # LLM routing
         LLMRouter, get_router,
         # Learning pipeline
-        ExecutionLog, ExecutionRecord, StorageCallback,
+        ExecutionLog, ExecutionRecord, StorageCallback, StoragePersistence,
         SkillSynthesizer, PreSynthesisContext, PreSynthesisHook,
         # MCP server
         register_tools, get_mcp,
@@ -37,6 +37,7 @@ from forge_bridge.learning.execution_log import (
     ExecutionRecord,
     StorageCallback,
 )
+from forge_bridge.learning.storage import StoragePersistence
 from forge_bridge.learning.synthesizer import (
     SkillSynthesizer,
     PreSynthesisContext,
@@ -59,6 +60,7 @@ __all__ = [
     "ExecutionLog",
     "ExecutionRecord",
     "StorageCallback",
+    "StoragePersistence",
     "SkillSynthesizer",
     "PreSynthesisContext",
     "PreSynthesisHook",
