@@ -35,7 +35,7 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
 **Milestone Goal:** Surface what forge-bridge has synthesized (tool provenance in MCP annotations) and where it has persisted executions (SQL backend for the learning-pipeline storage callback) — so downstream consumers can reason about synthesis history without scraping JSONL files.
 
 - [x] **Phase 7: Tool Provenance in MCP Annotations (EXT-02 → v1.2.0)** (4/4 plans) — completed 2026-04-21
-- [ ] **Phase 8: SQL Persistence Protocol (EXT-03 → v1.2.1 or v1.3.0)** — define `StoragePersistence` Protocol on the bridge side + cross-repo SQLAlchemy adapter in projekt-forge; Protocol-only on bridge, all DDL in consumer
+- [x] **Phase 8: SQL Persistence Protocol (EXT-03 → v1.3.0)** (3/3 plans) — completed 2026-04-22
 
 **Ordering:** Strictly sequential. Phase 7 ships v1.2.0, projekt-forge pins and UATs, *then* Phase 8 starts. Matches the v1.1 Phase 5 → Phase 6 gate pattern; shared `__all__` barrel edits + potential `ExecutionRecord` evolution forbid parallelism.
 
@@ -153,4 +153,4 @@ New in v1.2 (from REQUIREMENTS.md §"Out of Scope"):
 | 6. Learning Pipeline Integration | v1.1 | 4/4 | Complete | 2026-04-18 |
 | 7. Tool Provenance in MCP Annotations | v1.2 | 4/4 | Complete | 2026-04-21 |
 | 07.1. startup_bridge hotfix + deployment UAT | v1.2 | 5/5 | Complete | 2026-04-21 |
-| 8. SQL Persistence Protocol | v1.2 | 0/3 | Planned | - |
+| 8. SQL Persistence Protocol | v1.2 | 3/3 | Complete | 2026-04-22 |

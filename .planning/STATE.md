@@ -4,7 +4,7 @@ milestone: v1.2
 milestone_name: Observability & Provenance
 status: executing
 stopped_at: Phase 8 context gathered
-last_updated: "2026-04-22T05:00:22.846Z"
+last_updated: "2026-04-22T05:04:04.663Z"
 last_activity: 2026-04-22
 progress:
   total_phases: 3
@@ -73,7 +73,7 @@ Progress: [··········] 0% (v1.2 milestone — research + requirements 
 
 **Velocity (v1.0 baseline):**
 
-- Total plans completed: 34
+- Total plans completed: 37
 - v1.0 phases: 3 phases, 13 plans
 
 **By Phase (v1.0):**
