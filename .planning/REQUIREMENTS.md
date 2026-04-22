@@ -97,12 +97,50 @@ Grouped by category. REQ-ID format: `[CATEGORY]-[NUMBER]`. Numbering restarts pe
 
 ## Traceability
 
-*Filled by the roadmapper once ROADMAP.md is written. Phase numbering continues from v1.2 — v1.3 starts at Phase 9.*
+*Phase numbering continues from v1.2 — v1.3 starts at Phase 9.*
 
 | REQ-ID | Phase | Status |
 |--------|-------|--------|
-| _(pending roadmap)_ | — | — |
+| API-01 | Phase 9 | Pending |
+| API-02 | Phase 9 | Pending |
+| API-03 | Phase 9 | Pending |
+| API-04 | Phase 9 | Pending |
+| API-05 | Phase 9 | Pending |
+| API-06 | Phase 9 | Pending |
+| MFST-01 | Phase 9 | Pending |
+| MFST-02 | Phase 9 | Pending |
+| MFST-03 | Phase 9 | Pending |
+| MFST-06 | Phase 9 | Pending |
+| TOOLS-04 | Phase 9 | Pending |
+| EXECS-04 | Phase 9 | Pending |
+| CONSOLE-01 | Phase 10 | Pending |
+| CONSOLE-02 | Phase 10 | Pending |
+| CONSOLE-03 | Phase 10 | Pending |
+| CONSOLE-04 | Phase 10 | Pending |
+| CONSOLE-05 | Phase 10 | Pending |
+| TOOLS-01 | Phase 10 | Pending |
+| TOOLS-02 | Phase 10 | Pending |
+| EXECS-01 | Phase 10 | Pending |
+| EXECS-02 | Phase 10 | Pending |
+| MFST-04 | Phase 10 | Pending |
+| HEALTH-01 | Phase 10 | Pending |
+| HEALTH-04 | Phase 10 | Pending |
+| CLI-01 | Phase 11 | Pending |
+| CLI-02 | Phase 11 | Pending |
+| CLI-03 | Phase 11 | Pending |
+| CLI-04 | Phase 11 | Pending |
+| TOOLS-03 | Phase 11 | Pending |
+| EXECS-03 | Phase 11 | Pending |
+| MFST-05 | Phase 11 | Pending |
+| HEALTH-02 | Phase 11 | Pending |
+| HEALTH-03 | Phase 11 | Pending |
+| CHAT-01 | Phase 12 | Pending |
+| CHAT-02 | Phase 12 | Pending |
+| CHAT-03 | Phase 12 | Pending |
+| CHAT-04 | Phase 12 | Pending |
+
+**Coverage:** 37/37 requirements mapped. No orphans.
 
 ---
 
-*Last updated: 2026-04-22 — v1.3 requirements opened; roadmap pending*
+*Last updated: 2026-04-22 — v1.3 roadmap written; traceability table filled (Phases 9-12)*

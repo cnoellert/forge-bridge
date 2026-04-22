@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Artist Console
-status: defining_requirements
-stopped_at: Milestone scope confirmed
+status: roadmap_approved
+stopped_at: Phase 9 not started
 last_updated: "2026-04-22T00:00:00.000Z"
 last_activity: 2026-04-22
 progress:
-  total_phases: 0
+  total_phases: 4
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -21,45 +21,45 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-22)
 
 **Core value (v1.3):** Make forge-bridge legible to its operator — artist-first Web UI + CLI console surfacing the synthesis manifest, execution history, provenance, and live tool state, backed by a canonical MCP resource.
-**Current focus:** Defining v1.3 requirements
+**Current focus:** Phase 9 — Read API Foundation
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 9 — Read API Foundation (Not started)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-04-22 — Milestone v1.3 Artist Console started
+Status: Roadmap approved; ready to begin Phase 9
+Last activity: 2026-04-22 — v1.3 roadmap written (Phases 9-12)
 
-Progress: [··········] 0% (v1.3 milestone — scope confirmed, requirements + roadmap pending)
+Progress: [··········] 0% (v1.3 milestone — 4 phases, 0 complete)
 
 ## Session Handoff — Resume Instructions
 
 **What's committed and ready:**
 
-- `.planning/PROJECT.md` — v1.3 "Artist Console" Current Milestone section written
-- `.planning/STATE.md` — reset for new milestone
-- Git: clean working tree (pre-commit)
-
-**Still to produce this session:**
-
-- `.planning/REQUIREMENTS.md` — scoped v1.3 requirements with REQ-IDs (categories likely: CONSOLE, MFST, API, CLI, CHAT)
-- `.planning/ROADMAP.md` — phase structure starting at Phase 9
-- `.planning/research/` (optional) — 4 parallel agents if research step is approved
+- `.planning/PROJECT.md` — v1.3 "Artist Console" milestone scope
+- `.planning/REQUIREMENTS.md` — 37 requirements across 8 categories (API, TOOLS, EXECS, MFST, HEALTH, CONSOLE, CLI, CHAT)
+- `.planning/ROADMAP.md` — Phases 9-12 defined with success criteria
+- `.planning/STATE.md` — this file, reset for Phase 9
+- `.planning/research/SUMMARY.md` — HIGH confidence research across stack, features, architecture, pitfalls
 
 **Next action:**
 
-Continue the `/gsd-new-milestone` workflow — research decision → requirements → roadmap → approval.
+Run `/gsd-plan-phase 9` to begin Phase 9: Read API Foundation.
 
-**Key constraints for v1.3 planning:**
+**Phase 10 planning note:** Before `/gsd-plan-phase 10`, run `/gsd-ui-phase` to produce `UI-SPEC.md`. The Web UI phase plan must reference that spec.
 
-- Read-only UI this milestone — no admin/mutation actions, no auth
-- Serving on new port inside MCP server process (NOT mounted on `:9999` Flame exec endpoint, NOT on `:9998` WS)
-- JSONL is canonical data source (STORE-06); SQL read-adapter is opt-in
-- One manifest, two surfaces — bridge-owned canonical synthesis manifest served via MCP resource + console read API
-- Design language inherits LOGIK-PROJEKT `#242424` + `#cc9c00` amber, web-adapted; Web UI phase runs `/gsd-ui-phase` for its formal design contract
-- Locked v1.1/v1.2 non-goals carry forward (no LLMRouter hot-reload, no shared-path JSONL writers)
+**Phase 12 velocity gate:** Explicitly decide whether to include or defer Phase 12 (LLM Chat) to v1.4 before Phase 11 closes. Do not defer silently.
 
-**Open (roadmapper to decide scope):** real-time streaming (SSE/WebSocket push) vs poll-only; multi-project view.
+**Key constraints for v1.3 implementation:**
+
+- Uvicorn task pattern is locked — console runs as a separate uvicorn asyncio task inside `_lifespan` on `:9996`; NOT via `FastMCP.custom_route` (only works in `--http` mode, breaks stdio)
+- ConsoleReadAPI is the sole read path for all surfaces — Web UI, CLI, MCP resources, and chat all call it; no per-surface JSONL parsers
+- ManifestService singleton injected into watcher (write path) and console router (read path) — watcher is sole writer, console API reads via `snapshot()`
+- Instance-identity gate (API-04): `_lifespan` owns the canonical ExecutionLog and ManifestService; no duplicate instances anywhere in the process
+- MFST-02 and MFST-03 ship in the SAME plan (MCP resource + tool fallback shim together — P-03 prevention for Cursor/Gemini CLI)
+- Only new pip dep: `jinja2>=3.1`; all other deps (Starlette, uvicorn, Typer, Rich, httpx) already ship transitively via `mcp[cli]`
+- CLI commands must be sync functions calling sync `httpx.get()` — Typer 0.24.1 silently drops `async def` (verified via live test)
+- Every UI-touching phase (10, 12) includes mandatory non-developer dogfood UAT: artist identifies three most recently synthesized tools within 30 seconds
 
 ## Performance Metrics
 
@@ -67,6 +67,7 @@ Continue the `/gsd-new-milestone` workflow — research decision → requirement
 
 - Total plans completed: 37
 - v1.0 phases: 3 phases, 13 plans
+- v1.2 phases: 3 phases (7, 07.1, 8), 12 plans, 17 tasks
 
 **By Phase (v1.0):**
 
@@ -90,6 +91,7 @@ Continue the `/gsd-new-milestone` workflow — research decision → requirement
 ### Roadmap Evolution
 
 - Phase 07.1 inserted after Phase 7: startup_bridge graceful degradation hotfix + deployment UAT (URGENT) — Phase 7 UAT surfaced a deployment-blocking bug in forge-bridge.mcp.server.startup_bridge; exception from _client.start() escapes the try/except intended to guard wait_until_connected. Latent in v1.2.0. Fix + v1.2.1 hotfix + re-UAT via real MCP client before closing v1.2 milestone.
+- v1.3 roadmap written 2026-04-22: 4 phases (9-12), 37 requirements across 8 categories. Phase 12 (LLM Chat) explicitly velocity-gated — may defer to v1.4 if Phases 9-11 run long.
 
 ### Decisions
 
@@ -118,14 +120,17 @@ Recent decisions affecting current work:
 - [Phase 07.1]: v1.2.1 release ceremony mirrors Phase 7-04 v1.2.0 precedent (0987525); annotated tag v1.2.1 locks downstream identity for projekt-forge @ git+... re-pin
 - [Phase 07.1]: Historical changelog comment in tests/test_public_api.py preserved across releases (1.0.0 → 1.0.1 → 1.1.0 → 1.2.0 → 1.2.1) — minor departure from Plan 02's strict grep-zero acceptance criterion, intentional convention-preservation
 - [Phase 07.1-startup-bridge-graceful-degradation-hotfix-deployment-uat]: Approved Option A editable-shadow remediation before cross-repo pin bump: pip uninstall -y forge-bridge in forge conda env, then pip install -e .[dev,test] from projekt-forge to resolve fresh from @v1.2.1 tag. Shadow source was byte-identical to tag source (HEAD f069407 is one docs-only commit ahead of v1.2.1 at abd047c), so remediation is a clean no-behavior-change operation that restores direct_url.json identity lock.
+- [v1.3 Roadmap, 2026-04-22]: Console serves on a separate uvicorn task on `:9996` inside `_lifespan` — NOT via FastMCP.custom_route (only works in `--http` mode; stdio is the locked default and custom_route would break Claude Desktop/Claude Code configurations).
+- [v1.3 Roadmap, 2026-04-22]: MFST-02 and MFST-03 (MCP resource + tool fallback shim) ship in the same Phase 9 plan — P-03 prevention; Cursor and Gemini CLI do not support resources and the shim costs one function.
+- [v1.3 Roadmap, 2026-04-22]: Phase 12 (LLM Chat) is velocity-gated — explicitly deferrable to v1.4 if Phases 9-11 run long; must be an explicit scope decision before Phase 11 closes, not a silent drop.
 
 ### Pending Todos
 
-None yet.
+None.
 
 ### Blockers/Concerns
 
-None currently — v1.2 blockers all resolved (see archived milestones).
+None — v1.3 roadmap defined; ready to begin Phase 9.
 
 ## Deferred Items
 
@@ -133,10 +138,16 @@ None currently — v1.2 blockers all resolved (see archived milestones).
 |----------|------|--------|-------------|
 | EXT | Tool provenance in MCP annotations (EXT-02) | Shipped v1.2.0 (Phase 7) | — |
 | EXT | SQL persistence backend for ExecutionLog (EXT-03) | Shipped v1.3.0 (Phase 8) | — |
-| EXT | Shared synthesis manifest between repos (EXT-01) | Pulled into v1.3 Artist Console (one manifest, two surfaces) | — |
+| EXT | Shared synthesis manifest between repos (EXT-01) | Pulled into v1.3 Artist Console (MFST-06) | — |
+| v1.4 | SSE/WebSocket streaming push | Deferred — poll-first for v1.3 | v1.3 roadmap |
+| v1.4 | Multi-project console view | Deferred — single-bridge/single-project in v1.3 | v1.3 roadmap |
+| v1.4 | Promotion sparklines / rich historical charts | Deferred | v1.3 roadmap |
+| v1.4 | Admin/mutation actions (quarantine, promote, kill) | Deferred — paired with auth milestone | v1.3 roadmap |
+| v1.4 | Maya/editorial manifest producers | Deferred — Flame only in v1.3 | v1.3 roadmap |
+| v1.4 (maybe) | LLM Chat (Phase 12) | Velocity-gated — explicit decision required before Phase 11 closes | v1.3 roadmap |
 
 ## Session Continuity
 
-Last session: 2026-04-22 — v1.3 Artist Console milestone opened
-Stopped at: Milestone scope confirmed, PROJECT.md + STATE.md updated
-Resume file: continue `/gsd-new-milestone` workflow (research decision → REQUIREMENTS.md → ROADMAP.md)
+Last session: 2026-04-22 — v1.3 roadmap written (Phases 9-12, 37 requirements)
+Stopped at: Roadmap approved; STATE.md + REQUIREMENTS.md traceability updated
+Resume file: `/gsd-plan-phase 9`
