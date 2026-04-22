@@ -1,222 +1,350 @@
 # Project Research Summary
 
-**Project:** forge-bridge v1.2 — Observability & Provenance
-**Domain:** Stable-contract feature additions to a v1.1-shipped pip-consumed middleware package
-**Researched:** 2026-04-19
+**Project:** forge-bridge v1.3 — Artist Console
+**Domain:** Artist-first observability dashboard (Web UI + CLI + MCP resources) layered on an existing FastMCP + asyncio + JSONL-log middleware package
+**Researched:** 2026-04-22
 **Confidence:** HIGH
 
 ## Executive Summary
 
-v1.2 adds two observability features on top of the v1.1.1 foundation: **EXT-02** surfaces what the learning pipeline has synthesized (by lifting `.tags.json` sidecars into MCP tool metadata), and **EXT-03** defines a `StoragePersistence` `typing.Protocol` that projekt-forge implements with SQLAlchemy to mirror `ExecutionRecord` into SQL. Both features are small in code footprint (3 production files touched in forge-bridge; `__all__` grows by exactly 1) and both ride contracts already locked at v1.1.0 (`ExecutionRecord` frozen dataclass, `set_storage_callback` dispatch semantics, Phase 6-02 sidecar write-path). All four research tracks converge on the same shape: ship EXT-02 first as v1.2.0, let projekt-forge UAT it, then ship EXT-03 as v1.2.1 or v1.3.0 once we've seen what metadata is actually worth persisting.
+v1.3 ships an artist-facing console — a Web UI on port `:9996`, a `forge-bridge console` CLI companion, an MCP resource at `forge://manifest/synthesis`, and a shared `ConsoleReadAPI` that backs all surfaces — on top of the fully-deployed v1.3.0 foundation. The milestone is read-only: no mutation, no admin actions, no auth (localhost-only, matching `:9999` posture). The single most important architectural decision — confirmed across ARCHITECTURE.md and PITFALLS.md, and explicitly called out against STACK.md's initial recommendation — is that the console Web UI is served on a separate uvicorn task launched from `_lifespan` on port `:9996`, independent of the MCP transport mode. The alternative (`FastMCP.custom_route`) only functions when the MCP server runs in `--http` transport mode, which would break every existing Claude Desktop and Claude Code configuration that defaults to stdio. Stdio is the locked default; console serves on its own port regardless.
 
-The recommended approach is **strictly additive, no signature changes on public APIs**. EXT-02 attaches provenance to MCP `Tool._meta` (the documented freeform slot) — never to `annotations` (a closed safety-hint schema that spec-compliant clients treat as untrusted). EXT-03 defines the Protocol in `forge_bridge/learning/storage.py` but ships no SQLAlchemy models, no Alembic migrations, and no DDL — projekt-forge owns the schema, the migration chain, and the backfill story. Both features reuse the v1.1.0 minor-bump ceremony (barrel re-export → pyproject.toml → regression test → annotated tag → push). The only dependency change is bumping `mcp[cli]>=1.0` to `mcp[cli]>=1.19,<2` to pick up the `meta=` parameter on `FastMCP.tool()` (landed in SDK 1.19.0) while capping below the in-progress v2 rename (`FastMCP → MCPServer`).
+The recommended approach is additive and strictly in-process: one new `forge_bridge/console/` package, one new `forge_bridge/cli/console.py` Typer app, minimal modifications to `server.py` and `watcher.py`, and `jinja2>=3.1` as the only new pip dependency (all other deps — Starlette, uvicorn, sse_starlette, Typer, Rich, httpx — already ship transitively via `mcp[cli]`). The frontend is Jinja2 + htmx 2.x + Alpine.js 3.x, vendored as static files, with zero JavaScript build step. This is the correct choice for a pip-distributed, VFX-studio-deployed package where internet access during package install cannot be assumed and npm has no place in the Python toolchain. Every view in the Web UI and every subcommand in the CLI reads from the same `ConsoleReadAPI` class — single read model, no divergence possible.
 
-The primary new risk is a **second prompt-injection surface**: consumer-supplied `ctx.tags` already reach the synthesis LLM (Phase 6-02 additive-only hook), and v1.2 renders those same strings back to *every* LLM that calls `tools/list`. A `_sanitize_tag()` helper (strip control chars, reject injection markers, truncate to 64 chars, ≤16 tags per tool, ≤4KB `_meta` per tool) is a required Phase 7 deliverable, not a nice-to-have. The secondary risk is connection-pool exhaustion on the SQL side if EXT-03 is implemented with a long-lived session, retry-in-callback, or cross-loop session usage — mitigated by mandating one-session-per-callback (context-managed), no in-callback retry (durability comes from JSONL + backfill), and a recommended **sync SQLAlchemy callback** (matches Flame-thread `record()` call sites without an "event loop is closed" footgun).
+The primary risks are transport-related and UX-related, not algorithmic. P-01 (stdout corruption in stdio mode) and P-02 (transport switch breaking Claude Desktop configs) are critical: both are fully mitigated by the separate-uvicorn-task pattern and by preserving stdio as the default. P-03 (MCP resource client incompatibility) is addressed by shipping both `forge://manifest/synthesis` as an MCP resource AND a `forge_manifest_read` tool fallback shim — Cursor and Gemini CLI do not implement resources, and the shim costs one function. P-09 (CLI vs Web UI read-model drift, the same class of bug as LRN-05 from Phase 8) is fully prevented by the `ConsoleReadAPI` singleton before any surface is built. Artist-UX failure modes are explicitly flagged: a 30-second non-developer dogfood check is a required UAT criterion for every UI-touching phase, not a nice-to-have.
+
+---
+
+## Conflict Resolution: Web UI Serving Mechanism
+
+**STACK.md vs ARCHITECTURE.md/PITFALLS.md** — resolved here with explicit rationale.
+
+STACK.md identified `FastMCP.custom_route(path, methods)` as a single-process, single-port option that routes through the same Starlette app as the MCP protocol handler. This is technically correct and verified against `mcp==1.26.0`.
+
+ARCHITECTURE.md and PITFALLS.md (P-01, P-02) identify the critical constraint: `custom_route` ONLY serves traffic when FastMCP runs in `--http` transport mode. The default transport is stdio (required for Claude Desktop and Claude Code compatibility). In stdio mode, `mcp.run()` owns stdout exclusively — any HTTP server started alongside it that writes to stdout corrupts the MCP wire.
+
+**Locked resolution for v1.3:**
+- The console uses a separate uvicorn task bound to `:9996`, launched via `asyncio.create_task(serve_uvicorn(console_app, port=9996))` inside `_lifespan`, alongside the existing watcher task.
+- Stdio MCP remains the default transport (no `--http` flag = stdio). Claude Desktop and Claude Code configurations are unaffected.
+- `custom_route` is viable ONLY if the MCP server is started with `--http` transport. Treat it as a v1.4+ option to consolidate ports when operators explicitly opt into HTTP transport. Do not use it in v1.3.
+- PROJECT.md scope description ("served on a new port by the MCP server process") matches the ARCHITECTURE + PITFALLS pattern exactly.
+
+---
 
 ## Key Findings
 
 ### Recommended Stack
 
-One pin change. No new dependencies. See `STACK.md` for full rationale.
+One new pip dependency. Zero new process boundaries. All runtime behavior verified against installed packages.
 
-**Pin bump:**
-- `mcp[cli]>=1.0` → `mcp[cli]>=1.19,<2` in `pyproject.toml` — floor is first SDK release with `meta=` param on `FastMCP.tool()` (PR #1463, v1.19.0, Oct 2025); cap avoids accidental breakage from the `FastMCP → MCPServer` rename underway on `main` (post-v1.27).
+**Core technologies:**
 
-**No changes (researched-and-confirmed-negative):**
-- `typing.Protocol` + `@runtime_checkable` → stdlib since 3.8; forge-bridge is 3.10+; no `typing_extensions` needed.
-- `sqlalchemy[asyncio]>=2.0`, `alembic>=1.13`, `asyncpg`, `psycopg2-binary` → already carried from v1.0; EXT-03 doesn't add to them because all DDL lives in projekt-forge.
+- **Starlette** (0.52.1, transitive via `mcp[cli]`) — ASGI routing, `StaticFiles`, `JSONResponse`; provides everything needed for the console HTTP API without FastAPI's added weight
+- **uvicorn** (0.41.0, transitive via `mcp[cli]`) — programmatic `uvicorn.Server` API used inside an asyncio task; same server FastMCP uses internally, no new dependency
+- **Jinja2** (`>=3.1`, NEW — only new pip dep) — server-rendered HTML templates for Web UI; `Starlette.Jinja2Templates` wraps it; not currently installed
+- **htmx 2.0.10** (vendored static file, `forge_bridge/console/static/htmx.min.js`) — partial-page HTML swaps, auto-refresh polling, no build step; ~16 KB gzipped
+- **Alpine.js 3.x** (vendored static file, `forge_bridge/console/static/alpine.min.js`) — minimal client-side reactive state (tab selection, copy-to-clipboard, collapse panels); ~8 KB gzipped
+- **Typer 0.24.1** (transitive via `mcp[cli]`) — CLI subcommand framework; NOTE: async `def` commands are silently dropped — all CLI commands must be sync wrappers calling `httpx.get()` (sync httpx, not asyncio.run)
+- **Rich 14.3.3** (transitive via `mcp[cli]`) — terminal tables and panels for CLI output
+- **httpx** (already declared in `pyproject.toml`) — CLI HTTP calls to `:9996`; use sync client for simple GETs, no `asyncio.run()` wrapper needed
+- **sse_starlette 3.2.0** (transitive via `mcp[cli]`) — `EventSourceResponse` for SSE push if roadmapper scopes it in; zero-cost to add; poll-first recommended for v1.3
 
-**Out-of-repo (projekt-forge owns):** `alembic.ini`, `migrations/versions/YYYYMMDD_add_execution_log.py`, `ExecutionLogRow` ORM class. See STACK.md "Alembic chain strategy" — single chain in projekt-forge, not layered chains.
+**Explicitly rejected:**
+- FastAPI — Starlette is already installed; FastAPI adds ~1 MB of dependencies for zero functional gain on a read-only localhost dashboard
+- SPA frameworks (React, Svelte, SvelteKit) — require `npm run build` inside a pip package; incompatible with the Python toolchain and offline VFX studio environments
+- Tailwind CDN — 3.5 MB unoptimized, "development only" per Tailwind docs, requires internet access
+- Second separate process for the console — adds IPC, splits lifespan management, unnecessary complexity
+
+**Palette:** CSS custom properties in `forge-console.css`. `--forge-bg: #242424`, `--forge-amber: #cc9c00`, `--forge-text: #cccccc`. LOGIK-PROJEKT heritage. No Tailwind.
+
+**Key Typer constraint confirmed via live test:** `@app.command()` on an `async def` registers the coroutine but never awaits it (silently returns `RuntimeWarning: coroutine was never awaited`). Use sync outer functions with `httpx.get()` (sync) for all CLI commands that call the console API.
 
 ### Expected Features
 
-See `FEATURES.md` for full breakdown. REQ-ID labels preserved from research.
+Five feature categories, each mapping to a Web UI view + CLI subcommand + (for 3 of them) an MCP resource:
 
-#### EXT-02 (Phase 7) — Tool provenance in MCP annotations
+| Category | Web UI view | CLI subcommand | MCP resource |
+|----------|-------------|----------------|--------------|
+| Tools | Tools table | `console tools` | `forge://tools` |
+| Executions | Exec history | `console execs` | — |
+| Manifest | Manifest browser | `console manifest` | `forge://manifest/synthesis` |
+| Health | Health panel | `console health` + `console doctor` | `forge://llm/health` (exists) |
+| Chat | Chat surface | — | — |
 
-**Table stakes (MUST-HAVE):**
-- **TS-02.1** — Lift `.tags.json` sidecar into tool registration. Watcher reads `path.with_suffix(".sidecar.json")` (fallback `.tags.json` for grace period), passes through to `register_tool(..., provenance=...)`. Minimum payload: `tags=["synthesized", *sidecar_tags]` so clients can filter.
-- **TS-02.2** — Canonical provenance fields in `_meta` under the `forge-bridge/` namespace: `forge-bridge/origin` (`"synthesizer"`/`"builtin"`), `forge-bridge/code_hash`, `forge-bridge/synthesized_at`, `forge-bridge/version`, `forge-bridge/observation_count`. Reverse-DNS namespacing per MCP spec to avoid collision with future reserved keys.
-- **TS-02.3** — Safety default: set `annotations.readOnlyHint=False` on every synthesized tool (they call `bridge.execute()` which runs arbitrary Python). Explicit, not inferred — MCP clients auto-approve read-only tools.
+**Must have (table stakes):**
 
-**Differentiators (DEFER to v1.3):**
-- **DF-02.1** — Per-consumer `_meta` prefixes (e.g. `forge.projekt.*`) — waits on projekt-forge schema.
-- **DF-02.2** — `title=` from `ExecutionRecord.intent` — small UX win, deferrable.
-- **DF-02.3** — MCP resource `forge://synthesized/manifest` — this is the EXT-01 idea re-framed; defer until EXT-02 has clarified the schema in practice.
+- **TS-A.1 — Tools table** — filterable list of all registered MCP tools: name, namespace (`flame_*`/`forge_*`/`synth_*`), origin (builtin/synthesized), status (active/quarantined); data from `mcp.list_tools()` + `ProbationTracker`
+- **TS-A.2 — Per-tool drilldown** — full description, input schema, provenance fields (`origin`, `code_hash`, `synthesized_at`, `version`, `observation_count`), probation history, raw sidecar JSON
+- **TS-A.3 — Execution history list** — time-sorted JSONL tail: timestamp, intent, code_hash (truncated), promoted flag; default last 50 rows; filterable by promoted=true and date range
+- **TS-A.4 — Health panel** — traffic-light per service: Flame bridge (`:9999`), WebSocket server (`:9998`), LLM backends (Ollama/Anthropic/OpenAI), synthesis watcher
+- **TS-A.5 — Manifest view** — tabular view of `.manifest.json`: filename, sha256, loaded/orphaned status, tool name
+- **TS-E.1 — Execution drilldown** — full `raw_code`, `intent`, `code_hash`, `promoted` flag, raw JSONL record JSON
+- **TS-E.2 — Probation state per tool** — pass/fail counts, quarantine status and reason
+- **TS-E.3 — Raw JSONL CLI** — `console execs --raw` outputs NDJSON to stdout for `jq` piping
+- **TS-L.1 — `forge://manifest/synthesis`** — JSON manifest of all synthesized tools with full provenance, probation state
+- **TS-L.2 — `forge://tools`** — full tool list with `_meta` and annotations as a cacheable MCP resource
 
-#### EXT-03 (Phase 8) — SQL persistence backend
+**Should have (differentiators):**
 
-**Table stakes (MUST-HAVE):**
-- **TS-03.1** — `StoragePersistence` `typing.Protocol` in new module `forge_bridge/learning/storage.py`. Shape: `async def persist(self, record: ExecutionRecord) -> None; async def persist_batch(...); async def shutdown() -> None`. Modeled on OpenTelemetry's SpanExporter (single, batch, shutdown). `@runtime_checkable` for advisory isinstance checks.
-- **TS-03.2** — Canonical minimal schema documented **in the Protocol docstring only** (no DDL shipped): columns `code_hash` (TEXT, 64), `timestamp` (TIMESTAMPTZ), `raw_code` (TEXT), `intent` (TEXT NULL), `promoted` (BOOLEAN). Unique constraint on `(code_hash, timestamp)`; index on `code_hash`; index on `timestamp DESC`.
-- **TS-03.3** — Idempotent write via `insert(...).on_conflict_do_nothing(index_elements=["code_hash", "timestamp"])` — documented as an implementation requirement for consumers. Handles crash-replay + defensive double-fire atomically.
-- **TS-03.4** — Backfill decision: projekt-forge-owned one-shot CLI (`forge-ctl db backfill-executions`) reads JSONL → calls `persist()` with `on_conflict_do_nothing`. PITFALLS P-03.4 recommends **cutover instead of backfill** for simplicity; planning-phase call.
+- **DF-1 — Structured query console** — input bar accepting `tool:synth_* status:active`, `exec:promoted=true since:7d`; deterministic, no LLM in hot path; preset query chips for artist-friendly access
+- **DF-2 — LLM chat layer** — natural-language queries routed through existing `LLMRouter.acomplete()`; manifest + recent exec context injected as system context; graceful degradation when LLM is down
+- **DF-3 — `console doctor`** — pre-flight checklist: Flame reachable, WS server reachable, LLM backend healthy, JSONL parseable, manifest valid, synthesized tools loaded, StoragePersistence callback registered; PASS/FAIL/WARN table with actionable fix hints
+- **DF-4 — `forge://tools/{name}` resource template** — per-tool detail JSON for single tool by name; trivial once `forge://tools` exists
 
-**Differentiators (DEFER):**
-- **DF-03.1** — `persist_batch()` with 100-row chunks (only needed when backfill gets slow).
-- **DF-03.2** — Retention/cleanup (`DELETE WHERE timestamp < now() - interval '90 days'`).
-- **DF-03.3** — `shutdown()` present from day 1 in the Protocol even if no-op.
-- **DF-03.4** — Promotion-event mirror (`mark_promoted` does not fire the callback today — flag for Phase 8 planning whether this is a schema gap).
+**Defer to v1.4:**
+- DF-5 — Promotion rate sparklines (complex JSONL aggregation by day + tool via code_hash join)
+- DF-6 — SSE live updates (poll at 5s is sufficient; SSE infrastructure is zero-cost to add later)
+- LLM chat layer (DF-2) may defer to v1.4 depending on roadmapper's phase decision
+- `custom_route` consolidation for `--http` transport mode operators
+
+**Locked non-goals (anti-features):**
+- No admin/mutation actions in the UI — auth is a prerequisite; deferred to follow-on milestone
+- No auth on the console — localhost-bound, same posture as `:9999`
+- No ComfyUI-style node graph — dependency graph engine does not exist yet
+- No Grafana-style metric cardinality explosion — aggregate aggressively; surface only the 3 artist questions
+- No separate DB for the console — reads JSONL + in-memory state directly
+- No code editor or synthesis UI — read-only milestone; editing introduces XSS vectors
 
 ### Architecture Approach
 
-See `ARCHITECTURE.md` for file:symbol detail.
+The console is a single `forge_bridge/console/` package running entirely within the existing MCP server process. A `ManifestService` singleton owns in-memory tool state, injected into the watcher (write path) and the console router (read path). A second uvicorn task on `:9996` serves the console ASGI app, started in `_lifespan` alongside the existing watcher task. The `ConsoleReadAPI` is the exclusive read layer — Web UI handlers, CLI subcommands, and MCP resource functions all call it; zero duplicated query logic across surfaces. This directly prevents the CLI-vs-Web-UI drift pitfall (P-09) and mirrors the LRN-05 lesson from Phase 8 (single read/write path prevents dead seams).
 
-**EXT-02 integration points (forge-bridge only):**
+**Major components:**
 
-| File | Change | Symbol |
-|------|--------|--------|
-| `forge_bridge/learning/watcher.py` | Modified | `_scan_once` + new `_read_sidecar` helper |
-| `forge_bridge/mcp/registry.py` | Modified | `register_tool` (internal) gains `provenance: dict \| None = None` kwarg; merged into existing `meta={"_source": source}` under `forge-bridge/*` keys |
-| `forge_bridge/learning/synthesizer.py` | Modified | Sidecar schema bump `.tags.json` → `.sidecar.json` with `schema_version: 1`; WR-02 docstring fix on `ExecutionRecord`/`mark_promoted` drift |
-| `tests/learning/test_watcher_sidecar.py` | New | sidecar present/missing/malformed cases |
-| `tests/mcp/test_registry_provenance.py` | New | annotations merge + source-tag preserve |
-| `README.md` | Modified | conda-env polish item bundled into Phase 7 |
-| `forge_bridge/__init__.py` | **Not modified** | No new public symbols for EXT-02; provenance is transport-level, not API |
+1. **ManifestService** (`forge_bridge/console/manifest_service.py`) — shared singleton holding `dict[str, ToolRecord]` (stem to provenance record); `asyncio.Lock` for write safety; watcher is the sole writer; console API + MCP resource read via `snapshot()`; instantiated in `_lifespan`, injected into watcher and console router
+2. **ConsoleReadAPI** (`forge_bridge/console/read_api.py`) — the ONE read layer; exposes `get_tools()`, `get_executions(limit, since, promoted_only)`, `get_manifest()`, `get_health()`; Web UI HTTP handlers, CLI commands, and MCP resources all call this; never duplicated
+3. **Console HTTP app** (Starlette ASGI app, endpoints under `/api/v1/` and static assets at `/ui/`) — served by a background uvicorn task on `:9996` started in `_lifespan`; `StaticFiles` mount for Jinja2 templates + vendored JS/CSS
+4. **MCP resources** (`forge_bridge/console/resources.py`) — `register_console_resources(mcp, manifest_service)` called from `_lifespan` after `ManifestService` is ready; registers `forge://manifest/synthesis`, `forge://tools`, `forge://tools/{name}`, `forge://health`; plus `forge_manifest_read` tool fallback shim for clients that do not support resources (P-03)
+5. **CLI companion** (`forge_bridge/cli/console.py`) — Typer app registered as `forge-bridge console`; sync commands calling `httpx.get("http://127.0.0.1:9996/api/v1/...")` and formatting with Rich; stateless, no persistent connection
+6. **LLM chat endpoint** (`forge_bridge/console/chat.py`) — `POST /api/v1/chat`; builds context from `ManifestService.snapshot()` + `ExecutionLog.snapshot(limit=5)`; calls `LLMRouter.acomplete()` with `asyncio.wait_for(..., timeout=120.0)`; independent sanitization pass strips `raw_code` and injection markers from context
 
-**EXT-03 integration points (forge-bridge only; consumer impl in projekt-forge):**
+**Modified files (minimal surface):**
+- `forge_bridge/mcp/server.py` — `_lifespan`: instantiate `ManifestService`, inject into watcher, start console uvicorn task, call `register_console_resources()`
+- `forge_bridge/learning/watcher.py` — `watch_synthesized_tools()` and `_scan_once()` accept `manifest_service: ManifestService | None = None` (backward-compatible, None default)
+- `forge_bridge/learning/execution_log.py` — add `snapshot(limit, offset)` method reading from in-memory dicts (no JSONL I/O at query time)
+- `forge_bridge/__init__.py` — re-export `ManifestService`, `ToolRecord`; `__all__` grows 16 to ~18-19; minor version bump ceremony applies
+- `pyproject.toml` — add `"jinja2>=3.1"`; update `[project.scripts]` for `forge-bridge console` entry point; add `forge_bridge/console/` to `[tool.hatch.build]` includes
 
-| File | Change | Symbol |
-|------|--------|--------|
-| `forge_bridge/learning/storage.py` | New | `StoragePersistence` Protocol, `@runtime_checkable` |
-| `forge_bridge/__init__.py` | Modified | Re-export `StoragePersistence`; `__all__` grows 15 → **16** |
-| `tests/learning/test_storage_protocol.py` | New | isinstance-check contract test |
-
-**`__all__` changes:** Exactly +1 for the whole milestone (`StoragePersistence`). EXT-02 adds nothing to the public surface — annotations ride the MCP wire, not a Python import.
-
-**`set_storage_callback` / `register_tools` signatures:** **Unchanged.** Protocol is documentation; `register_tool` (internal, not `register_tools`) grows one kwarg.
+**ExecutionLog instance identity gate (Phase 9 precondition):** Confirm the console reads the SAME `ExecutionLog` instance that `bridge.py`'s callback fires against. In the standalone case, `_lifespan` must hold the canonical instance and pass it to both the callback registration path and the console read API. This avoids a repeat of LRN-05.
 
 ### Critical Pitfalls
 
-Top 5 load-bearing pitfalls that constitute **phase-planning gates** — roadmapper must surface these as plan tasks, not discover them in execution. See `PITFALLS.md` for the full list.
+1. **P-01: Stdout corruption in stdio mode** — `mcp.run()` in stdio mode owns stdout exclusively. Any HTTP server started in the same process that writes to stdout corrupts the MCP wire. Prevention: separate uvicorn task on `:9996`; all console output via `logging`, never `print()`. UAT: MCP client completes `tools/list` without errors while Web UI serves traffic on `:9996`.
 
-1. **P-02.5 + Privacy — new prompt-injection surface via `_meta` → `tools/list`** (EXT-02, Phase 7). Consumer-supplied tags reach a second LLM-facing surface at MCP rendering time — different threat model than Phase 6's synthesis-time injection. **Required Phase 7 deliverable:** `_sanitize_tag()` helper that strips control chars, rejects injection markers (`ignore previous`, `<|`, `[INST]`, triple-backtick, `---`), truncates to 64 chars, logs WARNING on reject. Non-negotiable — 2026 CVE context (Anthropic's own Git MCP server had three such CVEs in Jan 2026) makes this table-stakes security hygiene.
+2. **P-02: Transport switch breaks Claude Desktop configs** — Switching MCP default to `--http` transport silently breaks every `claude_desktop_config.json` entry. Prevention: stdio is the default (no flags = stdio); `--http` is opt-in; Web UI is unavailable in stdio mode. Document this trade-off explicitly.
 
-2. **P-02.1 — `_meta` vs `annotations` is NOT interchangeable** (EXT-02, Phase 7 gate). MCP `Tool.annotations` is a closed schema of five behavior hints (`title`, `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`); spec-compliant clients MUST ignore unknown annotation keys from untrusted servers. Provenance data goes in `Tool._meta` (documented freeform extension bag), never in `annotations`. **Required Phase 7-01 CONTEXT.md decision lock.**
+3. **P-03: MCP resource client incompatibility — no-tool-fallback trap** — Cursor does not support resources; Gemini CLI explicitly excludes resources. If `forge://manifest/synthesis` is the ONLY path to manifest data, these clients have no access. Prevention: ship BOTH `forge://manifest/synthesis` (resource) AND `forge_manifest_read` (tool fallback shim) together in Phase 9.
 
-3. **P-03.1 + P-03.8 — SQL session scoping and sync-over-async** (EXT-03, Phase 8). One session per callback, `async with async_sessionmaker.begin()`, no long-lived sessions bound to `ExecutionLog`. **Recommended implementation pattern:** projekt-forge registers a **sync** storage callback using sync `sessionmaker` — not `AsyncSession`. Rationale: `record()` can fire from a sync Flame thread with no running event loop; async callback silently drops with `RuntimeError: no running loop`. Sync sidesteps the footgun entirely; SQLAlchemy sync and async sessions coexist fine in the same process. Gate this in Phase 8-01 CONTEXT.md.
+4. **P-09: CLI vs Web UI read-model drift** — Two surfaces reading the same JSONL and in-memory state via different query paths will produce different numbers on boundary conditions. Artists file "wrong count" bugs that are actually query implementation differences. Prevention: single `ConsoleReadAPI` class is the ONLY path for both surfaces. Implement before any surface. This is the v1.3 architectural invariant.
 
-4. **P-03.5 — No retry in the storage callback, ever** (EXT-03, Phase 8). Durability comes from JSONL + backfill, not retry-in-callback. Retries stack async tasks (bounded only by asyncio's task queue) — a 30-second DB outage at 10/sec synthesis = 300 stacked tasks each holding a connection attempt = QueuePool exhaustion, which is exactly the failure mode we're preventing. One try/except, one WARNING log, return. Circuit-breaker shape documented in CONTEXT.md as a deferred pattern, not built.
+5. **P-04: JSONL partial-line parse on write boundary** — `fcntl.LOCK_EX` is advisory; a reader that opens the file without the lock can see a partial line. Prevention: `ExecutionLog.snapshot()` reads from in-memory dicts (no file I/O at query time), sidestepping the problem entirely for the hot path. If direct JSONL reads are needed elsewhere, use a position-tracked incremental reader with partial-line carry-over buffer.
 
-5. **I-3 + I-4 — Ship order matters; don't bundle in one tag** (Integration, both phases). Phase 7 (EXT-02) ships first as `v1.2.0`; projekt-forge UATs it; then Phase 8 (EXT-03) ships as `v1.2.1` or `v1.3.0`. Separate tags let projekt-forge pin forward/back independently. `ExecutionRecord` field additions require a minor bump + coordinated projekt-forge pin update.
+6. **P-06/P-07: LLM chat injection + cost runaway** — Context assembled for the chat endpoint must never include `raw_code` from execution records (only `intent` + `code_hash`); tool names and sidecar tags must pass through an independent sanitization pass (separate from `_sanitize_tag()` which covers MCP rendering). Rate limiter: sliding-window 10 RPM per source IP; `asyncio.wait_for(acomplete(), timeout=120.0)`.
+
+7. **Artist-UX failure modes** — Dashboard shows jargon (`promoted=True`, `JSONDecodeError at offset 412`, stats sorted by `code_hash`). Prevention: every UI-touching phase includes a mandatory 30-second non-developer dogfood check. A person who is not the developer must identify the three most recently synthesized tools and their status within 30 seconds of opening the Web UI.
+
+---
 
 ## Implications for Roadmap
 
-### Phase count: **2 phases** (Phase 7, Phase 8) — strictly sequential, not parallelizable
+Based on combined research across all four files, the v1.3 milestone maps to 4-5 phases (numbered Phase 9+ per PROJECT.md continuity from v1.2's Phase 8). The build order is strictly sequential — each phase depends on the HTTP API being stable before UI or CLI surfaces are built on top of it.
 
-Two structural coupling risks forbid parallelism: (a) both phases touch `forge_bridge/__init__.py` `__all__` (race on the barrel + tag ceremony conflict); (b) Phase 8 may want to consume `ExecutionRecord` field additions that Phase 7 inspires, but `ExecutionRecord` is a D-03-locked frozen dataclass — parallel work risks committing a schema that misses a field the other phase wants. The low-friction sequential path is faster in total wall-clock time.
+### Phase 9: ConsoleReadAPI + ManifestService + MCP Resources + Tool Fallback Shim
 
-### Phase 7: EXT-02 Tool Provenance in MCP Annotations (→ v1.2.0)
-
-**Rationale:** Smaller change, no consumer-side implementation dependency (unlike EXT-03 which needs projekt-forge's SQLAlchemy backend to verify end-to-end). The sidecar-to-annotation path lives entirely in forge-bridge (watcher + registry). Ships first because: (a) annotation changes are transparent to consumers not reading `_meta`; (b) EXT-02's sidecar pipeline produces the concrete `_meta` shape that EXT-03 can inspect when deciding "should the DB mirror any `_meta` fields as indexed columns?"; (c) it's the harder lift (sanitization, size budget, redaction allowlist, PII policy) and benefits from shipping before attention shifts to SQL.
+**Rationale:** Everything else depends on the read-side API existing and being tested. The MCP resources and tool fallback shim are bundled here because they are small and their data comes directly from `ManifestService.snapshot()`. Building the API and resources together means one release ceremony covers both. This phase also gates on the ExecutionLog instance identity check.
 
 **Delivers:**
-- `.tags.json` → `.sidecar.json` rename with `schema_version: 1` envelope (write path in synthesizer; read path in watcher with `.tags.json` backward-compat grace window)
-- `register_tool(..., provenance={"tags": [...], "meta": {...}})` internal kwarg; merges into existing `meta={"_source": ...}` under `forge-bridge/*` keys
-- `_sanitize_tag()` helper + 4 KB per-tool, 16-tags-per-tool, 64-char-per-tag ceilings
-- Redaction allowlist: `project:`, `phase:`, `shot:`, `type:` prefixes pass through; everything else → `redacted:<sha256[:8]>`; optional consumer-supplied `redact_fn` hook
-- `annotations.readOnlyHint=False` safety baseline on all synthesized tools
-- WR-02 docstring drift fix on `ExecutionRecord` vs `mark_promoted`
-- README conda-env guidance (v1.1 polish carry-over)
+- `ManifestService` singleton + `ToolRecord` dataclass
+- `ExecutionLog.snapshot(limit, offset)` method (in-memory read, no JSONL I/O)
+- `ConsoleReadAPI` — the single read layer for all surfaces
+- Console HTTP API skeleton: `/api/v1/manifest`, `/api/v1/executions`, `/api/v1/health`
+- `_lifespan` wiring: `ManifestService` instantiation, watcher injection, uvicorn task on `:9996`
+- `register_console_resources(mcp, manifest_service)` — `forge://manifest/synthesis`, `forge://tools`, `forge://tools/{name}`, `forge://health`
+- `forge_manifest_read` tool fallback shim (P-03 prevention)
+- CORS middleware on the console Starlette app
 
-**Addresses:** TS-02.1, TS-02.2, TS-02.3.
-**Avoids:** P-02.1, P-02.2, P-02.3, P-02.5, P-02.6, P-02.7 (live-UAT diff gate).
-**Plans (suggested): 4**
-  - 07-01 — Provenance contract + sidecar schema evolution (`.sidecar.json` + `schema_version`)
-  - 07-02 — Synthesizer + watcher wiring + `_sanitize_tag` + size budget
-  - 07-03 — `register_tool` provenance kwarg + registry meta merge + tests
-  - 07-04 — Release ceremony: `mcp[cli]>=1.19,<2` pin bump, regression test, `v1.2.0` tag, projekt-forge pin bump + UAT diff
+**Addresses:** TS-L.1, TS-L.2, TS-A.4 (health endpoint)
+**Avoids:** P-01, P-02, P-03, P-04, P-09, P-10
 
-### Phase 8: EXT-03 SQL Persistence Protocol (→ v1.2.1 or v1.3.0)
+**UAT criteria:**
+- MCP client (`tools/list`) succeeds while console HTTP API is serving traffic on `:9996`
+- Existing stdio integration tests pass with no `--http` flag (P-02 check)
+- Both `forge_manifest_read` tool path AND `resources/read forge://manifest/synthesis` return correct data from a real MCP session (not mocked)
+- `ConsoleReadAPI` and Web UI `/api/v1/manifest` return identical tool counts for the same data
+- ExecutionLog instance identity confirmed: live `bridge.execute()` call produces a row visible via `execution_log.snapshot()`
 
-**Rationale:** Gated on Phase 7 shipping and projekt-forge UAT clean. Protocol-only on the bridge side; real validation happens in projekt-forge's SQLAlchemy backend. Phase 5's lesson: two-repo phases are expensive — keep forge-bridge's delivery tight (one file + one barrel entry) so cross-repo coordination is minimized.
+**Research flag:** Standard patterns, no spike needed.
+
+---
+
+### Phase 10: Web UI (Jinja2 Templates + Static Assets + htmx Views)
+
+**Rationale:** The HTTP API from Phase 9 provides the stable contract the Web UI consumes. The Web UI is a read-only consumer — it has no coupling to Phase 11 (chat endpoint) unless the chat panel is included here.
 
 **Delivers:**
-- `forge_bridge/learning/storage.py` with `StoragePersistence` Protocol (persist, persist_batch, shutdown) + documented consistency model
-- Canonical schema documented in Protocol docstring (NOT as DDL)
-- `forge_bridge/__init__.py` re-export; `__all__` grows 15 → 16
-- Phase 8-01 CONTEXT.md decision lock: forge-bridge ships Protocol only; projekt-forge owns schema, Alembic chain, migrations, backfill
-- Recommended sync-callback pattern documented (P-03.8)
-- No-retry invariant documented (P-03.5)
-- `set_storage_callback` signature unchanged (Protocol is documentation)
-- projekt-forge: `_persist_execution` body swapped logger → SQL; isinstance-check at registration; cutover OR backfill script (planning decision per P-03.4)
+- `forge_bridge/console/templates/` — Jinja2 base template + per-view templates
+- `forge_bridge/console/static/` — `forge-console.css`, vendored `htmx.min.js`, `alpine.min.js`
+- Starlette `StaticFiles` mount and Jinja2 `TemplateResponse` routes at `/ui/`
+- View 1: Tools table (TS-A.1) — filterable, namespace color-coded
+- View 2: Per-tool drilldown (TS-A.2) — provenance, input schema, probation history, raw sidecar
+- View 3: Execution history (TS-A.3) + execution detail drawer (TS-E.1)
+- View 4: Manifest browser (TS-A.5) — loaded/orphaned status
+- View 5: Health panel (TS-A.4) — traffic-light cards, poll every 10 seconds via htmx
+- Structured query console (DF-1) — preset query chips minimum
+- `pyproject.toml` package-data includes for templates and static files
+- Design contract delivered by `/gsd-ui-phase` tooling
 
-**Addresses:** TS-03.1, TS-03.2, TS-03.3, TS-03.4.
-**Avoids:** P-03.1, P-03.2, P-03.3, P-03.5, P-03.7, P-03.8, P-03.9.
-**Plans (suggested): 3**
-  - 08-01 — `StoragePersistence` Protocol + barrel re-export + consistency-model CONTEXT.md
-  - 08-02 — projekt-forge sync SQLAlchemy adapter + Alembic revision + `on_conflict_do_nothing` + cutover-vs-backfill decision
-  - 08-03 — Release ceremony: `v1.2.1` (or `v1.3.0`) tag + projekt-forge pin bump + UAT DB writes
+**Uses:** Jinja2, htmx, Alpine.js, LOGIK-PROJEKT palette (`#242424` + `#cc9c00`)
+**Avoids:** P-11 (no SPA/npm), P-10 (assets and API co-served from `:9996`)
+
+**UAT criteria:**
+- Fresh `pip install forge-bridge` from built wheel + start in HTTP mode + open Web UI in browser — assets load without any npm commands
+- Browser `fetch()` calls from Web UI to `/api/v1/` succeed without CORS errors in Chrome and Safari
+- Non-developer dogfood: operator identifies three most recently synthesized tools and their status within 30 seconds
+
+**Research flag:** Standard patterns. No spike needed.
+
+---
+
+### Phase 11: CLI Companion (`forge-bridge console <subcommand>`)
+
+**Rationale:** CLI is the thinnest layer — pure formatting of JSON responses from the already-proven console API. Building it after the Web UI means the API contract is tested by real usage before the CLI is written against it. May merge with Phase 10 if the Web UI is lightweight; roadmapper decides.
+
+**Delivers:**
+- `forge_bridge/cli/console.py` — Typer app with subcommands: `tools`, `execs`, `manifest`, `health`, `doctor`
+- All commands are sync functions calling `httpx.get("http://127.0.0.1:9996/api/v1/...")` (sync httpx)
+- Rich table output for all subcommands; `--json` / `--raw` / `--format` flags
+- `forge-bridge console doctor` — parallel health checks, PASS/FAIL/WARN table with fix hints (DF-3)
+- `pyproject.toml` `[project.scripts]` updated: `forge-bridge` alone starts MCP server; `forge-bridge console <cmd>` runs CLI without starting the server
+- `httpx.ConnectError` handling with user-friendly "start the server first" message
+
+**Addresses:** TS-E.3, DF-3
+**Avoids:** P-09 (CLI reads from ConsoleReadAPI via HTTP, same data as Web UI)
+
+**UAT criteria:**
+- `forge-bridge console tools` output matches `/api/v1/manifest` JSON for same data — zero divergence
+- `forge-bridge console doctor` error message is helpful when server is not running
+- Non-developer dogfood: operator can answer "what synthesized tools are active?" from the terminal without opening a browser
+
+**Research flag:** Standard patterns. No spike needed.
+
+---
+
+### Phase 12: LLM Chat Endpoint (may defer to v1.4)
+
+**Rationale:** The LLM chat panel depends on Phase 9's `ManifestService` + `ExecutionLog.snapshot()` for context building and Phase 10's Web UI for the chat panel UI. It is the most complex surface and the most likely to be deferred. The rest of the console is fully functional without it. Defer to v1.4 if any earlier phase runs long.
+
+**Delivers (if in scope):**
+- `forge_bridge/console/chat.py` — `CONSOLE_SYSTEM_PROMPT`, chat handler, `build_chat_context(records, tool_list, max_bytes=2048)`
+- `POST /api/v1/chat` endpoint — `asyncio.wait_for(llm_router.acomplete(), timeout=120.0)`, client-disconnect cancellation
+- Independent sanitization pass: injects only `intent` + `code_hash` (never `raw_code`), strips injection markers from tool names and tags
+- Sliding-window rate limiter: 10 RPM per source IP, HTTP 429 on breach
+- Chat panel in Web UI (htmx form posting to `/api/v1/chat`)
+- Graceful degradation: chat panel grayed out when no LLM backend is healthy
+
+**Addresses:** DF-2
+**Avoids:** P-06 (injection), P-07 (cost runaway), P-08 (event loop blocking)
+
+**UAT criteria:**
+- 11 rapid requests from same IP within 1 minute: 11th returns HTTP 429
+- Mocked `LLMRouter.acomplete()` blocked indefinitely: endpoint returns timeout error within 125 seconds
+- Tool with injection-marker name does not propagate the marker into LLM context string
+- Non-developer dogfood: artist asks "what synthesis tools were created this week?" in plain English and gets a useful answer
+
+**Research flag:** Moderate complexity. Context assembly + sanitization boundary warrants a CONTEXT.md design spike before implementation. Apply the Phase 8 UAT lesson: test the full production call path, not individual seams.
+
+---
 
 ### Phase Ordering Rationale
 
-- Phase 7 before Phase 8, non-negotiable — shared `__all__` barrel edits + potential `ExecutionRecord` evolution make concurrent landing risky.
-- Phase 7 ships a full release (`v1.2.0`) before Phase 8 starts. projekt-forge pins `@v1.2.0`, UATs live `tools/list` with provenance visible, THEN Phase 8 begins. Matches v1.1 strict phase-ordering pattern (Phase 5 → Phase 6 gated; Phase 6 → v1.1.0 tag gated on UAT).
-- Neither phase touches locked v1.1 non-goals: no `LLMRouter` hot-reload, no shared-path JSONL writers, no `set_storage_callback` signature change, no `ExecutionRecord` field additions without minor bump + migration review.
+- Phase 9 is the foundation for everything. No UI or CLI surface can be built before the `ConsoleReadAPI`, `ManifestService`, and console HTTP API exist. MCP resources and the tool fallback shim ship here because they are small and their data comes from the same `ManifestService` that Phase 9 creates.
+- Phase 10 (Web UI) before Phase 11 (CLI) because the Web UI tests the API contract under real usage. The CLI is the thinnest client and benefits from building against a proven contract.
+- Phase 12 (LLM chat) last because it depends on everything else and is the most likely to be deferred. It does not block a functional, artist-usable console.
+- Merge options for the roadmapper: Phase 9 + MCP resources may fit in one phase (they share `ManifestService`). Phase 10 + Phase 11 may merge if the Web UI is lightweight.
+- Release ceremony timing: `__all__` grows 16 to ~18-19 with `ManifestService` and `ToolRecord`. One minor version bump ceremony at the end of Phase 9 or 10; not one per phase.
 
 ### Research Flags
 
-Phases with standard patterns (no mid-planning research spike expected):
-- **Phase 7** — MCP `_meta` pattern is spec-stable; FastMCP SDK `meta=` param verified; sanitization patterns are off-the-shelf.
-- **Phase 8** — `typing.Protocol` + `@runtime_checkable` are PEP 544 stable stdlib since 3.8. SQLAlchemy `async_sessionmaker.begin()` context-manager pattern is documented canonical.
+Phases likely needing deeper research during planning:
+- **Phase 12 (LLM chat):** Context assembly, sanitization boundary, and rate limiter design warrant a CONTEXT.md design spike. The boundary between `_sanitize_tag()` (MCP rendering) and the chat context sanitization pass (different threat model) needs explicit design. Token budget management for the Ollama local model context window also needs a number.
+- **Phase 10 (Web UI design contract):** Design contract is owned by `/gsd-ui-phase`. No architecture research needed, but the UI phase agent must be invoked for design deliverables.
 
-Phases that may benefit from targeted spike during planning:
-- **Phase 8-02 (projekt-forge SQLAlchemy adapter)** — one planning-phase decision: ship `ExecutionLogMixin` SQLAlchemy declarative mixin from forge-bridge (couples package to ORM API, prevents schema drift) vs. projekt-forge defines its own ORM class (cleaner package boundary, accepts drift risk). Research confidence on recommendation: MEDIUM.
-- **Phase 8-02 backfill-vs-cutover** — planning decision per P-03.4. Research recommends cutover for simplicity but flags both as valid.
-- **Phase 7-02 — whether `ExecutionRecord.intent` → MCP `title`** — small UX decision, not a research gap.
+Phases with standard patterns (skip research-phase):
+- **Phase 9:** `asyncio.create_task` + `uvicorn.Server` programmatic API is documented canonical. `ManifestService` is a simple asyncio-Lock-protected dict. MCP resource registration via `@mcp.resource()` is verified against `mcp==1.26.0`.
+- **Phase 11 (CLI):** Typer + httpx + Rich is a well-established stack. The sync-wrapper pattern for Typer 0.24.1 is verified.
 
-## Sidecar Schema Evolution Decision
+---
 
-**YES — rename `.tags.json` → `.sidecar.json` with `{"tags": [...], "meta": {...}, "schema_version": 1}` envelope. Phase 7 owns the write-path change.**
+## Additional Synthesis Notes
 
-Rationale:
-- **One file, one load, one atomic write** — both `tags` (for `FastMCP.tool(tags=...)` filter/enable) and canonical provenance `meta` (for `_meta["forge-bridge/*"]`) ship together. Today's `.tags.json` is `{"tags": [...]}` only — EXT-02 needs a meta payload alongside; adding a second sidecar would double the atomic-write surface.
-- **`schema_version: 1` costs nothing now** — lets future sidecar evolutions be detected without silently breaking old consumers.
-- **Grace window for backward compat** — watcher reads **both** for a migration window: prefer `.sidecar.json`, fall back to `.tags.json`. Synthesizer writes only `.sidecar.json` from v1.2.0 onwards.
-- **Lock in Phase 7-01, not 7-03** — update `synthesizer.py` write path + add round-trip read test **before** building the watcher/loader/register_tools side that consumes it.
+Cross-cutting concerns confirmed across multiple research files:
 
-**Plan ownership:** Phase 7-01 owns the synthesizer write-path rename + `schema_version: 1` envelope + round-trip test. Phase 7-02 owns the watcher read-path (with `.tags.json` fallback) and the `register_tool(..., provenance=...)` wiring. Phase 7-03 owns tests + size budget + sanitization. Phase 7-04 owns release ceremony.
+**Shared ConsoleReadAPI is the locked pattern.** All surfaces (Web UI / CLI / MCP resources / LLM chat) read through ONE class. Prevents P-09 and mirrors the LRN-05 lesson from Phase 8 (single read/write path prevents dead seams). Any phase that introduces a second read path is a scope violation.
+
+**Frontend stack: Jinja2 + htmx + Alpine.js, zero-build, vendored static assets.** No npm, no Tailwind CDN. One new pip dep: `jinja2>=3.1`. htmx and Alpine.js are vendored to guarantee offline availability in VFX studio environments.
+
+**CLI: Typer with sync functions calling sync httpx.** Typer 0.24.1 silently drops `async def` commands (verified via live test). Use `httpx.get()` (sync) for CLI to console API calls.
+
+**ManifestService singleton owns in-memory tool state.** Injected into watcher (write path) and console router (read path). Disk `.sidecar.json` is persistent truth; ManifestService is the in-memory consistent view. Watcher calls `manifest_service.register()` AFTER `register_tool()` succeeds — the manifest never contains a tool that is not registered.
+
+**MCP resource + tool fallback shim MUST ship together.** `forge_manifest_read` tool alongside `forge://manifest/synthesis` keeps the surface usable for all MCP clients. These are one deliverable in Phase 9, not two.
+
+**Artist-UX UAT criterion is mandatory, not optional.** Every UI-touching phase must include a 30-second non-developer dogfood check. This captures the failure class that pure engineering tests cannot detect.
+
+**Feature categories locked: TOOLS / EXECS / MANIFEST / HEALTH / CHAT.** Each maps to a Web UI view + CLI subcommand + (for 3 of them) an MCP resource. `forge-bridge console doctor` is table stakes.
+
+**Build order:** Phase 9 (ConsoleReadAPI + MCP resources + tool fallback shim) to Phase 10 (Web UI) to Phase 11 (CLI) to Phase 12 (LLM chat, may defer). Roadmapper may merge Phase 10 + 11 if thin enough.
+
+**ExecutionLog instance identity gate.** Phase 9 precondition: confirm the console reads the SAME `ExecutionLog` instance that `bridge.py`'s callback fires against. `_lifespan` must hold the canonical instance and pass it to both the callback registration path and the console read API. This must be an explicit Phase 9-01 task.
+
+---
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | MCP spec (2025-06-18) + SDK changelog + live-verified `meta=` roundtrip on installed `mcp==1.26.0`. PEP 544 behavior verified locally on Python 3.11. |
-| Features | HIGH | MCP `_meta` namespacing convention confirmed via 2026-03 "Tool Annotations as Risk Vocabulary" spec blog; OpenTelemetry SpanExporter provides a canonical template for the three-method Protocol shape. |
-| Architecture | HIGH | Integration points derived from direct source reads. `__all__` delta (+1) is mechanically derivable. Phase-ordering rationale has concrete conflict examples. |
-| Pitfalls | HIGH | Direct source analysis + 2026-era prompt-injection research (CyberArk Poison Everywhere, Unit 42 MCP Sampling, Anthropic Git MCP CVEs January 2026). SQLAlchemy 2.0 async patterns verified against current docs. |
+| Stack | HIGH | All runtime behavior verified against installed packages (`mcp==1.26.0`, `starlette==0.52.1`, `typer==0.24.1`). Typer async constraint confirmed via live test. One new dep (`jinja2>=3.1`) is straightforward. |
+| Features | HIGH | Feature scope from direct codebase analysis + PROJECT.md + reference UI pattern analysis (Temporal, Dagster, Prefect, ComfyUI, Grafana). Artist-vs-engineer split is well-grounded. |
+| Architecture | HIGH | Integration points from direct source reads of `server.py`, `watcher.py`, `execution_log.py`, `bridge.py` at v1.3.0. Component boundaries and data flows derived from existing code, not speculation. |
+| Pitfalls | HIGH | Conflict between STACK.md and ARCHITECTURE/PITFALLS.md is unambiguous — separate uvicorn task wins. Security pitfalls grounded in Phase 8 UAT lessons (LRN-05) and prior art (CyberArk, MCP injection CVEs). |
 
 **Overall confidence:** HIGH
 
 ### Gaps to Address During Planning
 
-- **ExecutionLogMixin ship-or-defer** (Phase 8 planning) — MEDIUM confidence recommendation; planning-phase judgment call.
-- **Backfill vs cutover** (Phase 8 planning) — P-03.4 recommends cutover; if projekt-forge needs historic reconstruction, ship backfill.
-- **EXT-02 attach point** — watcher reads `.sidecar.json` at registration (recommended) vs synthesizer stashes `__forge_meta__` on function object. Recommend watcher-reads-sidecar; lock in 07-01.
-- **`title=` / `description=` from sidecar** (Phase 7 planning) — small UX decision.
-- **`mark_promoted` callback mirror** (Phase 8 planning) — DF-03.4 flag.
-- **`ExecutionRecord` evolution pressure** — explicit carve: EXT-02 reads from `.sidecar.json` only, never from `ExecutionRecord`. Lock in Phase 7-01 CONTEXT.md.
+- **SSE vs poll scope decision** — PROJECT.md flags this as open. Research recommends poll-first (5s htmx `hx-trigger`); SSE is zero-cost to add if real-time feed is required. Roadmapper must decide before Phase 10 CONTEXT.md.
+- **Phase 10 + 11 merge decision** — both may be thin enough to ship as one. Roadmapper evaluates estimated task count once Phase 9 scope is finalized.
+- **Phase 12 (LLM chat) scope decision** — defer to v1.4 or include in v1.3? Roadmapper gates this on Phase 9-10-11 execution confidence.
+- **`forge-bridge` entry point wiring** — current `pyproject.toml` calls `mcp.run()` directly. Must be refactored to a Typer top-level app: bare `forge-bridge` = start MCP server; `forge-bridge console <cmd>` = CLI without starting server. Phase 9 design decision requiring explicit CONTEXT.md lock.
+- **`hatch.build` includes for static assets** — Jinja2 templates and vendored JS/CSS must survive wheel packaging. Verify `[tool.hatch.build.targets.wheel]` glob includes `forge_bridge/console/` subdirs. Phase 10 "looks done but isn't" checklist item.
+
+---
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- Direct source analysis — `forge_bridge/learning/{execution_log,synthesizer,watcher,manifest,probation}.py`, `forge_bridge/mcp/registry.py`, `forge_bridge/__init__.py` (v1.1.1)
-- MCP Specification 2025-06-18 — https://modelcontextprotocol.io/specification/2025-06-18/server/tools
-- MCP Tool Annotations as Risk Vocabulary (2026-03-16) — https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/blog/content/posts/2026-03-16-tool-annotations.md
-- MCP Python SDK release notes + PR #1463 (v1.19.0 `meta=` on `FastMCP.tool()`)
-- Live verification: `mcp==1.26.0` on Python 3.11.x
-- PEP 544 — Protocols
-- SQLAlchemy 2.0 `async_sessionmaker.begin()` docs
-- OpenTelemetry Python `SpanExporter` Protocol
-- `.planning/milestones/v1.1-ROADMAP.md`, `.planning/PROJECT.md`
+- Direct codebase analysis — `forge_bridge/mcp/server.py`, `forge_bridge/learning/watcher.py`, `forge_bridge/learning/execution_log.py`, `forge_bridge/bridge.py`, `forge_bridge/__init__.py` (v1.3.0 working tree)
+- Direct package inspection — `mcp==1.26.0` (`FastMCP.custom_route`, `@mcp.resource()`, route merge behavior verified), `starlette==0.52.1`, `typer==0.24.1` async behavior (live test)
+- `.planning/PROJECT.md` (v1.3 milestone scope, locked non-goals, design contract)
+- FastMCP docs (Context7 `/prefecthq/fastmcp`) — transport protocols, custom routes, HTTP mode vs stdio mode constraints
+- MCP Python SDK (Context7 `/modelcontextprotocol/python-sdk`) — resource decorator, URI templates
+- MCP Specification 2025-06-18 — Resources section
 
 ### Secondary (MEDIUM confidence)
-- CyberArk "Poison Everywhere: No output from your MCP server is safe"
-- Unit 42 "New Prompt Injection Attack Vectors Through MCP Sampling"
-- Practical DevSecOps MCP Security Vulnerabilities 2026
-- SQLAlchemy async issue #8145, discussion #5994
-- Celery result backend — `BaseBackend` subclass contract precedent
+- FastMCP: Running Your Server — gofastmcp.com/deployment/running-server — custom_route only in HTTP transport; stdio owns stdout exclusively
+- htmx 2.0.10 release — github.com/bigskysoftware/htmx/releases (2026-04-22)
+- Alpine.js 3.x — releasebot.io/updates/alpinejs (April 2026 release)
+- Tailwind Play CDN "development only" — tailwindcss.com/docs/installation/play-cdn
+- Temporal UI, Dagster asset catalog, Prefect flow runs dashboard, ComfyUI App Mode — reference UI pattern analysis
+- Grafana anti-pattern analysis — Tempo dashboard cited
+- npm doctor, React Native CLI doctor — `console doctor` pattern precedent
+- Gemini CLI resources issue #3816 — resources not supported
+- Cursor MCP resources forum — resources not supported
+- LLM API cost runaway patterns — $47K incident (tianpan.co/blog)
+- sse-starlette heartbeat + proxy patterns — github.com/sysid/sse-starlette
+- CyberArk "Poison Everywhere" — injection surfaces in MCP schema fields
 
 ---
-*Research completed: 2026-04-19*
-*Ready for roadmap: yes — 2 phases, strictly sequential, separate release tags*
+*Research completed: 2026-04-22*
+*Supersedes: SUMMARY-v1.2.md (v1.2 Observability & Provenance milestone)*
+*Ready for roadmap: yes — 4-5 phases (9-12), strictly sequential, single-repo milestone*
