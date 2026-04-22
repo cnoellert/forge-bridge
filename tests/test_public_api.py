@@ -49,12 +49,12 @@ def test_public_api_importable():
 
 
 def test_all_contract():
-    """forge_bridge.__all__ matches the 15-name surface exactly (Phase 4 D-01/D-02 + Phase 6 LRN-02/LRN-04)."""
+    """forge_bridge.__all__ matches the 16-name surface exactly (Phase 4 D-01/D-02 + Phase 6 LRN-02/LRN-04 + Phase 8 STORE-02)."""
     import forge_bridge
 
     expected = {
         "LLMRouter", "get_router",
-        "ExecutionLog", "ExecutionRecord", "StorageCallback",
+        "ExecutionLog", "ExecutionRecord", "StorageCallback", "StoragePersistence",
         "SkillSynthesizer", "PreSynthesisContext", "PreSynthesisHook",
         "register_tools", "get_mcp",
         "startup_bridge", "shutdown_bridge",
@@ -66,7 +66,7 @@ def test_all_contract():
         f"  Missing:  {expected - set(forge_bridge.__all__)}"
     )
     # Size must equal the expected set (catches duplicates)
-    assert len(forge_bridge.__all__) == 15
+    assert len(forge_bridge.__all__) == 16
 
 
 def test_core_types_not_reexported():
@@ -282,8 +282,31 @@ def test_phase6_symbols_importable_from_root():
         assert name in forge_bridge.__all__, f"{name} missing from forge_bridge.__all__"
 
 
-def test_public_surface_has_15_symbols():
-    """Phase 6 grows forge_bridge.__all__ from 11 to 15 entries."""
+def test_public_surface_has_16_symbols():
+    """Phase 8 grows forge_bridge.__all__ from 15 to 16 entries (adds StoragePersistence)."""
     import forge_bridge
 
-    assert len(forge_bridge.__all__) == 15
+    assert len(forge_bridge.__all__) == 16
+
+
+def test_phase8_symbols_importable_from_root():
+    """Phase 8 adds StoragePersistence to the public API surface (STORE-01, STORE-02)."""
+    import typing
+
+    import forge_bridge
+    from forge_bridge import StoragePersistence
+
+    # Symbol exists and is a typing.Protocol
+    assert StoragePersistence is not None
+    assert getattr(StoragePersistence, "_is_protocol", False) is True
+
+    # @runtime_checkable (D-03) — isinstance checks don't raise TypeError
+    class _Sanity:
+        def persist(self, record):  # pragma: no cover — structural only
+            return None
+
+    # Must not raise — confirms @runtime_checkable is applied
+    _ = isinstance(_Sanity(), StoragePersistence)
+
+    # __all__ membership
+    assert "StoragePersistence" in forge_bridge.__all__
