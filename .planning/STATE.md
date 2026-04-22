@@ -4,14 +4,14 @@ milestone: v1.2
 milestone_name: Observability & Provenance
 status: executing
 stopped_at: Phase 8 context gathered
-last_updated: "2026-04-22T00:04:12.002Z"
-last_activity: 2026-04-21
+last_updated: "2026-04-22T01:02:23.541Z"
+last_activity: 2026-04-22 -- Phase 08 execution started
 progress:
   total_phases: 3
   completed_phases: 2
-  total_plans: 9
+  total_plans: 12
   completed_plans: 9
-  percent: 100
+  percent: 75
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-15)
 
 **Core value (v1.2):** Surface synthesis provenance and persist execution history to SQL so downstream consumers can reason about what the learning pipeline has produced and stored — without scraping JSONL
-**Current focus:** Phase 07.1 — startup-bridge-graceful-degradation-hotfix-deployment-uat
+**Current focus:** Phase 08 — sql-persistence-protocol
 
 ## Current Position
 
-Phase: 07.1 (startup-bridge-graceful-degradation-hotfix-deployment-uat) — EXECUTING
-Plan: 3 of 5
-Status: Ready to execute
-Last activity: 2026-04-21
+Phase: 08 (sql-persistence-protocol) — EXECUTING
+Plan: 1 of 3
+Status: Executing Phase 08
+Last activity: 2026-04-22 -- Phase 08 execution started
 
 Progress: [··········] 0% (v1.2 milestone — research + requirements done, roadmap pending)
 
