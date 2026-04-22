@@ -4,7 +4,8 @@
 
 - ✅ **v1.0 Canonical Package & Learning Pipeline** — Phases 1-3 (shipped 2026-04-15)
 - ✅ **v1.1 projekt-forge Integration** — Phases 4-6 (shipped 2026-04-19 — v1.1.0 API release, v1.1.1 PATCH-01)
-- 🟢 **v1.2 Observability & Provenance** — Phases 7-8 (active — planning)
+- ✅ **v1.2 Observability & Provenance** — Phases 7, 07.1, 8 (shipped 2026-04-22 — v1.2.0, v1.2.1 hotfix, v1.3.0)
+- 📋 **v1.3 TBD** — start with `/gsd-new-milestone`
 
 ## Phases
 
@@ -30,116 +31,20 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
 
 </details>
 
-### 🟢 v1.2 Observability & Provenance (Phases 7-8)
+<details>
+<summary>✅ v1.2 Observability & Provenance (Phases 7, 07.1, 8) — SHIPPED 2026-04-22</summary>
 
-**Milestone Goal:** Surface what forge-bridge has synthesized (tool provenance in MCP annotations) and where it has persisted executions (SQL backend for the learning-pipeline storage callback) — so downstream consumers can reason about synthesis history without scraping JSONL files.
+- [x] **Phase 7: Tool Provenance in MCP Annotations** (4/4 plans) — completed 2026-04-21 (v1.2.0)
+- [x] **Phase 07.1: startup_bridge hotfix + deployment UAT** (5/5 plans) — completed 2026-04-21 (v1.2.1 hotfix)
+- [x] **Phase 8: SQL Persistence Protocol** (3/3 plans) — completed 2026-04-22 (v1.3.0)
 
-- [x] **Phase 7: Tool Provenance in MCP Annotations (EXT-02 → v1.2.0)** (4/4 plans) — completed 2026-04-21
-- [x] **Phase 8: SQL Persistence Protocol (EXT-03 → v1.3.0)** (3/3 plans) — completed 2026-04-22
+Full details: `.planning/milestones/v1.2-ROADMAP.md`
 
-**Ordering:** Strictly sequential. Phase 7 ships v1.2.0, projekt-forge pins and UATs, *then* Phase 8 starts. Matches the v1.1 Phase 5 → Phase 6 gate pattern; shared `__all__` barrel edits + potential `ExecutionRecord` evolution forbid parallelism.
+</details>
 
-**Stretch / deferred:** EXT-01 (shared synthesis manifest between repos) — revisit after Phase 7 clarifies what `_meta` payload is actually consumed. DF-02.1..DF-02.3, DF-03.1..DF-03.4 — candidates for v1.3 once observability data is in production.
+### 📋 v1.3 TBD (Not yet scoped)
 
-## Phase Details
-
-### Phase 7: Tool Provenance in MCP Annotations
-
-**Goal:** Consumers calling `tools/list` over MCP see canonical provenance fields on every synthesized tool (origin, code_hash, synthesized_at, version, observation_count) under the `forge-bridge/*` namespace in `Tool._meta`, with consumer-supplied tags passing through a sanitization boundary that strips injection markers and enforces size budgets.
-**Depends on:** Phase 6 (v1.1.0 shipped — `.tags.json` sidecar write-path, `ExecutionRecord` frozen, barrel at 15 symbols)
-**Requirements:** PROV-01, PROV-02, PROV-03, PROV-04, PROV-05, PROV-06
-**Success Criteria** (what must be TRUE):
-  1. An MCP client calling `tools/list` against a forge-bridge server with synthesized tools present receives `Tool._meta` payloads keyed under `forge-bridge/origin`, `forge-bridge/code_hash`, `forge-bridge/synthesized_at`, `forge-bridge/version`, `forge-bridge/observation_count` — verifiable via `mcp==1.26.0` roundtrip on `qwen2.5-coder:32b` against assist-01
-  2. A synthesized tool registered with a `.sidecar.json` envelope (`{"tags": [...], "meta": {...}, "schema_version": 1}`) surfaces its tags on the MCP wire; a legacy `.tags.json` sidecar still loads via the backward-compat grace path; a missing sidecar registers the tool with default `_meta` and no crash
-  3. A consumer-supplied tag containing control chars (`\n`, `\x00`..`\x1f`), injection markers (`ignore previous`, `<|`, `[INST]`, triple-backtick, `---`), or exceeding 64 chars is rejected at the `_sanitize_tag()` boundary with a WARNING log; every synthesized tool's `_meta` payload stays ≤ 4 KB and ≤ 16 tags per tool
-  4. Every synthesized tool registered has `annotations.readOnlyHint=False` set explicitly — verifiable by inspecting the `Tool` payload returned from `tools/list` (MCP clients MUST NOT auto-approve forge-synthesized tools)
-  5. projekt-forge pinned to `forge-bridge @ git+...@v1.2.0`, re-run live-UAT against assist-01 Ollama, `tools/list` diff shows only additive `_meta` changes on `synth_*` tools — no regressions on builtin `flame_*`/`forge_*` tools
-**Plans:** 4 plans
-
-Plans:
-- [x] 07-01-PLAN.md — Sidecar schema evolution: synthesizer writes `.sidecar.json` envelope `{"tags": [...], "meta": {...}, "schema_version": 1}` with five canonical `forge-bridge/*` meta keys; round-trip test (PROV-01)
-- [x] 07-02-PLAN.md — Watcher read-path + `_sanitize_tag()` + size budgets + redaction allowlist; `.sidecar.json` preferred, `.tags.json` fallback; feature-detect `provenance=` in `_scan_once` (PROV-01, PROV-03)
-- [x] 07-03-PLAN.md — `register_tool(..., provenance=)` kwarg + `_meta` merge + `readOnlyHint=False` synthesized baseline + WR-01 async callback test + WR-02 `ExecutionRecord` docstring fix + README conda-env section (PROV-02, PROV-04, PROV-05, PROV-06)
-- [x] 07-04-PLAN.md — Release ceremony: `mcp[cli]>=1.19,<2` pin, `v1.2.0` annotated tag on main, GitHub release (wheel + sdist), projekt-forge pin bump + cross-repo UAT `tools/list` diff (UAT vehicle deferred to Phase 07.1 — see [07.1-UAT-EVIDENCE.md](phases/07.1-startup-bridge-graceful-degradation-hotfix-deployment-uat/07.1-UAT-EVIDENCE.md))
-
-**Release artifact:** annotated `v1.2.0` tag on `main`, GitHub release with wheel + sdist. Hard gate: projekt-forge must pin `@v1.2.0` and UAT clean before Phase 8 starts.
-
-**UI hint:** no
-
-### Phase 07.1: startup_bridge graceful degradation hotfix + deployment UAT (INSERTED)
-
-**Goal:** Ship forge-bridge v1.2.1 whose MCP server boots cleanly when the standalone forge-bridge WebSocket server on :9998 is unreachable (honoring the existing docstring/warning-log contract of graceful degradation), then re-UAT PROV-02 via a real MCP client session instead of the monkey-patched harness used in Phase 7-04.
-**Requirements**: Defect fix — no REQ-ID (exposed during Phase 7 UAT; no matching entry in REQUIREMENTS.md)
-**Depends on:** Phase 7 (v1.2.0 released 2026-04-20)
-**Success Criteria** (what must be TRUE):
-  1. `python -m projekt_forge --no-db` (and `python -m forge_bridge`) in the `forge` conda env on Portofino boots cleanly with no process on :9998 — no exceptions escape the MCP server's lifespan, `tools/list` succeeds over stdio, `flame_ping` returns Flame's live state. NO monkey-patches or shims involved.
-  2. A regression test exists in `tests/` that FAILS against forge-bridge v1.2.0 and PASSES against the v1.2.1 fix (nyquist gate: spins up the MCP server with `FORGE_BRIDGE_URL` pointed at a dead port, asserts the server still serves a `tools/list` request).
-  3. forge-bridge v1.2.1 tagged, pushed, and released on GitHub with wheel + sdist; release notes clearly call out "hotfix" and "no PROV-02 changes".
-  4. projekt-forge re-pinned to `@v1.2.1` (line 25 of its pyproject.toml), reinstalled in the `forge` env, and its `pytest tests/` remains green at the 422 baseline.
-  5. A real MCP client (the user's Claude Code session on Portofino, with projekt-forge registered as an MCP server) observes PROV-02 `_meta` fields (`forge-bridge/origin: synthesizer`, `code_hash`, `synthesized_at`, `version`, `observation_count`) on a freshly Ollama-synthesized `synth_*` tool — verified end-to-end with evidence captured in `07.1-UAT-EVIDENCE.md` including verbatim tool-call result objects.
-  6. Phase 7 close-out unblocked: `07-04-SUMMARY.md` backfilled with pointer to 07.1 as the true UAT vehicle; `07-04` plan marked complete; Phase 7 verification pipeline can proceed.
-**Plans:** 5/5 plans executed — **completed 2026-04-21**
-
-Plans:
-- [x] 07.1-01-PLAN.md — RED/GREEN fix + regression test: failing test for startup_bridge graceful degradation (TDD RED), then try/except expansion to wrap both `_client.start()` and `wait_until_connected()` with `_client = None` nulling on failure (TDD GREEN). Covers SC1, SC2.
-- [x] 07.1-02-PLAN.md — Release ceremony: bump pyproject.toml 1.2.0→1.2.1, update test_public_api.py version-guard, annotated `v1.2.1` tag on main, GitHub release with wheel + sdist and hotfix-framed release notes. Covers SC3.
-- [x] 07.1-03-PLAN.md — Cross-repo re-pin: sed projekt-forge/pyproject.toml `@v1.2.0`→`@v1.2.1`, reinstall in `forge` conda env, verify site-packages resolution, regression-gate `pytest tests/` at 422-baseline. Covers SC4.
-- [x] 07.1-04-PLAN.md — Deployment UAT via real MCP client: register projekt-forge in Claude Code via `claude mcp add` + write HANDOFF.md + STOP for user-restart; fresh session runs 6-step UAT checklist + writes verbatim 07.1-UAT-EVIDENCE.md + cleanup. Covers SC5.
-- [x] 07.1-05-PLAN.md — Phase 7 close-out: backfill 07-04-SUMMARY.md with pointer to 07.1-UAT-EVIDENCE.md as the canonical UAT artifact; mark 07-04 complete in ROADMAP via `gsd-tools.cjs roadmap update-plan-progress`. Covers SC6.
-
-### Phase 8: SQL Persistence Protocol
-
-**Goal:** Consumers have a typed, documented contract (`StoragePersistence` Protocol) for mirroring `ExecutionRecord` writes into durable storage, with projekt-forge's `_persist_execution` stub replaced by a real sync-SQLAlchemy adapter that inserts rows idempotently and survives DB outages without retrying in the callback.
-**Depends on:** Phase 7 (v1.2.0 shipped, projekt-forge pin bumped + UAT clean)
-**Requirements:** STORE-01, STORE-02, STORE-03, STORE-04, STORE-05, STORE-06
-**Success Criteria** (what must be TRUE):
-  1. `from forge_bridge import StoragePersistence` succeeds in a clean virtualenv; `isinstance(fn, StoragePersistence)` returns `True` for an `async def persist(record): ...` function, `False` for a non-callable — verifiable via a contract test in `tests/learning/test_storage_protocol.py`; `__all__` grows 15 → 16
-  2. `ExecutionLog.set_storage_callback()` signature is unchanged from v1.1.0; consumers pass `backend.persist` (bound method) as the existing callable and the existing sync/async detection via `inspect.iscoroutinefunction` still works
-  3. After projekt-forge upgrades to the v1.2.1 (or v1.3.0) pin, every `ExecutionLog.record()` call results in a row in projekt-forge's `execution_log` SQL table (modulo DB outages, which are logged-and-swallowed); two forge-bridge processes writing to distinct JSONL paths produce no duplicate rows in the shared DB thanks to `on_conflict_do_nothing(index_elements=["code_hash","timestamp"])`
-  4. A simulated DB outage during a synthesis burst produces exactly one WARNING log line per failed callback (no retry stacking, no `QueuePool exhausted`); JSONL writes proceed unaffected; no async tasks stack beyond the normal steady-state count
-  5. CONTEXT.md documents the consistency model (log-authoritative, eventual, best-effort), the no-retry invariant (P-03.5), and the sync-callback recommendation (P-03.8); forge-bridge ships NO DDL, NO Alembic migrations, NO SQLAlchemy models — only the Protocol + docstring
-**Plans:** 3 plans
-
-Plans:
-- [x] 08-01-PLAN.md — Wave 1 (forge-bridge) — `StoragePersistence` @runtime_checkable Protocol (persist-only per D-02) in `forge_bridge/learning/storage.py`; barrel re-export through `forge_bridge/learning/__init__.py` + `forge_bridge/__init__.py`; `__all__` grows 15 → 16; canonical 4-column schema in module docstring (D-04, no promoted per D-08); contract test `tests/test_storage_protocol.py` (8 tests); updates `tests/test_public_api.py` for 16-symbol surface. Covers STORE-01, STORE-02, STORE-03, STORE-04, STORE-06.
-- [x] 08-02-PLAN.md — Wave 2 (CROSS-REPO: `/Users/cnoellert/Documents/GitHub/projekt-forge/`) — new Alembic revision `005_execution_log.py` extending projekt-forge's existing chain (004→005) creating `execution_log` table (code_hash TEXT, timestamp TIMESTAMPTZ, raw_code TEXT, intent TEXT + UNIQUE + 2 indexes); replace `_persist_execution` stub with sync SQLAlchemy adapter using `pg_insert(...).on_conflict_do_nothing(index_elements=["code_hash","timestamp"])` (D-07 sync, D-09 idempotent, D-06 no-retry, bound params for SQL-injection safety, no credential logging); `isinstance(_persist_execution, StoragePersistence)` gate at registration (D-11); adapter unit tests (8 tests) + updated wiring tests for sync-callback semantics. Covers STORE-05.
-- [x] 08-03-PLAN.md — Wave 3 (release ceremony + cross-repo pin + UAT) — forge-bridge `pyproject.toml` 1.2.1 → 1.3.0 (D-14 MINOR); `tests/test_public_api.py` version guard + changelog comment; annotated `v1.3.0` tag + GitHub Release with wheel + sdist; projekt-forge pin bump `@v1.2.1` → `@v1.3.0` + clean reinstall in `forge` conda env (Option A shadow remediation); `alembic upgrade head` applies revision 005 to live PG (HUMAN-VERIFIED checkpoint); real-synthesis UAT confirming rows land in execution_log (HUMAN-VERIFIED checkpoint). Milestone-close via `/gsd-complete-milestone` is the user's manual step after 08-03 closes. Indirect coverage of STORE-01..06 via the shipped artifact.
-
-**Release artifact:** annotated `v1.2.1` or `v1.3.0` tag on `main` (planning-phase decision — `__all__` delta is additive, so SemVer-minor is defensible; patch is also defensible since the Protocol is documentation). Milestone-close ceremony follows.
-
-**UI hint:** no
-
-## Cross-Repo Coordination
-
-| Phase | Plan | Repo | Notes |
-|-------|------|------|-------|
-| 7 | 07-04 | projekt-forge | pin bump `@v1.2.0` + UAT `tools/list` diff (live MCP verification against assist-01) |
-| 07.1 | 5/5 | Complete (2026-04-21) | Hotfix v1.2.1 released; cross-repo re-pin at `2f64b9e`; deployment UAT via real Claude Code MCP client captured at `07.1-UAT-EVIDENCE.md` |
-| 07.1 | 07.1-04 | projekt-forge | Claude Code MCP registration + live deployment UAT of PROV-02 `_meta` via real MCP client (no monkey-patches) |
-| 8 | 08-02 | projekt-forge | SQLAlchemy adapter + Alembic revision + isinstance check — **primary cross-repo deliverable** (mirrors Phase 6-04 pattern); path: `/Users/cnoellert/Documents/GitHub/projekt-forge/` |
-| 8 | 08-03 | projekt-forge | pin bump + UAT DB-write verification |
-
-Both cross-repo moments should be flagged as waves in their respective plans so phase-planning doesn't re-discover the coordination cost.
-
-## Locked Non-Goals (carried from v1.1 + added in v1.2)
-
-From v1.1:
-- **No `LLMRouter` hot-reload** — built once at consumer startup, restart to pick up config changes
-- **No shared-path JSONL writers across processes** — `fcntl.LOCK_EX` serializes writes, `_counters` is per-process state; two processes on the same file duplicate-promote
-- **No LLM config reload without restart** — ditto
-
-New in v1.2 (from REQUIREMENTS.md §"Out of Scope"):
-- **No full-text search / tsvector on `raw_code`** — JSONL `grep` is good enough for v1.2
-- **No time-series rollups / materialized views** — v1.3 dashboard concern
-- **No realtime callback streaming (WebSocket/SSE)** — local-first, consumers subscribe to their own DB's NOTIFY/LISTEN if needed
-- **No built-in Alembic migrations in forge-bridge** — Protocol-only, all DDL in projekt-forge
-- **No pluggable-backends registry** — one consumer today, YAGNI
-- **No cross-process promotion-counter sync** — v1.1 non-goal carried forward
-- **No code-signing / cryptographic provenance** — `code_hash` is integrity, not signature
-- **No placeholder sidecars for non-synthesized tools** — `_source` tag already distinguishes builtins; keep the "sidecar == synthesis artifact" contract
-- **No `_meta` provenance via `annotations`** — MCP spec reserves `annotations` for safety hints (PITFALL P-02.1)
-- **No consumer-facing `redact_fn` customization hook** — ship sane default in v1.2, reconsider in v1.3
-- **`ExecutionRecord` stays frozen at v1.1.0 shape** — any field addition requires minor bump + coordinated projekt-forge migration review (P-03.7, P-03.9)
+Run `/gsd-new-milestone` to define the next milestone's goals, requirements, and phase breakdown.
 
 ## Progress
 

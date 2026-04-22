@@ -6,16 +6,13 @@ forge-bridge is protocol-agnostic middleware for post-production pipelines — a
 
 ## Current State
 
-**Shipped:** v1.1.1 (2026-04-19) — `projekt-forge Integration` milestone complete. projekt-forge now consumes forge-bridge as a pip dependency (no duplicated source), the learning pipeline is wired into projekt-forge's LLM config / per-project log paths / storage callback, and `forge_bridge.__version__` is exposed via `importlib.metadata`. Three annotated tags on origin (`v1.0.1`, `v1.1.0`, `v1.1.1`) with wheel + sdist assets on the GitHub releases. Live-verified against Ollama on assist-01 (`qwen2.5-coder:32b`). See `.planning/milestones/v1.1-ROADMAP.md` for the full archive.
+**Shipped:** v1.3.0 (2026-04-22) — `v1.2 Observability & Provenance` milestone complete. Synthesized MCP tools now carry canonical provenance in `Tool._meta` (`origin`, `code_hash`, `synthesized_at`, `version`, `observation_count`) via `.sidecar.json` envelopes with consumer-tag sanitization + size budgets. The `StoragePersistence` `@runtime_checkable` Protocol ships on the bridge (1 method, documentation-only — no DDL on bridge side); projekt-forge consumes it via a sync SQLAlchemy adapter with idempotent `ON CONFLICT DO NOTHING` inserts + Alembic revision 005 + `isinstance` gate at registration. Three annotated tags this milestone (`v1.2.0` = Phase 7, `v1.2.1` = Phase 07.1 hotfix, `v1.3.0` = Phase 8) on origin with wheel + sdist assets. End-to-end UAT verified: real `bridge.execute()` writes land in projekt-forge's `execution_log` PG table. See `.planning/milestones/v1.2-ROADMAP.md` for the full archive.
 
-## Current Milestone: v1.2 Observability & Provenance
+**Codebase:** 21,826 LOC (forge_bridge + tests), 289 tests passing, 263 commits across 7 phases. Public API surface: 16 symbols in `forge_bridge.__all__`.
 
-**Goal:** Surface what forge-bridge has synthesized (tool provenance in MCP annotations) and where it has persisted executions (SQL backend for the learning-pipeline storage callback) — so downstream consumers can reason about synthesis history without scraping JSONL files.
+## Next Milestone: v1.3 TBD
 
-**Target features:**
-- **Phase 7: EXT-02 Tool provenance in MCP annotations** — lift `.tags.json` sidecars (produced by Phase 6-02) into MCP tool annotations; bundle WR-01/WR-02 code-review hygiene and README conda-env guidance
-- **Phase 8: EXT-03 SQL persistence backend for `ExecutionLog`** — define `StoragePersistence` Protocol on the bridge side; implement in projekt-forge via SQLAlchemy + Alembic
-- **Stretch / deferred:** EXT-01 (shared synthesis manifest between repos) — revisit after Phase 7 clarifies what metadata actually needs sharing
+Run `/gsd-new-milestone` to scope the next milestone. Deferred candidates include **EXT-01** (shared synthesis manifest between repos — now informed by what `_meta` payloads consumers actually read), **DF-02.1..DF-02.3** (manifest-as-resource reframing), and **DF-03.1..DF-03.4** (observability dashboards once SQL persistence has production data).
 
 ## Core Value
 
@@ -47,10 +44,16 @@ Make forge-bridge the single canonical package (`pip install forge-bridge`) that
 - ✓ Public API surface hardened: 11-name `__all__` barrel, injectable `LLMRouter`, public `startup_bridge`/`shutdown_bridge`, `register_tools()` post-run guard, `pyproject.toml` 1.0.0, PKG-03 grep gate clean — v1.1 (Phase 4)
 - ✓ projekt-forge rewired to consume forge-bridge as a pip dependency with site-packages resolution enforced (RWR-01..04) — v1.1 (Phase 5)
 - ✓ Learning pipeline integration in projekt-forge: storage callback + `pre_synthesis_hook` wired through `init_learning_pipeline`; `LLMRouter` built from `forge_config.yaml`; per-project `ExecutionLog` path; `forge_bridge` public surface grew to 15 symbols; annotated `v1.1.0` tag on origin (LRN-01..04) — v1.1.0 (Phase 6)
+- ✓ Tool provenance in MCP annotations: `.sidecar.json` envelope write-path with watcher preferring sidecar over legacy `.tags.json`; canonical `_meta` fields (`origin`, `code_hash`, `synthesized_at`, `version`, `observation_count`) under `forge-bridge/*` namespace; `_sanitize_tag()` boundary strips control chars + rejects injection markers + 64-char/16-tag/4KB budgets; explicit `annotations.readOnlyHint=False` on every synth tool (PROV-01..06) — v1.2.0 (Phase 7)
+- ✓ `startup_bridge` graceful degradation hotfix: MCP server boots cleanly when the standalone WS server on `:9998` is unreachable (honors existing docstring contract); re-UAT of PROV-02 via real MCP client session instead of the Phase 7-04 monkey-patched harness — v1.2.1 (Phase 07.1)
+- ✓ `StoragePersistence` Protocol: `@runtime_checkable typing.Protocol` with single `persist(record)` method; canonical 4-column schema (`code_hash`, `timestamp`, `raw_code`, `intent`) documented in module docstring; barrel re-export grows `__all__` 15→16; ships NO DDL on bridge — schema ownership stays with consumers (STORE-01..04) — v1.3.0 (Phase 8)
+- ✓ Cross-repo SQLAlchemy adapter: projekt-forge's `_persist_execution` stub replaced with real sync adapter using `pg_insert(...).on_conflict_do_nothing(index_elements=["code_hash","timestamp"])` for idempotency; Alembic revision `005_execution_log.py`; `isinstance(_persist_execution, StoragePersistence)` startup-time sanity gate; credential-leak prevention (logs only `type(exc).__name__`, never `str(exc)`) (STORE-05) — v1.3.0 (Phase 8)
+- ✓ No-retry invariant documented end-to-end: callback failures log WARNING once and return, durability comes from JSONL + optional backfill (STORE-06) — v1.3.0 (Phase 8)
+- ✓ LRN-05 gap closure: `forge_bridge.bridge.set_execution_callback()` hook was defined in Phase 6 but never installed; projekt-forge now installs `_forward_bridge_exec_to_log` in `init_learning_pipeline` — completing the `bridge.execute() → ExecutionLog.record() → _persist_execution → PG INSERT` chain. Discovered during Phase 8 live UAT — v1.3.0 (Phase 8 deviation)
 
 ### Active
 
-- _(none — v1.1.0 milestone complete)_
+- _(none — v1.2 milestone complete; v1.3 scope TBD via `/gsd-new-milestone`)_
 
 ### Out of Scope
 
@@ -62,11 +65,12 @@ Make forge-bridge the single canonical package (`pip install forge-bridge`) that
 
 ## Context
 
-- v1.0 shipped: 19,003 LOC Python, 159 tests passing, 66 commits across 3 phases
-- forge-bridge is now the canonical standalone package. projekt-forge integration is next.
-- FlameSavant learning pipeline successfully ported from JavaScript to Python with improvements (AST normalization, manifest-based file validation, safety blocklist)
-- Live-tested end-to-end: Flame execution -> JSONL log -> promotion -> qwen2.5-coder:32b synthesis -> validated MCP tool on disk
-- Local LLM (Ollama on assist-01, qwen2.5-coder:32b) confirmed working for synthesis
+- **v1.3.0 shipped (2026-04-22):** 21,826 LOC Python, 289 tests passing, 263 commits across 7 phases. Public API: 16 symbols in `forge_bridge.__all__`.
+- **Observability is live.** Every synthesized MCP tool carries provenance in `Tool._meta` under `forge-bridge/*`; every `bridge.execute()` call threads through to `ExecutionLog.record()` (LRN-05) then to projekt-forge's `execution_log` PG table via the StoragePersistence Protocol path. JSONL remains source of truth; SQL is the log-authoritative mirror.
+- **Cross-repo pin discipline proven.** Three release ceremonies this milestone followed the same pattern: forge-bridge tag + push → wheel + sdist → GitHub Release → projekt-forge pin bump → editable-shadow remediation (`pip uninstall -y forge-bridge && pip install -e .`) → UAT. The Option A pattern from Phase 07.1 is now the locked precedent for all future releases.
+- **FlameSavant learning pipeline** successfully ported from JavaScript to Python (Phase 3) with AST normalization, manifest-based file validation, safety blocklist.
+- **Live-tested end-to-end** throughout the milestone: Flame 2026.2.1 + Ollama `qwen2.5-coder:32b` on assist-01 → JSONL log → threshold promotion → synthesis → validated MCP tool with provenance metadata → SQL mirror row in `execution_log`.
+- **Runtime topology verified during Phase 8 UAT:** the projekt-forge admin DB lives at `forge_bridge` (not `forge_admin` as the original CONTEXT.md assumed); `FORGE_DB_URL` carries async `+asyncpg` driver prefix, so sync SQLAlchemy queries must strip the driver suffix before `create_engine()`.
 
 ## Constraints
 
@@ -97,6 +101,21 @@ Make forge-bridge the single canonical package (`pip install forge-bridge`) that
 | Minor-version bump ceremony: barrel re-export → pyproject.toml → regression test → annotated tag on main → push | Consumer (projekt-forge) pins via `git+...@vX.Y.Z`; tag identity locked at release time to prevent tag-drift attacks | ✓ Pattern established (Phase 6, reusable v1.2+) |
 | `LLMRouter` is built once at consumer startup from config and injected into `SkillSynthesizer`; no hot-reload — restart to pick up config changes | Keeps the wiring simple and avoids stale-client / dangling-session edge cases from swapping routers under live synthesizers. If runtime config reload ever becomes a requirement, design it explicitly. | ✓ Locked non-goal (Phase 6 scope boundary) |
 | Multiple `ExecutionLog` instances pointed at the **same** JSONL path across processes is NOT supported | `fcntl.LOCK_EX` serializes the writes, but `_counters` / `_promoted` are in-process state — each process would independently cross the promotion threshold, producing duplicate promotions. Consumer owns log-path strategy (SC #1 verified path isolation, not shared-path concurrency). If shared-path multi-writer is ever needed, design it explicitly (shared counter store, not per-process dict). | ✓ Locked non-goal (Phase 6 scope boundary) |
+| Provenance lives in `Tool._meta` under `forge-bridge/*` namespace, NOT `annotations` | MCP spec reserves `annotations` for safety hints (readOnlyHint, destructiveHint); mixing provenance there pollutes a safety-critical surface. Pitfall P-02.1 from Phase 7 research. | ✓ Complete (Phase 7, PROV-02) |
+| Consumer-supplied tags pass through `_sanitize_tag()` boundary at the read path (not the write path) | Consumer may produce unvalidated tags (legacy files, external tools); sanitizing at read-time means forge-bridge controls the trust boundary regardless of who wrote the sidecar. Size budgets: 64 chars/tag, 16 tags/tool, 4 KB/`_meta`. | ✓ Complete (Phase 7, PROV-03) |
+| Every synthesized tool gets `annotations.readOnlyHint=False` at registration | Synthesized tools call `bridge.execute()` to run arbitrary Python in Flame's process — that is categorically NOT read-only. Without explicit override, MCP clients may auto-approve synth tools under their read-only policy. | ✓ Complete (Phase 7, PROV-04) |
+| `startup_bridge` degrades gracefully when the standalone WS server on :9998 is unreachable — don't crash MCP server boot | Existing docstring + warning-log contract was written before Phase 7 made WS connectivity a hot path; v1.2.0 crashed here. Honoring the documented contract is the fix — MCP server still boots and flame_* tools still work if Flame is up. | ✓ Complete (Phase 07.1 hotfix, SC1) |
+| Cross-repo re-pin uses Option A shadow remediation: `pip uninstall -y forge-bridge && pip install -e .` | Editable install can shadow the pinned tag (`direct_url.json` keeps the source-tree path cached); uninstall-first forces pip to re-resolve from the pinned git reference. Locked pattern from Phase 07.1-03. | ✓ Locked pattern (Phase 07.1, reusable for all cross-repo re-pins) |
+| `StoragePersistence` Protocol exposes exactly one method (`persist`), not the originally-scoped 3-method API (`persist`, `persist_batch`, `shutdown`) | YAGNI — the single consumer (projekt-forge) has no use case for batch or shutdown today; adding them would freeze contracts with no grounding. Narrow Protocols are easier to implement correctly; wider Protocols are harder to satisfy. D-02 in Phase 8 CONTEXT. Future `BatchingStoragePersistence` sub-Protocol possible if backfill demand emerges. | ✓ Complete (Phase 8, D-02, STORE-01) |
+| `@runtime_checkable` is REQUIRED for `StoragePersistence` — not optional | Consumers need `isinstance()` at registration-time to fail loudly if the adapter drifts from the Protocol (e.g., forge-bridge adds a required method in a future minor bump). D-03 in Phase 8. | ✓ Complete (Phase 8, D-03, D-11) |
+| Canonical schema lives in the Protocol's module docstring, not in shipped DDL | Bridge is protocol-only — schema ownership stays with the consumer (projekt-forge has the Alembic migration). Docstring becomes the normative spec; deviating implementations are still Protocol-compliant but document their delta. D-04 in Phase 8. | ✓ Complete (Phase 8, D-04, STORE-04) |
+| Consistency model is log-authoritative + eventual + best-effort — JSONL is source of truth, SQL is a mirror | DB outages log WARNING once and return (no retry in callback, D-06). If the SQL row is missing, the JSONL record is canonical; a future backfill job can reconcile. D-05/D-06 in Phase 8. | ✓ Complete (Phase 8, D-05, D-06, STORE-06) |
+| Sync SQLAlchemy callback (not async), using `sessionmaker.begin()` context manager per call | ExecutionLog.record() can fire from Flame's Qt main thread where no asyncio event loop exists. Async would require `asyncio.run()` in the callback path, which is fragile across thread boundaries. Sync session-per-call is slower but correct. D-07 in Phase 8. | ✓ Complete (Phase 8, D-07, STORE-05) |
+| Idempotency via `on_conflict_do_nothing(index_elements=["code_hash","timestamp"])`, not app-level dedup | Multi-process safety (SC #1 path isolation is a sanity guard, not a concurrency contract — production is single-writer). PG-level constraint is atomic and matches the JSONL dedup shape. D-09 in Phase 8. | ✓ Complete (Phase 8, D-09) |
+| Credential leak prevention: log only `type(exc).__name__`, NEVER `str(exc)` for DB errors | SQLAlchemy `OperationalError.__str__()` walks the exception chain and includes the inner `asyncpg.InvalidPasswordError`-style message, which carries the DB URL with embedded credentials. Security-critical — a lazy log line leaks secrets to `.forge-bridge/*.log` and anywhere log aggregation ships. | ✓ Complete (Phase 8, 08-02 deviation, cf221fe review fix) |
+| Runtime adapter binding: attach `_persist_execution.persist = _persist_execution` to make a plain function satisfy `@runtime_checkable` Protocol | Python's `@runtime_checkable` checks for a named method attribute on the candidate object. Plain functions don't have a `.persist` attribute until we synthesize one — this pattern is how a callable satisfies a method-based Protocol without wrapping it in a class. Discovered during 08-02 execution. | ✓ Surprise (Phase 8, 08-02) |
+| Install `forge_bridge.bridge.set_execution_callback()` hook in projekt-forge's `init_learning_pipeline` — the Phase 6 hook was never wired | Phase 6 defined `set_execution_callback` as a public API but no production code called it. `bridge.execute() → ExecutionLog.record()` was a dead write path for three phases. Unit tests masked it by calling `log.record()` directly. Discovered during Phase 8 live UAT when real MCP calls produced zero rows. LRN-05. | ✓ Complete (Phase 8 deviation, projekt-forge cf221fe) |
+| UAT must exercise the full production call path end-to-end, not just unit-level pieces | Unit tests that hit individual seams mask missing wiring between them. Phase 8 UAT criterion ("real synthesis → row") surfaced LRN-05 only because we refused to fake the bridge path. Lesson: for observability chains that span multiple phases, the UAT query must come from a live production code path — not a harness. | ✓ Lesson (Phase 8 UAT) |
 
 ## Evolution
 
@@ -116,4 +135,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-19 — v1.2 "Observability & Provenance" milestone opened (Phases 7-8 scoped)*
+*Last updated: 2026-04-22 — v1.2 "Observability & Provenance" milestone shipped (v1.2.0 + v1.2.1 hotfix + v1.3.0; Phases 7, 07.1, 8 complete)*
