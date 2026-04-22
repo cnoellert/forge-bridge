@@ -9,21 +9,21 @@ Requirements for the Observability & Provenance milestone. Each maps to roadmap 
 
 ### Observability & Provenance (Phase 7 — EXT-02 → v1.2.0)
 
-- [ ] **PROV-01**: Synthesized tools emit a `.sidecar.json` file with `{"tags": [...], "meta": {...}, "schema_version": 1}` envelope; watcher reads `.sidecar.json` preferentially and falls back to legacy `.tags.json` during a grace window
-- [ ] **PROV-02**: MCP clients see canonical provenance fields in `Tool._meta` under the `forge-bridge/*` namespace: `origin`, `code_hash`, `synthesized_at`, `version`, `observation_count`
-- [ ] **PROV-03**: Consumer-supplied tags pass through `_sanitize_tag()` — strips control chars, rejects injection markers, truncates to 64 chars, caps at 16 tags per tool, 4KB per-tool `_meta`, logs WARNING on reject
-- [ ] **PROV-04**: Every synthesized tool has `annotations.readOnlyHint=False` set explicitly at registration (prevents MCP client auto-approve of synthesized tools that call `bridge.execute()`)
-- [ ] **PROV-05**: Code-review hygiene: async storage-callback failure-path tests added (WR-01); `ExecutionRecord` vs `mark_promoted` docstring drift fixed (WR-02)
-- [ ] **PROV-06**: README documents the conda `forge` env creation pattern (mirrors projekt-forge's convention; carry-over from v1.1 installer conversation)
+- [x] **PROV-01**: Synthesized tools emit a `.sidecar.json` file with `{"tags": [...], "meta": {...}, "schema_version": 1}` envelope; watcher reads `.sidecar.json` preferentially and falls back to legacy `.tags.json` during a grace window
+- [x] **PROV-02**: MCP clients see canonical provenance fields in `Tool._meta` under the `forge-bridge/*` namespace: `origin`, `code_hash`, `synthesized_at`, `version`, `observation_count`
+- [x] **PROV-03**: Consumer-supplied tags pass through `_sanitize_tag()` — strips control chars, rejects injection markers, truncates to 64 chars, caps at 16 tags per tool, 4KB per-tool `_meta`, logs WARNING on reject
+- [x] **PROV-04**: Every synthesized tool has `annotations.readOnlyHint=False` set explicitly at registration (prevents MCP client auto-approve of synthesized tools that call `bridge.execute()`)
+- [x] **PROV-05**: Code-review hygiene: async storage-callback failure-path tests added (WR-01); `ExecutionRecord` vs `mark_promoted` docstring drift fixed (WR-02)
+- [x] **PROV-06**: README documents the conda `forge` env creation pattern (mirrors projekt-forge's convention; carry-over from v1.1 installer conversation)
 
 ### Storage Backend (Phase 8 — EXT-03 → v1.2.1 or v1.3.0)
 
-- [ ] **STORE-01**: `forge_bridge/learning/storage.py` defines `StoragePersistence` `@runtime_checkable` Protocol with `async def persist(record)`, `async def persist_batch(records)`, `async def shutdown()` methods
-- [ ] **STORE-02**: `StoragePersistence` re-exported from `forge_bridge.__init__`; `__all__` grows 15 → 16
-- [ ] **STORE-03**: `ExecutionLog.set_storage_callback()` signature unchanged — Protocol is documentation-only; consumers pass `backend.persist` as the existing callable
-- [ ] **STORE-04**: Protocol docstring documents the canonical minimal schema (columns + constraint + indexes) that implementations MUST preserve; no DDL ships in forge-bridge
-- [ ] **STORE-05**: projekt-forge's `_persist_execution` stub replaced with a real sync SQLAlchemy backend using `on_conflict_do_nothing(index_elements=["code_hash","timestamp"])`; Alembic migration + isinstance check at registration
-- [ ] **STORE-06**: No-retry invariant documented in CONTEXT.md — callback failures log WARNING once and return (durability comes from JSONL + optional backfill, never in-callback retry)
+- [x] **STORE-01**: `forge_bridge/learning/storage.py` defines `StoragePersistence` `@runtime_checkable` Protocol with `async def persist(record)`, `async def persist_batch(records)`, `async def shutdown()` methods
+- [x] **STORE-02**: `StoragePersistence` re-exported from `forge_bridge.__init__`; `__all__` grows 15 → 16
+- [x] **STORE-03**: `ExecutionLog.set_storage_callback()` signature unchanged — Protocol is documentation-only; consumers pass `backend.persist` as the existing callable
+- [x] **STORE-04**: Protocol docstring documents the canonical minimal schema (columns + constraint + indexes) that implementations MUST preserve; no DDL ships in forge-bridge
+- [x] **STORE-05**: projekt-forge's `_persist_execution` stub replaced with a real sync SQLAlchemy backend using `on_conflict_do_nothing(index_elements=["code_hash","timestamp"])`; Alembic migration + isinstance check at registration
+- [x] **STORE-06**: No-retry invariant documented in CONTEXT.md — callback failures log WARNING once and return (durability comes from JSONL + optional backfill, never in-callback retry)
 
 ## Future Requirements
 
@@ -64,18 +64,18 @@ Deferred from v1.2 scope — candidates for a future milestone.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PROV-01 | Phase 7 | Pending |
-| PROV-02 | Phase 7 | Pending |
-| PROV-03 | Phase 7 | Pending |
-| PROV-04 | Phase 7 | Pending |
-| PROV-05 | Phase 7 | Pending |
-| PROV-06 | Phase 7 | Pending |
-| STORE-01 | Phase 8 | Pending |
-| STORE-02 | Phase 8 | Pending |
-| STORE-03 | Phase 8 | Pending |
-| STORE-04 | Phase 8 | Pending |
-| STORE-05 | Phase 8 | Pending |
-| STORE-06 | Phase 8 | Pending |
+| PROV-01 | Phase 7 | Done |
+| PROV-02 | Phase 7 | Done |
+| PROV-03 | Phase 7 | Done |
+| PROV-04 | Phase 7 | Done |
+| PROV-05 | Phase 7 | Done |
+| PROV-06 | Phase 7 | Done |
+| STORE-01 | Phase 8 | Done |
+| STORE-02 | Phase 8 | Done |
+| STORE-03 | Phase 8 | Done |
+| STORE-04 | Phase 8 | Done |
+| STORE-05 | Phase 8 | Done |
+| STORE-06 | Phase 8 | Done |
 
 **Coverage:**
 - v1.2 requirements: 12 total
