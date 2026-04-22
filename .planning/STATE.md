@@ -1,73 +1,65 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.2
-milestone_name: Observability & Provenance
-status: executing
-stopped_at: Phase 8 context gathered
-last_updated: "2026-04-22T17:04:24.191Z"
+milestone: v1.3
+milestone_name: Artist Console
+status: defining_requirements
+stopped_at: Milestone scope confirmed
+last_updated: "2026-04-22T00:00:00.000Z"
 last_activity: 2026-04-22
 progress:
-  total_phases: 3
-  completed_phases: 3
-  total_plans: 12
-  completed_plans: 12
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-04-15)
+See: .planning/PROJECT.md (updated 2026-04-22)
 
-**Core value (v1.2):** Surface synthesis provenance and persist execution history to SQL so downstream consumers can reason about what the learning pipeline has produced and stored — without scraping JSONL
-**Current focus:** Phase 08 — sql-persistence-protocol
+**Core value (v1.3):** Make forge-bridge legible to its operator — artist-first Web UI + CLI console surfacing the synthesis manifest, execution history, provenance, and live tool state, backed by a canonical MCP resource.
+**Current focus:** Defining v1.3 requirements
 
 ## Current Position
 
-Phase: 08
-Plan: Not started
-Status: Executing Phase 08
-Last activity: 2026-04-22
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-04-22 — Milestone v1.3 Artist Console started
 
-Progress: [··········] 0% (v1.2 milestone — research + requirements done, roadmap pending)
+Progress: [··········] 0% (v1.3 milestone — scope confirmed, requirements + roadmap pending)
 
 ## Session Handoff — Resume Instructions
 
 **What's committed and ready:**
 
-- `.planning/PROJECT.md` — v1.2 Current Milestone section written
-- `.planning/REQUIREMENTS.md` — 12 requirements (PROV-01..06 + STORE-01..06) with traceability table awaiting phase assignment
-- `.planning/research/` — STACK, FEATURES, ARCHITECTURE, PITFALLS, SUMMARY (all v1.2); v1.1 counterparts preserved as `*-v1.1.md`
-- `.planning/ROADMAP.md` — v1.1 archived in `<details>`; v1.2 draft scope visible (Phases 7 + 8)
-- Git: clean working tree, branch in sync with origin
+- `.planning/PROJECT.md` — v1.3 "Artist Console" Current Milestone section written
+- `.planning/STATE.md` — reset for new milestone
+- Git: clean working tree (pre-commit)
 
-**What IS committed:**
+**Still to produce this session:**
 
-- `.planning/ROADMAP.md` — Phase 7 + Phase 8 full draft (goals, SC, depends_on, suggested plan structure, cross-repo coordination, locked non-goals). Derived directly from research SUMMARY — NOT a formal gsd-roadmapper pass, but matches what the roadmapper would produce. Commit `6b40768`.
+- `.planning/REQUIREMENTS.md` — scoped v1.3 requirements with REQ-IDs (categories likely: CONSOLE, MFST, API, CLI, CHAT)
+- `.planning/ROADMAP.md` — phase structure starting at Phase 9
+- `.planning/research/` (optional) — 4 parallel agents if research step is approved
 
-**Next action (pick one):**
+**Next action:**
 
-1. **Ratify the draft + go straight to Phase 7 planning** — run `/gsd-plan-phase 7` directly. The draft suggests 4 plans (07-01 sidecar schema, 07-02 watcher + sanitize, 07-03 register_tool wiring + hygiene, 07-04 release). Fastest path.
+Continue the `/gsd-new-milestone` workflow — research decision → requirements → roadmap → approval.
 
-2. **Re-derive with gsd-roadmapper** — spawn the roadmapper to produce a fresh pass; compare to the existing draft. Useful if you want a second opinion or the draft feels off.
+**Key constraints for v1.3 planning:**
 
-3. **Review the draft manually** — `cat .planning/ROADMAP.md` and iterate with me before committing to planning.
+- Read-only UI this milestone — no admin/mutation actions, no auth
+- Serving on new port inside MCP server process (NOT mounted on `:9999` Flame exec endpoint, NOT on `:9998` WS)
+- JSONL is canonical data source (STORE-06); SQL read-adapter is opt-in
+- One manifest, two surfaces — bridge-owned canonical synthesis manifest served via MCP resource + console read API
+- Design language inherits LOGIK-PROJEKT `#242424` + `#cc9c00` amber, web-adapted; Web UI phase runs `/gsd-ui-phase` for its formal design contract
+- Locked v1.1/v1.2 non-goals carry forward (no LLMRouter hot-reload, no shared-path JSONL writers)
 
-**Key constraints for either path:**
-
-- Phase 7 (EXT-02) ships v1.2.0 BEFORE Phase 8 (EXT-03) starts. Hard gate, not a suggestion.
-- Phase 8's STORE-05 is a cross-repo plan (lands in projekt-forge at `/Users/cnoellert/Documents/GitHub/projekt-forge/`).
-- `__all__` stays at 15 during Phase 7; grows to 16 (adds `StoragePersistence`) during Phase 8.
-- `ExecutionRecord` frozen dataclass stays at v1.1.0 shape unless a specific plan adds a field with minor bump + migration.
-- Locked v1.1 non-goals carry forward: no LLMRouter hot-reload, no shared-path JSONL writers.
-
-**Critical pitfalls to surface in planning (from PITFALLS.md):**
-
-1. `_meta` vs `annotations` is NOT interchangeable — MCP spec reserves `annotations` for safety hints; provenance goes in `_meta` under `forge-bridge/*` namespace.
-2. `_sanitize_tag()` is a Phase 7 non-negotiable (prompt-injection surface via `tools/list`).
-3. Phase 8: sync SQLAlchemy callback recommended (avoids "no running loop" silent-drop).
-4. Phase 8: no retry in the storage callback, ever. Durability via JSONL + backfill.
+**Open (roadmapper to decide scope):** real-time streaming (SSE/WebSocket push) vs poll-only; multi-project view.
 
 ## Performance Metrics
 
@@ -133,20 +125,18 @@ None yet.
 
 ### Blockers/Concerns
 
-- [Phase 4]: mcp/server.py lifespan refactor — promoting _startup/_shutdown to public requires confirming forge-bridge's own test suite does not depend on the private names before Phase 4 planning
-- ~~[Phase 5]: Import blast radius in projekt-forge not yet measured~~ — RESOLVED: 179 `from forge_bridge.*` imports + 8 bare-module + 30+ patch-target variants all measured and rewritten in Plan 05-01
-- ~~[Phase 6]: DB persistence scope in v1.1 not decided~~ — RESOLVED 2026-04-18: SQL backend for ExecutionLog (EXT-03) deferred to v1.1.x; Phase 6 focuses on wiring (LRN-01..04) with JSONL + storage callback. See Decisions for rationale.
+None currently — v1.2 blockers all resolved (see archived milestones).
 
 ## Deferred Items
 
 | Category | Item | Status | Deferred At |
 |----------|------|--------|-------------|
-| EXT | Shared synthesis manifest between repos (EXT-01) | Future requirement | v1.1 definition |
-| EXT | Tool provenance in MCP annotations (EXT-02) | Future requirement | v1.1 definition |
-| EXT | SQL persistence backend for ExecutionLog (EXT-03) | Future requirement | v1.1 definition |
+| EXT | Tool provenance in MCP annotations (EXT-02) | Shipped v1.2.0 (Phase 7) | — |
+| EXT | SQL persistence backend for ExecutionLog (EXT-03) | Shipped v1.3.0 (Phase 8) | — |
+| EXT | Shared synthesis manifest between repos (EXT-01) | Pulled into v1.3 Artist Console (one manifest, two surfaces) | — |
 
 ## Session Continuity
 
-Last session: 2026-04-22T00:04:11.999Z
-Stopped at: Phase 8 context gathered
-Resume file: .planning/phases/08-sql-persistence-protocol/08-CONTEXT.md
+Last session: 2026-04-22 — v1.3 Artist Console milestone opened
+Stopped at: Milestone scope confirmed, PROJECT.md + STATE.md updated
+Resume file: continue `/gsd-new-milestone` workflow (research decision → REQUIREMENTS.md → ROADMAP.md)

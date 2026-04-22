@@ -10,9 +10,32 @@ forge-bridge is protocol-agnostic middleware for post-production pipelines — a
 
 **Codebase:** 21,826 LOC (forge_bridge + tests), 289 tests passing, 263 commits across 7 phases. Public API surface: 16 symbols in `forge_bridge.__all__`.
 
-## Next Milestone: v1.3 TBD
+## Current Milestone: v1.3 Artist Console
 
-Run `/gsd-new-milestone` to scope the next milestone. Deferred candidates include **EXT-01** (shared synthesis manifest between repos — now informed by what `_meta` payloads consumers actually read), **DF-02.1..DF-02.3** (manifest-as-resource reframing), and **DF-03.1..DF-03.4** (observability dashboards once SQL persistence has production data).
+**Goal:** Make forge-bridge legible to its operator — ship an artist-first Web UI + CLI console that surfaces the synthesis manifest, execution history, provenance, and live tool state, backed by a canonical MCP resource that any consumer can read.
+
+**Target features:**
+- Console Web UI — artist-first dashboard (LOGIK-PROJEKT dark + amber, web-adapted) served on a new port by the MCP server process; views for tools, execs, manifest, health, per-tool drilldown
+- Console CLI companion — `forge-bridge console <subcommand>` mirrors the Web UI surface for scripting / SSH workflows
+- Structured query console — primary interaction mode inside the Web UI; fast, deterministic, no LLM in the hot path
+- LLM chat layered on the console — second surface over the same read API using the existing `LLMRouter`
+- Synthesis manifest as MCP resource — one canonical manifest owned by the bridge, exposed at `forge://manifest/synthesis` (for LLM agents) and via the console read API (for the Web UI and CLI); satisfies both DF-02 and EXT-01 through the same artifact
+- Shared read-side API powering Web UI + CLI + chat, reading JSONL (canonical, per STORE-06) + live bridge state; optional SQL read-adapter mirrors the StoragePersistence shape
+
+**Key context:**
+- Read-only milestone; no quarantine/promote/kill in UI (admin is a follow-on once auth is in scope)
+- Serving model: new port (e.g., `:9996`) inside the MCP server process; `:9999` stays Flame's exec endpoint, `:9998` stays WS
+- Design contract for the Web UI is owned by `/gsd-ui-phase` for its phase — expected palette inherits `#242424` base + `#cc9c00` amber from LOGIK-PROJEKT
+- Minor version bump (grows `__all__` for new console entrypoints + manifest API) → next tag expected **v1.4.0**
+- Phase numbering continues from v1.2 — v1.3 starts at **Phase 9**
+
+**Locked non-goals:**
+- No Maya/editorial adapters for the manifest (Flame remains the only producer this milestone)
+- No auth in the console (localhost-bound, same posture as `:9999`)
+- No admin/mutation actions in the UI
+- Carried forward: no `LLMRouter` hot-reload, no shared-path JSONL writers
+
+**Open (roadmapper to decide scope):** real-time streaming (SSE/WebSocket push) vs poll-only; multi-project view in the console.
 
 ## Core Value
 
@@ -53,7 +76,7 @@ Make forge-bridge the single canonical package (`pip install forge-bridge`) that
 
 ### Active
 
-- _(none — v1.2 milestone complete; v1.3 scope TBD via `/gsd-new-milestone`)_
+- _v1.3 Artist Console requirements pending in `.planning/REQUIREMENTS.md` (roadmap assigns to Phase 9+)._
 
 ### Out of Scope
 
@@ -135,4 +158,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-22 — v1.2 "Observability & Provenance" milestone shipped (v1.2.0 + v1.2.1 hotfix + v1.3.0; Phases 7, 07.1, 8 complete)*
+*Last updated: 2026-04-22 — v1.3 "Artist Console" milestone opened (Phase 9+ scope pending requirements + roadmap)*
