@@ -109,7 +109,12 @@ Full details: `.planning/milestones/v1.2-ROADMAP.md`
   4. Preset chips (`Active synth` / `Quarantined` / `Builtin only`) are visually discoverable on first paint. A one-line caption or layout treatment makes them obviously interactive before the operator attempts the query grammar. `UI-SPEC.md` captures the adjusted discoverability pattern.
   5. A new in-browser test (Playwright or equivalent — not `starlette.testclient.TestClient`, which cannot see htmx swaps) drives a real browser through: load `/ui/tools`, click a nav link, assert one `.top-nav` and one `#health-strip` in the rendered DOM. The test is wired into the default regression suite (`pytest` discovers it or an equivalent CLI gate runs it), and it fails on the 2026-04-23 `shell.html` shipping state.
   6. Non-developer dogfood re-UAT: a fresh operator (not the developer `CN/dev`, not the 2026-04-23 tester `ET/tester`) identifies the three most recently synthesized tools and their status within **30 seconds**, on a `:9996` integration server preloaded with the same fixture set used in the 2026-04-23 UAT. Pass is required before Phase 11 may start. Record lives at `.planning/phases/10-01-artist-ux-gap-closure/10-01-UAT.md`.
-**Plans**: TBD (gap-closure — `/gsd-plan-phase 10.1 --gaps`)
+**Plans**: 5 plans across 3 waves (Wave 1 parallel; Wave 2 serialized on Wave 1; Wave 3 closure)
+  - [ ] 10.1-01-PLAN.md (wave 1) — ToolRecord quarantine-surface pinning test + misleading `Quarantined` preset chip removal (D-40 triage outcome (b))
+  - [ ] 10.1-02-PLAN.md (wave 1) — shell.html nav swap fix (D-37 Option A) + UI-SPEC.md §"Interaction Contracts" table update (D-38)
+  - [ ] 10.1-03-PLAN.md (wave 2) — Tools-view artist legibility: `_derive_tool_status` helper + tools_table.html rewrite (Status chip column, demoted telemetry, D-41) + chip-caption (D-42) + forge-console.css status-chip variants (D-40)
+  - [ ] 10.1-04-PLAN.md (wave 2) — Playwright in-browser nav-swap regression test (D-43) + pytest-playwright in new `test-e2e` optional extra; includes mandatory pre-commit FAIL/PASS verification cycle
+  - [ ] 10.1-05-PLAN.md (wave 3) — Pre-UAT automated-gate check + fixture-server prep + fresh-operator D-44 dogfood re-UAT checkpoint + 10.1-UAT.md record (D-45)
 **UI hint**: yes
 
 ---
@@ -241,7 +246,7 @@ redundant. On FB-D ship, mark Phase 12 as superseded in the progress table.
 | 8. SQL Persistence Protocol | v1.2 | 3/3 | Complete | 2026-04-22 |
 | 9. Read API Foundation | v1.3 | 0/3 | Not started | - |
 | 10. Web UI | v1.3 | 8/8 | Plans shipped, **blocked on D-36 artist-UX gate** | 2026-04-23 |
-| 10.1. Artist-UX Gap Closure | v1.3 | 0/? | Not started | - |
+| 10.1. Artist-UX Gap Closure | v1.3 | 0/5 | Not started | - |
 | 11. CLI Companion | v1.3 | 0/? | Not started | - |
 | 12. LLM Chat | v1.3 | 0/? | Superseded by FB-D (velocity gate triggered) | - |
 | FB-A. Staged Operation Entity & Lifecycle | v1.4 | 0/? | Designed | - |
