@@ -58,3 +58,12 @@ main#view-main{background:var(--color-bg);padding:64px 24px}
 .health-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
 .chat-stub-card{max-width:480px;margin:64px auto;background:var(--color-surface);padding:32px;border:1px solid var(--color-border);text-align:center}
 .chat-stub-card h1{font-size:20px;font-weight:600;color:var(--color-text-bright)}
+.status-chip{display:inline-block;padding:4px 8px;border-radius:2px;font-size:12px;font-weight:600;border:1px solid;text-transform:capitalize}
+.status-chip--active{background:rgba(47,95,0,.15);color:var(--color-status-ok);border-color:var(--color-status-ok)}
+.status-chip--loaded{background:var(--color-surface);color:var(--color-text);border-color:var(--color-border-md)}
+.status-chip--quarantined{background:rgba(102,78,0,.2);color:var(--color-accent);border-color:var(--color-accent)}
+.chip-caption{color:var(--color-text-muted);font-size:12px;margin:0 0 8px 0}
+.tool-name-cell .tool-name-primary{font-weight:400}
+.tool-name-cell .tool-name-secondary{color:var(--color-text-muted);font-size:12px;margin-top:2px}
+.tool-name-cell .tool-name-secondary .sep{margin:0 4px;opacity:.6}
+.tool-name-cell .tool-name-secondary .ns{font-weight:600}
