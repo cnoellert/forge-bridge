@@ -4,7 +4,7 @@
 
 {% block body %}
 <div x-data="shellRoot()" x-init="init()">
-  <nav class="top-nav" hx-boost="true" hx-push-url="true" hx-target="#view-main" hx-swap="innerHTML">
+  <nav class="top-nav" hx-boost="true" hx-push-url="true">
     <a href="/ui/tools"    class="nav-link{% if active_view == 'tools' %} active{% endif %}"    {% if active_view == 'tools' %}aria-current="page"{% endif %}>Tools</a>
     <a href="/ui/execs"    class="nav-link{% if active_view == 'execs' %} active{% endif %}"    {% if active_view == 'execs' %}aria-current="page"{% endif %}>Executions</a>
     <a href="/ui/manifest" class="nav-link{% if active_view == 'manifest' %} active{% endif %}" {% if active_view == 'manifest' %}aria-current="page"{% endif %}>Manifest</a>
