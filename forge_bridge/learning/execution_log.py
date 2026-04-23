@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import collections
+import dataclasses
 import fcntl
 import hashlib
 import inspect
@@ -23,6 +25,7 @@ from typing import Awaitable, Callable, Optional, Union
 logger = logging.getLogger(__name__)
 
 LOG_PATH = Path.home() / ".forge-bridge" / "executions.jsonl"
+_DEFAULT_MAX_SNAPSHOT = 10_000
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +117,14 @@ class ExecutionLog:
         self._promoted: set[str] = set()
         self._code_by_hash: dict[str, str] = {}
         self._intent_by_hash: dict[str, Optional[str]] = {}
+        # Bounded in-memory snapshot deque (D-06).
+        # Sized via FORGE_EXEC_SNAPSHOT_MAX env; default 10_000.
+        # Replay (below) will re-fill the deque from JSONL, maxlen-truncating to newest.
+        maxlen = int(os.environ.get("FORGE_EXEC_SNAPSHOT_MAX", _DEFAULT_MAX_SNAPSHOT))
+        self._records: "collections.deque[ExecutionRecord]" = collections.deque(maxlen=maxlen)
+        # Promotion-only JSONL rows (mark_promoted) populate this set; snapshot()
+        # joins it against deque records to project promoted=True (D-09, P9-3).
+        self._promoted_hashes: set[str] = set()
         self._replay()
         self._storage_callback: Optional[StorageCallback] = None
         self._storage_callback_is_async: bool = False
@@ -167,6 +178,7 @@ class ExecutionLog:
                     # Promotion-only record
                     if rec.get("promoted") is True and "raw_code" not in rec:
                         self._promoted.add(code_hash)
+                        self._promoted_hashes.add(code_hash)  # D-09 for snapshot projection
                         continue
 
                     # Normal execution record
@@ -176,6 +188,15 @@ class ExecutionLog:
                         self._intent_by_hash[code_hash] = rec.get("intent")
                         if rec.get("promoted") is True:
                             self._promoted.add(code_hash)
+                            self._promoted_hashes.add(code_hash)  # D-09 projection
+                        replayed = ExecutionRecord(
+                            code_hash=code_hash,
+                            raw_code=rec["raw_code"],
+                            intent=rec.get("intent"),
+                            timestamp=rec.get("timestamp", ""),
+                            promoted=bool(rec.get("promoted", False)),
+                        )
+                        self._records.append(replayed)  # newest-wins via deque maxlen
         except OSError:
             logger.warning("Could not read execution log at %s", self._path)
 
@@ -230,6 +251,10 @@ class ExecutionLog:
                         exc_info=True,
                     )
 
+        # D-06: append to the snapshot deque AFTER JSONL flush + callback fire.
+        # Ordering is the contract — the deque mirrors canonical write order.
+        self._records.append(record)
+
         if self._counters[h] >= self._threshold and h not in self._promoted:
             return True
         return False
@@ -237,6 +262,7 @@ class ExecutionLog:
     def mark_promoted(self, code_hash: str) -> None:
         """Mark a code hash as promoted, preventing future promotion signals."""
         self._promoted.add(code_hash)
+        self._promoted_hashes.add(code_hash)  # D-09: snapshot projection source
         rec = {
             "code_hash": code_hash,
             "promoted": True,
@@ -262,3 +288,60 @@ class ExecutionLog:
     def get_count(self, code_hash: str) -> int:
         """Return the execution count for a given hash."""
         return self._counters.get(code_hash, 0)
+
+    def snapshot(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        since: Optional[datetime] = None,
+        promoted_only: bool = False,
+        code_hash: Optional[str] = None,  # prefix match per D-03
+    ) -> tuple[list[ExecutionRecord], int]:
+        """Return (filtered_records, total_before_pagination) from the bounded deque.
+
+        Reads deque only (D-07). Never touches JSONL — the deque is the hot-path
+        query surface; disk is canonical for full history.
+
+        Ordering: newest-first (reverse deque iteration). Default limit is 50,
+        matches D-05; the handler clamps to 500 max BEFORE calling this method.
+
+        Filters (all AND-combined):
+          since: ISO8601-parsed timestamp; records older than this are dropped.
+          promoted_only: include only records whose code_hash is in
+                         self._promoted_hashes (D-09 projection — not the frozen
+                         ExecutionRecord.promoted field, which may be stale).
+          code_hash: prefix match (D-03) — rec.code_hash.startswith(code_hash).
+
+        NOTE (W-01): the `tool` filter (e.g. `?tool=synth_*`) is DEFERRED to
+        v1.4. Supporting it requires either a `ManifestService`-owned
+        `code_hash`->name reverse map (with careful concurrency semantics while
+        the watcher mutates the manifest) or an additive field on
+        `ExecutionRecord`. Both changes are larger than D-12's "decide now"
+        threshold. In v1.3 the /api/v1/execs route handler REJECTS `?tool=...`
+        with a 400 `{"error": {"code": "not_implemented"}}` response — so
+        `snapshot()` never sees the kwarg and does not need to accept it.
+
+        Returns a fresh list so callers may iterate without worrying about deque
+        mutation during iteration.
+        """
+        filtered: list[ExecutionRecord] = []
+        for rec in reversed(self._records):  # newest-first
+            if since is not None:
+                try:
+                    rec_ts = datetime.fromisoformat(rec.timestamp)
+                except ValueError:
+                    continue  # unparseable timestamp: skip, don't break (clock skew tolerance)
+                if rec_ts < since:
+                    continue
+            if promoted_only and rec.code_hash not in self._promoted_hashes:
+                continue
+            if code_hash is not None and not rec.code_hash.startswith(code_hash):
+                continue
+            # D-09 projection: mirror current promoted state onto a frozen clone
+            if rec.code_hash in self._promoted_hashes and not rec.promoted:
+                rec = dataclasses.replace(rec, promoted=True)
+            filtered.append(rec)
+
+        total = len(filtered)
+        page = filtered[offset : offset + limit]
+        return page, total

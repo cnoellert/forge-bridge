@@ -388,3 +388,183 @@ async def test_async_storage_callback_exception_does_not_propagate(tmp_path):
 
     # record()'s return value is a bool (did it signal promotion?) — just assert type
     assert isinstance(result, bool)
+
+
+# ---------------------------------------------------------------------------
+# Plan 09-02 Task 2: bounded deque + snapshot() + _promoted_hashes (D-06..D-09)
+# ---------------------------------------------------------------------------
+
+
+def test_records_deque_initialized_with_maxlen_from_env(tmp_path, monkeypatch):
+    """FORGE_EXEC_SNAPSHOT_MAX env var sizes the in-memory snapshot deque."""
+    from forge_bridge.learning.execution_log import ExecutionLog
+
+    monkeypatch.setenv("FORGE_EXEC_SNAPSHOT_MAX", "100")
+    log_path = tmp_path / "executions.jsonl"
+    log = ExecutionLog(log_path=log_path)
+    assert log._records.maxlen == 100
+
+
+def test_records_deque_default_maxlen_is_10000(tmp_path, monkeypatch):
+    """Without env, the deque defaults to maxlen=10_000."""
+    from forge_bridge.learning.execution_log import ExecutionLog
+
+    monkeypatch.delenv("FORGE_EXEC_SNAPSHOT_MAX", raising=False)
+    log_path = tmp_path / "executions.jsonl"
+    log = ExecutionLog(log_path=log_path)
+    assert log._records.maxlen == 10_000
+
+
+def test_record_appends_to_deque_after_jsonl_flush(tmp_path):
+    """record() appends an ExecutionRecord to _records after the JSONL write."""
+    from forge_bridge.learning.execution_log import ExecutionLog, ExecutionRecord
+
+    log_path = tmp_path / "executions.jsonl"
+    log = ExecutionLog(log_path=log_path)
+    log.record("print(1)")
+
+    assert len(log._records) == 1
+    rec = log._records[0]
+    assert isinstance(rec, ExecutionRecord)
+    assert rec.raw_code == "print(1)"
+
+
+def test_snapshot_returns_records_newest_first(tmp_path):
+    """snapshot() iterates the deque newest-first by default."""
+    from forge_bridge.learning.execution_log import ExecutionLog
+
+    log_path = tmp_path / "executions.jsonl"
+    log = ExecutionLog(log_path=log_path)
+    log.record("a = 1")
+    log.record("b = 2")
+    log.record("c = 3")
+    records, total = log.snapshot(limit=10)
+    assert total == 3
+    assert records[0].raw_code == "c = 3"
+    assert records[-1].raw_code == "a = 1"
+
+
+def test_snapshot_respects_limit_and_offset(tmp_path):
+    """snapshot(limit, offset) paginates over the newest-first list."""
+    from forge_bridge.learning.execution_log import ExecutionLog
+
+    log_path = tmp_path / "executions.jsonl"
+    log = ExecutionLog(log_path=log_path)
+    for i in range(5):
+        log.record(f"x = {i}")
+    records, total = log.snapshot(limit=2, offset=1)
+    assert total == 5
+    assert len(records) == 2
+    # Newest-first ordering: index 0 is x=4; offset=1 drops it; next two are x=3, x=2.
+    assert records[0].raw_code == "x = 3"
+    assert records[1].raw_code == "x = 2"
+
+
+def test_snapshot_since_filter(tmp_path):
+    """snapshot(since=...) drops records older than the boundary datetime."""
+    from datetime import datetime, timezone
+
+    from forge_bridge.learning.execution_log import ExecutionLog, ExecutionRecord
+
+    log_path = tmp_path / "executions.jsonl"
+    log = ExecutionLog(log_path=log_path)
+    # Inject two stale records directly (skip real clock) then a real one.
+    old1 = ExecutionRecord(
+        code_hash="h1" + "0" * 62, raw_code="old_1", intent=None,
+        timestamp="2020-01-01T00:00:00+00:00", promoted=False,
+    )
+    old2 = ExecutionRecord(
+        code_hash="h2" + "0" * 62, raw_code="old_2", intent=None,
+        timestamp="2020-01-02T00:00:00+00:00", promoted=False,
+    )
+    log._records.append(old1)
+    log._records.append(old2)
+    log.record("new = 1")  # real now()
+    boundary = datetime(2022, 1, 1, tzinfo=timezone.utc)
+    records, total = log.snapshot(since=boundary)
+    assert total == 1
+    assert records[0].raw_code == "new = 1"
+
+
+def test_snapshot_promoted_only_filter(tmp_path):
+    """snapshot(promoted_only=True) returns only promoted hashes, projected promoted=True."""
+    from forge_bridge.learning.execution_log import ExecutionLog
+
+    log_path = tmp_path / "executions.jsonl"
+    log = ExecutionLog(log_path=log_path)
+    log.record("x = 1")
+    h1 = list(log._code_by_hash.keys())[0]
+    log.record("y = 2")
+    log.record("z = 3")
+    log.mark_promoted(h1)
+    records, total = log.snapshot(promoted_only=True)
+    assert total == 1
+    assert records[0].code_hash == h1
+    # D-09 projection: promoted=True despite the frozen deque record having promoted=False
+    assert records[0].promoted is True
+
+
+def test_snapshot_code_hash_prefix_filter(tmp_path):
+    """snapshot(code_hash=prefix) matches records whose code_hash starts with prefix."""
+    from forge_bridge.learning.execution_log import ExecutionLog
+
+    log_path = tmp_path / "executions.jsonl"
+    log = ExecutionLog(log_path=log_path)
+    log.record("x = 1")
+    log.record("y = 2")
+    log.record("z = 3")
+    # Pick any stored hash and its first 6 chars as a prefix
+    hashes = list(log._code_by_hash.keys())
+    target = hashes[0]
+    prefix = target[:6]
+    records, total = log.snapshot(code_hash=prefix)
+    # All returned records' hashes must start with the prefix
+    assert all(r.code_hash.startswith(prefix) for r in records)
+    assert total >= 1
+
+
+def test_replay_refills_deque_from_jsonl(tmp_path):
+    """_replay() re-fills the deque from the JSONL file up to maxlen."""
+    from forge_bridge.learning.execution_log import ExecutionLog
+
+    log_path = tmp_path / "executions.jsonl"
+    log1 = ExecutionLog(log_path=log_path)
+    for i in range(5):
+        log1.record(f"x = {i}")
+
+    # Fresh instance -- replay must re-fill the deque
+    log2 = ExecutionLog(log_path=log_path)
+    assert len(log2._records) == 5
+    # _promoted_hashes should be empty (no promotions yet)
+    assert log2._promoted_hashes == set()
+
+
+def test_replay_maxlen_newest_wins(tmp_path, monkeypatch):
+    """When maxlen < JSONL row count, deque contains the newest maxlen records."""
+    from forge_bridge.learning.execution_log import ExecutionLog
+
+    log_path = tmp_path / "executions.jsonl"
+    # First pass -- write 50 records with the default unbounded-replay env
+    monkeypatch.delenv("FORGE_EXEC_SNAPSHOT_MAX", raising=False)
+    log1 = ExecutionLog(log_path=log_path)
+    for i in range(50):
+        log1.record(f"x = {i}")
+    # Second pass -- bounded to 10 via env
+    monkeypatch.setenv("FORGE_EXEC_SNAPSHOT_MAX", "10")
+    log2 = ExecutionLog(log_path=log_path)
+    assert len(log2._records) == 10
+    # Should contain the newest 10 (x = 40 .. x = 49)
+    seen_codes = {r.raw_code for r in log2._records}
+    assert "x = 49" in seen_codes
+    assert "x = 40" in seen_codes
+    assert "x = 39" not in seen_codes
+
+
+def test_mark_promoted_populates_promoted_hashes(tmp_path):
+    """mark_promoted(code_hash) adds the hash to _promoted_hashes."""
+    from forge_bridge.learning.execution_log import ExecutionLog
+
+    log_path = tmp_path / "executions.jsonl"
+    log = ExecutionLog(log_path=log_path)
+    log.mark_promoted("deadbeef")
+    assert "deadbeef" in log._promoted_hashes
