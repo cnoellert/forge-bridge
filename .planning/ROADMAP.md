@@ -46,7 +46,8 @@ Full details: `.planning/milestones/v1.2-ROADMAP.md`
 ### 📋 v1.3 Artist Console (Phases 9-12)
 
 - [ ] **Phase 9: Read API Foundation** — ConsoleReadAPI, ManifestService singleton, instance-identity gate, uvicorn task on `:9996`, MCP resources + tool fallback shim
-- [x] **Phase 10: Web UI** — Jinja2 + htmx + Alpine.js, five views (tools, execs, manifest, health, chat nav), structured query console, health header strip (completed 2026-04-23)
+- [x] **Phase 10: Web UI** — Jinja2 + htmx + Alpine.js, five views (tools, execs, manifest, health, chat nav), structured query console, health header strip — 8/8 plans shipped 2026-04-23, **blocked on D-36 artist-UX gate** (remediated in Phase 10.1)
+- [ ] **Phase 10.1: Artist-UX Gap Closure** — fix `hx-boost` nav swap bug, add explicit Status chip to Tools table, artist-legible column headers, discoverable preset chips, in-browser swap regression test; re-run D-36 dogfood UAT
 - [ ] **Phase 11: CLI Companion** — Typer subcommands (tools, execs, manifest, health, doctor), Rich output, --json flags
 - [ ] **Phase 12: LLM Chat** — /api/v1/chat endpoint, Web UI chat panel, sanitized context assembly, token budget cap (velocity-gated; may defer to v1.4)
 
@@ -91,6 +92,24 @@ Full details: `.planning/milestones/v1.2-ROADMAP.md`
   - [x] 10-06-PLAN.md (wave 4) — Manifest + Health views (MFST-04, HEALTH-01/04)
   - [x] 10-07-PLAN.md (wave 5) — Chat nav stub (CONSOLE-05 nav contract)
   - [x] 10-08-PLAN.md (wave 6) — Closure: wheel packaging test + JS-disabled test + full regression + non-developer dogfood UAT (D-35/D-36)
+**UI hint**: yes
+
+**Phase 10 closure status (2026-04-23):** 8/8 plans executed, 152/152 automated tests pass, ruff clean, path-traversal mitigations confirmed live. D-35/D-36 non-developer dogfood UAT returned **FAIL** — operator verdict "nearly impossible to understand", plus a shipping render bug in `shell.html` line 7 (`hx-boost` + `hx-target`/`hx-swap` mismatch duplicates nav + health strip on click). Phase 10 ships back to planning per D-36. Remediation scoped as **Phase 10.1** below. Do not advance to Phase 11 until Phase 10.1 re-UAT passes.
+
+---
+
+### Phase 10.1: Artist-UX Gap Closure
+**Goal**: The Web UI passes the D-36 non-developer dogfood re-UAT — a fresh operator opens `http://localhost:9996/ui/` cold and identifies the three most recently synthesized tools and their status (active / quarantined) within 30 seconds. The nav swap contract is fixed (no duplicate `.top-nav` / `#health-strip` render on click), the Tools table surfaces an explicit **Status** chip, column headers use artist-facing language, developer telemetry is demoted or hidden, and preset chips are discoverable on first paint. A new in-browser swap-contract test guards against regression of the `shell.html` bug class.
+**Depends on**: Phase 10 (remediation edits to shipped template + handler infrastructure; no new entity / route surfaces)
+**Requirements**: CONSOLE-02, CONSOLE-04, TOOLS-01, TOOLS-02 (re-verification under the D-36 artist-UX gate — automated coverage already closed in Phase 10)
+**Success Criteria** (what must be TRUE):
+  1. Clicking any top-nav link from any `/ui/*` view swaps only the view region; the rendered DOM contains exactly one `.top-nav` and one `#health-strip` after navigation. The `hx-boost` + `hx-target`/`hx-swap` mismatch in `shell.html` line 7 is resolved (either by removing `hx-target`/`hx-swap` from the nav and letting `hx-boost` do its default whole-body swap, or by content-negotiating `/ui/*` handlers on `HX-Request` to return just the view block). `UI-SPEC.md` §"HTMX Contracts" is updated so the spec no longer describes the buggy pattern.
+  2. The Tools table shows an explicit **Status** column with a visual chip rendered as one of `active`, `quarantined`, or `loaded`. Status is NOT inferred from `observation_count` by the reader. Quarantined rows read as "quarantined" at a glance.
+  3. Column headers use artist-facing language. Developer telemetry (`Code hash`, `Obs count`, raw `Namespace`) is hidden, tucked behind a details toggle on the row, or demoted to a secondary smaller-weight row under the tool name — not rendered as primary column headers.
+  4. Preset chips (`Active synth` / `Quarantined` / `Builtin only`) are visually discoverable on first paint. A one-line caption or layout treatment makes them obviously interactive before the operator attempts the query grammar. `UI-SPEC.md` captures the adjusted discoverability pattern.
+  5. A new in-browser test (Playwright or equivalent — not `starlette.testclient.TestClient`, which cannot see htmx swaps) drives a real browser through: load `/ui/tools`, click a nav link, assert one `.top-nav` and one `#health-strip` in the rendered DOM. The test is wired into the default regression suite (`pytest` discovers it or an equivalent CLI gate runs it), and it fails on the 2026-04-23 `shell.html` shipping state.
+  6. Non-developer dogfood re-UAT: a fresh operator (not the developer `CN/dev`, not the 2026-04-23 tester `ET/tester`) identifies the three most recently synthesized tools and their status within **30 seconds**, on a `:9996` integration server preloaded with the same fixture set used in the 2026-04-23 UAT. Pass is required before Phase 11 may start. Record lives at `.planning/phases/10-01-artist-ux-gap-closure/10-01-UAT.md`.
+**Plans**: TBD (gap-closure — `/gsd-plan-phase 10.1 --gaps`)
 **UI hint**: yes
 
 ---
@@ -221,7 +240,8 @@ redundant. On FB-D ship, mark Phase 12 as superseded in the progress table.
 | 07.1. startup_bridge hotfix + deployment UAT | v1.2 | 5/5 | Complete | 2026-04-21 |
 | 8. SQL Persistence Protocol | v1.2 | 3/3 | Complete | 2026-04-22 |
 | 9. Read API Foundation | v1.3 | 0/3 | Not started | - |
-| 10. Web UI | v1.3 | 8/8 | Complete   | 2026-04-23 |
+| 10. Web UI | v1.3 | 8/8 | Plans shipped, **blocked on D-36 artist-UX gate** | 2026-04-23 |
+| 10.1. Artist-UX Gap Closure | v1.3 | 0/? | Not started | - |
 | 11. CLI Companion | v1.3 | 0/? | Not started | - |
 | 12. LLM Chat | v1.3 | 0/? | Superseded by FB-D (velocity gate triggered) | - |
 | FB-A. Staged Operation Entity & Lifecycle | v1.4 | 0/? | Designed | - |
