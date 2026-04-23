@@ -1,0 +1,45 @@
+{% extends "shell.html" %}
+{% block title %}{{ tool.name }} — Tool — Forge Console{% endblock %}
+
+{% block view %}
+<p><a href="/ui/tools" class="nav-link">← All tools</a></p>
+<h1 class="view-title">{{ tool.name }}</h1>
+
+<section class="card provenance-card" aria-labelledby="prov-heading">
+  <h2 id="prov-heading" class="view-title" style="font-size:var(--text-label);color:var(--color-text-muted);margin:0 0 var(--space-md) 0;">Provenance (_meta)</h2>
+  <dl class="dl-two-col">
+    <dt>origin</dt>            <dd class="amber">{{ tool.origin }}</dd>
+    <dt>code_hash</dt>         <dd class="amber mono">{{ tool.code_hash or '—' }}</dd>
+    <dt>synthesized_at</dt>    <dd class="amber mono">{{ tool.synthesized_at or '—' }}</dd>
+    <dt>version</dt>           <dd class="amber">{{ tool.version or '—' }}</dd>
+    <dt>observation_count</dt> <dd class="amber">{{ tool.observation_count }}</dd>
+  </dl>
+</section>
+
+{% if tool.tags %}
+<section class="chip-row" aria-label="Consumer tags">
+  {% for tag in tool.tags %}<span class="chip chip-readonly">{{ tag }}</span>{% endfor %}
+</section>
+{% endif %}
+
+{% if tool.origin == 'synthesized' and raw_code %}
+<section class="card code-card" x-data="{ copyLabel: 'Copy source' }">
+  <button class="copy-btn"
+          type="button"
+          @click="navigator.clipboard.writeText($refs.src.textContent).then(() => { copyLabel = 'Copied!'; setTimeout(() => copyLabel = 'Copy source', 2000); })"
+          x-text="copyLabel"
+          aria-label="Copy source code to clipboard">Copy source</button>
+  <pre class="font-mono" x-ref="src">{{ raw_code }}</pre>
+</section>
+{% endif %}
+
+<details class="card sidecar-card" x-data="{ copyLabel: 'Copy JSON' }">
+  <summary>Show raw sidecar JSON (engineer mode)</summary>
+  <button class="copy-btn"
+          type="button"
+          @click="navigator.clipboard.writeText($refs.json.textContent).then(() => { copyLabel = 'Copied!'; setTimeout(() => copyLabel = 'Copy JSON', 2000); })"
+          x-text="copyLabel"
+          aria-label="Copy sidecar JSON to clipboard">Copy JSON</button>
+  <pre class="font-mono" x-ref="json">{{ tool | tojson(indent=2) }}</pre>
+</details>
+{% endblock %}

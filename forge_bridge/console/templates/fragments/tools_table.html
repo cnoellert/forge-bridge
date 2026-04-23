@@ -1,0 +1,37 @@
+<div id="tools-table">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Origin</th>
+        <th>Namespace</th>
+        <th>Code hash</th>
+        <th>Synthesized</th>
+        <th>Obs count</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for tool in tools %}
+      <tr class="row-link"
+          hx-get="/ui/tools/{{ tool.name }}"
+          hx-target="#view-main"
+          hx-swap="innerHTML"
+          hx-push-url="true">
+        <td>{{ tool.name }}</td>
+        <td>{{ tool.origin }}</td>
+        <td>{{ tool.namespace }}</td>
+        <td class="mono" title="{{ tool.code_hash or '' }}">{{ (tool.code_hash or '—')[:8] }}</td>
+        <td class="mono">{{ tool.synthesized_at or '—' }}</td>
+        <td>{{ tool.observation_count }}</td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="6" class="empty-state">
+          <strong>No tools registered</strong><br>
+          Start the MCP server and connect a client to populate this list.
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

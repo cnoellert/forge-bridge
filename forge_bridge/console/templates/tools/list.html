@@ -1,0 +1,40 @@
+{% extends "shell.html" %}
+{% block title %}Registered Tools — Forge Console{% endblock %}
+
+{% block view %}
+<h1 class="view-title">Registered Tools</h1>
+
+{% include "fragments/query_console.html" %}
+
+<div class="table-toolbar">
+  <button class="btn btn-refresh"
+          hx-get="/ui/fragments/tools-table{{ querystring }}"
+          hx-target="#tools-table"
+          hx-swap="outerHTML"
+          hx-push-url="false">Refresh tools</button>
+  <span class="staleness" x-data="staleness()" x-init="init()" x-text="label"></span>
+</div>
+
+{% include "fragments/tools_table.html" %}
+
+<script>
+  function staleness() {
+    return {
+      shown: 0,
+      label: 'Last refreshed 0s ago',
+      init() {
+        setInterval(() => {
+          this.shown += 1;
+          this.label = `Last refreshed ${this.shown}s ago`;
+        }, 1000);
+        document.body.addEventListener('htmx:afterSwap', (e) => {
+          if (e.detail && e.detail.target && e.detail.target.id === 'tools-table') {
+            this.shown = 0;
+            this.label = 'Last refreshed 0s ago';
+          }
+        });
+      }
+    }
+  }
+</script>
+{% endblock %}
