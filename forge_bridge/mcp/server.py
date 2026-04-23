@@ -27,6 +27,7 @@ Config (env vars):
     FORGE_BRIDGE_HOST     127.0.0.1        (Flame HTTP bridge host)
     FORGE_BRIDGE_PORT     9999             (Flame HTTP bridge port)
     FORGE_MCP_CLIENT_NAME mcp_claude       (client identifier)
+    FORGE_CONSOLE_PORT    9996             (Artist Console HTTP API)
 """
 
 from __future__ import annotations
@@ -35,11 +36,16 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
 
 from mcp.server.fastmcp import FastMCP
 
 from forge_bridge.client import AsyncClient
 from forge_bridge.mcp.registry import register_builtins
+
+if TYPE_CHECKING:
+    from forge_bridge.console.manifest_service import ManifestService
+    from forge_bridge.learning.execution_log import ExecutionLog
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +55,12 @@ logger = logging.getLogger(__name__)
 
 _client: AsyncClient | None = None
 _server_started: bool = False
+
+# Canonical singletons owned by _lifespan (API-04 / D-16 instance-identity gate)
+_canonical_execution_log: "ExecutionLog | None" = None
+_canonical_manifest_service: "ManifestService | None" = None
+# I-02: canonical watcher task handle for _check_watcher crash detection.
+_canonical_watcher_task: "asyncio.Task | None" = None
 
 
 def get_client() -> AsyncClient:
@@ -62,31 +74,102 @@ def get_client() -> AsyncClient:
 
 
 # ─────────────────────────────────────────────────────────────
-# Server lifespan — connect client, start watcher, clean up on exit
+# Server lifespan — D-31 6-step sequence
 # ─────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def _lifespan(mcp_server: FastMCP):
-    """Server lifespan: connect client, start watcher, clean up on exit."""
-    global _server_started
-    # Connect to forge-bridge
+    """Server lifespan (D-31 6-step sequence):
+      1. startup_bridge()
+      2. instantiate ManifestService + canonical ExecutionLog
+      3. launch watcher_task with manifest_service injected
+      4. build ConsoleReadAPI(execution_log=..., manifest_service=...)
+      5. build console Starlette app + register_console_resources(...)
+      6. launch console_task (uvicorn Server.serve())
+
+    Teardown reverses: cancel console_task, cancel watcher_task, shutdown_bridge.
+    """
+    global _server_started, _canonical_execution_log, _canonical_manifest_service, _canonical_watcher_task
+
+    # Step 1 — existing behavior
     await startup_bridge()
     _server_started = True  # D-14: trips the register_tools() guard
 
-    # Launch synthesized tool watcher as background task
+    # Step 2 — canonical singletons (API-04 + D-16 gate)
+    from forge_bridge.console.manifest_service import ManifestService
+    from forge_bridge.console.read_api import (
+        ConsoleReadAPI,
+        register_canonical_singletons,
+    )
+    from forge_bridge.learning.execution_log import ExecutionLog
+
+    execution_log = ExecutionLog()
+    manifest_service = ManifestService()
+    _canonical_execution_log = execution_log
+    _canonical_manifest_service = manifest_service
+    # Record ids before the watcher task exists — I-02 task handle is installed
+    # directly on the module global in Step 3.
+    register_canonical_singletons(execution_log, manifest_service)
+
+    # Step 3 — watcher with manifest_service injected
+    # (I-02: also register the task handle so /api/v1/health can detect a
+    # crashed watcher instead of falling back to the coarse _server_started
+    # boolean.)
     from forge_bridge.learning.watcher import watch_synthesized_tools
-    watcher_task = asyncio.create_task(watch_synthesized_tools(mcp_server))
+    watcher_task = asyncio.create_task(
+        watch_synthesized_tools(mcp_server, manifest_service=manifest_service),
+        name="watcher_task",
+    )
+    _canonical_watcher_task = watcher_task
+
+    # Step 4 — ConsoleReadAPI (sole read layer)
+    console_port = int(os.environ.get("FORGE_CONSOLE_PORT", "9996"))
+    console_read_api = ConsoleReadAPI(
+        execution_log=execution_log,
+        manifest_service=manifest_service,
+        console_port=console_port,
+    )
+
+    # Step 5 — Starlette app + MCP resources/tools registration
+    from forge_bridge.console.app import build_console_app
+    from forge_bridge.console.resources import register_console_resources
+
+    app = build_console_app(console_read_api)
+    register_console_resources(mcp_server, manifest_service, console_read_api)
+
+    # Step 6 — launch console uvicorn task (may degrade per D-29)
+    console_task, console_server = await _start_console_task(
+        app, "127.0.0.1", console_port,
+    )
 
     try:
         yield
     finally:
+        # Teardown — reverse of setup
+        if console_task is not None and console_server is not None:
+            console_server.should_exit = True
+            try:
+                await asyncio.wait_for(console_task, timeout=5.0)
+            except asyncio.TimeoutError:
+                console_task.cancel()
+                try:
+                    await console_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            except (asyncio.CancelledError, Exception):
+                pass
+
         watcher_task.cancel()
         try:
             await watcher_task
         except asyncio.CancelledError:
             pass
+
         await shutdown_bridge()
         _server_started = False  # reset for clean teardown / test isolation
+        _canonical_execution_log = None
+        _canonical_manifest_service = None
+        _canonical_watcher_task = None  # I-02: clear on teardown
 
 
 # ─────────────────────────────────────────────────────────────
@@ -160,6 +243,74 @@ async def shutdown_bridge() -> None:
     if _client:
         await _client.stop()
         _client = None
+
+
+# ─────────────────────────────────────────────────────────────
+# Console uvicorn task launcher (API-06 / D-29 graceful degradation)
+# ─────────────────────────────────────────────────────────────
+
+async def _start_console_task(
+    app,
+    host: str,
+    port: int,
+    ready_timeout: float = 5.0,
+):
+    """Launch the console uvicorn server as an asyncio task.
+
+    Returns (task, server) on successful bind; (None, None) on port
+    unavailable (API-06 / D-29). Mirrors startup_bridge's degradation
+    pattern: try, on Exception log WARNING, null out the resource, continue.
+    """
+    import socket
+
+    import uvicorn
+
+    from forge_bridge.console.logging_config import STDERR_ONLY_LOGGING_CONFIG
+
+    # Port precheck — cleaner than letting Server.serve() raise an unhandled
+    # OSError inside the task.
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        probe.bind((host, port))
+    except OSError as e:
+        logger.warning(
+            "Console API disabled — port %s:%d unavailable: %s. "
+            "MCP server continues without :%d.", host, port, e, port,
+        )
+        try:
+            probe.close()
+        except Exception:
+            pass
+        return None, None
+    finally:
+        try:
+            probe.close()
+        except Exception:
+            pass
+
+    config = uvicorn.Config(
+        app=app,
+        host=host,
+        port=port,
+        log_config=STDERR_ONLY_LOGGING_CONFIG,  # D-20
+        access_log=False,                       # D-21
+        lifespan="off",                         # Starlette app has no lifespan of its own
+    )
+    server = uvicorn.Server(config)
+    task = asyncio.create_task(server.serve(), name="console_uvicorn_task")
+
+    # Lightweight startup barrier — Server.started flips to True in startup()
+    deadline = asyncio.get_running_loop().time() + ready_timeout
+    while not server.started and asyncio.get_running_loop().time() < deadline:
+        if task.done():  # serve() exited early — bind failed after precheck raced
+            return None, None
+        await asyncio.sleep(0.02)
+    if not server.started:
+        logger.warning(
+            "Console uvicorn did not signal started within %.1fs", ready_timeout,
+        )
+    return task, server
 
 
 def main() -> None:
