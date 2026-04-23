@@ -94,14 +94,21 @@ def test_ui_root_redirects_to_tools(client):
 )
 def test_ui_full_page_routes_registered(client, path):
     r = client.get(path)
-    # Wave 1 stubs return 501 until Wave 2 fills them in; health strip
-    # fragment returns 200 because it has a real Wave-1 implementation.
-    # What we're guarding against is a 404 — that would mean a route the
-    # Wave 2 plans need is MISSING from the registry.
-    assert r.status_code != 404, (
-        f"{path} returned 404 — route not registered. "
-        f"Wave 2 plans depend on every /ui/* route being present."
-    )
+    # Wave 1 stubs return 501 until Wave 2 fills them in; Wave 2 handlers
+    # return 200 (list pages) or 404 (drilldown with non-existent resource).
+    # Any response except a Starlette routing 404 means the route IS registered.
+    # We detect an unregistered route by checking for Starlette's default
+    # "Not Found" plain-text body (no HTML, no our template).
+    # A handler-generated 404 (from errors/not_found.html) still proves the
+    # route matched — the Route is present in the registry.
+    if r.status_code == 404:
+        # Starlette's routing 404 has a plain-text body with no <html>.
+        # Our handler-generated 404 renders errors/not_found.html (has <html>).
+        assert "<html" in r.text.lower(), (
+            f"{path} returned a Starlette routing 404 (no HTML body) — "
+            f"route is NOT registered in build_console_app(). "
+            f"Wave 2 plans depend on every /ui/* route being present."
+        )
 
 
 # -- Phase 10: fragment /ui/fragments/* routes are REGISTERED --------------

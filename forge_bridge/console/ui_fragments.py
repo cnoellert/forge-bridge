@@ -13,6 +13,8 @@ import logging
 from starlette.requests import Request
 from starlette.responses import HTMLResponse
 
+from forge_bridge.console.ui_handlers import _filter_tools
+
 logger = logging.getLogger(__name__)
 
 
@@ -44,12 +46,30 @@ async def health_strip_fragment(request: Request) -> HTMLResponse:
     )
 
 
-# -- Tools table fragment (Wave 1: stub; 10-04 fills in) --------------------
+# -- Tools table fragment -----------------------------------------------------
 
 async def tools_table_fragment(request: Request) -> HTMLResponse:
-    return HTMLResponse(
-        "<p>tools-table fragment — pending plan 10-04.</p>",
-        status_code=501,
+    """Bare table fragment for htmx outerHTML swap from the Refresh tools button."""
+    try:
+        tools = await request.app.state.console_read_api.get_tools()
+    except Exception as exc:
+        logger.warning(
+            "tools_table_fragment failed: %s", type(exc).__name__, exc_info=True,
+        )
+        return HTMLResponse(
+            '<div class="empty-state">'
+            "<strong>Could not load tools</strong><br>"
+            "The console API may be restarting."
+            "</div>",
+            status_code=500,
+        )
+    filtered = _filter_tools(tools, dict(request.query_params))
+    return request.app.state.templates.TemplateResponse(
+        "fragments/tools_table.html",
+        {
+            "request": request,
+            "tools": [t.to_dict() for t in filtered],
+        },
     )
 
 

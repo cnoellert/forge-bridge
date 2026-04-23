@@ -1,3 +1,4 @@
+{% set health = health|default({'status': 'fail', 'services': {}, 'instance_identity': {}}) %}
 <div id="health-strip"
      class="health-strip"
      hx-get="/ui/fragments/health-strip"

@@ -14,11 +14,19 @@ Handler contract (mirrors handlers.py):
 from __future__ import annotations
 
 import logging
+import os
+from pathlib import Path
 
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
 
 logger = logging.getLogger(__name__)
+
+# Path to synthesized tool source files (T-10-18: confined to SYNTH_ROOT)
+_SYNTH_ROOT = Path(os.environ.get(
+    "FORGE_SYNTH_ROOT",
+    str(Path.home() / ".forge-bridge" / "tools" / "synth"),
+))
 
 
 # -- Helper: map query_params -> token string for D-26 pre-population --
@@ -57,6 +65,67 @@ def _render_error(request: Request, template: str, message: str, status: int) ->
     )
 
 
+def _tools_preset_chips() -> list:
+    """D-09: preset chip roster for the tools view."""
+    return [
+        {"label": "Active synth", "tokens": "origin:synthesized"},
+        {"label": "Quarantined", "tokens": "origin:synthesized q:quarantined"},
+        {"label": "Builtin only", "tokens": "origin:builtin"},
+    ]
+
+
+def _filter_tools(tools, qp):
+    """Apply UI-grammar filters to get_tools() result.
+
+    v1.3 does filtering in-Python because /api/v1/tools has no server-side
+    filter params (D-23 — structured query console + preset chips are the
+    only filter surface in v1.3).
+    """
+    origin = qp.get("origin")
+    namespace = qp.get("namespace")
+    readonly = qp.get("readonly")
+    q = (qp.get("q") or "").lower()
+    out = []
+    for t in tools:
+        if origin and t.origin != origin:
+            continue
+        if namespace and t.namespace != namespace:
+            continue
+        if readonly is not None:
+            m = dict(t.meta) if t.meta else {}
+            if str(m.get("read_only_hint", "")).lower() != readonly.lower():
+                continue
+        if q and q not in t.name.lower():
+            continue
+        out.append(t)
+    return out
+
+
+def _read_synth_source(name: str) -> str | None:
+    """Best-effort: read raw source for a synthesized tool.
+
+    Returns None if the file is missing or unreadable. Includes path-traversal
+    guard (T-10-18): verifies the resolved path is still under _SYNTH_ROOT
+    before reading.
+    """
+    candidate = _SYNTH_ROOT / f"{name}.py"
+    try:
+        resolved = candidate.resolve()
+        try:
+            resolved.relative_to(_SYNTH_ROOT.resolve())
+        except ValueError:
+            # Path escaped SYNTH_ROOT — reject silently (traversal attempt)
+            return None
+        if resolved.is_file():
+            return resolved.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.warning(
+            "_read_synth_source failed for %s: %s",
+            name, type(exc).__name__, exc_info=True,
+        )
+    return None
+
+
 # -- Root redirect ----------------------------------------------------------
 
 async def ui_index_handler(request: Request) -> HTMLResponse:
@@ -64,23 +133,72 @@ async def ui_index_handler(request: Request) -> HTMLResponse:
     return RedirectResponse(url="/ui/tools", status_code=302)
 
 
-# -- Tools view (Wave 1: registered-but-NOT-IMPLEMENTED; 10-04 fills in) ----
+# -- Tools view ---------------------------------------------------------------
 
 async def ui_tools_handler(request: Request) -> HTMLResponse:
-    """501 stub. Plan 10-04 implements this."""
-    return HTMLResponse(
-        "<!doctype html><html><body><h1>Not Implemented</h1>"
-        "<p>/ui/tools — pending plan 10-04.</p></body></html>",
-        status_code=501,
+    """Full-page /ui/tools handler. Implements TOOLS-01 + CONSOLE-03."""
+    try:
+        tools = await request.app.state.console_read_api.get_tools()
+    except Exception as exc:
+        logger.warning(
+            "ui_tools_handler failed: %s", type(exc).__name__, exc_info=True,
+        )
+        return _render_error(
+            request, "errors/read_failed.html",
+            "Could not load tools — the console API may be restarting. Refresh to try again.",
+            500,
+        )
+    filtered = _filter_tools(tools, dict(request.query_params))
+    querystring = "?" + str(request.query_params) if request.query_params else ""
+    return request.app.state.templates.TemplateResponse(
+        "tools/list.html",
+        {
+            "request": request,
+            "active_view": "tools",
+            "tools": [t.to_dict() for t in filtered],
+            "query_params": dict(request.query_params),
+            "query_params_as_tokens": _query_params_as_tokens(
+                request.query_params, _TOOLS_KEYS,
+            ),
+            "querystring": querystring,
+            "view_slug": "tools",
+            "preset_chips": _tools_preset_chips(),
+            "supported_keys": _TOOLS_KEYS,
+        },
     )
 
 
 async def ui_tool_detail_handler(request: Request) -> HTMLResponse:
-    """501 stub. Plan 10-04 implements this."""
-    return HTMLResponse(
-        "<!doctype html><html><body><h1>Not Implemented</h1>"
-        "<p>/ui/tools/{name} — pending plan 10-04.</p></body></html>",
-        status_code=501,
+    """Drilldown /ui/tools/{name} handler. Implements TOOLS-02."""
+    name = request.path_params["name"]
+    try:
+        tool = await request.app.state.console_read_api.get_tool(name)
+    except Exception as exc:
+        logger.warning(
+            "ui_tool_detail_handler failed: %s", type(exc).__name__, exc_info=True,
+        )
+        return _render_error(
+            request, "errors/read_failed.html",
+            "Could not load tool detail — the console API may be restarting.",
+            500,
+        )
+    if tool is None:
+        return _render_error(
+            request, "errors/not_found.html",
+            f"No tool named {name!r}.",
+            404,
+        )
+    raw_code = None
+    if tool.origin == "synthesized":
+        raw_code = _read_synth_source(name)
+    return request.app.state.templates.TemplateResponse(
+        "tools/detail.html",
+        {
+            "request": request,
+            "active_view": "tools",
+            "tool": tool.to_dict(),
+            "raw_code": raw_code,
+        },
     )
 
 
