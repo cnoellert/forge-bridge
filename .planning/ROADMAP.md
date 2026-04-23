@@ -46,7 +46,7 @@ Full details: `.planning/milestones/v1.2-ROADMAP.md`
 ### 📋 v1.3 Artist Console (Phases 9-12)
 
 - [ ] **Phase 9: Read API Foundation** — ConsoleReadAPI, ManifestService singleton, instance-identity gate, uvicorn task on `:9996`, MCP resources + tool fallback shim
-- [ ] **Phase 10: Web UI** — Jinja2 + htmx + Alpine.js, five views (tools, execs, manifest, health, chat nav), structured query console, health header strip
+- [x] **Phase 10: Web UI** — Jinja2 + htmx + Alpine.js, five views (tools, execs, manifest, health, chat nav), structured query console, health header strip (completed 2026-04-23)
 - [ ] **Phase 11: CLI Companion** — Typer subcommands (tools, execs, manifest, health, doctor), Rich output, --json flags
 - [ ] **Phase 12: LLM Chat** — /api/v1/chat endpoint, Web UI chat panel, sanitized context assembly, token budget cap (velocity-gated; may defer to v1.4)
 
@@ -90,7 +90,7 @@ Full details: `.planning/milestones/v1.2-ROADMAP.md`
   - [x] 10-05-PLAN.md (wave 3) — Execs view: list + pagination + drilldown + fragment handlers (EXECS-01/02)
   - [x] 10-06-PLAN.md (wave 4) — Manifest + Health views (MFST-04, HEALTH-01/04)
   - [x] 10-07-PLAN.md (wave 5) — Chat nav stub (CONSOLE-05 nav contract)
-  - [ ] 10-08-PLAN.md (wave 6) — Closure: wheel packaging test + JS-disabled test + full regression + non-developer dogfood UAT (D-35/D-36)
+  - [x] 10-08-PLAN.md (wave 6) — Closure: wheel packaging test + JS-disabled test + full regression + non-developer dogfood UAT (D-35/D-36)
 **UI hint**: yes
 
 ---
@@ -221,7 +221,7 @@ redundant. On FB-D ship, mark Phase 12 as superseded in the progress table.
 | 07.1. startup_bridge hotfix + deployment UAT | v1.2 | 5/5 | Complete | 2026-04-21 |
 | 8. SQL Persistence Protocol | v1.2 | 3/3 | Complete | 2026-04-22 |
 | 9. Read API Foundation | v1.3 | 0/3 | Not started | - |
-| 10. Web UI | v1.3 | 7/8 | In Progress|  |
+| 10. Web UI | v1.3 | 8/8 | Complete   | 2026-04-23 |
 | 11. CLI Companion | v1.3 | 0/? | Not started | - |
 | 12. LLM Chat | v1.3 | 0/? | Superseded by FB-D (velocity gate triggered) | - |
 | FB-A. Staged Operation Entity & Lifecycle | v1.4 | 0/? | Designed | - |
