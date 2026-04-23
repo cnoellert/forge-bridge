@@ -8,6 +8,8 @@ forge-bridge is protocol-agnostic middleware for post-production pipelines — a
 
 **Shipped:** v1.3.0 (2026-04-22) — `v1.2 Observability & Provenance` milestone complete. Synthesized MCP tools now carry canonical provenance in `Tool._meta` (`origin`, `code_hash`, `synthesized_at`, `version`, `observation_count`) via `.sidecar.json` envelopes with consumer-tag sanitization + size budgets. The `StoragePersistence` `@runtime_checkable` Protocol ships on the bridge (1 method, documentation-only — no DDL on bridge side); projekt-forge consumes it via a sync SQLAlchemy adapter with idempotent `ON CONFLICT DO NOTHING` inserts + Alembic revision 005 + `isinstance` gate at registration. Three annotated tags this milestone (`v1.2.0` = Phase 7, `v1.2.1` = Phase 07.1 hotfix, `v1.3.0` = Phase 8) on origin with wheel + sdist assets. End-to-end UAT verified: real `bridge.execute()` writes land in projekt-forge's `execution_log` PG table. See `.planning/milestones/v1.2-ROADMAP.md` for the full archive.
 
+**In progress (v1.3 "Artist Console"):** Phase 9 "Read API Foundation" complete (2026-04-23) — `ConsoleReadAPI` is the sole read path for all surfaces; `ManifestService` singleton is injected into the watcher and console router; the console HTTP API runs on `:9996` as a separate uvicorn asyncio task inside `_lifespan`; MCP resources (`forge://manifest/synthesis`, `forge://tools`, `forge://tools/{name}`, `forge://health`) + `forge_manifest_read` / `forge_tools_read` tool shims return byte-identical payloads to the HTTP routes; SC#1 P-01 runtime UAT verified (100 concurrent GETs on `:9996` while MCP stdio stays byte-clean JSON-RPC); API-06 graceful port degradation works. Full suite: 379/379.
+
 **Codebase:** 21,826 LOC (forge_bridge + tests), 289 tests passing, 263 commits across 7 phases. Public API surface: 16 symbols in `forge_bridge.__all__`.
 
 ## Current Milestone: v1.3 Artist Console
@@ -158,4 +160,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-22 — v1.3 "Artist Console" milestone opened (Phase 9+ scope pending requirements + roadmap)*
+*Last updated: 2026-04-23 — Phase 9 "Read API Foundation" complete; Phase 10 "Web UI" next*
