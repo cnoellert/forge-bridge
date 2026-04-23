@@ -418,11 +418,15 @@ async def ui_health_view_handler(request: Request) -> HTMLResponse:
     )
 
 
-# -- Chat stub (Wave 1: stub; 10-07 fills in) -------------------------------
+# -- Chat stub (D-28/D-29: nav surface ships now; Phase 12 fills in panel) --
 
 async def ui_chat_stub_handler(request: Request) -> HTMLResponse:
-    return HTMLResponse(
-        "<!doctype html><html><body><h1>Not Implemented</h1>"
-        "<p>/ui/chat — pending plan 10-07.</p></body></html>",
-        status_code=501,
+    """Chat nav stub — D-28/D-29. Full shell.html render; Phase 12 will fill
+    in the panel content without churning shell.html or the route table."""
+    return request.app.state.templates.TemplateResponse(
+        "chat/stub.html",
+        {
+            "request": request,
+            "active_view": "chat",
+        },
     )
