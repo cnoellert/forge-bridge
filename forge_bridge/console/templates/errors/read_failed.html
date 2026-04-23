@@ -1,0 +1,8 @@
+{% extends "shell.html" %}
+{% block title %}Read Error — Forge Console{% endblock %}
+{% block view %}
+<section class="card error-card">
+  <h1 class="view-title">Could not load data</h1>
+  <p>{{ message|default("The console API may be restarting. Refresh to try again.") }}</p>
+</section>
+{% endblock %}

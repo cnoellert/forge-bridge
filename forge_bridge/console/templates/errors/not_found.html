@@ -1,0 +1,9 @@
+{% extends "shell.html" %}
+{% block title %}Not Found — Forge Console{% endblock %}
+{% block view %}
+<section class="card error-card">
+  <h1 class="view-title">Not Found</h1>
+  <p>{{ message|default("The requested resource was not found.") }}</p>
+  <p><a href="/ui/tools" class="nav-link">Back to tools</a></p>
+</section>
+{% endblock %}
