@@ -149,7 +149,7 @@ Phase 10 introduces these hand-written HTML/CSS components (no third-party compo
 
 | Trigger | hx-target | hx-swap | hx-push-url |
 |---------|-----------|---------|-------------|
-| Nav link click (hx-boost) | `#view-main` | `innerHTML` | `true` |
+| Nav link click (hx-boost) | default (body) | default (outerHTML of body) | `true` |
 | Chip click (query submit) | `#view-main` | `innerHTML` | `true` |
 | Query console Enter | `#view-main` | `innerHTML` | `true` |
 | Pagination prev/next | `#view-main` | `innerHTML` | `true` |
@@ -157,6 +157,8 @@ Phase 10 introduces these hand-written HTML/CSS components (no third-party compo
 | Health strip poll (10s) | `#health-strip` | `outerHTML` | `false` |
 | Health dedicated view poll (5s) | `#health-view-content` | `innerHTML` | `false` |
 | Pill click (expand) | Alpine local state only | n/a | `false` |
+
+**Nav swap note (Phase 10.1, D-37 Option A):** the top-nav on `shell.html` sets `hx-boost="true" hx-push-url="true"` and intentionally omits `hx-target` / `hx-swap`. htmx-boost's default behavior then applies — the full response body is fetched and swapped in place (body `outerHTML`). Because every `/ui/*` handler returns the full shell + view per D-01, the rendered DOM after a nav click contains exactly one `.top-nav` and one `#health-strip`. The 2026-04-23 duplicate-nav render bug came from the earlier `hx-target="#view-main" hx-swap="innerHTML"` combination, which injected the whole shell inside the existing `#view-main`. Removed in Phase 10.1 plan 10.1-02.
 
 ### Keyboard affordances
 
