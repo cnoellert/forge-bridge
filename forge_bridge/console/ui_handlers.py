@@ -66,10 +66,16 @@ def _render_error(request: Request, template: str, message: str, status: int) ->
 
 
 def _tools_preset_chips() -> list:
-    """D-09: preset chip roster for the tools view."""
+    """D-09 + Phase 10.1 D-40 triage (b): preset chip roster for the tools view.
+
+    The Phase 10 quarantine chip was dropped in Phase 10.1 because its token
+    string was a substring filter against tool names (not a status field) and
+    probation-quarantined tools are deleted from ManifestService by the
+    watcher's removal-mirror path (watcher.py:278-293 after
+    probation.py:71-88). Locked by tests/test_tool_quarantine_surface.py.
+    """
     return [
         {"label": "Active synth", "tokens": "origin:synthesized"},
-        {"label": "Quarantined", "tokens": "origin:synthesized q:quarantined"},
         {"label": "Builtin only", "tokens": "origin:builtin"},
     ]
 
