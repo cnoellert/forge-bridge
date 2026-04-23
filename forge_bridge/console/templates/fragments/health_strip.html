@@ -15,6 +15,7 @@
       ('mcp',     health.services.mcp|default({})),
       ('flame',   health.services.flame_bridge|default({})),
       ('ws',      health.services.ws_server|default({})),
+      ('llm',     {'status': 'ok'} if health.services.llm_backends and (health.services.llm_backends | selectattr('status', 'ne', 'ok') | list | length == 0) else {'status': 'fail', 'detail': 'one or more backends down'}),
       ('watcher', health.services.watcher|default({})),
       ('storage', health.services.storage_callback|default({})),
       ('port',    health.services.console_port|default({})),

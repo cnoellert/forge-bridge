@@ -1,0 +1,113 @@
+{# Query console partial. Included by list views via {% include with context %}.
+   Context required:
+     - view_slug: str, one of "tools" | "execs" | "manifest"
+     - query_params: dict[str, str], the current URL query params
+     - preset_chips: list[{"label": str, "tokens": str}]
+     - supported_keys: list[str]  (view-specific grammar keys from D-08) #}
+
+<div class="query-console"
+     x-data='queryConsole({
+       view: "{{ view_slug }}",
+       initial: {{ query_params|default({})|tojson|safe }},
+       supported: {{ supported_keys|default([])|tojson|safe }}
+     })'
+     x-init="init()">
+  <input type="text"
+         id="query-console-input"
+         class="query-console-input"
+         name="q"
+         x-model="tokenString"
+         x-ref="input"
+         @keydown.enter.prevent="submit()"
+         @keydown.escape.prevent="clearAndReset()"
+         placeholder="filter: origin:synthesized promoted:true …"
+         autocomplete="off"
+         autocorrect="off"
+         spellcheck="false"
+         value="{{ query_params_as_tokens|default('') }}">
+  <div class="query-error" x-show="errorMessage" x-text="errorMessage" x-cloak></div>
+  <div class="chip-row" role="group" aria-label="Preset filters">
+    {% for chip in preset_chips|default([]) %}
+    <button type="button"
+            class="chip"
+            @click='stuffAndSubmit("{{ chip.tokens }}")'>
+      {{ chip.label }}
+    </button>
+    {% endfor %}
+  </div>
+
+  <script>
+    function queryConsole(opts) {
+      return {
+        tokenString: '',
+        errorMessage: '',
+        init() {
+          // D-26: pre-populate input from URL params on first paint.
+          this.tokenString = this.$refs.input.value;
+        },
+        parse(input) {
+          // D-08 grammar: whitespace-separated key:value pairs.
+          // Returns [params, errors]. errors is [] or [{token, reason}].
+          const params = {};
+          const errors = [];
+          const tokens = (input || '').trim().split(/\s+/).filter(Boolean);
+          for (const tok of tokens) {
+            const idx = tok.indexOf(':');
+            if (idx <= 0) {
+              errors.push({ token: tok, reason: 'missing key:value separator' });
+              continue;
+            }
+            const key = tok.substring(0, idx).toLowerCase();
+            const val = tok.substring(idx + 1);
+            if (opts.supported.length && !opts.supported.includes(key)) {
+              errors.push({ token: tok, reason: `unknown key "${key}"` });
+              continue;
+            }
+            // Map UI grammar -> Phase 9 API query params (D-07: client does the translation)
+            // tools view: origin, namespace, readonly, q
+            // execs view: tool, since, until, promoted, hash
+            // manifest view: q, status
+            if (key === 'promoted') { params.promoted_only = val; }
+            else if (key === 'hash') { params.code_hash = val; }
+            else { params[key] = val; }
+          }
+          return [params, errors];
+        },
+        buildUrl(params) {
+          const qs = new URLSearchParams(params).toString();
+          const base = `/ui/${opts.view}`;
+          return qs ? `${base}?${qs}` : base;
+        },
+        submit() {
+          const [params, errors] = this.parse(this.tokenString);
+          if (errors.length) {
+            // D-10: inline error below input, never toast.
+            const keys = opts.supported.join(', ');
+            this.errorMessage = `Unknown filter key: \`${errors[0].token}\`. Supported keys: ${keys}.`;
+            return;
+          }
+          this.errorMessage = '';
+          const url = this.buildUrl(params);
+          htmx.ajax('GET', url, {
+            target: '#view-main',
+            swap: 'innerHTML',
+            pushUrl: true,
+          });
+        },
+        clearAndReset() {
+          this.tokenString = '';
+          this.errorMessage = '';
+          htmx.ajax('GET', `/ui/${opts.view}`, {
+            target: '#view-main',
+            swap: 'innerHTML',
+            pushUrl: true,
+          });
+        },
+        stuffAndSubmit(tokens) {
+          this.tokenString = tokens;
+          this.submit();
+        },
+      }
+    }
+  </script>
+</div>
