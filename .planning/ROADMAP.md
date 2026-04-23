@@ -83,9 +83,9 @@ Full details: `.planning/milestones/v1.2-ROADMAP.md`
   4. Health strip is visible on every view and updates automatically (poll) — artist can see at a glance whether Flame bridge, LLM backends, and watcher are reachable without navigating away.
   5. Structured query console accepts a filter expression (e.g. `origin:synthesized`, `promoted:true`) and the view updates deterministically without an LLM call.
 **Plans**: 8 plans across 6 waves (Wave 1 parallel; Waves 2-5 serialized due to shared ui_handlers.py/ui_fragments.py ownership; Wave 6 closure)
-  - [ ] 10-01-PLAN.md (wave 1) — Assets landing: jinja2 dep + wheel-include globs + vendored JS with SRI + forge-console.css
-  - [ ] 10-02-PLAN.md (wave 1) — Template skeleton: base.html + shell.html + health_strip/query_console fragments + error templates
-  - [ ] 10-03-PLAN.md (wave 1) — Starlette wiring: Jinja2Templates + StaticFiles mount + /ui route table + ui_handlers/ui_fragments modules + route-registration smoke test
+  - [x] 10-01-PLAN.md (wave 1) — Assets landing: jinja2 dep + wheel-include globs + vendored JS with SRI + forge-console.css
+  - [x] 10-02-PLAN.md (wave 1) — Template skeleton: base.html + shell.html + health_strip/query_console fragments + error templates
+  - [x] 10-03-PLAN.md (wave 1) — Starlette wiring: Jinja2Templates + StaticFiles mount + /ui route table + ui_handlers/ui_fragments modules + route-registration smoke test
   - [ ] 10-04-PLAN.md (wave 2) — Tools view: list + drilldown + fragment handlers (TOOLS-01/02)
   - [ ] 10-05-PLAN.md (wave 3) — Execs view: list + pagination + drilldown + fragment handlers (EXECS-01/02)
   - [ ] 10-06-PLAN.md (wave 4) — Manifest + Health views (MFST-04, HEALTH-01/04)
@@ -221,7 +221,7 @@ redundant. On FB-D ship, mark Phase 12 as superseded in the progress table.
 | 07.1. startup_bridge hotfix + deployment UAT | v1.2 | 5/5 | Complete | 2026-04-21 |
 | 8. SQL Persistence Protocol | v1.2 | 3/3 | Complete | 2026-04-22 |
 | 9. Read API Foundation | v1.3 | 0/3 | Not started | - |
-| 10. Web UI | v1.3 | 0/? | Not started | - |
+| 10. Web UI | v1.3 | 3/8 | In Progress|  |
 | 11. CLI Companion | v1.3 | 0/? | Not started | - |
 | 12. LLM Chat | v1.3 | 0/? | Superseded by FB-D (velocity gate triggered) | - |
 | FB-A. Staged Operation Entity & Lifecycle | v1.4 | 0/? | Designed | - |
