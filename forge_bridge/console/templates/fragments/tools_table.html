@@ -3,11 +3,9 @@
     <thead>
       <tr>
         <th>Name</th>
-        <th>Origin</th>
-        <th>Namespace</th>
-        <th>Code hash</th>
-        <th>Synthesized</th>
-        <th>Obs count</th>
+        <th>Status</th>
+        <th>Type</th>
+        <th>Created</th>
       </tr>
     </thead>
     <tbody>
@@ -17,16 +15,29 @@
           hx-target="#view-main"
           hx-swap="innerHTML"
           hx-push-url="true">
-        <td>{{ tool.name }}</td>
-        <td>{{ tool.origin }}</td>
-        <td>{{ tool.namespace }}</td>
-        <td class="mono" title="{{ tool.code_hash or '' }}">{{ (tool.code_hash or '—')[:8] }}</td>
+        <td class="tool-name-cell">
+          <div class="tool-name-primary mono">{{ tool.name }}</div>
+          <div class="tool-name-secondary">
+            <span class="ns">{{ tool.namespace }}</span>
+            {% if tool.code_hash %}
+            <span class="sep">·</span>
+            <span class="mono" title="{{ tool.code_hash }}">{{ tool.code_hash[:8] }}</span>
+            {% endif %}
+            <span class="sep">·</span>
+            <span>{{ tool.observation_count }} obs</span>
+          </div>
+        </td>
+        <td>
+          <span class="status-chip status-chip--{{ tool.status }}">{{ tool.status }}</span>
+        </td>
+        <td>
+          {% if tool.origin == 'synthesized' %}Synthesized{% elif tool.origin == 'builtin' %}Built-in{% else %}{{ tool.origin }}{% endif %}
+        </td>
         <td class="mono">{{ tool.synthesized_at or '—' }}</td>
-        <td>{{ tool.observation_count }}</td>
       </tr>
       {% else %}
       <tr>
-        <td colspan="6" class="empty-state">
+        <td colspan="4" class="empty-state">
           <strong>No tools registered</strong><br>
           Start the MCP server and connect a client to populate this list.
         </td>
