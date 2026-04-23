@@ -1,0 +1,33 @@
+<div id="execs-table">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Timestamp</th>
+        <th>Code hash</th>
+        <th>Intent</th>
+        <th>Promoted</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for rec in records %}
+      <tr class="row-link"
+          hx-get="/ui/execs/{{ rec.code_hash }}/{{ rec.timestamp | urlencode }}"
+          hx-target="#view-main"
+          hx-swap="innerHTML"
+          hx-push-url="true">
+        <td class="mono">{{ rec.timestamp }}</td>
+        <td class="mono" title="{{ rec.code_hash }}">{{ rec.code_hash[:8] }}</td>
+        <td>{{ rec.intent or '&mdash;' }}</td>
+        <td>{% if rec.promoted %}yes{% else %}no{% endif %}</td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="4" class="empty-state">
+          <strong>No executions recorded</strong><br>
+          Run a tool via an MCP client or the Flame bridge to see history here.
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

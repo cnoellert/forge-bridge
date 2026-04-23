@@ -1,0 +1,56 @@
+{% extends "shell.html" %}
+{% block title %}Execution History — Forge Console{% endblock %}
+
+{% block view %}
+<h1 class="view-title">Execution History</h1>
+
+{% include "fragments/query_console.html" %}
+
+<div class="table-toolbar">
+  <button class="btn btn-refresh"
+          hx-get="/ui/fragments/execs-table{{ querystring }}"
+          hx-target="#execs-table"
+          hx-swap="outerHTML"
+          hx-push-url="false">Refresh history</button>
+  <span class="staleness" x-data="staleness()" x-init="init()" x-text="label"></span>
+</div>
+
+{% include "fragments/execs_table.html" %}
+
+{% if total > limit %}
+<nav class="pagination" aria-label="Pagination">
+  {% if offset > 0 %}
+  <a class="btn" href="/ui/execs?limit={{ limit }}&offset={{ [offset - limit, 0] | max }}{{ filter_querystring }}">&larr; Prev</a>
+  {% else %}
+  <span class="btn" aria-disabled="true" style="opacity:0.5">&larr; Prev</span>
+  {% endif %}
+  <span class="staleness">Page {{ (offset // limit) + 1 }} of {{ ((total + limit - 1) // limit) | int }}</span>
+  {% if offset + limit < total %}
+  <a class="btn" href="/ui/execs?limit={{ limit }}&offset={{ offset + limit }}{{ filter_querystring }}">Next &rarr;</a>
+  {% else %}
+  <span class="btn" aria-disabled="true" style="opacity:0.5">Next &rarr;</span>
+  {% endif %}
+</nav>
+{% endif %}
+
+<script>
+  function staleness() {
+    return {
+      shown: 0,
+      label: 'Last refreshed 0s ago',
+      init() {
+        setInterval(() => {
+          this.shown += 1;
+          this.label = `Last refreshed ${this.shown}s ago`;
+        }, 1000);
+        document.body.addEventListener('htmx:afterSwap', (e) => {
+          if (e.detail && e.detail.target && e.detail.target.id === 'execs-table') {
+            this.shown = 0;
+            this.label = 'Last refreshed 0s ago';
+          }
+        });
+      }
+    }
+  }
+</script>
+{% endblock %}

@@ -1,0 +1,25 @@
+{% extends "shell.html" %}
+{% block title %}Execution {{ record.code_hash[:8] }} — Forge Console{% endblock %}
+
+{% block view %}
+<p><a href="/ui/execs" class="nav-link">&larr; All executions</a></p>
+<h1 class="view-title">Execution Detail</h1>
+
+<section class="card provenance-card">
+  <dl class="dl-two-col">
+    <dt>timestamp</dt>  <dd class="amber mono">{{ record.timestamp }}</dd>
+    <dt>code_hash</dt>  <dd class="amber mono">{{ record.code_hash }}</dd>
+    <dt>intent</dt>     <dd class="amber">{{ record.intent or '&mdash;' }}</dd>
+    <dt>promoted</dt>   <dd class="amber">{% if record.promoted %}yes{% else %}no{% endif %}</dd>
+  </dl>
+</section>
+
+<section class="card code-card" x-data="{ copyLabel: 'Copy code' }">
+  <button class="copy-btn"
+          type="button"
+          @click="navigator.clipboard.writeText($refs.src.textContent).then(() => { copyLabel = 'Copied!'; setTimeout(() => copyLabel = 'Copy code', 2000); })"
+          x-text="copyLabel"
+          aria-label="Copy code to clipboard">Copy code</button>
+  <pre class="font-mono" x-ref="src">{{ record.raw_code }}</pre>
+</section>
+{% endblock %}
