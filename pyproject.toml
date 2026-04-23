@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.scripts]
-forge-bridge = "forge_bridge.__main__:main"
+forge-bridge = "forge_bridge.__main__:app"
 
 [project.optional-dependencies]
 llm = [
@@ -30,6 +30,7 @@ llm = [
 dev = [
     "pytest",
     "pytest-asyncio",
+    "pytest-timeout>=2.2.0",
     "ruff",
 ]
 
@@ -42,6 +43,20 @@ include = ["forge_bridge/**"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+[tool.ruff.lint]
+extend-select = ["T20"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["T20"]
+# Phase 11: add "forge_bridge/cli/**" carve-out when CLI subcommands ship.
+# Pre-Phase-5 orphaned modules — broken imports (references nonexistent `forge_mcp`
+# module), not re-exported in forge_bridge/__init__.py, not runtime-imported anywhere.
+# Carved out so the T20 gate can be live for new code (especially forge_bridge/console/)
+# without requiring a pre-emptive dead-code deletion inside Plan 09-01. Track cleanup
+# as a follow-up refactor.
+"forge_bridge/server.py" = ["T20"]
+"forge_bridge/shell.py" = ["T20"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
