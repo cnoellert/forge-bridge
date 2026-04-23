@@ -62,12 +62,13 @@ Exceptions:
 | Label | 12px | 600 (semibold) | 1.4 | sans-serif stack | Table column headers, definition list keys, chip labels, nav items |
 | Heading | 20px | 600 (semibold) | 1.2 | sans-serif stack | View page title (e.g. "Tools", "Execution History") |
 | Display | 28px | 600 (semibold) | 1.15 | sans-serif stack | Reserved for the main page `<h1>` brand/app name in shell header only |
-| Mono | 13px | 400 (regular) | 1.6 | monospace stack | code_hash values, raw source `<pre>`, query console input, timestamps |
+
+Mono rendering: code_hash values, raw source `<pre>`, query console input, and timestamps all use **Body size (14px) with the monospace font family (`--font-mono`)**. No separate mono size token. Line-height 1.6 applied via a `.font-mono` utility class on `<pre>` blocks for comfortable vertical rhythm. The monospace font-family provides the visual distinction; a separate 13px size is not needed.
 
 Rules:
 - Body (14px) is the floor — nothing in the UI renders below 12px (Label).
 - Two weights only: 400 and 600. No 500, no 700.
-- Mono line-height 1.6 gives `<pre>` blocks comfortable vertical rhythm for multi-line source inspection.
+- `<pre>` blocks use `font-family: var(--font-mono); font-size: var(--text-body); line-height: 1.6;`.
 
 ---
 
@@ -108,6 +109,8 @@ Accent is NOT used for: table row hover, general link styling, pagination button
 
 Phase 10 introduces these hand-written HTML/CSS components (no third-party component library). All are implemented as Jinja2 macros or partials.
 
+**Primary visual anchor on list views:** the query console input + preset chip row. **Primary visual anchor on drilldown pages:** the provenance definition list card (two-column, amber value column).
+
 ### Shell (shell.html)
 
 - **Top nav bar**: `#2a2a2a` background, 40px height, app name in Display (28px/600), five nav links in Label (12px/600), active link has 2px amber left border (vertical nav item style) or bottom border (horizontal). No logo/icon.
@@ -116,18 +119,18 @@ Phase 10 introduces these hand-written HTML/CSS components (no third-party compo
 
 ### List views (tools, execs, manifest)
 
-- **Query console**: Full-width `<input>` in Mono font (13px), `#3a3f4f` background, border `#555555`, focus border `#cc9c00`. Below input: 3-4 preset chip buttons. Error message appears as 12px amber text directly below input — never as a toast (D-10).
+- **Query console**: Full-width `<input>` in monospace font (14px, `--font-mono`), `#3a3f4f` background, border `#555555`, focus border `#cc9c00`. Below input: 3-4 preset chip buttons. Error message appears as 12px amber text directly below input — never as a toast (D-10).
 - **Preset chips**: Rounded-2px buttons, bg `#2a2a2a`, border `#555555`, Label font (12px/600). Hover bg `#333333`. No amber fill — amber is not used for chip hover. One-click stuffs query and submits.
 - **Refresh button + staleness label**: Right-aligned above table. "Refresh" button neutral style (bg `#4a4a4a`, border `#555555`). Staleness label in Text muted (12px/400).
-- **Data table**: Full-width, no outer border. Column headers: Label (12px/600), `#ffffff`. Table row: body (14px/400), `#cccccc`. Row hover bg `#2a2a2a`. Row border-bottom `1px solid #333333`. code_hash column: Mono (13px), first 8 chars + hover tooltip for full hash (D-16).
+- **Data table**: Full-width, no outer border. Column headers: Label (12px/600), `#ffffff`. Table row: body (14px/400), `#cccccc`. Row hover bg `#2a2a2a`. Row border-bottom `1px solid #333333`. code_hash column: monospace font (14px, `--font-mono`), first 8 chars + hover tooltip for full hash (D-16).
 - **Pagination**: Prev / Next buttons + "Page N of M" label centered below table. Neutral button style. No numbered page list in v1.3.
 
 ### Drilldown pages (tool detail, exec detail)
 
-- **Provenance card**: `#2a2a2a` background, `1px solid #333333` border, `border-radius: 4px`, padding `md` (16px). Two-column definition list: key column Label (12px/600) in `#999999`; value column Body (14px/400) in `#cc9c00` (amber). Mono (13px) for `code_hash` and `synthesized_at` values.
+- **Provenance card**: `#2a2a2a` background, `1px solid #333333` border, `border-radius: 4px`, padding `md` (16px). Two-column definition list: key column Label (12px/600) in `#999999`; value column Body (14px/400) in `#cc9c00` (amber). Monospace font (14px, `--font-mono`) for `code_hash` and `synthesized_at` values.
 - **Consumer-tag chip row**: Inline row of read-only chips below provenance card. Same chip style as preset chips but non-interactive (no hover, no click). Label (12px).
-- **Raw source `<pre>`**: Mono (13px/400), line-height 1.6, `#1a1a1a` background (darker than secondary for code contrast — adopted from forge_dark_theme.py `QTextEdit`), `1px solid #333333` border, `border-radius: 2px`, padding `sm` (8px). No JS syntax highlighter (D-17). Copy-to-clipboard button: top-right corner of pre block, neutral button style, Alpine `@click` handler (~4 LOC per D-14).
-- **Raw sidecar JSON**: `<details>` element, default `closed`, same pre styling. Label reads "Show raw sidecar JSON (engineer mode)".
+- **Raw source `<pre>`**: Monospace font (14px, `--font-mono`), line-height 1.6, `#1a1a1a` background (darker than secondary for code contrast — adopted from forge_dark_theme.py `QTextEdit`), `1px solid #333333` border, `border-radius: 2px`, padding `sm` (8px). No JS syntax highlighter (D-17). "Copy source" button: top-right corner of pre block, neutral button style, Alpine `@click` handler (~4 LOC per D-14).
+- **Raw sidecar JSON**: `<details>` element, default `closed`, same pre styling. Label reads "Show raw sidecar JSON (engineer mode)". "Copy JSON" button: top-right corner, same neutral style as copy source button.
 
 ### Health dedicated view (/ui/health)
 
@@ -204,7 +207,8 @@ All read views render complete HTML on first paint. Filter links and pagination 
 | Chat stub body | "LLM chat launches in Phase 12. For now, use the structured query console to explore tools and execution history." | Plus two chip-link buttons: "Browse synthesized tools →" and "View recent executions →" |
 | Code hash tooltip (list view) | Full 64-char hash on hover | Truncated display shows first 8 chars (D-16) |
 | Drilldown: raw sidecar toggle | "Show raw sidecar JSON (engineer mode)" | `<summary>` label inside `<details>` element, default closed |
-| Copy-to-clipboard button | "Copy" → "Copied!" (2 s then reset) | Alpine `x-text` toggle; no icon |
+| Copy-to-clipboard: source block | "Copy source" → "Copied!" (2 s then reset) | Alpine `x-text` toggle; top-right of raw source `<pre>` block; no icon |
+| Copy-to-clipboard: JSON block | "Copy JSON" → "Copied!" (2 s then reset) | Alpine `x-text` toggle; top-right of raw sidecar `<details>` block; no icon |
 | Destructive actions | None in Phase 10. Read-only phase. | N/A |
 
 ---
@@ -249,7 +253,6 @@ CSS custom properties declared on `:root` (web idiomatic translation of the thre
   --text-heading: 20px;
   --text-body:    14px;
   --text-label:   12px;
-  --text-mono:    13px;
 
   --space-xs: 4px;
   --space-sm: 8px;
@@ -260,6 +263,8 @@ CSS custom properties declared on `:root` (web idiomatic translation of the thre
   --space-3xl:64px;
 }
 ```
+
+`--font-mono` is a font-family token only. Mono content uses `font-size: var(--text-body)` (14px). No `--text-mono` size token exists.
 
 No Tailwind. No CSS framework. No `@import` from external URLs. All styles in a single flat file.
 
