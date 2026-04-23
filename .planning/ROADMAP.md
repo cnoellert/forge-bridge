@@ -6,7 +6,7 @@
 - ✅ **v1.1 projekt-forge Integration** — Phases 4-6 (shipped 2026-04-19 — v1.1.0 API release, v1.1.1 PATCH-01)
 - ✅ **v1.2 Observability & Provenance** — Phases 7, 07.1, 8 (shipped 2026-04-22 — v1.2.0, v1.2.1 hotfix, v1.3.0)
 - 📋 **v1.3 Artist Console** — Phases 9-12 (in progress)
-- 📐 **v1.4 Staged Ops Platform** — Phases FB-A..FB-D (proposed 2026-04-23 — consumed by projekt-forge v1.4)
+- 📐 **v1.4 Staged Ops Platform** — Phases FB-A..FB-D (proposed 2026-04-23 — consumed by projekt-forge v1.5)
 
 ## Phases
 
@@ -119,13 +119,15 @@ Full details: `.planning/milestones/v1.2-ROADMAP.md`
 ### 📐 v1.4 Staged Ops Platform (Phases FB-A..FB-D)
 
 **Milestone Goal**: Extend forge-bridge with the human-in-the-loop primitives that
-projekt-forge v1.4 needs to become a thin Flame-side consumer: a `staged_operation` entity
+projekt-forge v1.5 needs to become a thin Flame-side consumer: a `staged_operation` entity
 with a proposed→approved→executed lifecycle, MCP + HTTP surface for list/approve/reject,
 an agentic `complete_with_tools()` method on LLMRouter, and a chat endpoint that binds it
 all together for both the Web UI (Phase 10) and external Flame hooks.
 
 **Proposed 2026-04-23** after projekt-forge ROADMAP restructure audit. Each FB phase maps
-directly to a dependency projekt-forge v1.4 has declared.
+directly to a dependency projekt-forge v1.5 has declared. (projekt-forge v1.4 is Editorial
+Operations — Flame-side work independent of forge-bridge, sequenced ahead of the consumer
+milestone so Flame-side velocity is not gated on upstream platform work.)
 
 ---
 
