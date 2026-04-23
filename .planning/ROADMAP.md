@@ -64,7 +64,7 @@ Full details: `.planning/milestones/v1.2-ROADMAP.md`
 **Plans**: 3 plans
   - [x] 09-01-PLAN.md — Typer entrypoint refactor + ruff T20 lint gate (unblocks console CLI + enforces print-ban before console package lands)
   - [x] 09-02-PLAN.md — Console package data layer: ManifestService singleton + ConsoleReadAPI facade + ExecutionLog deque snapshot + watcher injection
-  - [ ] 09-03-PLAN.md — Surface layer: Starlette app on :9996 as uvicorn asyncio task, MCP resources + tool shims, _lifespan D-31 wiring, LOGGING_CONFIG stdio-safety, SC#1 stdout-cleanliness integration test
+  - [x] 09-03-PLAN.md — Surface layer: Starlette app on :9996 as uvicorn asyncio task, MCP resources + tool shims, _lifespan D-31 wiring, LOGGING_CONFIG stdio-safety, SC#1 stdout-cleanliness integration test
 
 ---
 
