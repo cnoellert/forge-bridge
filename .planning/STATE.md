@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Artist Console
-status: executing
-stopped_at: Phase 10 UI-SPEC approved
-last_updated: "2026-04-23T18:24:10.208Z"
-last_activity: 2026-04-23 -- Phase 10 execution started
+status: blocked
+stopped_at: Phase 10 execution — automated gates pass, D-36 artist-UX UAT FAILED
+last_updated: "2026-04-23T19:35:00.000Z"
+last_activity: 2026-04-23 -- Phase 10 automated gates pass (152/152 tests); D-36 dogfood UAT FAIL — ships back to planning
 progress:
   total_phases: 4
   completed_phases: 1
-  total_plans: 11
-  completed_plans: 3
-  percent: 27
+  total_plans: 19
+  completed_plans: 11
+  percent: 58
 ---
 
 # Project State
@@ -25,12 +25,22 @@ See: .planning/PROJECT.md (updated 2026-04-22)
 
 ## Current Position
 
-Phase: 10 (web-ui) — EXECUTING
-Plan: 1 of 8
-Status: Executing Phase 10
-Last activity: 2026-04-23 -- Phase 10 execution started
+Phase: 10 (web-ui) — BLOCKED on D-36 artist-UX gate
+Plan: 8 of 8 (all plans complete, phase ships back to planning per D-36)
+Status: Phase 10 closure blocked — dogfood UAT failed
+Last activity: 2026-04-23 -- Phase 10 automated gates pass; D-36 dogfood UAT FAIL
 
-Progress: [··········] 0% (v1.3 milestone — 4 phases, 0 complete)
+Progress: [███·······] 58% (v1.3 milestone — 4 phases, 1 complete + Phase 10 blocked)
+
+**Block details:** Phase 10 plans 10-01 through 10-08 all executed. 152/152 automated tests pass (wheel contract, JS-disabled first-paint, path-traversal mitigations confirmed live). The mandatory D-35/D-36 non-developer dogfood UAT returned FAIL — operator verdict "nearly impossible to understand". In the same session a shipping render bug was discovered in `shell.html` line 7: `hx-boost="true"` combined with `hx-target="#view-main" hx-swap="innerHTML"` causes nav clicks to inject the full shell+view inside the existing `#view-main`, duplicating the nav and health strip. Full record: `.planning/phases/10-web-ui/10-UAT.md` + `.planning/phases/10-web-ui/10-08-SUMMARY.md`.
+
+**Next action:** run `/gsd-plan-phase 10.1 --gaps` to create a remediation plan targeting:
+1. shell.html nav swap contract (hx-boost + full-page handler mismatch)
+2. Explicit Status column with visual chip (active / quarantined / loaded)
+3. Artist-oriented column header language; hide or tuck away developer telemetry
+4. Chip discoverability on first paint
+5. In-browser nav-swap test (playwright or equivalent)
+6. Re-run dogfood UAT with fresh operator on the remediated build
 
 ## Session Handoff — Resume Instructions
 
@@ -130,7 +140,7 @@ None.
 
 ### Blockers/Concerns
 
-None — v1.3 roadmap defined; ready to begin Phase 9.
+- **Phase 10 blocked on D-36 artist-UX gate (2026-04-23).** Automated tests pass; non-developer dogfood UAT failed qualitatively ("nearly impossible to understand"). Shipping render bug found in `shell.html` `hx-boost` configuration — nav clicks duplicate the shell inside `#view-main`. Do not advance to Phase 11 until remediation lands and the dogfood UAT passes with a fresh operator. Full record: `.planning/phases/10-web-ui/10-UAT.md`.
 
 ## Deferred Items
 
@@ -148,6 +158,6 @@ None — v1.3 roadmap defined; ready to begin Phase 9.
 
 ## Session Continuity
 
-Last session: 2026-04-23T17:33:11.791Z
-Stopped at: Phase 10 UI-SPEC approved
-Resume file: .planning/phases/10-web-ui/10-UI-SPEC.md
+Last session: 2026-04-23T19:35:00Z
+Stopped at: Phase 10 execution — automated gates pass, D-36 dogfood UAT FAIL
+Resume file: .planning/phases/10-web-ui/10-UAT.md  (FAIL record + remediation scope)
