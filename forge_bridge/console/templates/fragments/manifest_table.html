@@ -1,0 +1,37 @@
+<div id="manifest-table">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Code hash</th>
+        <th>Synthesized</th>
+        <th>Version</th>
+        <th>Obs count</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for entry in entries %}
+      <tr class="row-link"
+          hx-get="/ui/tools/{{ entry.name }}"
+          hx-target="#view-main"
+          hx-swap="innerHTML"
+          hx-push-url="true">
+        <td>{{ entry.name }}</td>
+        <td class="mono" title="{{ entry.code_hash or '' }}">{{ (entry.code_hash or '—')[:8] }}</td>
+        <td class="mono">{{ entry.synthesized_at or '—' }}</td>
+        <td>{{ entry.version or '—' }}</td>
+        <td>{{ entry.observation_count }}</td>
+        <td>{{ entry.status }}</td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="6" class="empty-state">
+          <strong>Manifest is empty</strong><br>
+          No synthesized tools have been registered. Use the learning pipeline to generate tools.
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

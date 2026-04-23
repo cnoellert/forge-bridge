@@ -1,0 +1,43 @@
+{% extends "shell.html" %}
+{% block title %}Synthesis Manifest — Forge Console{% endblock %}
+
+{% block view %}
+<h1 class="view-title">Synthesis Manifest</h1>
+<p class="staleness" style="margin-bottom:var(--space-md)">
+  {{ manifest.count }} entries (schema v{{ manifest.schema_version }})
+</p>
+
+{% include "fragments/query_console.html" %}
+
+<div class="table-toolbar">
+  <button class="btn btn-refresh"
+          hx-get="/ui/fragments/manifest-table{{ querystring }}"
+          hx-target="#manifest-table"
+          hx-swap="outerHTML"
+          hx-push-url="false">Refresh manifest</button>
+  <span class="staleness" x-data="staleness()" x-init="init()" x-text="label"></span>
+</div>
+
+{% include "fragments/manifest_table.html" %}
+
+<script>
+  function staleness() {
+    return {
+      shown: 0,
+      label: 'Last refreshed 0s ago',
+      init() {
+        setInterval(() => {
+          this.shown += 1;
+          this.label = `Last refreshed ${this.shown}s ago`;
+        }, 1000);
+        document.body.addEventListener('htmx:afterSwap', (e) => {
+          if (e.detail && e.detail.target && e.detail.target.id === 'manifest-table') {
+            this.shown = 0;
+            this.label = 'Last refreshed 0s ago';
+          }
+        });
+      }
+    }
+  }
+</script>
+{% endblock %}

@@ -1,0 +1,14 @@
+{% extends "shell.html" %}
+{% block title %}System Health — Forge Console{% endblock %}
+
+{% block view %}
+<h1 class="view-title">System Health</h1>
+
+<div id="health-view-content"
+     hx-get="/ui/fragments/health-view"
+     hx-trigger="every 5s[!document.hidden]"
+     hx-swap="innerHTML"
+     hx-push-url="false">
+  {% include "fragments/health_view.html" %}
+</div>
+{% endblock %}

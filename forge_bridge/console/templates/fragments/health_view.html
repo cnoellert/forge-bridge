@@ -1,0 +1,56 @@
+{% set health = health|default({'status': 'fail', 'services': {}, 'instance_identity': {}}) %}
+<p class="staleness" style="margin-bottom:var(--space-md)">
+  Overall status:
+  <span class="agg-pill status-{{ health.status|default('fail') }}" style="display:inline-block;margin-left:var(--space-sm)">
+    {% if health.status == 'ok' %}OK
+    {% elif health.status == 'degraded' %}Degraded
+    {% else %}Error{% endif %}
+  </span>
+  · version {{ health.version|default('?') }}
+  · {{ health.ts|default('—') }}
+</p>
+
+<div class="health-grid">
+  {% for name, svc in [
+      ('MCP server', health.services.mcp|default({})),
+      ('Flame bridge', health.services.flame_bridge|default({})),
+      ('WebSocket bridge', health.services.ws_server|default({})),
+      ('Watcher', health.services.watcher|default({})),
+      ('Storage callback', health.services.storage_callback|default({})),
+      ('Console port', health.services.console_port|default({})),
+  ] %}
+  <section class="card health-card">
+    <h2 style="font-size:var(--text-label);color:var(--color-text-muted);margin:0 0 var(--space-sm) 0">{{ name }}</h2>
+    <p>
+      <span class="dot status-{{ svc.status|default('fail') }}"></span>
+      <strong>{{ svc.status|default('—') }}</strong>
+    </p>
+    <p class="staleness">{{ svc.detail|default('—') }}</p>
+    {% if svc.url %}<p class="staleness mono">{{ svc.url }}</p>{% endif %}
+  </section>
+  {% endfor %}
+
+  {# LLM backends — list, render each backend as its own card #}
+  {% for backend in health.services.llm_backends|default([]) %}
+  <section class="card health-card">
+    <h2 style="font-size:var(--text-label);color:var(--color-text-muted);margin:0 0 var(--space-sm) 0">LLM: {{ backend.name }}</h2>
+    <p>
+      <span class="dot status-{{ backend.status|default('fail') }}"></span>
+      <strong>{{ backend.status|default('—') }}</strong>
+    </p>
+    <p class="staleness">{{ backend.detail|default('—') }}</p>
+  </section>
+  {% endfor %}
+</div>
+
+{% if health.instance_identity %}
+<section class="card" style="margin-top:var(--space-xl)">
+  <h2 style="font-size:var(--text-label);color:var(--color-text-muted);margin:0 0 var(--space-sm) 0">Instance identity (API-04)</h2>
+  <dl class="dl-two-col">
+    <dt>execution_log</dt>
+    <dd class="{% if health.instance_identity.execution_log.id_match %}amber{% endif %}">{{ health.instance_identity.execution_log.detail }}</dd>
+    <dt>manifest_service</dt>
+    <dd class="{% if health.instance_identity.manifest_service.id_match %}amber{% endif %}">{{ health.instance_identity.manifest_service.detail }}</dd>
+  </dl>
+</section>
+{% endif %}
