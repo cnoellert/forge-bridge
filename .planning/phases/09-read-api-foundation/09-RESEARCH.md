@@ -1213,40 +1213,50 @@ extend-select = ["T20"]
 
 **Total `[ASSUMED]` claims in this research: 5.** Everything else is `[VERIFIED]` via live Python or `[CITED]` from the CONTEXT.md / STACK.md / ARCHITECTURE.md stack that the user already reviewed.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Tool-name filter on `/api/v1/execs?tool=synth_*` — join layer?**
    - What we know: `ExecutionRecord` (frozen, v1.1) has no `tool_name` field. `ManifestService` maps name→hash via `ToolRecord.code_hash`.
    - What's unclear: whether to add the join in the route handler (resolve glob → set of hashes → pass to `snapshot(hashes=...)`) or defer the tool filter to v1.4.
    - Recommendation: **add the join in the route handler for Phase 9.** Single task, ~15 lines, satisfies D-03 end-to-end. Alternative: document it as "implemented in Phase 10 when Web UI needs it" and ship Phase 9 without. Planner decides.
+   - **RESOLVED:** Defer to v1.4. The /api/v1/execs route handler REJECTS `?tool=...` with a 400 `{"error": {"code": "not_implemented", "message": "tool filter reserved for v1.4"}}` response in v1.3. Rationale: the executor is still `ExecutionRecord` (no `tool_name` field); the glob-join requires either a `ManifestService`-owned `code_hash`→name reverse map (with careful concurrency semantics when the watcher is actively mutating the manifest) or an additive field on `ExecutionRecord`. Both changes are larger than D-12's "decide now" threshold and justify deferral to v1.4 where streaming push + richer filters ship together. Phase 10 Web UI therefore will NOT ship a `tool:` token in the DF-1 query parser for v1.3 — Phase 10 CONTEXT.md `<deferred>` notes must record this alignment. Corresponding planner edits: (a) `ExecutionLog.snapshot()` and `ConsoleReadAPI.get_executions()` do NOT accept a `tool` kwarg (Plan 09-02); (b) `execs_handler` early-returns 400 `not_implemented` when `request.query_params.get("tool")` is truthy (Plan 09-03 Task 1); (c) a new test `test_execs_tool_filter_returns_400_not_implemented` pins the contract (Plan 09-03 Task 1).
 
 2. **`/api/v1/manifest` — full payload vs pagination?**
    - What we know: manifest is typically 10-100 tools for a single project; no pagination requirement in REQUIREMENTS.md.
    - What's unclear: whether `?limit=50` applies to `/api/v1/manifest` too, for consistency with `/api/v1/tools` and `/api/v1/execs`.
    - Recommendation: return the full manifest with `meta: {total: N}` and no limit clamping. If a studio ever has >1000 tools, revisit.
+   - **RESOLVED:** Return the full manifest with `meta: {total: N}` and NO limit clamping in v1.3. Revisit when a studio has >1000 tools (no REQ-ID gate ships before then).
 
 3. **`/api/v1/tools` ordering contract?**
    - What we know: insertion order is what `ManifestService.get_all()` returns.
    - What's unclear: whether builtins or synthesized tools appear first; whether there's a canonical `?sort=` contract.
    - Recommendation: insertion order (builtins registered by `register_builtins` at import, synthesized by watcher during `_lifespan`). Document. Sort ordering in the HTTP layer is a Phase 10 Web-UI concern.
+   - **RESOLVED:** Insertion order — builtins (registered by `register_builtins` at import) precede synthesized tools (registered by the watcher during `_lifespan`). No `?sort=` parameter in v1.3. Sort ordering in the HTTP layer is a Phase 10 Web-UI concern.
 
 4. **`flame_bridge` health check shape — what URL?**
    - What we know: The existing WebSocket client connects to `ws://127.0.0.1:9998`; the Flame HTTP bridge is `http://127.0.0.1:9999/exec`.
    - What's unclear: Does `/api/v1/health.services.flame_bridge` probe :9999 or :9998? D-14 shows `url: "http://...:9999"` which is the Flame HTTP bridge. Confirmed: :9999 HTTP.
    - Recommendation: Two separate health fields: `flame_bridge` (HTTP :9999) and `ws_server` (WS :9998). D-14 already separates these — so this is resolved.
+   - **RESOLVED:** Two separate health fields: `flame_bridge` probes `http://127.0.0.1:9999` (HTTP); `ws_server` probes `ws://127.0.0.1:9998` (WebSocket TCP reachability). D-14 already enshrines this split.
 
 5. **`forge://llm/health` resource relationship to `forge://health`?**
    - What we know: `forge://llm/health` exists (v1.0, in `llm/health.py`); `forge://health` is new (Phase 9).
    - What's unclear: does Phase 9 subsume `forge://llm/health`? Or coexist?
    - Recommendation: **coexist.** `forge://llm/health` stays — it's a narrower, LLM-only view for agents that only want that slice. `forge://health` is the full D-14 body. Both pass through `ConsoleReadAPI.get_health()` internally to maintain D-25.
+   - **RESOLVED:** Coexist. `forge://llm/health` stays as the narrower LLM-only view; `forge://health` ships as the full D-14 body. Both pass through `ConsoleReadAPI.get_health()` internally (D-25).
 
-## Risks and Open Questions for the Planner
+## Risks and Open Questions for the Planner (RESOLVED)
 
 1. **Phase 9 scope is tight but >1 plan.** Recommended split: (a) `09-01-typer-entrypoint` (Typer root + empty console subcommand + ruff gate — lands first, small diff per D-11); (b) `09-02-console-package` (ManifestService, ExecutionLog deque/snapshot, watcher injection); (c) `09-03-read-api-and-wiring` (ConsoleReadAPI, Starlette app, `_lifespan` extension, resources + tool shims, all integration tests). Planner may merge (b)+(c) if wave sizing fits.
+   - **RESOLVED:** Planner split Phase 9 into THREE plans exactly as recommended (09-01 / 09-02 / 09-03) with waves 1 / 2 / 3. Plan 09-03 carries an explicit context checkpoint marker between Task 3 and Task 4 (W-04) so the executor may split context windows if approaching 55%+.
 2. **Test fixture for "real MCP over stdio + real uvicorn on :9996 concurrently"** is the critical P-01 test (SC#1). Planner should budget a dedicated test-fixture task that spawns the MCP server in a subprocess, establishes a stdio client, and opens httpx-based concurrent traffic on `:9996`. This is the Phase 07.1 UAT evidence pattern applied here.
+   - **RESOLVED:** Plan 09-03 Task 6 creates `tests/test_console_stdio_cleanliness.py` as a dedicated P-01 fixture — real subprocess + real uvicorn + 100 concurrent GETs + Content-Length frame parsing. `pytest-timeout>=2.2.0` added to dev extras (I-01) so `@pytest.mark.timeout(60)` is enforced.
 3. **`ruff` version in `[tool.ruff.lint] extend-select = ["T20"]`** — if the pinned dev-extras ruff is too old for the `lint` subsection, fall back to top-level `[tool.ruff] select = [...]`. Planner verifies on-commit.
+   - **RESOLVED:** Plan 09-01 Task 2's verify block runs `ruff check forge_bridge/` against the live tree — if the config section is wrong ruff errors immediately and the commit fails. No pre-planning fallback; the commit-time check is the gate.
 4. **`register_console_resources` call-order** must be AFTER `register_builtins(mcp)` runs at import but BEFORE `_lifespan` yields. If a resource name collides with an existing builtin (unlikely — `forge://llm/health` is the only existing resource and names are distinct), FastMCP raises on registration. Add an error message that points to `register_builtins` vs `register_console_resources` as the two registration sites.
+   - **RESOLVED:** Plan 09-03 Task 4 locks `register_console_resources(mcp_server, manifest_service, console_read_api)` as D-31 Step 5 (after Step 4 builds `ConsoleReadAPI`, before Step 6 launches the uvicorn task). The four resource URIs (`forge://manifest/synthesis`, `forge://tools`, `forge://tools/{name}`, `forge://health`) do not collide with `forge://llm/health`. If FastMCP's registration error surfaces at boot, the resulting traceback already names both sites — no extra error wrapping needed.
 5. **ExecutionLog.snapshot's `tool` kwarg deferral** — see Open Question #1. Either implement the join in Phase 9 (15 LoC in handler) or defer — mark explicitly in plan so Phase 10 doesn't assume the query param works.
+   - **RESOLVED:** Defer to v1.4 per Open Question #1 RESOLVED marker. `ExecutionLog.snapshot()` and `ConsoleReadAPI.get_executions()` do NOT accept a `tool` kwarg. `execs_handler` rejects `?tool=...` with 400 `not_implemented`. Phase 10 CONTEXT.md `<deferred>` must record that the DF-1 query parser omits the `tool:` token in v1.3.
 
 ## Sources
 
@@ -1314,10 +1324,13 @@ extend-select = ["T20"]
 | Pitfalls | HIGH | 5 new pitfalls beyond SUMMARY.md/PITFALLS.md carry-forward, each tied to a Phase 9 code path |
 | Validation | HIGH | Every REQ-ID has a named test file + command; SC#1..5 each have a dedicated integration test |
 
-### Open Questions
+### Open Questions (RESOLVED)
 1. `/api/v1/execs?tool=synth_*` — implement the manifest-join in the route handler (15 LoC) or defer to v1.4? Recommend: implement.
+   - **RESOLVED:** Defer to v1.4. `execs_handler` rejects with 400 `not_implemented`; `snapshot()` + `get_executions()` do not accept the kwarg. See `## Open Questions (RESOLVED)` Q#1 above for the full rationale.
 2. Tool-shim collision — verify `register_console_resources` post-`register_builtins` works (live-verifiable via unit test; assumed A5).
+   - **RESOLVED:** Plan 09-03 Task 3 registers `forge://manifest/synthesis`, `forge://tools`, `forge://tools/{name}`, `forge://health` — none collide with the existing `forge://llm/health`. Registration happens inside `_lifespan` step 5 (Plan 09-03 Task 4), AFTER `register_builtins(mcp)` has run at import. FastMCP 1.26.0 accepts post-construction registration (assumption A5 confirmed in RESEARCH.md §Pattern 3).
 3. Phase 9 plan split — recommend 2-3 plans: Typer-root-refactor (small), console-package-core (ManifestService + ExecutionLog deque), read-api-and-wiring (ConsoleReadAPI + Starlette + `_lifespan` + resources). Planner finalizes.
+   - **RESOLVED:** Planner split Phase 9 into three plans exactly as recommended: 09-01 Typer root + ruff gate (Wave 1); 09-02 console package core + ExecutionLog deque + watcher injection (Wave 2); 09-03 read-API surface + `_lifespan` wiring + all integration tests (Wave 3). Plan 09-03 carries a context checkpoint marker between Task 3 and Task 4 for optional context-window split.
 
 ### Ready for Planning
 Research complete. Planner can now create PLAN.md files for Phase 9 subplans.
