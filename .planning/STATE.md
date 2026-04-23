@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Artist Console
-status: blocked
-stopped_at: Phase 10 execution — automated gates pass, D-36 artist-UX UAT FAILED
-last_updated: "2026-04-23T19:35:00.000Z"
-last_activity: 2026-04-23 -- Phase 10 automated gates pass (152/152 tests); D-36 dogfood UAT FAIL — ships back to planning
+status: executing
+stopped_at: Phase 10 execution — automated gates pass, D-36 dogfood UAT FAIL
+last_updated: "2026-04-23T20:45:32.917Z"
+last_activity: 2026-04-23 -- Phase 10.1 execution started
 progress:
-  total_phases: 4
-  completed_phases: 1
-  total_plans: 19
+  total_phases: 5
+  completed_phases: 2
+  total_plans: 16
   completed_plans: 11
-  percent: 58
+  percent: 69
 ---
 
 # Project State
@@ -21,20 +21,21 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-22)
 
 **Core value (v1.3):** Make forge-bridge legible to its operator — artist-first Web UI + CLI console surfacing the synthesis manifest, execution history, provenance, and live tool state, backed by a canonical MCP resource.
-**Current focus:** Phase 10 — web-ui
+**Current focus:** Phase 10.1 — artist-ux-gap-closure
 
 ## Current Position
 
-Phase: 10 (web-ui) — BLOCKED on D-36 artist-UX gate
-Plan: 8 of 8 (all plans complete, phase ships back to planning per D-36)
-Status: Phase 10 closure blocked — dogfood UAT failed
-Last activity: 2026-04-23 -- Phase 10 automated gates pass; D-36 dogfood UAT FAIL
+Phase: 10.1 (artist-ux-gap-closure) — EXECUTING
+Plan: 1 of 5
+Status: Executing Phase 10.1
+Last activity: 2026-04-23 -- Phase 10.1 execution started
 
 Progress: [███·······] 58% (v1.3 milestone — 4 phases, 1 complete + Phase 10 blocked)
 
 **Block details:** Phase 10 plans 10-01 through 10-08 all executed. 152/152 automated tests pass (wheel contract, JS-disabled first-paint, path-traversal mitigations confirmed live). The mandatory D-35/D-36 non-developer dogfood UAT returned FAIL — operator verdict "nearly impossible to understand". In the same session a shipping render bug was discovered in `shell.html` line 7: `hx-boost="true"` combined with `hx-target="#view-main" hx-swap="innerHTML"` causes nav clicks to inject the full shell+view inside the existing `#view-main`, duplicating the nav and health strip. Full record: `.planning/phases/10-web-ui/10-UAT.md` + `.planning/phases/10-web-ui/10-08-SUMMARY.md`.
 
 **Next action:** run `/gsd-plan-phase 10.1 --gaps` to create a remediation plan targeting:
+
 1. shell.html nav swap contract (hx-boost + full-page handler mismatch)
 2. Explicit Status column with visual chip (active / quarantined / loaded)
 3. Artist-oriented column header language; hide or tuck away developer telemetry
