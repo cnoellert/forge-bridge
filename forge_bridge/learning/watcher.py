@@ -19,6 +19,7 @@ from forge_bridge.learning.sanitize import _sanitize_tag, apply_size_budget
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
+    from forge_bridge.console.manifest_service import ManifestService
     from forge_bridge.learning.probation import ProbationTracker
 
 logger = logging.getLogger(__name__)
@@ -35,15 +36,26 @@ async def watch_synthesized_tools(
     synthesized_dir: Path | None = None,
     poll_interval: float = _POLL_INTERVAL,
     tracker: "ProbationTracker | None" = None,
+    manifest_service: "ManifestService | None" = None,
 ) -> None:
-    """Asyncio polling loop: hot-load new/changed synthesized tools."""
+    """Asyncio polling loop: hot-load new/changed synthesized tools.
+
+    manifest_service: optional -- when provided, every successfully-registered
+        synthesized tool is also entered into the ManifestService by name,
+        keeping the in-memory synthesis manifest in lock-step with the
+        live MCP tool registry. Backward-compatible default of None
+        preserves Phase 3-8 behavior.
+    """
     synth_dir = synthesized_dir or SYNTHESIZED_DIR
     seen: dict[str, str] = {}  # stem -> sha256
 
     while True:
         await asyncio.sleep(poll_interval)
         try:
-            _scan_once(mcp, seen, synth_dir, tracker=tracker)
+            _scan_once(
+                mcp, seen, synth_dir,
+                tracker=tracker, manifest_service=manifest_service,
+            )
         except Exception:
             logger.exception("Error in synthesized tool watcher")
 
@@ -142,12 +154,74 @@ def _read_sidecar(py_path: Path) -> dict | None:
     return apply_size_budget(payload)
 
 
+def _log_manifest_register_exception(task: "asyncio.Task") -> None:
+    """done_callback for the manifest_service.register coroutine.
+
+    Logs exceptions raised inside the scheduled register/remove tasks without
+    surfacing them to the sync _scan_once caller. Mirrors the
+    _log_callback_exception pattern in execution_log.py (LRN-02) so watcher
+    side-effect failures do not crash the polling loop. Credential-safety
+    practice: log only type(exc).__name__, not str(exc).
+    """
+    try:
+        exc = task.exception()
+    except asyncio.CancelledError:
+        return
+    if exc is not None:
+        logger.warning(
+            "manifest_service.register raised: %s", type(exc).__name__,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+
+
+def _build_tool_record(stem: str, provenance: dict | None, digest: str):
+    """Build a ToolRecord from watcher-side inputs.
+
+    Lazy-imports ToolRecord to avoid a circular import cycle with
+    forge_bridge.console (console reads from learning indirectly via
+    the MCP tool registration callbacks).
+    """
+    from forge_bridge.console.manifest_service import ToolRecord
+
+    # Infer namespace from stem prefix (flame_/forge_/synth_); default "synth"
+    if stem.startswith("flame_"):
+        namespace = "flame"
+    elif stem.startswith("forge_"):
+        namespace = "forge"
+    else:
+        namespace = "synth"
+
+    # Extract meta from provenance if present; provenance may be None
+    meta_src = (provenance or {}).get("meta") or {}
+    # Normalize meta into stringified pairs for the frozen tuple
+    meta_pairs = tuple((str(k), str(v)) for k, v in meta_src.items())
+    tags = tuple(str(t) for t in (provenance or {}).get("tags", ()))
+
+    # Derive optional fields from meta (sidecar schema)
+    version = meta_src.get("version")
+    synthesized_at = meta_src.get("synthesized_at")
+    observation_count = int(meta_src.get("observation_count", 0) or 0)
+
+    return ToolRecord(
+        name=stem,
+        origin="synthesized",
+        namespace=namespace,
+        synthesized_at=synthesized_at,
+        code_hash=digest,
+        version=version,
+        observation_count=observation_count,
+        tags=tags,
+        meta=meta_pairs,
+    )
+
+
 def _scan_once(
     mcp: "FastMCP",
     seen: dict[str, str],
     synthesized_dir: Path,
     tracker: "ProbationTracker | None" = None,
     manifest_path: Path = MANIFEST_PATH,
+    manifest_service: "ManifestService | None" = None,
 ) -> None:
     """Single scan pass — detect new, changed, and deleted files."""
     if not synthesized_dir.exists():
@@ -184,6 +258,19 @@ def _scan_once(
             register_tool(mcp, fn, name=stem, source="synthesized", provenance=provenance)
             seen[stem] = digest
             logger.info(f"Registered synthesized tool: {stem}")
+            # If a ManifestService is injected, mirror the MCP registration into
+            # the in-memory manifest. manifest_service.register is async; we are
+            # sync-in-async (called from the watcher coroutine) so schedule the
+            # coroutine via asyncio.create_task with a done-callback for errors.
+            if manifest_service is not None:
+                try:
+                    record = _build_tool_record(stem, provenance, digest)
+                    task = asyncio.create_task(manifest_service.register(record))
+                    task.add_done_callback(_log_manifest_register_exception)
+                except Exception:
+                    logger.exception(
+                        "Failed to schedule manifest register for %s", stem
+                    )
         except ValueError as e:
             logger.warning(f"Skipped {stem}: {e}")
 
@@ -195,6 +282,15 @@ def _scan_once(
                 logger.info(f"Removed synthesized tool: {stem}")
             except Exception:
                 pass
+            # Mirror removal into the manifest service
+            if manifest_service is not None:
+                try:
+                    task = asyncio.create_task(manifest_service.remove(stem))
+                    task.add_done_callback(_log_manifest_register_exception)
+                except Exception:
+                    logger.exception(
+                        "Failed to schedule manifest remove for %s", stem
+                    )
             del seen[stem]
 
 

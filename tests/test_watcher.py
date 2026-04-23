@@ -297,3 +297,91 @@ class TestReadSidecar:
         with caplog.at_level(logging.WARNING, logger="forge_bridge.learning.watcher"):
             assert _read_sidecar(py) is None
         assert any("non-list tags field" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Plan 09-02 Task 3: manifest_service injection into watcher (MFST-01)
+# ---------------------------------------------------------------------------
+
+
+class TestWatcherManifestServiceInjection:
+    """Tests 9-12 from Plan 09-02 Task 3 — watcher signature + scan-register mirror."""
+
+    def test_watcher_signature_has_manifest_service_kwarg(self):
+        """watch_synthesized_tools exposes manifest_service kwarg with default None."""
+        import inspect
+
+        from forge_bridge.learning.watcher import watch_synthesized_tools
+
+        sig = inspect.signature(watch_synthesized_tools)
+        assert "manifest_service" in sig.parameters
+        param = sig.parameters["manifest_service"]
+        assert param.default is None
+        # Annotation stored as a string (TYPE_CHECKING / string annotation)
+        assert "ManifestService" in str(param.annotation)
+
+    async def test_watcher_registers_tool_record_on_successful_register(
+        self, fresh_mcp, synth_dir, manifest_path
+    ):
+        """_scan_once mirrors a successful register_tool into the ManifestService."""
+        import asyncio as _asyncio
+
+        from forge_bridge.console import ManifestService
+
+        ms = ManifestService()
+        seen: dict[str, str] = {}
+        _write_tool(synth_dir, "synth_mirror")
+        _scan_once(
+            fresh_mcp, seen, synth_dir,
+            manifest_path=manifest_path, manifest_service=ms,
+        )
+        # Give scheduled create_task a chance to run
+        await _asyncio.sleep(0)
+
+        rec = ms.get("synth_mirror")
+        assert rec is not None
+        assert rec.origin == "synthesized"
+        assert rec.code_hash is not None
+        assert len(rec.code_hash) == 64  # sha256 hex
+
+    def test_watcher_backward_compat_without_manifest_service(
+        self, fresh_mcp, synth_dir, manifest_path
+    ):
+        """_scan_once with manifest_service=None preserves Phase 3-8 behavior."""
+        seen: dict[str, str] = {}
+        _write_tool(synth_dir, "synth_nomirror")
+        # Pass manifest_service=None explicitly (also the default)
+        _scan_once(
+            fresh_mcp, seen, synth_dir,
+            manifest_path=manifest_path, manifest_service=None,
+        )
+        # MCP registration still happens; no crash from the manifest_service
+        # None branch.
+        assert "synth_nomirror" in fresh_mcp._tool_manager._tools
+
+    async def test_watcher_removes_manifest_entry_on_file_deletion(
+        self, fresh_mcp, synth_dir, manifest_path
+    ):
+        """_scan_once mirrors a file-deletion into ManifestService.remove()."""
+        import asyncio as _asyncio
+
+        from forge_bridge.console import ManifestService
+
+        ms = ManifestService()
+        seen: dict[str, str] = {}
+        path = _write_tool(synth_dir, "synth_vanish")
+        _scan_once(
+            fresh_mcp, seen, synth_dir,
+            manifest_path=manifest_path, manifest_service=ms,
+        )
+        await _asyncio.sleep(0)
+        assert ms.get("synth_vanish") is not None
+
+        # Delete the file + re-scan
+        path.unlink()
+        _scan_once(
+            fresh_mcp, seen, synth_dir,
+            manifest_path=manifest_path, manifest_service=ms,
+        )
+        await _asyncio.sleep(0)
+        assert ms.get("synth_vanish") is None
