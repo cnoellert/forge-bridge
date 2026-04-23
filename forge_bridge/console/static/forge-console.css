@@ -1,0 +1,17 @@
+/* forge-console.css — Forge Bridge Artist Console v1.3
+ * Placeholder file. Plan 10-01 will replace this with the full stylesheet.
+ * This stub ensures the /ui/static/ mount resolves correctly in Wave 1 tests.
+ */
+
+:root {
+  --color-bg: #1a1a1a;
+  --color-surface: #242424;
+  --color-accent: #f5a623;
+  --color-text: #e8e8e8;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: system-ui, sans-serif;
+}
