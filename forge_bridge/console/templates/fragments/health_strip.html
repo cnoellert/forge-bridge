@@ -1,0 +1,40 @@
+<div id="health-strip"
+     class="health-strip"
+     hx-get="/ui/fragments/health-strip"
+     hx-trigger="every 10s[!document.hidden]"
+     hx-swap="outerHTML"
+     hx-push-url="false"
+     x-data="{ expanded: false }">
+  <button class="agg-pill status-{{ health.status|default('fail') }}"
+          @click="expanded = !expanded"
+          aria-label="Toggle health detail panel">
+    {% if health.status == 'ok' %}OK{% elif health.status == 'degraded' %}Degraded{% else %}Error{% endif %}
+  </button>
+  <span class="dot-row" role="list" aria-label="Service status">
+    {% set svc_order = [
+      ('mcp',     health.services.mcp|default({})),
+      ('flame',   health.services.flame_bridge|default({})),
+      ('ws',      health.services.ws_server|default({})),
+      ('watcher', health.services.watcher|default({})),
+      ('storage', health.services.storage_callback|default({})),
+      ('port',    health.services.console_port|default({})),
+    ] %}
+    {% for name, svc in svc_order %}
+    <span class="dot status-{{ svc.status|default('fail') }}"
+          role="listitem"
+          title="{{ name }}: {{ svc.detail|default('') }}"></span>
+    {% endfor %}
+  </span>
+  <div class="expanded-panel" x-show="expanded" x-cloak>
+    {% for name, svc in health.services.items() %}
+    <div>
+      <strong>{{ name }}:</strong>
+      <span class="status-{{ svc.status if svc is mapping and svc.status else 'absent' }}">
+        {% if svc is mapping %}{{ svc.status|default('—') }} — {{ svc.detail|default('') }}
+        {% elif svc is iterable and svc is not string %}{{ svc | length }} backend(s)
+        {% else %}{{ svc }}{% endif %}
+      </span>
+    </div>
+    {% endfor %}
+  </div>
+</div>
