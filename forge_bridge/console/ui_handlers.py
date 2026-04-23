@@ -20,6 +20,8 @@ from pathlib import Path
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
 
+from forge_bridge.console.manifest_service import ToolRecord
+
 logger = logging.getLogger(__name__)
 
 # Path to synthesized tool source files (T-10-18: confined to SYNTH_ROOT)
@@ -78,6 +80,39 @@ def _tools_preset_chips() -> list:
         {"label": "Active synth", "tokens": "origin:synthesized"},
         {"label": "Builtin only", "tokens": "origin:builtin"},
     ]
+
+
+def _derive_tool_status(tool: "ToolRecord") -> str:
+    """D-40 status derivation for the Tools-view Status column.
+
+    Mirrors the manifest-view _filter_manifest_entries precedent at
+    lines 326-357 -- derived server-side from ToolRecord fields so the
+    template stays thin. Returns one of two values in Phase 10.1:
+
+      - "active":  synthesized tool with a code_hash AND observation_count > 0
+      - "loaded":  everything else visible in get_tools() -- builtin tools,
+                   synthesized tools with no observations, synthesized tools
+                   with a missing code_hash.
+
+    The "quarantined" status does NOT appear here by design: quarantined
+    tools are removed from ManifestService by the watcher's removal-mirror
+    path (forge_bridge/learning/watcher.py:278-293) after
+    ProbationTracker.quarantine() (forge_bridge/learning/probation.py:71-88)
+    fires, so they are never in the get_tools() stream. Locked by
+    tests/test_tool_quarantine_surface.py. If that test fails, this
+    function and forge-console.css's chip variant set must be re-planned.
+
+    Signature accepts ToolRecord directly (not dict) because the sole call
+    site -- the `ui_tools_handler` TemplateResponse comprehension -- iterates
+    `filtered: list[ToolRecord]` BEFORE `.to_dict()` is applied.
+    """
+    if (
+        tool.origin == "synthesized"
+        and tool.code_hash
+        and (tool.observation_count or 0) > 0
+    ):
+        return "active"
+    return "loaded"
 
 
 def _filter_tools(tools, qp):
@@ -161,7 +196,10 @@ async def ui_tools_handler(request: Request) -> HTMLResponse:
         {
             "request": request,
             "active_view": "tools",
-            "tools": [t.to_dict() for t in filtered],
+            "tools": [
+                {**t.to_dict(), "status": _derive_tool_status(t)}
+                for t in filtered
+            ],
             "query_params": dict(request.query_params),
             "query_params_as_tokens": _query_params_as_tokens(
                 request.query_params, _TOOLS_KEYS,
