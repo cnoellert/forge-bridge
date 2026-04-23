@@ -21,7 +21,7 @@ def _find_free_port() -> int:
         return s.getsockname()[1]
 
 
-async def test_start_console_task_returns_task_and_server_on_ok_port(caplog):
+async def test_start_console_task_returns_task_and_server_on_ok_port():
     """Happy path: free port, _start_console_task succeeds."""
     port = _find_free_port()
 
