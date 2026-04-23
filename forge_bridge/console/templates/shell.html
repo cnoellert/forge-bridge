@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}Forge Console{% endblock %}
+
+{% block body %}
+<div x-data="shellRoot()" x-init="init()">
+  <nav class="top-nav" hx-boost="true" hx-push-url="true" hx-target="#view-main" hx-swap="innerHTML">
+    <a href="/ui/tools"    class="nav-link{% if active_view == 'tools' %} active{% endif %}"    {% if active_view == 'tools' %}aria-current="page"{% endif %}>Tools</a>
+    <a href="/ui/execs"    class="nav-link{% if active_view == 'execs' %} active{% endif %}"    {% if active_view == 'execs' %}aria-current="page"{% endif %}>Executions</a>
+    <a href="/ui/manifest" class="nav-link{% if active_view == 'manifest' %} active{% endif %}" {% if active_view == 'manifest' %}aria-current="page"{% endif %}>Manifest</a>
+    <a href="/ui/health"   class="nav-link{% if active_view == 'health' %} active{% endif %}"   {% if active_view == 'health' %}aria-current="page"{% endif %}>Health</a>
+    <a href="/ui/chat"     class="nav-link{% if active_view == 'chat' %} active{% endif %}"     {% if active_view == 'chat' %}aria-current="page"{% endif %}>Chat</a>
+  </nav>
+
+  <div id="health-strip-container">
+    {% include "fragments/health_strip.html" %}
+  </div>
+
+  <main id="view-main">
+    {% block view %}{% endblock %}
+  </main>
+</div>
+
+<script>
+  function shellRoot() {
+    return {
+      init() {
+        // D-22: single tab-visibility listener on the whole shell.
+        // On un-hide, fire an immediate health-strip refresh and let
+        // htmx's own `every 10s[!document.hidden]` pause/resume cadence.
+        document.addEventListener('visibilitychange', () => {
+          if (!document.hidden) {
+            const strip = document.getElementById('health-strip');
+            if (strip) { htmx.trigger(strip, 'load'); }
+          }
+        });
+        // D-11: `/` focuses the query-console input from anywhere
+        // on the page, as long as the user isn't already typing in
+        // another <input> / <textarea> / [contenteditable].
+        document.addEventListener('keydown', (e) => {
+          const tag = document.activeElement ? document.activeElement.tagName : '';
+          const inEditable = tag === 'INPUT' || tag === 'TEXTAREA'
+            || (document.activeElement && document.activeElement.isContentEditable);
+          if (e.key === '/' && !inEditable) {
+            const q = document.getElementById('query-console-input');
+            if (q) { e.preventDefault(); q.focus(); }
+          }
+        });
+      }
+    }
+  }
+</script>
+{% endblock %}
