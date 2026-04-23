@@ -82,7 +82,15 @@ Full details: `.planning/milestones/v1.2-ROADMAP.md`
   3. Artist can click into any tool and see its canonical `_meta` provenance fields (origin, code_hash, synthesized_at, version, observation_count) and raw source for synthesized tools — no jargon-only displays.
   4. Health strip is visible on every view and updates automatically (poll) — artist can see at a glance whether Flame bridge, LLM backends, and watcher are reachable without navigating away.
   5. Structured query console accepts a filter expression (e.g. `origin:synthesized`, `promoted:true`) and the view updates deterministically without an LLM call.
-**Plans**: TBD
+**Plans**: 8 plans across 6 waves (Wave 1 parallel; Waves 2-5 serialized due to shared ui_handlers.py/ui_fragments.py ownership; Wave 6 closure)
+  - [ ] 10-01-PLAN.md (wave 1) — Assets landing: jinja2 dep + wheel-include globs + vendored JS with SRI + forge-console.css
+  - [ ] 10-02-PLAN.md (wave 1) — Template skeleton: base.html + shell.html + health_strip/query_console fragments + error templates
+  - [ ] 10-03-PLAN.md (wave 1) — Starlette wiring: Jinja2Templates + StaticFiles mount + /ui route table + ui_handlers/ui_fragments modules + route-registration smoke test
+  - [ ] 10-04-PLAN.md (wave 2) — Tools view: list + drilldown + fragment handlers (TOOLS-01/02)
+  - [ ] 10-05-PLAN.md (wave 3) — Execs view: list + pagination + drilldown + fragment handlers (EXECS-01/02)
+  - [ ] 10-06-PLAN.md (wave 4) — Manifest + Health views (MFST-04, HEALTH-01/04)
+  - [ ] 10-07-PLAN.md (wave 5) — Chat nav stub (CONSOLE-05 nav contract)
+  - [ ] 10-08-PLAN.md (wave 6) — Closure: wheel packaging test + JS-disabled test + full regression + non-developer dogfood UAT (D-35/D-36)
 **UI hint**: yes
 
 ---
