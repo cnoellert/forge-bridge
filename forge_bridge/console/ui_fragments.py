@@ -13,7 +13,7 @@ import logging
 from starlette.requests import Request
 from starlette.responses import HTMLResponse
 
-from forge_bridge.console.ui_handlers import _filter_tools
+from forge_bridge.console.ui_handlers import _filter_tools, _filter_manifest_entries
 
 logger = logging.getLogger(__name__)
 
@@ -109,19 +109,44 @@ async def execs_table_fragment(request: Request) -> HTMLResponse:
     )
 
 
-# -- Manifest table fragment (Wave 1: stub; 10-06 fills in) -----------------
+# -- Manifest table fragment --------------------------------------------------
 
 async def manifest_table_fragment(request: Request) -> HTMLResponse:
-    return HTMLResponse(
-        "<p>manifest-table fragment — pending plan 10-06.</p>",
-        status_code=501,
+    """Bare manifest table for htmx outerHTML swap from the Refresh manifest button."""
+    try:
+        manifest = await request.app.state.console_read_api.get_manifest()
+    except Exception as exc:
+        logger.warning(
+            "manifest_table_fragment failed: %s", type(exc).__name__, exc_info=True,
+        )
+        return HTMLResponse(
+            '<div class="empty-state"><strong>Could not load manifest</strong></div>',
+            status_code=500,
+        )
+    filtered = _filter_manifest_entries(
+        list(manifest.get("tools", [])), dict(request.query_params),
+    )
+    return request.app.state.templates.TemplateResponse(
+        "fragments/manifest_table.html",
+        {"request": request, "entries": filtered},
     )
 
 
-# -- Health view fragment (Wave 1: stub; 10-06 fills in) --------------------
+# -- Health view fragment -----------------------------------------------------
 
 async def health_view_fragment(request: Request) -> HTMLResponse:
-    return HTMLResponse(
-        "<p>health-view fragment — pending plan 10-06.</p>",
-        status_code=501,
+    """Bare health-view content for htmx innerHTML swap (polls at 5s per D-20)."""
+    try:
+        health = await request.app.state.console_read_api.get_health()
+    except Exception as exc:
+        logger.warning(
+            "health_view_fragment failed: %s", type(exc).__name__, exc_info=True,
+        )
+        return HTMLResponse(
+            '<div class="empty-state"><strong>Could not load health</strong></div>',
+            status_code=500,
+        )
+    return request.app.state.templates.TemplateResponse(
+        "fragments/health_view.html",
+        {"request": request, "health": health},
     )

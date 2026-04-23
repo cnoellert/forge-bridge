@@ -313,23 +313,108 @@ async def ui_exec_detail_handler(request: Request) -> HTMLResponse:
     )
 
 
-# -- Manifest view (Wave 1: stub; 10-06 fills in) ---------------------------
+# -- Manifest view -----------------------------------------------------------
+
+def _manifest_preset_chips() -> list:
+    """D-09: preset chip roster for the manifest view."""
+    return [
+        {"label": "Loaded", "tokens": "status:loaded"},
+        {"label": "Orphaned", "tokens": "status:orphaned"},
+    ]
+
+
+def _filter_manifest_entries(entries: list, qp: dict) -> list:
+    """Apply q + status filters to manifest entries from get_manifest()['tools'].
+
+    Status derivation:
+    - active: has code_hash AND observation_count > 0
+    - loaded: has code_hash but observation_count == 0
+    - orphaned: no code_hash (missing sidecar)
+
+    status=orphaned filter: observation_count == 0 OR code_hash missing.
+    status=loaded filter: has code_hash (any obs count).
+    """
+    q = (qp.get("q") or "").lower()
+    status = (qp.get("status") or "").lower()
+    out = []
+    for e in entries:
+        if q and q not in e.get("name", "").lower():
+            continue
+        if status == "orphaned":
+            if e.get("observation_count", 0) > 0 and e.get("code_hash"):
+                continue
+        elif status == "loaded":
+            if not e.get("code_hash"):
+                continue
+        # Decorate each entry with a derived status label for the table
+        if e.get("code_hash") and e.get("observation_count", 0) > 0:
+            e = {**e, "status": "active"}
+        elif not e.get("code_hash"):
+            e = {**e, "status": "orphaned"}
+        else:
+            e = {**e, "status": "loaded"}
+        out.append(e)
+    return out
+
 
 async def ui_manifest_handler(request: Request) -> HTMLResponse:
-    return HTMLResponse(
-        "<!doctype html><html><body><h1>Not Implemented</h1>"
-        "<p>/ui/manifest — pending plan 10-06.</p></body></html>",
-        status_code=501,
+    """Full-page /ui/manifest handler. Implements MFST-04 + CONSOLE-03."""
+    try:
+        manifest = await request.app.state.console_read_api.get_manifest()
+    except Exception as exc:
+        logger.warning(
+            "ui_manifest_handler failed: %s", type(exc).__name__, exc_info=True,
+        )
+        return _render_error(
+            request, "errors/read_failed.html",
+            "Could not load manifest — the console API may be restarting.",
+            500,
+        )
+    filtered = _filter_manifest_entries(
+        list(manifest.get("tools", [])), dict(request.query_params),
+    )
+    querystring = "?" + str(request.query_params) if request.query_params else ""
+    return request.app.state.templates.TemplateResponse(
+        "manifest/list.html",
+        {
+            "request": request,
+            "active_view": "manifest",
+            "manifest": manifest,
+            "entries": filtered,
+            "querystring": querystring,
+            "query_params": dict(request.query_params),
+            "query_params_as_tokens": _query_params_as_tokens(
+                request.query_params, _MANIFEST_KEYS,
+            ),
+            "view_slug": "manifest",
+            "preset_chips": _manifest_preset_chips(),
+            "supported_keys": _MANIFEST_KEYS,
+        },
     )
 
 
-# -- Health dedicated view (Wave 1: stub; 10-06 fills in) -------------------
+# -- Health dedicated view ---------------------------------------------------
 
 async def ui_health_view_handler(request: Request) -> HTMLResponse:
-    return HTMLResponse(
-        "<!doctype html><html><body><h1>Not Implemented</h1>"
-        "<p>/ui/health — pending plan 10-06.</p></body></html>",
-        status_code=501,
+    """Full-page /ui/health handler. Implements HEALTH-01."""
+    try:
+        health = await request.app.state.console_read_api.get_health()
+    except Exception as exc:
+        logger.warning(
+            "ui_health_view_handler failed: %s", type(exc).__name__, exc_info=True,
+        )
+        return _render_error(
+            request, "errors/read_failed.html",
+            "Could not load health status.",
+            500,
+        )
+    return request.app.state.templates.TemplateResponse(
+        "health/detail.html",
+        {
+            "request": request,
+            "active_view": "health",
+            "health": health,
+        },
     )
 
 
