@@ -73,12 +73,39 @@ async def tools_table_fragment(request: Request) -> HTMLResponse:
     )
 
 
-# -- Execs table fragment (Wave 1: stub; 10-05 fills in) --------------------
+# -- Execs table fragment -----------------------------------------------------
 
 async def execs_table_fragment(request: Request) -> HTMLResponse:
-    return HTMLResponse(
-        "<p>execs-table fragment — pending plan 10-05.</p>",
-        status_code=501,
+    """Bare table fragment for htmx outerHTML swap from the Refresh history button."""
+    from dataclasses import asdict
+    from forge_bridge.console.handlers import _parse_pagination, _parse_filters
+    try:
+        limit, offset = _parse_pagination(request)
+        try:
+            since, promoted_only, code_hash = _parse_filters(request)
+        except ValueError as ve:
+            return HTMLResponse(
+                f'<div class="empty-state"><strong>Invalid filter</strong><br>{ve}</div>',
+                status_code=400,
+            )
+        records, total = await request.app.state.console_read_api.get_executions(
+            limit=limit, offset=offset, since=since,
+            promoted_only=promoted_only, code_hash=code_hash,
+        )
+    except Exception as exc:
+        logger.warning(
+            "execs_table_fragment failed: %s", type(exc).__name__, exc_info=True,
+        )
+        return HTMLResponse(
+            '<div class="empty-state"><strong>Could not load executions</strong></div>',
+            status_code=500,
+        )
+    return request.app.state.templates.TemplateResponse(
+        "fragments/execs_table.html",
+        {
+            "request": request,
+            "records": [asdict(r) for r in records],
+        },
     )
 
 

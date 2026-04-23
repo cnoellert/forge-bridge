@@ -202,21 +202,114 @@ async def ui_tool_detail_handler(request: Request) -> HTMLResponse:
     )
 
 
-# -- Execs view (Wave 1: stub; 10-05 fills in) ------------------------------
+# -- Execs view ---------------------------------------------------------------
+
+def _execs_preset_chips() -> list:
+    """D-09: preset chip roster for the execs view.
+
+    'Last 24h' requires a client-computed ISO timestamp; for v1.3 we ship
+    two absolute chips instead (planner recommendation — scope note in plan).
+    """
+    return [
+        {"label": "Promoted only", "tokens": "promoted:true"},
+        {"label": "Hash prefix", "tokens": "hash:abcd"},
+    ]
+
 
 async def ui_execs_handler(request: Request) -> HTMLResponse:
-    return HTMLResponse(
-        "<!doctype html><html><body><h1>Not Implemented</h1>"
-        "<p>/ui/execs — pending plan 10-05.</p></body></html>",
-        status_code=501,
+    """Full-page /ui/execs handler. Implements EXECS-01 + CONSOLE-03."""
+    from dataclasses import asdict
+    from forge_bridge.console.handlers import _parse_pagination, _parse_filters
+    try:
+        limit, offset = _parse_pagination(request)
+        try:
+            since, promoted_only, code_hash = _parse_filters(request)
+        except ValueError as ve:
+            return _render_error(
+                request, "errors/read_failed.html",
+                f"Could not load executions — {ve}",
+                400,
+            )
+        records, total = await request.app.state.console_read_api.get_executions(
+            limit=limit, offset=offset, since=since,
+            promoted_only=promoted_only, code_hash=code_hash,
+        )
+    except Exception as exc:
+        logger.warning(
+            "ui_execs_handler failed: %s", type(exc).__name__, exc_info=True,
+        )
+        return _render_error(
+            request, "errors/read_failed.html",
+            "Could not load execution history — the console API may be restarting.",
+            500,
+        )
+    # Build filter_querystring (filters only, no limit/offset — so pagination
+    # links preserve filter state without multiplying pagination params).
+    filter_parts = []
+    for key in ("since", "promoted_only", "code_hash"):
+        val = request.query_params.get(key)
+        if val:
+            filter_parts.append(f"&{key}={val}")
+    filter_qs = "".join(filter_parts)
+    querystring = "?" + str(request.query_params) if request.query_params else ""
+    return request.app.state.templates.TemplateResponse(
+        "execs/list.html",
+        {
+            "request": request,
+            "active_view": "execs",
+            "records": [asdict(r) for r in records],
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "querystring": querystring,
+            "filter_querystring": filter_qs,
+            "query_params": dict(request.query_params),
+            "query_params_as_tokens": _query_params_as_tokens(
+                request.query_params, _EXECS_KEYS,
+            ),
+            "view_slug": "execs",
+            "preset_chips": _execs_preset_chips(),
+            "supported_keys": _EXECS_KEYS,
+        },
     )
 
 
 async def ui_exec_detail_handler(request: Request) -> HTMLResponse:
-    return HTMLResponse(
-        "<!doctype html><html><body><h1>Not Implemented</h1>"
-        "<p>/ui/execs/{code_hash}/{timestamp} — pending plan 10-05.</p></body></html>",
-        status_code=501,
+    """Drilldown /ui/execs/{code_hash}/{timestamp} handler. Implements EXECS-02."""
+    from dataclasses import asdict
+    code_hash = request.path_params["code_hash"]
+    timestamp = request.path_params["timestamp"]
+    try:
+        # Find the record: ask for records matching this hash prefix; match timestamp.
+        records, _ = await request.app.state.console_read_api.get_executions(
+            limit=500, offset=0, code_hash=code_hash,
+        )
+    except Exception as exc:
+        logger.warning(
+            "ui_exec_detail_handler failed: %s", type(exc).__name__, exc_info=True,
+        )
+        return _render_error(
+            request, "errors/read_failed.html",
+            "Could not load execution detail.",
+            500,
+        )
+    match = next(
+        (r for r in records if r.code_hash == code_hash and r.timestamp == timestamp),
+        None,
+    )
+    if match is None:
+        return _render_error(
+            request, "errors/not_found.html",
+            f"No execution recorded for hash {code_hash[:8]!r} at {timestamp!r}.",
+            404,
+        )
+    return request.app.state.templates.TemplateResponse(
+        "execs/detail.html",
+        {
+            "request": request,
+            "active_view": "execs",
+            "record": asdict(match),
+        },
     )
 
 
