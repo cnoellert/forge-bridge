@@ -127,3 +127,57 @@ def test_tool_record_has_no_status_or_quarantined_field() -> None:
         "re-planned to read status from the record directly instead of "
         "deriving it in _filter_tools()."
     )
+
+
+def test_derive_tool_status_active_for_synth_with_obs() -> None:
+    """D-40: origin=synthesized AND code_hash AND obs>0 -> active."""
+    from forge_bridge.console.ui_handlers import _derive_tool_status
+
+    tool = ToolRecord(
+        name="synth_a",
+        origin="synthesized",
+        namespace="synth",
+        code_hash="a" * 64,
+        observation_count=5,
+    )
+    assert _derive_tool_status(tool) == "active"
+
+
+def test_derive_tool_status_loaded_for_synth_with_zero_obs() -> None:
+    from forge_bridge.console.ui_handlers import _derive_tool_status
+
+    tool = ToolRecord(
+        name="synth_b",
+        origin="synthesized",
+        namespace="synth",
+        code_hash="b" * 64,
+        observation_count=0,
+    )
+    assert _derive_tool_status(tool) == "loaded"
+
+
+def test_derive_tool_status_loaded_for_builtin() -> None:
+    from forge_bridge.console.ui_handlers import _derive_tool_status
+
+    tool = ToolRecord(
+        name="flame_get_project",
+        origin="builtin",
+        namespace="flame",
+        code_hash=None,
+        observation_count=10,
+    )
+    assert _derive_tool_status(tool) == "loaded"
+
+
+def test_derive_tool_status_loaded_for_synth_missing_code_hash() -> None:
+    """Edge case: synth with missing code_hash falls to loaded (not active, not a new variant)."""
+    from forge_bridge.console.ui_handlers import _derive_tool_status
+
+    tool = ToolRecord(
+        name="synth_c",
+        origin="synthesized",
+        namespace="synth",
+        code_hash=None,
+        observation_count=3,
+    )
+    assert _derive_tool_status(tool) == "loaded"
