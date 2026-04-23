@@ -1,17 +1,60 @@
-/* forge-console.css — Forge Bridge Artist Console v1.3
- * Placeholder file. Plan 10-01 will replace this with the full stylesheet.
- * This stub ensures the /ui/static/ mount resolves correctly in Wave 1 tests.
- */
-
-:root {
-  --color-bg: #1a1a1a;
-  --color-surface: #242424;
-  --color-accent: #f5a623;
-  --color-text: #e8e8e8;
-}
-
-body {
-  background: var(--color-bg);
-  color: var(--color-text);
-  font-family: system-ui, sans-serif;
-}
+:root{--color-bg:#242424;--color-surface:#2a2a2a;--color-surface-deep:#1a1a1a;--color-accent:#cc9c00;--color-accent-muted:#664e00;--color-text:#cccccc;--color-text-bright:#ffffff;--color-text-muted:#999999;--color-border:#333333;--color-border-md:#555555;--color-status-ok:#2F5F00;--color-status-warn:#664e00;--color-status-error:#660000;--font-sans:"Segoe UI","Helvetica Neue",Arial,sans-serif;--font-mono:"Consolas","Monaco","Courier New",monospace;--text-display:28px;--text-heading:20px;--text-body:14px;--text-label:12px;--space-xs:4px;--space-sm:8px;--space-md:16px;--space-lg:24px;--space-xl:32px;--space-2xl:48px;--space-3xl:64px}
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--color-bg);color:var(--color-text);font-family:var(--font-sans);font-size:14px;font-weight:400;line-height:1.5}
+[x-cloak]{display:none!important}
+.top-nav,.health-strip{background:var(--color-surface);height:40px;display:flex;align-items:center;gap:16px}
+.top-nav{padding:0 16px}
+.health-strip{border-bottom:1px solid var(--color-border);padding:0 24px}
+main#view-main{background:var(--color-bg);padding:64px 24px}
+.nav-link,.dl-two-col dt,.data-table th,.staleness{font-size:12px;font-weight:600}
+.nav-link,.data-table th{color:var(--color-text-bright)}
+.dl-two-col dt,.staleness{color:var(--color-text-muted)}
+.nav-link{padding:8px 16px;min-height:32px;text-decoration:none;display:flex;align-items:center;color:var(--color-text)}
+.nav-link.active,.nav-link[aria-current="page"]{border-left:2px solid var(--color-accent)}
+.query-console-input{width:100%;font-family:var(--font-mono);font-size:14px;background:#3a3f4f;border:1px solid var(--color-border-md);padding:8px 16px;min-height:32px;color:var(--color-text)}
+.query-console-input:focus{outline:none;border-color:var(--color-accent)}
+.query-error{font-size:12px;color:var(--color-accent)}
+.query-token-error{background:var(--color-accent-muted);color:var(--color-accent);border-bottom:1px solid var(--color-accent)}
+.chip-row{display:flex;gap:8px}
+.chip,.chip-readonly{background:var(--color-surface);border:1px solid var(--color-border-md);color:var(--color-text);padding:8px 16px;border-radius:2px;font-size:12px}
+.chip{min-height:32px;cursor:pointer}
+.chip:hover{background:#333333}
+.chip-readonly{cursor:default}
+.btn{background:#4a4a4a;border:1px solid var(--color-border-md);color:var(--color-text);padding:8px 16px;min-height:32px;border-radius:2px;cursor:pointer}
+.btn:hover{background:#555555}
+.btn-refresh{border-bottom:2px solid var(--color-accent)}
+.table-toolbar{display:flex;justify-content:flex-end;gap:16px}
+.data-table{width:100%;border-collapse:collapse;font-size:14px}
+.data-table th,.data-table td{padding:8px 16px;border-bottom:1px solid var(--color-border)}
+.data-table th{text-align:left}
+.data-table td{color:var(--color-text)}
+.data-table tr.row-link{cursor:pointer}
+.data-table tr.row-link:hover td{background:var(--color-surface)}
+.mono{font-family:var(--font-mono)}
+.empty-state{text-align:center;color:var(--color-text-muted)}
+.pagination{display:flex;justify-content:center;gap:16px}
+.view-title{font-size:20px;font-weight:600;color:var(--color-text-bright)}
+.card,.health-card,.error-card{background:var(--color-surface);border:1px solid var(--color-border);border-radius:4px;padding:16px}
+.card,.health-card{margin-bottom:32px}
+.error-card{max-width:640px;margin:64px auto}
+.dl-two-col{display:grid;grid-template-columns:max-content 1fr;gap:8px 24px}
+.dl-two-col dd{margin:0;color:var(--color-text)}
+.dl-two-col dd.amber{color:var(--color-accent)}
+.code-card,.sidecar-card{position:relative}
+.code-card pre,.sidecar-card pre{font-family:var(--font-mono);font-size:14px;line-height:1.6;background:var(--color-surface-deep);border:1px solid var(--color-border);border-radius:2px;padding:8px;overflow-x:auto;color:var(--color-text)}
+.copy-btn{position:absolute;top:8px;right:8px}
+.agg-pill{padding:4px 16px;border-radius:4px;border:2px solid var(--color-border-md);background:transparent;color:var(--color-text);cursor:pointer;min-height:32px}
+.agg-pill.status-ok{border-color:var(--color-status-ok)}
+.agg-pill.status-degraded{border-color:var(--color-accent)}
+.agg-pill.status-fail{border-color:var(--color-status-error)}
+.dot-row{display:flex;gap:4px;align-items:center}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.dot.status-ok{background:var(--color-status-ok)}
+.dot.status-warn,.dot.status-degraded{background:var(--color-status-warn)}
+.dot.status-fail,.dot.status-error{background:var(--color-status-error)}
+.dot.status-absent{background:var(--color-text-muted)}
+.expanded-panel{background:var(--color-surface);padding:16px;border-top:1px solid var(--color-border)}
+.health-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
+.chat-stub-card{max-width:480px;margin:64px auto;background:var(--color-surface);padding:32px;border:1px solid var(--color-border);text-align:center}
+.chat-stub-card h1{font-size:20px;font-weight:600;color:var(--color-text-bright)}
