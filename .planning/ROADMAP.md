@@ -47,7 +47,7 @@ Full details: `.planning/milestones/v1.2-ROADMAP.md`
 
 - [ ] **Phase 9: Read API Foundation** — ConsoleReadAPI, ManifestService singleton, instance-identity gate, uvicorn task on `:9996`, MCP resources + tool fallback shim
 - [x] **Phase 10: Web UI** — Jinja2 + htmx + Alpine.js, five views (tools, execs, manifest, health, chat nav), structured query console, health header strip — 8/8 plans shipped 2026-04-23, **blocked on D-36 artist-UX gate** (remediated in Phase 10.1)
-- [ ] **Phase 10.1: Artist-UX Gap Closure** — fix `hx-boost` nav swap bug, add explicit Status chip to Tools table, artist-legible column headers, discoverable preset chips, in-browser swap regression test; re-run D-36 dogfood UAT
+- [x] **Phase 10.1: Artist-UX Gap Closure** — fix `hx-boost` nav swap bug, add explicit Status chip to Tools table, artist-legible column headers, discoverable preset chips, in-browser swap regression test; re-run D-36 dogfood UAT (completed 2026-04-24)
 - [ ] **Phase 11: CLI Companion** — Typer subcommands (tools, execs, manifest, health, doctor), Rich output, --json flags
 - [ ] **Phase 12: LLM Chat** — /api/v1/chat endpoint, Web UI chat panel, sanitized context assembly, token budget cap (velocity-gated; may defer to v1.4)
 
@@ -114,7 +114,7 @@ Full details: `.planning/milestones/v1.2-ROADMAP.md`
   - [x] 10.1-02-PLAN.md (wave 1) — shell.html nav swap fix (D-37 Option A) + UI-SPEC.md §"Interaction Contracts" table update (D-38)
   - [x] 10.1-03-PLAN.md (wave 2) — Tools-view artist legibility: `_derive_tool_status` helper + tools_table.html rewrite (Status chip column, demoted telemetry, D-41) + chip-caption (D-42) + forge-console.css status-chip variants (D-40)
   - [x] 10.1-04-PLAN.md (wave 2) — Playwright in-browser nav-swap regression test (D-43) + pytest-playwright in new `test-e2e` optional extra; includes mandatory pre-commit FAIL/PASS verification cycle
-  - [ ] 10.1-05-PLAN.md (wave 3) — Pre-UAT automated-gate check + fixture-server prep + fresh-operator D-44 dogfood re-UAT checkpoint + 10.1-UAT.md record (D-45)
+  - [x] 10.1-05-PLAN.md (wave 3) — Pre-UAT automated-gate check + fixture-server prep + fresh-operator D-44 dogfood re-UAT checkpoint + 10.1-UAT.md record (D-45)
 **UI hint**: yes
 
 ---
@@ -246,7 +246,7 @@ redundant. On FB-D ship, mark Phase 12 as superseded in the progress table.
 | 8. SQL Persistence Protocol | v1.2 | 3/3 | Complete | 2026-04-22 |
 | 9. Read API Foundation | v1.3 | 0/3 | Not started | - |
 | 10. Web UI | v1.3 | 8/8 | Plans shipped, **blocked on D-36 artist-UX gate** | 2026-04-23 |
-| 10.1. Artist-UX Gap Closure | v1.3 | 5/6 | In Progress|  |
+| 10.1. Artist-UX Gap Closure | v1.3 | 6/6 | Complete    | 2026-04-24 |
 | 11. CLI Companion | v1.3 | 0/? | Not started | - |
 | 12. LLM Chat | v1.3 | 0/? | Superseded by FB-D (velocity gate triggered) | - |
 | FB-A. Staged Operation Entity & Lifecycle | v1.4 | 0/? | Designed | - |
