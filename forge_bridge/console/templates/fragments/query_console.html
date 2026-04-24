@@ -88,19 +88,25 @@
           }
           this.errorMessage = '';
           const url = this.buildUrl(params);
+          // Plan 10.1-06 fix: swap the entire body (not innerHTML into #view-main)
+          // to preserve the D-39 invariant (exactly one .top-nav, one #health-strip).
+          // htmx.ajax() does not honor pushUrl: true with target:body — we push
+          // the URL explicitly via history.pushState so the filtered URL is
+          // bookmarkable / back-navigable.
+          history.pushState({}, '', url);
           htmx.ajax('GET', url, {
             target: 'body',
             swap: 'outerHTML',
-            pushUrl: true,
           });
         },
         clearAndReset() {
           this.tokenString = '';
           this.errorMessage = '';
-          htmx.ajax('GET', `/ui/${opts.view}`, {
+          const resetUrl = `/ui/${opts.view}`;
+          history.pushState({}, '', resetUrl);
+          htmx.ajax('GET', resetUrl, {
             target: 'body',
             swap: 'outerHTML',
-            pushUrl: true,
           });
         },
         stuffAndSubmit(tokens) {
