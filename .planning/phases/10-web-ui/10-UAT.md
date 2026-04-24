@@ -4,7 +4,7 @@
 **Operator:** ET / tester
 **Developer:** CN / dev
 **Duration:** not measured — operator gave qualitative verdict before timing completed
-**Outcome:** FAIL
+**Outcome:** FAIL (remediated 2026-04-24 via Phase 10.1 — re-UAT verdict PASS with recorded deviations; see `.planning/phases/10.1-artist-ux-gap-closure/10.1-UAT.md` for details)
 
 ## Fixture state
 
@@ -49,3 +49,23 @@ Remediation scope for a follow-up phase (proposed 10.1 or 10-09):
 6. Re-run the non-developer dogfood UAT with a fresh operator on the remediated build; must pass within 30s to close Phase 10.
 
 Record the next-step in STATE.md: Phase 10 execution COMPLETE through automated gates (tasks 1–3 pass: wheel contract, JS-disabled degradation, regression suite). Phase 10 BLOCKED on D-36 artist-UX gate. Do not advance to Phase 11 until remediation + re-UAT pass.
+
+---
+
+## Closure (2026-04-24)
+
+Remediation Phase 10.1 completed all six scoped items above:
+
+1. `shell.html` nav swap fix — `hx-target`/`hx-swap` removed; `hx-boost` handles whole-page swap (Plan 10.1-02).
+2. Explicit **Status** chip column — `_derive_tool_status()` helper + `active`/`loaded` chip vocabulary (Plan 10.1-03). Quarantined-tool surfacing deferred to Phase 11 / v1.4 via amended ROADMAP SC#2 (Plan 10.1-01).
+3. Artist-facing column headers — 4 primary columns (Name / Status / Type / Created); developer telemetry demoted into the Name cell's secondary row (Plan 10.1-03).
+4. Chip discoverability — caption "Click a chip to narrow the list" + CSS refresh for the LOGIK-PROJEKT amber palette (Plan 10.1-03).
+5. In-browser swap-contract test — Playwright `test_ui_nav_swap_regression.py` (Plan 10.1-04) + Playwright `test_ui_chip_click_regression.py` (gap-closure Plan 10.1-06 after a chip-click shell-dup bug was caught by the pre-UAT smoke check).
+6. Fresh-operator re-UAT — performed 2026-04-24 10:50. Operator ET under two documented deviations (fresh-operator rule and partial-understanding criterion). Verdict: PASS with deviations. See `.planning/phases/10.1-artist-ux-gap-closure/10.1-UAT.md` §Deviations for the full audit trail.
+
+Three Phase-11 follow-ups persisted in `.planning/phases/10.1-artist-ux-gap-closure/10.1-HUMAN-UAT.md`:
+a. Truly-fresh-operator re-UAT (requalify SC#6 against D-44 without deviation).
+b. Default-sort affordance legibility on the `Created` column header.
+c. Non-Chromium browser parity smoke (Firefox + Safari).
+
+Phase 10 is no longer blocking Phase 11. D-36 artist-UX gate closed.
