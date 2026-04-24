@@ -133,7 +133,7 @@ def test_ui_tools_query_input_prepopulated_from_url(client):
 def test_ui_tools_preset_chips_present(client):
     r = client.get("/ui/tools")
     assert r.status_code == 200
-    assert "Active synth" in r.text
+    assert "Synth only" in r.text
     assert "Builtin only" in r.text
 
 

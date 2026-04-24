@@ -89,8 +89,8 @@
           this.errorMessage = '';
           const url = this.buildUrl(params);
           htmx.ajax('GET', url, {
-            target: '#view-main',
-            swap: 'innerHTML',
+            target: 'body',
+            swap: 'outerHTML',
             pushUrl: true,
           });
         },
@@ -98,8 +98,8 @@
           this.tokenString = '';
           this.errorMessage = '';
           htmx.ajax('GET', `/ui/${opts.view}`, {
-            target: '#view-main',
-            swap: 'innerHTML',
+            target: 'body',
+            swap: 'outerHTML',
             pushUrl: true,
           });
         },

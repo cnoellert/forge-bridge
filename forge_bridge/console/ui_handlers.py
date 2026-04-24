@@ -77,7 +77,7 @@ def _tools_preset_chips() -> list:
     probation.py:71-88). Locked by tests/test_tool_quarantine_surface.py.
     """
     return [
-        {"label": "Active synth", "tokens": "origin:synthesized"},
+        {"label": "Synth only", "tokens": "origin:synthesized"},
         {"label": "Builtin only", "tokens": "origin:builtin"},
     ]
 
