@@ -246,7 +246,7 @@ redundant. On FB-D ship, mark Phase 12 as superseded in the progress table.
 | 8. SQL Persistence Protocol | v1.2 | 3/3 | Complete | 2026-04-22 |
 | 9. Read API Foundation | v1.3 | 0/3 | Not started | - |
 | 10. Web UI | v1.3 | 8/8 | Plans shipped, **blocked on D-36 artist-UX gate** | 2026-04-23 |
-| 10.1. Artist-UX Gap Closure | v1.3 | 4/5 | In Progress|  |
+| 10.1. Artist-UX Gap Closure | v1.3 | 5/6 | In Progress|  |
 | 11. CLI Companion | v1.3 | 0/? | Not started | - |
 | 12. LLM Chat | v1.3 | 0/? | Superseded by FB-D (velocity gate triggered) | - |
 | FB-A. Staged Operation Entity & Lifecycle | v1.4 | 0/? | Designed | - |
