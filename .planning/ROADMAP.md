@@ -129,7 +129,7 @@ Full details: `.planning/milestones/v1.2-ROADMAP.md`
   3. `forge-bridge console doctor` prints a clear "server is not running — start with `python -m forge_bridge`" message when `:9996` is unreachable, rather than a raw connection error.
   4. Non-developer dogfood: an operator can answer "what synthesized tools are active?" and "when did the last execution run?" from the terminal without opening a browser, within 30 seconds. (Phase 11 D-08 softens this to developer-as-operator with the "can I decipher the output without re-reading the source?" criterion — see 11-CONTEXT.md.)
 **Plans**: 3 plans across 3 waves (Wave 1 primitives; Wave 2 subcommands + registration; Wave 3 soft UAT close-out)
-  - [ ] 11-01-PLAN.md (wave 1) — CLI foundation primitives: rich pin + cli/ package + client.py (sync httpx + typed exceptions + envelope unwrap) + render.py (Rich helpers + Created ▼) + since.py (--since parser) + Wave 0 conftest fixture + test_cli_client/test_cli_rendering stubs
+  - [x] 11-01-PLAN.md (wave 1) — CLI foundation primitives: rich pin + cli/ package + client.py (sync httpx + typed exceptions + envelope unwrap) + render.py (Rich helpers + Created ▼) + since.py (--since parser) + Wave 0 conftest fixture + test_cli_client/test_cli_rendering stubs
   - [ ] 11-02-PLAN.md (wave 2) — Five subcommands: tools, execs (W-01 client-side --tool), manifest, health, doctor (expanded check matrix + CI-gating exit codes) + console_app.command() registrations in __main__.py + per-command tests + CLI-01 registration tests + P-01 cross-command stdout-purity tests
   - [ ] 11-03-PLAN.md (wave 3) — Soft self-administered dogfood UAT (D-08): developer-as-operator runs all five commands against live :9996, records PASS/FAIL+note in 11-UAT.md
 
@@ -250,7 +250,7 @@ redundant. On FB-D ship, mark Phase 12 as superseded in the progress table.
 | 9. Read API Foundation | v1.3 | 0/3 | Not started | - |
 | 10. Web UI | v1.3 | 8/8 | Plans shipped, **blocked on D-36 artist-UX gate** | 2026-04-23 |
 | 10.1. Artist-UX Gap Closure | v1.3 | 6/6 | Complete    | 2026-04-24 |
-| 11. CLI Companion | v1.3 | 0/3 | Not started | - |
+| 11. CLI Companion | v1.3 | 1/3 | In Progress|  |
 | 12. LLM Chat | v1.3 | 0/? | Superseded by FB-D (velocity gate triggered) | - |
 | FB-A. Staged Operation Entity & Lifecycle | v1.4 | 0/? | Designed | - |
 | FB-B. Staged Ops MCP Tools + Read API | v1.4 | 0/? | Designed | - |
