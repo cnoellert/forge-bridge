@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Staged Ops Platform
 status: defining-requirements
-stopped_at: v1.4 roadmap formalized; awaiting user approval before phase planning begins
-last_updated: "2026-04-25T19:00:00.000Z"
-last_activity: 2026-04-25 -- gsd-roadmapper formalized FB-A..FB-D phases; LLMTOOL-04..07 + CHAT-05 absorbed into success criteria; 19/19 v1.4 requirements mapped; awaiting user approval
+stopped_at: Phase 13 (FB-A) discuss session in progress; dual-naming amendment applied to ROADMAP/STATE
+last_updated: "2026-04-25T19:30:00.000Z"
+last_activity: 2026-04-25 -- /gsd-discuss-phase started for Phase 13 (FB-A); tooling impedance with FB-* letter scheme resolved by dual-naming (numeric IDs 13-16 for tooling, FB-A..FB-D preserved as cross-repo alias)
 progress:
   total_phases: 4
   completed_phases: 0
@@ -21,19 +21,19 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-25 at v1.3 close)
 
 **Project core value:** forge-bridge is the single canonical pip-installable middleware (`pip install forge-bridge`) — protocol-agnostic communication bus with a canonical vocabulary that any endpoint (Flame, Maya, editorial, LLM agents) connects to.
-**Current focus:** **v1.4 Staged Ops Platform** — open milestone, roadmap formalized 2026-04-25. FB-A..FB-D letter scheme preserved (consumer-driven by projekt-forge v1.5). 19 requirements mapped (STAGED 7 + LLMTOOL 7 + CHAT 5).
+**Current focus:** **v1.4 Staged Ops Platform** — open milestone, roadmap formalized 2026-04-25; dual-naming amendment applied 2026-04-25 (Phases 13-16 with FB-A..FB-D alias). 19 requirements mapped (STAGED 7 + LLMTOOL 7 + CHAT 5).
 
 ## Current Position
 
-Phase: Not started — FB-A is the next plan target
+Phase: Phase 13 (FB-A) — discuss session in progress
 Plan: —
-Status: Defining requirements (roadmap formalized; awaiting user approval)
+Status: In progress (discuss-phase started; dual-naming amendment locked 2026-04-25)
 Milestone: v1.4 Staged Ops Platform (opened 2026-04-25)
-Last activity: 2026-04-25 -- gsd-roadmapper formalized FB-A..FB-D phases against REQUIREMENTS.md; FB-C success criteria expanded to 7 (absorbed LLMTOOL-04..07); FB-D success criteria expanded to 5 (absorbed CHAT-05); 19/19 requirements mapped; FB-A and FB-C are parallelizable (no shared dependency)
+Last activity: 2026-04-25 -- /gsd-discuss-phase invoked for Phase 13 (FB-A); FB-* letter scheme found incompatible with gsd-tools find-phase (requires numeric IDs); dual-naming amendment applied — phases now use Phase 13-16 numeric IDs for tooling with FB-A..FB-D preserved as canonical cross-repo aliases
 
-**v1.4 roadmap formalized** 2026-04-25 — FB-A..FB-D phases mapped to 19 v1.4 requirements; phase letter scheme preserved per locked decision; awaiting user approval to proceed.
+**Dual-naming amendment 2026-04-25** — `gsd-discuss-phase FB-A` failed `find-phase` because the tool's `normalizePhaseName()` strips letter prefixes only when followed by a digit (`FB-13` would parse, `FB-A` does not). Resolution: ROADMAP and STATE now use `Phase N (FB-X)` style; numeric IDs 13-16 (skipping superseded Phase 12 "LLM Chat") are internal plumbing for tooling/state/dirs; FB-A..FB-D remains the canonical alias for cross-repo references with projekt-forge v1.5.
 
-**Next action:** User reviews ROADMAP.md draft → on approval, status flips from `defining-requirements` to `in-progress`; FB-A is the first plan target. Recommended sequencing: FB-A and FB-C can run in parallel (no shared dependency); FB-B requires FB-A; FB-D requires FB-C.
+**Next action:** Continue Phase 13 (FB-A) discuss workflow — analyze gray areas, present to user, capture decisions in `.planning/phases/13-fb-a-staged-operation-entity-lifecycle/13-CONTEXT.md`.
 
 ## Session Handoff — Resume Instructions
 
@@ -48,14 +48,13 @@ Last activity: 2026-04-25 -- gsd-roadmapper formalized FB-A..FB-D phases against
 
 **Next action:**
 
-Awaiting user approval of ROADMAP.md draft. On approval:
-1. Orchestrator commits the roadmap + state + traceability updates
-2. Status flips `defining-requirements` → `in-progress`
-3. `/gsd-discuss-phase FB-A` (or `/gsd-discuss-phase FB-C` if running in parallel) is the next entry point
+Phase 13 (FB-A) discuss session is the active work. Dual-naming amendment (this session, 2026-04-25) is committed alongside the discuss artifacts.
+
+`/gsd-discuss-phase 13` (FB-A) is the resumable entry point. Phase 15 (FB-C) discuss can run in parallel via `/gsd-discuss-phase 15` once FB-A locks its decisions.
 
 **Key constraints (still binding for v1.4 work that builds on v1.3 surfaces):**
 
-- Phase letter scheme `FB-A..FB-D` is LOCKED — do NOT renumber to phases 12..15. Consumer-driven by projekt-forge v1.5 declared deps.
+- Phase naming uses dual-naming (amended 2026-04-25): numeric IDs `Phase 13..16` for gsd tooling AND preserved `FB-A..FB-D` as canonical cross-repo alias. The letter scheme stays the public identifier (projekt-forge v1.5 declared `FB-A..FB-D` as required deps); the numeric IDs are internal plumbing required by `gsd-tools find-phase`. Numeric mapping skips Phase 12 (already taken by superseded "LLM Chat") so commit history stays unambiguous.
 - Uvicorn task pattern is locked — console runs as a separate uvicorn asyncio task inside `_lifespan` on `:9996`; NOT via `FastMCP.custom_route` (only works in `--http` mode, breaks stdio)
 - ConsoleReadAPI is the sole read path for all surfaces — Web UI, CLI, MCP resources, and chat all call it; no per-surface JSONL parsers. FB-B's HTTP routes consume this same facade.
 - ManifestService singleton injected into watcher (write path) and console router (read path) — watcher is sole writer, console API reads via `snapshot()`
@@ -143,6 +142,7 @@ Recent decisions affecting current work:
 - [v1.4 Roadmap, 2026-04-25]: FB-A and FB-C are parallelizable — no shared dependency. FB-B → FB-A (entity before its surface). FB-D → FB-C (loop before chat endpoint). Sequencing FB-A and FB-C concurrently is a legitimate execution-order option.
 - [v1.4 Roadmap, 2026-04-25]: Sanitization patterns consolidate into a single source of truth in FB-C — Phase 7's `_sanitize_tag()` and FB-C's `_sanitize_tool_result()` share `forge_bridge/_sanitize_patterns.py` (or equivalent). This is a FB-C scope item, not a new phase.
 - [v1.4 Roadmap, 2026-04-25]: `LLMLoopBudgetExceeded` exported from `forge_bridge.__all__`. Barrel grows 16→17. Required so callers (FB-D chat endpoint) can catch it and translate to HTTP 504/408.
+- [v1.4 Roadmap amendment, 2026-04-25]: Dual-naming applied — `Phase 13..16` numeric IDs added alongside preserved `FB-A..FB-D` aliases. Forced by `gsd-tools` impedance: `normalizePhaseName()` only strips letter prefixes when followed by a digit, so `FB-A` cannot resolve via `find-phase` and the discuss/plan/execute pipeline silently fails. Numeric mapping skips 12 (taken by superseded "LLM Chat" — 12 still exists in v1.3 history as superseded). The original locked decision (no renumber) was about preserving the cross-repo contract with projekt-forge v1.5; the amendment satisfies that intent (alias preserved everywhere) while adding the numeric plumbing tooling needs.
 
 ### Pending Todos
 
@@ -176,5 +176,5 @@ None. Roadmap formalized; awaiting user approval.
 ## Session Continuity
 
 Last session: 2026-04-25
-Stopped at: v1.4 roadmap formalized (FB-A..FB-D mapped against REQUIREMENTS.md); awaiting user approval before phase planning begins
-Resume file: .planning/ROADMAP.md
+Stopped at: Phase 13 (FB-A) discuss in progress; dual-naming amendment locked
+Resume file: .planning/phases/13-fb-a-staged-operation-entity-lifecycle/ (created in this session)
