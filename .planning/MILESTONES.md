@@ -1,5 +1,43 @@
 # Milestones
 
+## v1.3 Artist Console (Shipped: 2026-04-25)
+
+**Phases completed:** 4 phases (9, 10, 10.1, 11), 20 plans
+**Phase superseded:** Phase 12 (LLM Chat) → v1.4 FB-D (velocity gate decided 2026-04-23)
+**Release tag:** v1.3.1 (milestone close on top of v1.3.0 from Phase 8)
+**Requirements:** 33/37 shipped + 4/37 superseded → v1.4 FB-D = 37/37 resolved
+**Stats:** 148 commits, 202 files changed, +43,765 / −1,059 lines, ~30,378 LOC at close
+
+**Key accomplishments:**
+
+- **Read API foundation (Phase 9 → uvicorn task on `:9996`).** `ConsoleReadAPI` is the sole read path for all surfaces — Web UI, CLI, MCP resources, future chat all consume the byte-identical `{data, meta}` envelope. `ManifestService` singleton injected into the watcher (write path) and console router (read path); instance-identity gate (API-04) ensures `_lifespan` owns the canonical `ExecutionLog` and `ManifestService`. Console runs as a separate uvicorn asyncio task inside `_lifespan` — NOT via `FastMCP.custom_route` (which only works in `--http` mode and would break stdio default). MCP resources + tool fallback shim ship in the same plan (P-03 prevention for Cursor / Gemini CLI).
+- **Web UI (Phase 10 → Jinja2 + htmx + Alpine.js).** Five views (tools / execs / manifest / health / chat-nav) served from Jinja2 templates with htmx partial refreshes and Alpine.js state — zero JS build step, vendored htmx + Alpine with SRI. Persistent health header strip on every view. Structured query console as primary interaction (deterministic, no LLM in hot path). LOGIK-PROJEKT amber-on-dark palette translated to web idioms via `UI-SPEC.md` design contract.
+- **Artist-UX gap closure (Phase 10.1 → INSERTED 2026-04-23).** Phase 10's D-36 fresh-operator dogfood UAT FAILED qualitatively ("nearly impossible to understand") and surfaced an `hx-boost` shell-duplication bug. Six-plan remediation: nav-swap fix, explicit Status chip column, artist-facing column headers with demoted developer telemetry, chip discoverability, in-browser Playwright nav-swap regression test, gap-closure-of-gap-closure for an independent chip-click shell-dup bug. Re-UAT PASSED 2026-04-24 with two honest-recorded deviations carried to a HUMAN-UAT follow-up file.
+- **CLI companion (Phase 11 → Typer + Rich + sync httpx).** Five subcommands (`tools`, `execs`, `manifest`, `health`, `doctor`) consume the `:9996` API via sync `httpx` (Typer 0.24.1 silently drops `async def` — verified). Filter-flag grammar mirrors Phase 10 Web UI tokens 1:1 so artists who learn one dialect use both. `--json` short-circuits Rich entirely (P-01 stdout purity). Locked exit-code taxonomy: `0` success, `1` server error envelope, `2` server unreachable. `doctor` runs an expanded check matrix (JSONL parseability, sidecar dirs, port reachability, disk space) with CI-gating exit codes. D-08 soft-UAT PASS — developer-as-operator with "can I decipher" criterion is the right tool for technical surfaces (vs. fresh-operator for artist surfaces).
+- **Phase 12 supersession (decided 2026-04-23).** Mid-milestone, projekt-forge v1.5 declared FB-A..FB-D as required deps. FB-D ("Chat Endpoint") naturally absorbs Phase 12's chat scope while adding the agentic tool-call loop that makes the chat surface useful in the first place. CHAT-01..04 carry forward to v1.4 FB-D — explicit decision, not a silent drop.
+
+**Verification & regression:**
+- Phase 9 VERIFICATION: PASSED 2026-04-22 (5/5 must-haves; 379 tests green)
+- Phase 10 VERIFICATION: plans shipped 2026-04-23; D-36 UAT initially FAILED → resolved by 10.1
+- Phase 10.1 VERIFICATION: PASSED 2026-04-24 (D-36 re-UAT PASS with two honest-recorded deviations)
+- Phase 11 VERIFICATION: PASSED 2026-04-25 (13/13 must-haves; 111 CLI tests + 592 full-suite green; 91% CLI coverage; D-08 soft UAT PASS)
+
+**Known deferred items at close** (carry forward to v1.4 polish or v1.5):
+- Truly-fresh-operator re-UAT for Web UI (10.1-HUMAN-UAT)
+- Default-sort affordance legibility on Web UI `Created` column — CLI side already ships `Created ▼` glyph (10.1-HUMAN-UAT)
+- Non-Chromium browser parity smoke (10.1-HUMAN-UAT)
+- `manifest` and `tools` CLI views render visually indistinguishable (Phase 11 D-08 UAT)
+- W-01 server-side `/api/v1/execs?tool=...` filter (client-side workaround shipped in Phase 11)
+- Quarantined-tool surfacing in UI/CLI → v1.5 admin/auth milestone
+
+**Lessons:**
+- Hard fresh-operator UAT gate is the right tool for artist-facing surfaces (Phase 10 retrospectively taught us this when the D-36 UAT caught a UX failure class unit tests missed). Soft developer-as-operator gate is the right tool for technical CLI/SSH surfaces (Phase 11 D-08 confirmed). Match the gate to the user population.
+- ConsoleReadAPI as sole read path validated three times in one milestone (Web UI, CLI, MCP resources). Single read layer + multiple presentations is a pattern that earned its discipline.
+- Apply UX lessons to the surface that ships *next* — Phase 11's CLI shipped `Created ▼` default-sort affordance closing Phase 10.1's HUMAN-UAT item #2 on the CLI surface immediately, even though the Web UI fix remains a deferred follow-up. Don't wait to retrofit; bake the lesson into the next surface.
+- Bookkeeping drift compounds — the Phase 9 ROADMAP top-line checkbox stayed unchecked from 2026-04-22 → 2026-04-25 because Phases 10, 10.1, 11 all shipped on top of Phase 9 in the same week and the `[x]` flip got skipped four times in a row. Reconciled at v1.3 close. Mitigation: GSD `roadmap update-plan-progress` already handles per-plan; need an analogous "phase complete" sweep that flips the top-line bullet too.
+
+---
+
 ## v1.2 Observability & Provenance (Shipped: 2026-04-22)
 
 **Phases completed:** 3 phases (7, 07.1, 8), 12 plans, 17 tasks

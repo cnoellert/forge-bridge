@@ -5,7 +5,7 @@
 - ✅ **v1.0 Canonical Package & Learning Pipeline** — Phases 1-3 (shipped 2026-04-15)
 - ✅ **v1.1 projekt-forge Integration** — Phases 4-6 (shipped 2026-04-19 — v1.1.0 API release, v1.1.1 PATCH-01)
 - ✅ **v1.2 Observability & Provenance** — Phases 7, 07.1, 8 (shipped 2026-04-22 — v1.2.0, v1.2.1 hotfix, v1.3.0)
-- 📋 **v1.3 Artist Console** — Phases 9-12 (in progress)
+- ✅ **v1.3 Artist Console** — Phases 9, 10, 10.1, 11 (shipped 2026-04-25 — v1.3.1; Phase 12 superseded by v1.4 FB-D)
 - 📐 **v1.4 Staged Ops Platform** — Phases FB-A..FB-D (proposed 2026-04-23 — consumed by projekt-forge v1.5)
 
 ## Phases
@@ -43,113 +43,21 @@ Full details: `.planning/milestones/v1.2-ROADMAP.md`
 
 </details>
 
-### 📋 v1.3 Artist Console (Phases 9-12)
+<details>
+<summary>✅ v1.3 Artist Console (Phases 9, 10, 10.1, 11) — SHIPPED 2026-04-25</summary>
 
-- [x] **Phase 9: Read API Foundation** — ConsoleReadAPI, ManifestService singleton, instance-identity gate, uvicorn task on `:9996`, MCP resources + tool fallback shim (completed 2026-04-22)
-- [x] **Phase 10: Web UI** — Jinja2 + htmx + Alpine.js, five views (tools, execs, manifest, health, chat nav), structured query console, health header strip — 8/8 plans shipped 2026-04-23, **blocked on D-36 artist-UX gate** (remediated in Phase 10.1)
-- [x] **Phase 10.1: Artist-UX Gap Closure** — fix `hx-boost` nav swap bug, add explicit Status chip to Tools table, artist-legible column headers, discoverable preset chips, in-browser swap regression test; re-run D-36 dogfood UAT (completed 2026-04-24)
-- [x] **Phase 11: CLI Companion** — Typer subcommands (tools, execs, manifest, health, doctor), Rich output, --json flags (completed 2026-04-25)
-- [ ] **Phase 12: LLM Chat** — /api/v1/chat endpoint, Web UI chat panel, sanitized context assembly, token budget cap (velocity-gated; may defer to v1.4)
+- [x] **Phase 9: Read API Foundation** (3/3 plans) — completed 2026-04-22
+- [x] **Phase 10: Web UI** (8/8 plans) — completed 2026-04-23 (D-36 gate closed by Phase 10.1)
+- [x] **Phase 10.1: Artist-UX Gap Closure** (6/6 plans, INSERTED) — completed 2026-04-24
+- [x] **Phase 11: CLI Companion** (3/3 plans) — completed 2026-04-25
+- ~~Phase 12: LLM Chat~~ — superseded by v1.4 FB-D 2026-04-23 (velocity gate)
+
+Full details: `.planning/milestones/v1.3-ROADMAP.md`
+
+</details>
 
 ## Phase Details
 
-### Phase 9: Read API Foundation
-**Goal**: The shared read layer is live — `ConsoleReadAPI` is the sole read path for all surfaces, `ManifestService` singleton is injected into the watcher and console router, the console HTTP API runs on `:9996` as a separate uvicorn asyncio task inside `_lifespan`, and MCP resources plus tool fallback shim are registered so every client can reach manifest and tool data from Phase 9 onward.
-**Depends on**: Phase 8 (v1.3.0 foundation — StoragePersistence, ExecutionLog, watcher, `_lifespan`)
-**Requirements**: API-01, API-02, API-03, API-04, API-05, API-06, MFST-01, MFST-02, MFST-03, MFST-06, TOOLS-04, EXECS-04
-**Success Criteria** (what must be TRUE):
-  1. An MCP client completing `tools/list` while the console HTTP API is serving traffic on `:9996` sees no errors or stdout corruption — MCP stdio wire is clean.
-  2. `GET /api/v1/manifest` returns the current synthesis manifest as JSON, and `forge_manifest_read` tool + `resources/read forge://manifest/synthesis` return identical data from a real (non-mocked) MCP session.
-  3. `GET /api/v1/tools`, `GET /api/v1/execs`, and `GET /api/v1/health` all return JSON; a live `bridge.execute()` call produces a record visible via `GET /api/v1/execs` — confirming the ExecutionLog instance-identity gate (API-04).
-  4. If `:9996` is unavailable at startup, the MCP server boots anyway and logs a WARNING — mirroring the v1.2.1 degradation pattern.
-  5. Existing stdio integration tests pass with no `--http` flag — transport posture is unchanged.
-**Plans**: 3 plans
-  - [x] 09-01-PLAN.md — Typer entrypoint refactor + ruff T20 lint gate (unblocks console CLI + enforces print-ban before console package lands)
-  - [x] 09-02-PLAN.md — Console package data layer: ManifestService singleton + ConsoleReadAPI facade + ExecutionLog deque snapshot + watcher injection
-  - [x] 09-03-PLAN.md — Surface layer: Starlette app on :9996 as uvicorn asyncio task, MCP resources + tool shims, _lifespan D-31 wiring, LOGGING_CONFIG stdio-safety, SC#1 stdout-cleanliness integration test
-
----
-
-### Phase 10: Web UI
-**Goal**: An artist can open `http://localhost:9996/ui/` in a browser and navigate five fully-functional views — tools table with provenance drilldown, execution history with per-record detail, manifest browser, health panel, and chat navigation stub — served from Jinja2 templates with htmx partial refreshes and Alpine.js state, with no npm build step required and a persistent health strip visible on every page.
-**Depends on**: Phase 9 (ConsoleReadAPI and HTTP API must be stable before any template layer is built on top)
-**Requirements**: CONSOLE-01, CONSOLE-02, CONSOLE-03, CONSOLE-04, CONSOLE-05, TOOLS-01, TOOLS-02, EXECS-01, EXECS-02, MFST-04, HEALTH-01, HEALTH-04
-
-**CONTEXT NOTE — UI design contract:** Before `/gsd-plan-phase 10` generates plans, run `/gsd-ui-phase` to produce `UI-SPEC.md`. The phase plan must reference that spec; do not write CSS palette or layout rules into plans before `UI-SPEC.md` exists.
-
-**Success Criteria** (what must be TRUE):
-  1. A fresh `pip install forge-bridge` from the built wheel followed by starting the server and opening `http://localhost:9996/ui/` in Chrome or Safari loads all static assets without any npm commands and without CORS errors in the browser console.
-  2. Non-developer dogfood: an operator who is not the developer opens the Web UI cold and identifies the three most recently synthesized tools and their status (active / quarantined) within 30 seconds.
-  3. Artist can click into any tool and see its canonical `_meta` provenance fields (origin, code_hash, synthesized_at, version, observation_count) and raw source for synthesized tools — no jargon-only displays.
-  4. Health strip is visible on every view and updates automatically (poll) — artist can see at a glance whether Flame bridge, LLM backends, and watcher are reachable without navigating away.
-  5. Structured query console accepts a filter expression (e.g. `origin:synthesized`, `promoted:true`) and the view updates deterministically without an LLM call.
-**Plans**: 8 plans across 6 waves (Wave 1 parallel; Waves 2-5 serialized due to shared ui_handlers.py/ui_fragments.py ownership; Wave 6 closure)
-  - [x] 10-01-PLAN.md (wave 1) — Assets landing: jinja2 dep + wheel-include globs + vendored JS with SRI + forge-console.css
-  - [x] 10-02-PLAN.md (wave 1) — Template skeleton: base.html + shell.html + health_strip/query_console fragments + error templates
-  - [x] 10-03-PLAN.md (wave 1) — Starlette wiring: Jinja2Templates + StaticFiles mount + /ui route table + ui_handlers/ui_fragments modules + route-registration smoke test
-  - [x] 10-04-PLAN.md (wave 2) — Tools view: list + drilldown + fragment handlers (TOOLS-01/02)
-  - [x] 10-05-PLAN.md (wave 3) — Execs view: list + pagination + drilldown + fragment handlers (EXECS-01/02)
-  - [x] 10-06-PLAN.md (wave 4) — Manifest + Health views (MFST-04, HEALTH-01/04)
-  - [x] 10-07-PLAN.md (wave 5) — Chat nav stub (CONSOLE-05 nav contract)
-  - [x] 10-08-PLAN.md (wave 6) — Closure: wheel packaging test + JS-disabled test + full regression + non-developer dogfood UAT (D-35/D-36)
-**UI hint**: yes
-
-**Phase 10 closure status (2026-04-23):** 8/8 plans executed, 152/152 automated tests pass, ruff clean, path-traversal mitigations confirmed live. D-35/D-36 non-developer dogfood UAT returned **FAIL** — operator verdict "nearly impossible to understand", plus a shipping render bug in `shell.html` line 7 (`hx-boost` + `hx-target`/`hx-swap` mismatch duplicates nav + health strip on click). Phase 10 ships back to planning per D-36. Remediation scoped as **Phase 10.1** below. Do not advance to Phase 11 until Phase 10.1 re-UAT passes.
-
----
-
-### Phase 10.1: Artist-UX Gap Closure
-**Goal**: The Web UI passes the D-36 non-developer dogfood re-UAT — a fresh operator opens `http://localhost:9996/ui/` cold and identifies the three most recently synthesized tools and their status (active / quarantined) within 30 seconds. The nav swap contract is fixed (no duplicate `.top-nav` / `#health-strip` render on click), the Tools table surfaces an explicit **Status** chip, column headers use artist-facing language, developer telemetry is demoted or hidden, and preset chips are discoverable on first paint. A new in-browser swap-contract test guards against regression of the `shell.html` bug class.
-**Depends on**: Phase 10 (remediation edits to shipped template + handler infrastructure; no new entity / route surfaces)
-**Requirements**: CONSOLE-02, CONSOLE-04, TOOLS-01, TOOLS-02 (re-verification under the D-36 artist-UX gate — automated coverage already closed in Phase 10)
-**Success Criteria** (what must be TRUE):
-  1. Clicking any top-nav link from any `/ui/*` view swaps only the view region; the rendered DOM contains exactly one `.top-nav` and one `#health-strip` after navigation. The `hx-boost` + `hx-target`/`hx-swap` mismatch in `shell.html` line 7 is resolved (either by removing `hx-target`/`hx-swap` from the nav and letting `hx-boost` do its default whole-body swap, or by content-negotiating `/ui/*` handlers on `HX-Request` to return just the view block). `UI-SPEC.md` §"HTMX Contracts" is updated so the spec no longer describes the buggy pattern.
-  2. The Tools table shows an explicit **Status** column with a visual chip rendered as one of `active` or `loaded`. Status is NOT inferred from `observation_count` by the reader. **Note**: quarantined tools are filtered out of the ConsoleReadAPI registry (per `forge_bridge/learning/probation.py` + `forge_bridge/learning/watcher.py` removal-mirror); the `quarantined` chip variant is contract-locked via `tests/test_tool_quarantine_surface.py` but never renders in Phase 10.1 fixtures. Quarantined-tool surfacing deferred to Phase 11 / v1.4.
-  3. Column headers use artist-facing language. Developer telemetry (`Code hash`, `Obs count`, raw `Namespace`) is hidden, tucked behind a details toggle on the row, or demoted to a secondary smaller-weight row under the tool name — not rendered as primary column headers.
-  4. Preset chips (`Active synth` / `Quarantined` / `Builtin only`) are visually discoverable on first paint. A one-line caption or layout treatment makes them obviously interactive before the operator attempts the query grammar. `UI-SPEC.md` captures the adjusted discoverability pattern.
-  5. A new in-browser test (Playwright or equivalent — not `starlette.testclient.TestClient`, which cannot see htmx swaps) drives a real browser through: load `/ui/tools`, click a nav link, assert one `.top-nav` and one `#health-strip` in the rendered DOM. The test is wired into the default regression suite (`pytest` discovers it or an equivalent CLI gate runs it), and it fails on the 2026-04-23 `shell.html` shipping state.
-  6. Non-developer dogfood re-UAT: a fresh operator (not the developer `CN/dev`, not the 2026-04-23 tester `ET/tester`) identifies the three most recently synthesized tools and their status within **30 seconds**, on a `:9996` integration server preloaded with the same fixture set used in the 2026-04-23 UAT. Pass is required before Phase 11 may start. Record lives at `.planning/phases/10-01-artist-ux-gap-closure/10-01-UAT.md`.
-**Plans**: 5 plans across 3 waves (Wave 1 parallel; Wave 2 serialized on Wave 1; Wave 3 closure)
-  - [x] 10.1-01-PLAN.md (wave 1) — ToolRecord quarantine-surface pinning test + misleading `Quarantined` preset chip removal (D-40 triage outcome (b))
-  - [x] 10.1-02-PLAN.md (wave 1) — shell.html nav swap fix (D-37 Option A) + UI-SPEC.md §"Interaction Contracts" table update (D-38)
-  - [x] 10.1-03-PLAN.md (wave 2) — Tools-view artist legibility: `_derive_tool_status` helper + tools_table.html rewrite (Status chip column, demoted telemetry, D-41) + chip-caption (D-42) + forge-console.css status-chip variants (D-40)
-  - [x] 10.1-04-PLAN.md (wave 2) — Playwright in-browser nav-swap regression test (D-43) + pytest-playwright in new `test-e2e` optional extra; includes mandatory pre-commit FAIL/PASS verification cycle
-  - [x] 10.1-05-PLAN.md (wave 3) — Pre-UAT automated-gate check + fixture-server prep + fresh-operator D-44 dogfood re-UAT checkpoint + 10.1-UAT.md record (D-45)
-**UI hint**: yes
-
----
-
-### Phase 11: CLI Companion
-**Goal**: An operator on a headless server or SSH session can run `forge-bridge console <subcommand>` and get the same information surfaced by the Web UI — tool list, execution history, manifest, health status, and a `doctor` pre-flight check — with Rich-formatted output in a TTY and plain JSON when piped.
-**Depends on**: Phase 10 (CLI calls the same console HTTP API; building after Phase 10 means the API contract is tested by real Web UI usage before the CLI writes against it)
-**Requirements**: CLI-01, CLI-02, CLI-03, CLI-04, TOOLS-03, EXECS-03, MFST-05, HEALTH-02, HEALTH-03
-**Success Criteria** (what must be TRUE):
-  1. `forge-bridge console tools` output matches `/api/v1/tools` JSON for the same runtime state — zero divergence between CLI and Web UI data.
-  2. `forge-bridge console doctor` exits non-zero when any health check fails and prints an actionable remediation hint per failure — suitable for CI gating.
-  3. `forge-bridge console doctor` prints a clear "server is not running — start with `python -m forge_bridge`" message when `:9996` is unreachable, rather than a raw connection error.
-  4. Non-developer dogfood: an operator can answer "what synthesized tools are active?" and "when did the last execution run?" from the terminal without opening a browser, within 30 seconds. (Phase 11 D-08 softens this to developer-as-operator with the "can I decipher the output without re-reading the source?" criterion — see 11-CONTEXT.md.)
-**Plans**: 3 plans across 3 waves (Wave 1 primitives; Wave 2 subcommands + registration; Wave 3 soft UAT close-out)
-  - [x] 11-01-PLAN.md (wave 1) — CLI foundation primitives: rich pin + cli/ package + client.py (sync httpx + typed exceptions + envelope unwrap) + render.py (Rich helpers + Created ▼) + since.py (--since parser) + Wave 0 conftest fixture + test_cli_client/test_cli_rendering stubs
-  - [x] 11-02-PLAN.md (wave 2) — Five subcommands: tools, execs (W-01 client-side --tool), manifest, health, doctor (expanded check matrix + CI-gating exit codes) + console_app.command() registrations in __main__.py + per-command tests + CLI-01 registration tests + P-01 cross-command stdout-purity tests
-  - [x] 11-03-PLAN.md (wave 3) — Soft self-administered dogfood UAT (D-08): developer-as-operator runs all five commands against live :9996, records PASS/FAIL+note in 11-UAT.md
-
----
-
-### Phase 12: LLM Chat
-**Goal**: An artist can type a natural-language question about the pipeline state into the Web UI chat panel (e.g. "what synthesis tools were created this week?") and receive a useful, safely-assembled answer from the LLM router — with deterministic cost protection (token budget cap, rate limiter) and graceful degradation when no LLM backend is healthy.
-
-**Velocity gate:** This phase is included as a v1.3 target but is explicitly deferrable to v1.4 if Phases 9-11 run long. Do not defer silently — roadmapper must make an explicit scope decision before Phase 11 closes.
-
-**Depends on**: Phase 10 (Web UI chat panel lives in the Web UI template layer); Phase 9 (ManifestService + ExecutionLog.snapshot() provide context for the chat endpoint)
-**Requirements**: CHAT-01, CHAT-02, CHAT-03, CHAT-04
-**Success Criteria** (what must be TRUE):
-  1. Eleven rapid requests from the same IP within one minute: the eleventh returns HTTP 429 with a clear "rate limit exceeded" message — cost cap is enforced.
-  2. A mocked `LLMRouter.acomplete()` that blocks indefinitely causes the endpoint to return a timeout error within 125 seconds — no hung requests.
-  3. A tool whose sidecar name contains an injection marker (e.g. `IGNORE PREVIOUS INSTRUCTIONS`) does not propagate that string into the LLM context — sanitization boundary holds.
-  4. Non-developer dogfood: an artist asks "what synthesis tools were created this week?" in the chat panel and receives a useful, plain-English answer within the LLM's normal response time.
-**Plans**: TBD
-
----
 
 ### 📐 v1.4 Staged Ops Platform (Phases FB-A..FB-D)
 

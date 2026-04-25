@@ -6,38 +6,15 @@ forge-bridge is protocol-agnostic middleware for post-production pipelines — a
 
 ## Current State
 
-**Shipped:** v1.3.0 (2026-04-22) — `v1.2 Observability & Provenance` milestone complete. Synthesized MCP tools now carry canonical provenance in `Tool._meta` (`origin`, `code_hash`, `synthesized_at`, `version`, `observation_count`) via `.sidecar.json` envelopes with consumer-tag sanitization + size budgets. The `StoragePersistence` `@runtime_checkable` Protocol ships on the bridge (1 method, documentation-only — no DDL on bridge side); projekt-forge consumes it via a sync SQLAlchemy adapter with idempotent `ON CONFLICT DO NOTHING` inserts + Alembic revision 005 + `isinstance` gate at registration. Three annotated tags this milestone (`v1.2.0` = Phase 7, `v1.2.1` = Phase 07.1 hotfix, `v1.3.0` = Phase 8) on origin with wheel + sdist assets. End-to-end UAT verified: real `bridge.execute()` writes land in projekt-forge's `execution_log` PG table. See `.planning/milestones/v1.2-ROADMAP.md` for the full archive.
+**Shipped:** v1.3.1 (2026-04-25) — `v1.3 Artist Console` milestone complete. ConsoleReadAPI is the sole read path for all surfaces (Web UI, CLI, MCP resources), backed by a `ManifestService` singleton and an instance-identity gate (API-04) inside `_lifespan`. The console HTTP API runs as a separate uvicorn asyncio task on `:9996`, co-resident with MCP stdio (NOT FastMCP `custom_route` — would break stdio default). Three presentation surfaces consume the same byte-identical `{data, meta}` envelope: an artist-first Web UI (Jinja2 + vendored htmx + Alpine.js, no JS build step, LOGIK-PROJEKT amber-on-dark palette), a Typer + Rich CLI companion with locked exit-code taxonomy, and `forge://manifest/synthesis` MCP resource + `forge_manifest_read` tool fallback shim. Phase 12 (LLM Chat) was velocity-gated mid-milestone and superseded by v1.4 FB-D. End-to-end UAT verified across all three surfaces; D-36 fresh-operator gate caught a Phase 10 UX failure that Phase 10.1 remediated and re-validated. See `.planning/milestones/v1.3-ROADMAP.md` for the full archive.
 
-**In progress (v1.3 "Artist Console"):** Phase 9 "Read API Foundation" complete (2026-04-23); Phase 10 "Web UI" shipped then remediated — initial Phase 10 execution closed automated gates but FAILED the D-36 non-developer dogfood UAT ("nearly impossible to understand") and surfaced a shell-duplication render bug on nav click. **Phase 10.1 "Artist-UX Gap Closure" (2026-04-24)** remediated all six scoped items: `shell.html` nav-swap fix, explicit Status chip column (`active`/`loaded` — quarantined deferred to Phase 11/v1.4), artist-facing column headers with demoted telemetry, chip caption for discoverability, Playwright nav-swap + chip-click regression tests, and the re-run D-36 dogfood UAT (PASS with two honest-recorded deviations around fresh-operator identity + partial-understanding read). Gap-closure-of-gap-closure Plan 10.1-06 added when the pre-UAT smoke caught an independent chip-click shell-dup bug (same D-39 invariant class, different code path). Three follow-ups persisted to `10.1-HUMAN-UAT.md` for Phase 11 or a dedicated micro-pass: truly-fresh-operator re-UAT, default-sort affordance legibility on the `Created` column, and Firefox/Safari parity smoke. Full suite: 481/481.
+**Next milestone (proposed):** v1.4 Staged Ops Platform — Phases FB-A..FB-D (staged_operation entity + lifecycle, MCP/HTTP surface for list/approve/reject, `LLMRouter.complete_with_tools()` agentic loop, chat endpoint absorbing Phase 12's CHAT-* scope). Driven by projekt-forge v1.5's declared deps; design dated 2026-04-23 in `.planning/ROADMAP.md`. Open via `/gsd-new-milestone`.
 
-**Codebase:** 21,826 LOC (forge_bridge + tests), 289 tests passing, 263 commits across 7 phases. Public API surface: 16 symbols in `forge_bridge.__all__`.
+**Codebase at v1.3 close:** ~30,378 LOC (forge_bridge + tests), 592 tests passing, 411 commits across 11 shipped phases (1, 2, 3, 4, 5, 6, 7, 07.1, 8, 9, 10, 10.1, 11). Public API surface: 16 symbols in `forge_bridge.__all__` (unchanged in v1.3 — console is a private surface).
 
-## Current Milestone: v1.3 Artist Console
+## Current Milestone: _Between milestones (v1.3 closed; v1.4 pending)_
 
-**Goal:** Make forge-bridge legible to its operator — ship an artist-first Web UI + CLI console that surfaces the synthesis manifest, execution history, provenance, and live tool state, backed by a canonical MCP resource that any consumer can read.
-
-**Target features:**
-- Console Web UI — artist-first dashboard (LOGIK-PROJEKT dark + amber, web-adapted) served on a new port by the MCP server process; views for tools, execs, manifest, health, per-tool drilldown
-- Console CLI companion — `forge-bridge console <subcommand>` mirrors the Web UI surface for scripting / SSH workflows
-- Structured query console — primary interaction mode inside the Web UI; fast, deterministic, no LLM in the hot path
-- LLM chat layered on the console — second surface over the same read API using the existing `LLMRouter`
-- Synthesis manifest as MCP resource — one canonical manifest owned by the bridge, exposed at `forge://manifest/synthesis` (for LLM agents) and via the console read API (for the Web UI and CLI); satisfies both DF-02 and EXT-01 through the same artifact
-- Shared read-side API powering Web UI + CLI + chat, reading JSONL (canonical, per STORE-06) + live bridge state; optional SQL read-adapter mirrors the StoragePersistence shape
-
-**Key context:**
-- Read-only milestone; no quarantine/promote/kill in UI (admin is a follow-on once auth is in scope)
-- Serving model: new port (e.g., `:9996`) inside the MCP server process; `:9999` stays Flame's exec endpoint, `:9998` stays WS
-- Design contract for the Web UI is owned by `/gsd-ui-phase` for its phase — expected palette inherits `#242424` base + `#cc9c00` amber from LOGIK-PROJEKT
-- Minor version bump (grows `__all__` for new console entrypoints + manifest API) → next tag expected **v1.4.0**
-- Phase numbering continues from v1.2 — v1.3 starts at **Phase 9**
-
-**Locked non-goals:**
-- No Maya/editorial adapters for the manifest (Flame remains the only producer this milestone)
-- No auth in the console (localhost-bound, same posture as `:9999`)
-- No admin/mutation actions in the UI
-- Carried forward: no `LLMRouter` hot-reload, no shared-path JSONL writers
-
-**Open (roadmapper to decide scope):** real-time streaming (SSE/WebSocket push) vs poll-only; multi-project view in the console.
+v1.3 Artist Console shipped 2026-04-25 (`v1.3.1`). v1.4 Staged Ops Platform is pre-designed in `.planning/ROADMAP.md` (Phases FB-A..FB-D, dated 2026-04-23) and will be opened via `/gsd-new-milestone`.
 
 ## Core Value
 
@@ -75,10 +52,15 @@ Make forge-bridge the single canonical package (`pip install forge-bridge`) that
 - ✓ Cross-repo SQLAlchemy adapter: projekt-forge's `_persist_execution` stub replaced with real sync adapter using `pg_insert(...).on_conflict_do_nothing(index_elements=["code_hash","timestamp"])` for idempotency; Alembic revision `005_execution_log.py`; `isinstance(_persist_execution, StoragePersistence)` startup-time sanity gate; credential-leak prevention (logs only `type(exc).__name__`, never `str(exc)`) (STORE-05) — v1.3.0 (Phase 8)
 - ✓ No-retry invariant documented end-to-end: callback failures log WARNING once and return, durability comes from JSONL + optional backfill (STORE-06) — v1.3.0 (Phase 8)
 - ✓ LRN-05 gap closure: `forge_bridge.bridge.set_execution_callback()` hook was defined in Phase 6 but never installed; projekt-forge now installs `_forward_bridge_exec_to_log` in `init_learning_pipeline` — completing the `bridge.execute() → ExecutionLog.record() → _persist_execution → PG INSERT` chain. Discovered during Phase 8 live UAT — v1.3.0 (Phase 8 deviation)
+- ✓ Read API foundation: `ConsoleReadAPI` is the sole read path for all surfaces (Web UI, CLI, MCP resources); `ManifestService` singleton with watcher injection; instance-identity gate (API-04) enforced in `_lifespan`; uvicorn asyncio task on `:9996` co-resident with MCP server (NOT FastMCP `custom_route` — would break stdio); `forge://manifest/synthesis` MCP resource + `forge_manifest_read` tool fallback shim ship in same plan; graceful degradation when `:9996` unavailable (API-01..06, MFST-01..03,06, TOOLS-04, EXECS-04) — v1.3.1 (Phase 9)
+- ✓ Web UI: artist-first dashboard at `http://localhost:9996/ui/` — five views (tools, execs, manifest, health, chat-nav), Jinja2 + vendored htmx + Alpine.js with SRI, zero JS build step, structured query console as primary interaction (no LLM in hot path), persistent health header strip, LOGIK-PROJEKT amber-on-dark palette via UI-SPEC.md design contract (CONSOLE-01..05, TOOLS-01,02, EXECS-01,02, MFST-04, HEALTH-01,04) — v1.3.1 (Phase 10 + 10.1 remediation)
+- ✓ Artist-UX gap closure (INSERTED Phase 10.1): D-36 fresh-operator dogfood UAT failed Phase 10 → six-plan remediation shipped explicit Status chip column, artist-facing column headers with demoted developer telemetry, `hx-boost` shell-duplication fix, chip discoverability, in-browser Playwright nav-swap regression test, gap-closure-of-gap-closure for chip-click shell-dup; D-36 re-UAT PASSED — v1.3.1 (Phase 10.1)
+- ✓ CLI companion: Typer + Rich + sync `httpx` consumer of `:9996` — five subcommands (`tools`, `execs`, `manifest`, `health`, `doctor`), filter-flag grammar mirrors Web UI 1:1, `--json` short-circuits Rich (P-01 stdout purity), locked exit codes (`0` ok / `1` server error / `2` unreachable), `doctor` expanded check matrix (JSONL parseability, sidecar dirs, port reachability, disk space) with CI-gating exit codes; D-08 soft UAT PASS (CLI-01..04, TOOLS-03, EXECS-03, MFST-05, HEALTH-02,03) — v1.3.1 (Phase 11)
+- ✓ Phase 12 supersession (decided 2026-04-23, confirmed at v1.3 close): mid-milestone, projekt-forge v1.5 declared FB-A..FB-D as required deps; FB-D ("Chat Endpoint") absorbs Phase 12's chat scope while adding the agentic tool-call loop. CHAT-01..04 carry forward to v1.4 FB-D — explicit decision, not a silent drop
 
 ### Active
 
-- _v1.3 Artist Console requirements pending in `.planning/REQUIREMENTS.md` (roadmap assigns to Phase 9+)._
+- _v1.4 Staged Ops Platform requirements pending — milestone opening via `/gsd-new-milestone` will populate `.planning/REQUIREMENTS.md` with STAGED-*, LLMTOOL-*, CHAT-* (carry-over from Phase 12 supersession) IDs._
 
 ### Out of Scope
 
@@ -160,4 +142,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-23 — Phase 9 "Read API Foundation" complete; Phase 10 "Web UI" next*
+*Last updated: 2026-04-25 — v1.3 Artist Console milestone closed (`v1.3.1`); ready to open v1.4 Staged Ops Platform via `/gsd-new-milestone`*

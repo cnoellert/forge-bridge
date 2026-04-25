@@ -1,66 +1,57 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.3
-milestone_name: Artist Console
-status: complete
-stopped_at: v1.3 milestone complete
-last_updated: "2026-04-25T00:30:00.000Z"
-last_activity: 2026-04-25 -- v1.3 milestone closed (Phase 9 bookkeeping reconciled — Phase 9 was shipped 2026-04-22 before Phase 10/10.1/11)
+milestone: between-milestones
+milestone_name: v1.3 closed; v1.4 pending
+status: idle
+stopped_at: v1.3 archived (tag v1.3.1); ready for /gsd-new-milestone v1.4
+last_updated: "2026-04-25T16:30:00.000Z"
+last_activity: 2026-04-25 -- v1.3 archived to .planning/milestones/v1.3-{ROADMAP,REQUIREMENTS}.md and v1.3-phases/; ROADMAP collapsed; REQUIREMENTS.md removed (fresh on next milestone)
 progress:
-  total_phases: 5
-  completed_phases: 4
-  total_plans: 20
-  completed_plans: 20
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-04-22)
+See: .planning/PROJECT.md (updated 2026-04-25 at v1.3 close)
 
-**Core value (v1.3):** Make forge-bridge legible to its operator — artist-first Web UI + CLI console surfacing the synthesis manifest, execution history, provenance, and live tool state, backed by a canonical MCP resource.
-**Current focus:** v1.3 milestone complete — ready to open v1.4 (FB-A through FB-D)
+**Project core value:** forge-bridge is the single canonical pip-installable middleware (`pip install forge-bridge`) — protocol-agnostic communication bus with a canonical vocabulary that any endpoint (Flame, Maya, editorial, LLM agents) connects to.
+**Current focus:** _Between milestones._ v1.3 archived; v1.4 Staged Ops Platform pre-designed in ROADMAP.md (FB-A..FB-D) — open via `/gsd-new-milestone`.
 
 ## Current Position
 
-Milestone: v1.3 Artist Console — COMPLETE
-Phases shipped: 9 (Read API), 10 (Web UI), 10.1 (Artist-UX gap closure), 11 (CLI Companion)
-Phase deferred/superseded: 12 (LLM Chat → folded into v1.4 FB-D)
-Last activity: 2026-04-25 -- bookkeeping reconciled; ROADMAP top-line + progress table now reflect Phase 9 completion (was shipped 2026-04-22, plans/summaries/verification all in place; only the top-line checkbox lagged)
+Milestone: _none_ — v1.3 archived, v1.4 not yet opened
+Last activity: 2026-04-25 -- v1.3 milestone close ceremony complete (archive + tag prep)
 
-Progress: [██████████] 100% (v1.3 milestone — 4 phases shipped, 1 superseded)
+**v1.3 archived** to `.planning/milestones/`:
+- `v1.3-ROADMAP.md` — full phase details (9, 10, 10.1, 11; Phase 12 superseded)
+- `v1.3-REQUIREMENTS.md` — 33 shipped + 4 superseded → v1.4 FB-D
+- `v1.3-phases/` — all phase directories (CONTEXT, RESEARCH, PLANs, SUMMARIES, VERIFICATION, UAT records)
 
-**v1.3 close-out (all four phases):**
-
-- **Phase 9 — Read API Foundation** (shipped 2026-04-22): ConsoleReadAPI sole-read-path discipline; ManifestService singleton; instance-identity gate (API-04); uvicorn task on `:9996` inside `_lifespan`; MCP resources + tool fallback shim. 5/5 must-haves verified, 379 tests green at close. Foundation that Phases 10/10.1/11 all consumed.
-- **Phase 10 — Web UI** (shipped 2026-04-23, blocker resolved 2026-04-24 via 10.1): Jinja2 + htmx + Alpine.js, five views, structured query console, health header strip. D-36 fresh-operator UAT initially failed; 10.1 closed the gap.
-- **Phase 10.1 — Artist-UX Gap Closure** (shipped 2026-04-24): hx-boost nav-swap fix, Status chip column, artist-legible headers, preset chip discoverability, in-browser swap regression test, dogfood UAT re-run PASS.
-- **Phase 11 — CLI Companion** (shipped 2026-04-25): Typer + Rich subcommands (tools, execs, manifest, health, doctor) on top of Phase 9 API; D-08 soft UAT PASS; 13/13 must-haves verified.
-
-**Phase 12 velocity gate (decided 2026-04-23, confirmed 2026-04-24):** LLM Chat superseded by FB-D in v1.4. No work leaks back into v1.3.
-
-**Next action:** open v1.4 milestone with `/gsd-new-milestone` (FB-A through FB-D — staged operation entity, MCP tools + read API, LLMRouter tool-call loop, chat endpoint).
+**Next action:** `/gsd-new-milestone v1.4` — adopts the existing FB-A..FB-D pre-design (per discussion 2026-04-25), runs targeted FB-C research, populates fresh REQUIREMENTS.md, formalizes phases via roadmapper.
 
 ## Session Handoff — Resume Instructions
 
-**What's committed and ready:**
+**What's committed and ready (v1.3 archive):**
 
-- All Phase 10 / 10.1 / 11 plans, summaries, UAT records, and verification reports
-- `forge_bridge/cli/` package — five Typer subcommands (`tools`, `execs`, `manifest`, `health`, `doctor`) consuming `:9996` console API; locked exit-code taxonomy (0/1/2); `--json` short-circuits Rich (P-01)
-- `.planning/PROJECT.md` — v1.3 "Artist Console" milestone scope
-- `.planning/REQUIREMENTS.md` — 37 requirements across 8 categories
-- `.planning/ROADMAP.md` — Phases 9, 10, 10.1, 11 all marked Complete; Phase 12 marked Superseded by FB-D
-- `.planning/research/SUMMARY.md` — HIGH confidence research from v1.3 milestone open
+- `.planning/milestones/v1.3-ROADMAP.md` — full milestone archive (phase details, success criteria, key decisions, deferred items)
+- `.planning/milestones/v1.3-REQUIREMENTS.md` — final requirement state (33 shipped, 4 superseded → FB-D, full traceability table)
+- `.planning/milestones/v1.3-phases/{09,10,10.1,11}-*/` — phase artifacts moved out of `.planning/phases/`
+- `.planning/MILESTONES.md` — v1.3 entry prepended with key accomplishments + lessons
+- `.planning/PROJECT.md` — Validated requirements section grew with v1.3 entries; Current Milestone marked between-milestones
+- `.planning/ROADMAP.md` — v1.3 collapsed to `<details>` block with link to archive; v1.4 FB-A..FB-D pre-design preserved
+- Annotated git tag `v1.3.1` (will be created during this commit ceremony)
 
 **Next action:**
 
-Run `/gsd-new-milestone` to open v1.4 (FB-A staged operation entity → FB-B MCP tools + read API → FB-C LLMRouter tool-call loop → FB-D chat endpoint), or `/gsd-progress` to confirm milestone closure routing.
+Run `/gsd-new-milestone v1.4` — pre-discussed plan: adopt FB-A..FB-D as-is (consumer-driven by projekt-forge v1.5), keep letter scheme, run targeted FB-C research only (Anthropic + Ollama tool-call format current state), plant `SEED-AUTH-V1.5` for FB-D rate-limiting → caller-identity follow-up, defer manifest/tools UX polish + 10.1-HUMAN-UAT items to v1.4.x patch (not core v1.4 scope).
 
-**Phase 9 bookkeeping note (resolved 2026-04-25):** Phase 9 was actually shipped 2026-04-22 — all 3 plans, summaries, REVIEW, and VERIFICATION present and Phases 10/10.1/11 all consumed it. The ROADMAP top-line `[ ] Phase 9` and progress-table `0/3 Not started` were stale checkbox state that survived past Phase 9 close because it shipped in the same week as Phases 10/10.1 and the bookkeeping pass got skipped. Reconciled in this commit; no code changes.
-
-**Key constraints (still binding for v1.4 work that touches v1.3 surfaces):**
+**Key constraints (still binding for v1.4 work that builds on v1.3 surfaces):**
 
 - Uvicorn task pattern is locked — console runs as a separate uvicorn asyncio task inside `_lifespan` on `:9996`; NOT via `FastMCP.custom_route` (only works in `--http` mode, breaks stdio)
 - ConsoleReadAPI is the sole read path for all surfaces — Web UI, CLI, MCP resources, and chat all call it; no per-surface JSONL parsers
