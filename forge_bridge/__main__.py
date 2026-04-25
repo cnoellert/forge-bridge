@@ -28,6 +28,17 @@ console_app = typer.Typer(
 )
 app.add_typer(console_app, name="console")
 
+# Phase 11: register console subcommands.
+# Imports are deferred from module top to here to keep `forge-bridge` (bare invocation)
+# boot-fast — MCP server import path doesn't need cli.* modules.
+from forge_bridge.cli import doctor, execs, health, manifest, tools  # noqa: E402
+
+console_app.command("tools")(tools.tools_cmd)
+console_app.command("execs")(execs.execs_cmd)
+console_app.command("manifest")(manifest.manifest_cmd)
+console_app.command("health")(health.health_cmd)
+console_app.command("doctor")(doctor.doctor_cmd)
+
 
 @app.callback(invoke_without_command=True)
 def main(
