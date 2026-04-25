@@ -1,0 +1,86 @@
+# Requirements — v1.4 Staged Ops Platform
+
+**Milestone:** v1.4 Staged Ops Platform
+**Status:** Active — defined 2026-04-25
+**Source:** FB-A..FB-D pre-design from `.planning/ROADMAP.md` (2026-04-23) + targeted FB-C research at `.planning/research/FB-C-TOOL-CALL-LOOP.md` (2026-04-25)
+
+---
+
+## v1.4 Requirements
+
+### STAGED — Staged Operation Entity & Lifecycle
+
+- [ ] **STAGED-01**: A new `entity_type='staged_operation'` participates in the existing extensible entity model with required fields `proposer` (str), `operation` (str), `parameters` (JSONB), and initial `status='proposed'` — verified via direct SQLAlchemy round-trip test (insert, fetch, compare).
+- [ ] **STAGED-02**: Lifecycle transitions are enforced in the data layer: `proposed → approved → executed` (happy path), `proposed → rejected` (artist veto), `approved → failed` (execution error). Illegal transitions (e.g., `executed → proposed`, `rejected → executed`) raise `StagedOpLifecycleError` with the attempted transition in the message.
+- [ ] **STAGED-03**: Every lifecycle transition writes a `DBEvent` row with `old_status`, `new_status`, `actor` (proposer for proposed→rejected; approver for proposed→approved; executor for approved→executed/failed), and timestamp — queryable by `entity_id` for full audit replay.
+- [ ] **STAGED-04**: The `parameters` JSONB at `status='proposed'` is preserved verbatim across status advancement (the column is never mutated after creation); the `result` JSONB column is populated only on `executed` or `failed` and is null otherwise. A diff of `parameters` vs `result` is recoverable per operation via SQL alone.
+- [ ] **STAGED-05**: MCP tools `forge_list_staged`, `forge_get_staged`, `forge_approve_staged`, `forge_reject_staged` are registered and callable from a real MCP client session; each returns a JSON payload that matches the entity shape from STAGED-01 + status field.
+- [ ] **STAGED-06**: HTTP routes `GET /api/v1/staged?status=proposed` (list filter), `POST /api/v1/staged/{id}/approve`, `POST /api/v1/staged/{id}/reject` transition lifecycle and return the updated record — same data shape as the MCP tools (zero divergence; verified by side-by-side response comparison test).
+- [ ] **STAGED-07**: `resources/read forge://staged/pending` MCP resource returns a snapshot of pending operations identical to `forge_list_staged(status='proposed')` output. Approval does NOT execute the operation itself — forge-bridge is the bookkeeper; the proposer (e.g., projekt-forge) subscribes to approval events via the existing event bus and executes against its own domain (Flame).
+
+### LLMTOOL — `LLMRouter.complete_with_tools()` Agentic Loop
+
+- [ ] **LLMTOOL-01**: `router.complete_with_tools(prompt, tools=[...], sensitive=True)` completes a two-step loop (LLM calls tool A, receives result, returns final response) against a real Ollama backend running `qwen2.5-coder:32b` — verified in an integration test on assist-01.
+- [ ] **LLMTOOL-02**: Cloud path (`sensitive=False` → Anthropic) produces a terminal response for the same prompt + tool schemas as LLMTOOL-01 — verified against live API with `ANTHROPIC_API_KEY` set. Sensitive routing logic (`sensitive=True → local`) is preserved verbatim from existing `acomplete()` behavior.
+- [ ] **LLMTOOL-03**: A tool invocation failure (raised exception, timeout, schema mismatch) is caught at the coordinator boundary, surfaced back to the LLM as a structured `tool_result` with `is_error=True` (Anthropic) or `"ERROR: "` content prefix (Ollama), and the loop continues — one bad tool does not abort the session. The loop has a hard iteration cap (default 8) and a total wall-clock cap (default 120s); per-tool sub-budget is `min(30s, remaining_global_budget)`. Exceeding either cap raises `LLMLoopBudgetExceeded`, exported from `forge_bridge.__all__` (barrel grows 16→17).
+- [ ] **LLMTOOL-04**: Repeat-call detection — after three identical `(tool_name, json.dumps(args, sort_keys=True))` invocations within one session, the coordinator injects a synthetic `tool_result` with `is_error=True` and text `"You have called {tool} with the same arguments {n} times. Try different arguments or stop calling this tool."`. The original tool is NOT invoked the third time. Verified via integration test with a stub LLM that emits the same tool_call three times.
+- [ ] **LLMTOOL-05**: Tool result size cap — every tool result string is truncated to 8192 bytes before feeding back to the LLM. Truncated content is suffixed with `\n[...truncated, full result was {n} bytes]`. Constant `_TOOL_RESULT_MAX_BYTES = 8192` is overridable via `complete_with_tools(..., tool_result_max_bytes=N)`. Verified via integration test with a stub tool returning 100 KB of payload.
+- [ ] **LLMTOOL-06**: Tool result sanitization boundary — `_sanitize_tool_result()` exists in `forge_bridge/llm/_sanitize.py` and is invoked on every tool_result content string before leaving the coordinator for the LLM. Pattern set is shared with Phase 7's `_sanitize_tag()` (consolidated into `forge_bridge/_sanitize_patterns.py` or equivalent — single source of truth). Patterns matching injection markers (case-insensitive) are replaced with `[BLOCKED:INJECTION_MARKER]`; ASCII control chars (other than `\n`, `\t`) are stripped. Verified via integration test with a tool returning a known injection string — the LLM-bound message content does NOT include the marker substring. **Acceptance overlaps with CHAT-03**: FB-C ships the helper, FB-D wires the chat endpoint into it.
+- [ ] **LLMTOOL-07**: Recursive-synthesis guard — a contextvar `_in_tool_loop` is set inside `complete_with_tools()` (try/finally for cleanup); both `acomplete()` and `complete_with_tools()` check the var on entry and raise `RecursiveToolLoopError` if set. The synthesizer's safety blocklist (Phase 3) is updated to flag imports from `forge_bridge.llm` in synthesized code. Verified via unit test: a tool function that calls `acomplete()` raises `RecursiveToolLoopError` when invoked from within `complete_with_tools()`.
+
+### CHAT — Chat Endpoint (carry-over from Phase 12 supersession)
+
+- [ ] **CHAT-01**: `/api/v1/chat` endpoint exposes `complete_with_tools()` over HTTP with rate limiting — eleven rapid requests from the same IP within one minute, the eleventh returns HTTP 429 with `{"error": "rate limit exceeded", ...}` envelope. Bucket is keyed by remote IP for v1.4; SEED-AUTH-V1.5 plants the migration to caller-identity bucketing once auth lands.
+- [ ] **CHAT-02**: Chat endpoint wall-clock timeout — an `acomplete_with_tools()` call that blocks indefinitely causes the endpoint to return a timeout error within 125 seconds (LLMTOOL-03 wall-clock cap of 120s + 5s buffer for response framing). Verified via integration test with a stub tool that sleeps forever.
+- [ ] **CHAT-03**: Sanitization boundary holds end-to-end — a tool whose sidecar name or parameters contain an injection marker (e.g., `IGNORE PREVIOUS INSTRUCTIONS`) does not propagate that string into the LLM context. Wired through `_sanitize_tool_result()` from LLMTOOL-06 plus the Phase 7 tool-definition sanitization. Verified via integration test that asserts the LLM-bound prompt does NOT contain the marker substring after a deliberately-poisoned tool runs.
+- [ ] **CHAT-04**: Non-developer dogfood UAT — an artist asks "what synthesis tools were created this week?" in the Web UI chat panel and receives a useful, plain-English answer within the LLM's normal response time (<60s on assist-01 hardware). UAT pattern matches Phase 10's D-36 hard fresh-operator gate; failure here triggers a remediation phase (analogous to Phase 10.1). Web UI chat panel itself is consumed from the existing chat-nav stub shipped in CONSOLE-04 (v1.3); FB-D wires the panel to the new endpoint.
+- [ ] **CHAT-05**: External-consumer parity — the same `/api/v1/chat` endpoint serves projekt-forge Flame hooks (projekt-forge v1.5 Phase 22/23 consumers) with zero divergence in behavior or context assembly compared to the Web UI. Verified by replaying the same prompt + tool schemas through both clients and comparing terminal responses (modulo non-deterministic LLM output — assert structural shape match).
+
+---
+
+## Out of Scope (v1.4)
+
+These were considered and explicitly excluded — they have a target milestone or rationale.
+
+| Item | Why deferred | Carry-forward target |
+|------|--------------|----------------------|
+| Auth (caller identity, multi-user rate limiting) | Locked non-goal — pre-discussed at v1.4 open. SEED-AUTH-V1.5 planted. | v1.5 dedicated auth milestone |
+| Parallel tool execution within a single LLM turn | §6.4 — race-condition surface vs zero throughput gain (Flame's idle-event queue serializes anyway). `parallel: bool = False` kwarg ships to advertise the v1.5 path; passing `True` raises `NotImplementedError`. | v1.5 — flip after FB-C UAT baseline |
+| Cross-provider sensitive fallback (cloud-fail → local) | §5.4 — loop state is not portable across providers (Anthropic message dicts ≠ Ollama message dicts). Mid-loop fallback would require state reconstruction. | v1.5+ — design explicitly when needed |
+| Message-history pruning (summarize old turns, drop early tool results) | §6.2 — for v1.4, ingest-time truncation at 8 KB per result (LLMTOOL-05) is sufficient given expected session lengths. True pruning is a v1.5+ feature. | SEED-MESSAGE-PRUNING-V1.5 |
+| Default Ollama tool model bump (`qwen2.5-coder:32b` → `qwen3:32b`) | §3 / Q1 — qwen3 has known tool-calling reliability issues (Ollama issues #14493, #11662, #11135). Keep `qwen2.5-coder:32b` as the FB-C ship default; bump after empirical UAT on assist-01. | SEED-DEFAULT-MODEL-BUMP-V1.4.x |
+| Anthropic `tool_runner()` beta helper | §1 — still under `client.beta.*` namespace as of 2026-04-25; would couple loop semantics to one provider when we need parity with Ollama. | Not a target — coordinator + adapters is the pattern |
+| OpenAI compatibility shim for Ollama tool calls | §1 — drops `tool_calls.function.arguments` quirks, hides the real Ollama wire format, prevents reliability-signal handling. Use the official `ollama` Python client for the local path. | Not a target — adds new optional dep `ollama>=0.6.1,<1` |
+| v1.3 polish items: manifest/tools CLI visual differentiation, 10.1-HUMAN-UAT (truly-fresh-operator re-UAT, sort-affordance legibility, non-Chromium parity), W-01 server-side `--tool` filter, real-time streaming push, multi-project console view | Pre-discussed at v1.4 open — not core v1.4 scope; keep v1.4 focused on the projekt-forge v1.5 dependency. | v1.4.x patch milestone |
+| Quarantined-tool surfacing in UI/CLI | Paired with auth milestone (admin/mutation actions need identity gating). | v1.5 admin/auth milestone |
+
+## Future Requirements (deferred features, not in v1.4)
+
+| Item | Source | Target |
+|------|--------|--------|
+| Migrate `/api/v1/chat` rate limiting from IP-based to caller-identity-based | SEED-AUTH-V1.5 (planted at v1.4 open) | v1.5 auth milestone |
+| Tool examples (Anthropic `input_examples` field) on registered tools | FB-C research §2.1 | SEED-TOOL-EXAMPLES-V1.5 |
+| Claude Managed Agents memory feature integration | FB-C research §1 (forward-looking) | SEED-CMA-MEMORY-V1.5+ |
+| Synthesizer safety blocklist update for `forge_bridge.llm` imports | LLMTOOL-07 (CROSS-CUTTING — must land in v1.4 alongside FB-C) | v1.4 FB-C scope (SEED-SYNTH-LLM-RECURSION-BLOCK as tracking-only) |
+
+## Coverage at Open
+
+| Category | Count | REQ-IDs |
+|----------|-------|---------|
+| STAGED | 7 | STAGED-01..07 |
+| LLMTOOL | 7 | LLMTOOL-01..07 |
+| CHAT | 5 | CHAT-01..05 |
+| **Total** | **19** | All v1.4 requirements |
+
+## Traceability — to be filled by roadmapper
+
+| REQ-ID | Phase | Status |
+|--------|-------|--------|
+| STAGED-01..04 | _TBD_ | Open |
+| STAGED-05..07 | _TBD_ | Open |
+| LLMTOOL-01..07 | _TBD_ | Open |
+| CHAT-01..05 | _TBD_ | Open |
+
+---
+
+*Authored: 2026-04-25 — `/gsd-new-milestone v1.4`. Pre-design from `.planning/ROADMAP.md` (2026-04-23) + targeted FB-C research at `.planning/research/FB-C-TOOL-CALL-LOOP.md`. Awaiting roadmapper to map REQ-IDs to FB-A..FB-D phases.*
