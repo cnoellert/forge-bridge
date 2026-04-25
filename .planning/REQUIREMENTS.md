@@ -72,15 +72,32 @@ These were considered and explicitly excluded — they have a target milestone o
 | CHAT | 5 | CHAT-01..05 |
 | **Total** | **19** | All v1.4 requirements |
 
-## Traceability — to be filled by roadmapper
+## Traceability
 
 | REQ-ID | Phase | Status |
 |--------|-------|--------|
-| STAGED-01..04 | _TBD_ | Open |
-| STAGED-05..07 | _TBD_ | Open |
-| LLMTOOL-01..07 | _TBD_ | Open |
-| CHAT-01..05 | _TBD_ | Open |
+| STAGED-01 | FB-A | Open |
+| STAGED-02 | FB-A | Open |
+| STAGED-03 | FB-A | Open |
+| STAGED-04 | FB-A | Open |
+| STAGED-05 | FB-B | Open |
+| STAGED-06 | FB-B | Open |
+| STAGED-07 | FB-B | Open |
+| LLMTOOL-01 | FB-C | Open |
+| LLMTOOL-02 | FB-C | Open |
+| LLMTOOL-03 | FB-C | Open |
+| LLMTOOL-04 | FB-C | Open |
+| LLMTOOL-05 | FB-C | Open |
+| LLMTOOL-06 | FB-C | Open |
+| LLMTOOL-07 | FB-C | Open |
+| CHAT-01 | FB-D | Open |
+| CHAT-02 | FB-D | Open |
+| CHAT-03 | FB-D | Open |
+| CHAT-04 | FB-D | Open |
+| CHAT-05 | FB-D | Open |
+
+**Coverage:** 19/19 requirements mapped (100%). FB-A: 4 reqs · FB-B: 3 reqs · FB-C: 7 reqs · FB-D: 5 reqs.
 
 ---
 
-*Authored: 2026-04-25 — `/gsd-new-milestone v1.4`. Pre-design from `.planning/ROADMAP.md` (2026-04-23) + targeted FB-C research at `.planning/research/FB-C-TOOL-CALL-LOOP.md`. Awaiting roadmapper to map REQ-IDs to FB-A..FB-D phases.*
+*Authored: 2026-04-25 — `/gsd-new-milestone v1.4`. Pre-design from `.planning/ROADMAP.md` (2026-04-23) + targeted FB-C research at `.planning/research/FB-C-TOOL-CALL-LOOP.md`. Traceability filled by gsd-roadmapper 2026-04-25 — 19/19 requirements mapped to FB-A..FB-D.*

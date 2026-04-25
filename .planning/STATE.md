@@ -3,11 +3,11 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Staged Ops Platform
 status: defining-requirements
-stopped_at: v1.4 opened; defining requirements before roadmapper
-last_updated: "2026-04-25T17:00:00.000Z"
-last_activity: 2026-04-25 -- /gsd-new-milestone v1.4 opened; PROJECT.md Current Milestone section populated; SEED-AUTH-V1.5 planted; awaiting research decision then REQUIREMENTS.md generation
+stopped_at: v1.4 roadmap formalized; awaiting user approval before phase planning begins
+last_updated: "2026-04-25T19:00:00.000Z"
+last_activity: 2026-04-25 -- gsd-roadmapper formalized FB-A..FB-D phases; LLMTOOL-04..07 + CHAT-05 absorbed into success criteria; 19/19 v1.4 requirements mapped; awaiting user approval
 progress:
-  total_phases: 0
+  total_phases: 4
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -21,51 +21,62 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-25 at v1.3 close)
 
 **Project core value:** forge-bridge is the single canonical pip-installable middleware (`pip install forge-bridge`) — protocol-agnostic communication bus with a canonical vocabulary that any endpoint (Flame, Maya, editorial, LLM agents) connects to.
-**Current focus:** **v1.4 Staged Ops Platform** — open milestone, defining requirements. FB-A..FB-D pre-design adopted as-is (consumer-driven by projekt-forge v1.5). Targeted FB-C research only; FB-A/B/D ride existing patterns from Phases 8/9/10.
+**Current focus:** **v1.4 Staged Ops Platform** — open milestone, roadmap formalized 2026-04-25. FB-A..FB-D letter scheme preserved (consumer-driven by projekt-forge v1.5). 19 requirements mapped (STAGED 7 + LLMTOOL 7 + CHAT 5).
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: Not started — FB-A is the next plan target
 Plan: —
-Status: Defining requirements
+Status: Defining requirements (roadmap formalized; awaiting user approval)
 Milestone: v1.4 Staged Ops Platform (opened 2026-04-25)
-Last activity: 2026-04-25 -- /gsd-new-milestone v1.4 opened; PROJECT.md updated with Current Milestone v1.4 section; SEED-AUTH-V1.5 planted for FB-D rate-limiting → caller-identity follow-up
+Last activity: 2026-04-25 -- gsd-roadmapper formalized FB-A..FB-D phases against REQUIREMENTS.md; FB-C success criteria expanded to 7 (absorbed LLMTOOL-04..07); FB-D success criteria expanded to 5 (absorbed CHAT-05); 19/19 requirements mapped; FB-A and FB-C are parallelizable (no shared dependency)
 
-**v1.4 opened** 2026-04-25 — FB-A..FB-D phases adopted as-is from 2026-04-23 pre-design.
+**v1.4 roadmap formalized** 2026-04-25 — FB-A..FB-D phases mapped to 19 v1.4 requirements; phase letter scheme preserved per locked decision; awaiting user approval to proceed.
 
-**Next action:** Define `.planning/REQUIREMENTS.md` (STAGED-01..07, LLMTOOL-01..03, CHAT-01..04 carry-over from Phase 12 supersession) → spawn `gsd-roadmapper` to formalize FB-A..FB-D phases (keep letter scheme, do NOT renumber to 12..15).
+**Next action:** User reviews ROADMAP.md draft → on approval, status flips from `defining-requirements` to `in-progress`; FB-A is the first plan target. Recommended sequencing: FB-A and FB-C can run in parallel (no shared dependency); FB-B requires FB-A; FB-D requires FB-C.
 
 ## Session Handoff — Resume Instructions
 
-**What's committed and ready (v1.4 open):**
+**What's committed and ready (v1.4 roadmap formalized):**
 
-- `.planning/PROJECT.md` — Current Milestone section populated with v1.4 goal, FB-A..FB-D target features, scope decisions; Active requirements pointer flipped from "pending" to "defined in REQUIREMENTS.md"
-- `.planning/STATE.md` — milestone metadata flipped from `between-milestones` to `v1.4`; status `defining-requirements`
+- `.planning/PROJECT.md` — Current Milestone section populated with v1.4 goal, FB-A..FB-D target features, scope decisions
+- `.planning/REQUIREMENTS.md` — STAGED-01..07, LLMTOOL-01..07, CHAT-01..05 (19 reqs); traceability table filled in by roadmapper 2026-04-25
+- `.planning/ROADMAP.md` — v1.4 status flipped 📐→🚧; FB-A..FB-D phase blocks updated with refreshed success criteria, dependencies, parallelization note; Progress table rows flipped Designed→Open
+- `.planning/STATE.md` — milestone metadata updated to reflect roadmap formalization
 - `.planning/seeds/SEED-AUTH-V1.5.md` — planted for FB-D rate-limiting → caller-identity follow-up once v1.5 auth ships
-- `.planning/ROADMAP.md` — v1.4 FB-A..FB-D pre-design (already in repo since 2026-04-23) carries forward unchanged; roadmapper will formalize against fresh REQUIREMENTS.md
+- `.planning/research/FB-C-TOOL-CALL-LOOP.md` — targeted FB-C research (Anthropic + Ollama tool-call format current state)
 
 **Next action:**
 
-Continue `/gsd-new-milestone v1.4` workflow — research decision (targeted FB-C only is the pre-discussed plan), then REQUIREMENTS.md generation, then roadmapper.
+Awaiting user approval of ROADMAP.md draft. On approval:
+1. Orchestrator commits the roadmap + state + traceability updates
+2. Status flips `defining-requirements` → `in-progress`
+3. `/gsd-discuss-phase FB-A` (or `/gsd-discuss-phase FB-C` if running in parallel) is the next entry point
 
 **Key constraints (still binding for v1.4 work that builds on v1.3 surfaces):**
 
+- Phase letter scheme `FB-A..FB-D` is LOCKED — do NOT renumber to phases 12..15. Consumer-driven by projekt-forge v1.5 declared deps.
 - Uvicorn task pattern is locked — console runs as a separate uvicorn asyncio task inside `_lifespan` on `:9996`; NOT via `FastMCP.custom_route` (only works in `--http` mode, breaks stdio)
-- ConsoleReadAPI is the sole read path for all surfaces — Web UI, CLI, MCP resources, and chat all call it; no per-surface JSONL parsers
+- ConsoleReadAPI is the sole read path for all surfaces — Web UI, CLI, MCP resources, and chat all call it; no per-surface JSONL parsers. FB-B's HTTP routes consume this same facade.
 - ManifestService singleton injected into watcher (write path) and console router (read path) — watcher is sole writer, console API reads via `snapshot()`
 - Instance-identity gate (API-04): `_lifespan` owns the canonical ExecutionLog and ManifestService; no duplicate instances anywhere in the process
-- MFST-02 and MFST-03 ship in the SAME plan (MCP resource + tool fallback shim together — P-03 prevention for Cursor/Gemini CLI)
-- Only new pip dep: `jinja2>=3.1`; all other deps (Starlette, uvicorn, Typer, Rich, httpx) already ship transitively via `mcp[cli]`
+- MFST-02 and MFST-03 ship in the SAME plan (MCP resource + tool fallback shim together — P-03 prevention for Cursor/Gemini CLI). Apply same pattern to STAGED-05/STAGED-07 in FB-B.
+- Only new pip dep on top of v1.3: `ollama>=0.6.1,<1` (FB-C native Ollama tool-call client; OpenAI-compat shim stays for `acomplete()`)
 - CLI commands must be sync functions calling sync `httpx.get()` — Typer 0.24.1 silently drops `async def` (verified via live test)
-- Every UI-touching phase (10, 12) includes mandatory non-developer dogfood UAT: artist identifies three most recently synthesized tools within 30 seconds
+- Every UI-touching phase (FB-D) includes mandatory non-developer dogfood UAT: D-36 fresh-operator gate pattern from Phase 10
+- FB-A and FB-C are parallelizable — no shared dependency. FB-B → FB-A. FB-D → FB-C.
+- `LLMLoopBudgetExceeded` exported from `forge_bridge.__all__` (barrel grows 16→17) — FB-C deliverable
+- Sanitization patterns consolidate into single source of truth (Phase 7 + FB-C share `forge_bridge/_sanitize_patterns.py` or equivalent) — refactor target during FB-C, not a new plan
 
 ## Performance Metrics
 
-**Velocity (v1.0 baseline):**
+**Velocity (v1.0–v1.3 baseline):**
 
-- Total plans completed: 46
+- Total plans completed: 51 (across milestones v1.0–v1.3)
 - v1.0 phases: 3 phases, 13 plans
+- v1.1 phases: 3 phases, 13 plans
 - v1.2 phases: 3 phases (7, 07.1, 8), 12 plans, 17 tasks
+- v1.3 phases: 4 phases (9, 10, 10.1, 11), 20 plans
 
 **By Phase (v1.0):**
 
@@ -90,6 +101,8 @@ Continue `/gsd-new-milestone v1.4` workflow — research decision (targeted FB-C
 
 - Phase 07.1 inserted after Phase 7: startup_bridge graceful degradation hotfix + deployment UAT (URGENT) — Phase 7 UAT surfaced a deployment-blocking bug in forge-bridge.mcp.server.startup_bridge; exception from _client.start() escapes the try/except intended to guard wait_until_connected. Latent in v1.2.0. Fix + v1.2.1 hotfix + re-UAT via real MCP client before closing v1.2 milestone.
 - v1.3 roadmap written 2026-04-22: 4 phases (9-12), 37 requirements across 8 categories. Phase 12 (LLM Chat) explicitly velocity-gated — may defer to v1.4 if Phases 9-11 run long.
+- v1.4 pre-design dated 2026-04-23 in ROADMAP.md alongside v1.3 close — FB-A..FB-D scoped against projekt-forge v1.5 declared deps (consumer-driven naming). Phase 12 superseded by FB-D in same audit.
+- v1.4 roadmap formalized 2026-04-25 by gsd-roadmapper: FB-C success criteria grew from 4→7 (absorbed LLMTOOL-04 repeat-call detection, LLMTOOL-05 8KB result truncation, LLMTOOL-06 sanitization boundary, LLMTOOL-07 recursive-synthesis guard — all surfaced by targeted FB-C research). FB-D success criteria grew from 4→5 (absorbed CHAT-05 external-consumer parity with projekt-forge Flame hooks). Total v1.4 requirements: 19 (STAGED 7 + LLMTOOL 7 + CHAT 5).
 
 ### Decisions
 
@@ -124,14 +137,20 @@ Recent decisions affecting current work:
 - [Phase 11, 2026-04-24]: Phase 12 velocity gate decision honored — Phase 12 superseded by FB-D in ROADMAP. v1.3 closes with Phases 9, 10, 10.1, 11 (LLM Chat work moves to v1.4 FB-D).
 - [Phase 11, 2026-04-24]: D-04 W-01 stays open — `execs --tool` runs client-side with locked stderr note. Server-side `/api/v1/execs?tool=...` is a v1.4 API extension; Phase 11 deliberately consumed Phase 9/10 API as-is and added zero server endpoints.
 - [Phase 11, 2026-04-24]: Soft UAT gate (D-08) is the right tool for technical CLI surfaces — developer-as-operator with the "can I decipher" criterion produced a useful PASS plus one v1.4-deferred UX note (manifest/tools render visually indistinguishable). Bundle the manifest caption + cross-link fix with Phase 10.1 humanized-timestamps follow-up in a v1.4 polish pass.
+- [v1.4 Roadmap, 2026-04-25]: Phase letter scheme `FB-A..FB-D` is LOCKED — consumer-driven by projekt-forge v1.5 declared deps. NOT renumbered to phases 12..15. Pre-discussed at v1.4 open and re-confirmed at roadmap formalization.
+- [v1.4 Roadmap, 2026-04-25]: FB-C success criteria expanded from pre-design's 4 to 7 to absorb LLMTOOL-04 (repeat-call detection), LLMTOOL-05 (8 KB result truncation), LLMTOOL-06 (sanitization boundary), LLMTOOL-07 (recursive-synthesis guard) — all surfaced by targeted FB-C research. FB-C is the largest phase by criterion count.
+- [v1.4 Roadmap, 2026-04-25]: FB-D success criteria expanded from pre-design's 4 to 5 to add CHAT-05 (external-consumer parity with projekt-forge Flame hooks). FB-D is the v1.5 cross-consumer integration point, not just the Web UI chat panel.
+- [v1.4 Roadmap, 2026-04-25]: FB-A and FB-C are parallelizable — no shared dependency. FB-B → FB-A (entity before its surface). FB-D → FB-C (loop before chat endpoint). Sequencing FB-A and FB-C concurrently is a legitimate execution-order option.
+- [v1.4 Roadmap, 2026-04-25]: Sanitization patterns consolidate into a single source of truth in FB-C — Phase 7's `_sanitize_tag()` and FB-C's `_sanitize_tool_result()` share `forge_bridge/_sanitize_patterns.py` (or equivalent). This is a FB-C scope item, not a new phase.
+- [v1.4 Roadmap, 2026-04-25]: `LLMLoopBudgetExceeded` exported from `forge_bridge.__all__`. Barrel grows 16→17. Required so callers (FB-D chat endpoint) can catch it and translate to HTTP 504/408.
 
 ### Pending Todos
 
-None.
+None. Roadmap formalized; awaiting user approval.
 
 ### Blockers/Concerns
 
-- **None.** Phase 10's D-36 artist-UX gate was closed by Phase 10.1 (completed 2026-04-24). Phase 11 verification PASS. v1.3 has no outstanding blockers — Phase 9 is the only remaining slate item.
+- **None.** Roadmap formalization complete. All 19 v1.4 requirements mapped (STAGED-01..07 → FB-A/FB-B; LLMTOOL-01..07 → FB-C; CHAT-01..05 → FB-D). FB-A and FB-C are parallelizable.
 
 ## Deferred Items
 
@@ -145,11 +164,17 @@ None.
 | v1.4 | Promotion sparklines / rich historical charts | Deferred | v1.3 roadmap |
 | v1.4 | Admin/mutation actions (quarantine, promote, kill) | Deferred — paired with auth milestone | v1.3 roadmap |
 | v1.4 | Maya/editorial manifest producers | Deferred — Flame only in v1.3 | v1.3 roadmap |
-| v1.4 | LLM Chat (Phase 12) | Superseded by FB-D — velocity gate decided 2026-04-23, confirmed at Phase 11 close 2026-04-24 | v1.3 roadmap |
+| v1.4 | LLM Chat (Phase 12) | Superseded by FB-D — velocity gate decided 2026-04-23, confirmed at Phase 11 close 2026-04-24, formalized in FB-D 2026-04-25 | v1.3 roadmap |
 | v1.4 | CLI manifest/tools differentiation | Deferred — Phase 11 D-08 UAT noted manifest + tools render visually indistinguishable; bundle with Phase 10.1 humanized-timestamps follow-up | Phase 11 UAT 2026-04-24 |
+| v1.4.x | Manifest/tools CLI visual differentiation, 10.1-HUMAN-UAT items, W-01 server-side filter, real-time streaming push, multi-project view | Pre-discussed at v1.4 open — patch milestone after core v1.4 ships | v1.4 open 2026-04-25 |
+| v1.5 | Auth (caller-identity rate limiting, multi-user) | SEED-AUTH-V1.5 planted at v1.4 open | v1.4 open 2026-04-25 |
+| v1.5 | Parallel tool execution within single LLM turn | FB-C ships `parallel: bool = False` advertising the v1.5 path; passing True raises NotImplementedError | v1.4 FB-C scope |
+| v1.5 | Cross-provider sensitive fallback | Loop state is provider-specific; mid-loop fallback would require state reconstruction | FB-C research §5.4 |
+| v1.5 | Message-history pruning (summarize old turns, drop early tool results) | SEED-MESSAGE-PRUNING-V1.5 — for v1.4, ingest-time truncation at 8KB per result is sufficient | FB-C research §6.2 |
+| v1.5 | Tool examples (Anthropic `input_examples` field) | SEED-TOOL-EXAMPLES-V1.5 | FB-C research §2.1 |
 
 ## Session Continuity
 
-Last session: 2026-04-24
-Stopped at: Phase 11 complete (verified PASS, ready to plan Phase 9)
-Resume file: .planning/phases/11-cli-companion/11-VERIFICATION.md
+Last session: 2026-04-25
+Stopped at: v1.4 roadmap formalized (FB-A..FB-D mapped against REQUIREMENTS.md); awaiting user approval before phase planning begins
+Resume file: .planning/ROADMAP.md
