@@ -1,11 +1,11 @@
 ---
 gsd_state_version: 1.0
-milestone: between-milestones
-milestone_name: v1.3 closed; v1.4 pending
-status: idle
-stopped_at: v1.3 archived (tag v1.3.1); ready for /gsd-new-milestone v1.4
-last_updated: "2026-04-25T16:30:00.000Z"
-last_activity: 2026-04-25 -- v1.3 archived to .planning/milestones/v1.3-{ROADMAP,REQUIREMENTS}.md and v1.3-phases/; ROADMAP collapsed; REQUIREMENTS.md removed (fresh on next milestone)
+milestone: v1.4
+milestone_name: Staged Ops Platform
+status: defining-requirements
+stopped_at: v1.4 opened; defining requirements before roadmapper
+last_updated: "2026-04-25T17:00:00.000Z"
+last_activity: 2026-04-25 -- /gsd-new-milestone v1.4 opened; PROJECT.md Current Milestone section populated; SEED-AUTH-V1.5 planted; awaiting research decision then REQUIREMENTS.md generation
 progress:
   total_phases: 0
   completed_phases: 0
@@ -21,35 +21,32 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-25 at v1.3 close)
 
 **Project core value:** forge-bridge is the single canonical pip-installable middleware (`pip install forge-bridge`) — protocol-agnostic communication bus with a canonical vocabulary that any endpoint (Flame, Maya, editorial, LLM agents) connects to.
-**Current focus:** _Between milestones._ v1.3 archived; v1.4 Staged Ops Platform pre-designed in ROADMAP.md (FB-A..FB-D) — open via `/gsd-new-milestone`.
+**Current focus:** **v1.4 Staged Ops Platform** — open milestone, defining requirements. FB-A..FB-D pre-design adopted as-is (consumer-driven by projekt-forge v1.5). Targeted FB-C research only; FB-A/B/D ride existing patterns from Phases 8/9/10.
 
 ## Current Position
 
-Milestone: _none_ — v1.3 archived, v1.4 not yet opened
-Last activity: 2026-04-25 -- v1.3 milestone close ceremony complete (archive + tag prep)
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Milestone: v1.4 Staged Ops Platform (opened 2026-04-25)
+Last activity: 2026-04-25 -- /gsd-new-milestone v1.4 opened; PROJECT.md updated with Current Milestone v1.4 section; SEED-AUTH-V1.5 planted for FB-D rate-limiting → caller-identity follow-up
 
-**v1.3 archived** to `.planning/milestones/`:
-- `v1.3-ROADMAP.md` — full phase details (9, 10, 10.1, 11; Phase 12 superseded)
-- `v1.3-REQUIREMENTS.md` — 33 shipped + 4 superseded → v1.4 FB-D
-- `v1.3-phases/` — all phase directories (CONTEXT, RESEARCH, PLANs, SUMMARIES, VERIFICATION, UAT records)
+**v1.4 opened** 2026-04-25 — FB-A..FB-D phases adopted as-is from 2026-04-23 pre-design.
 
-**Next action:** `/gsd-new-milestone v1.4` — adopts the existing FB-A..FB-D pre-design (per discussion 2026-04-25), runs targeted FB-C research, populates fresh REQUIREMENTS.md, formalizes phases via roadmapper.
+**Next action:** Define `.planning/REQUIREMENTS.md` (STAGED-01..07, LLMTOOL-01..03, CHAT-01..04 carry-over from Phase 12 supersession) → spawn `gsd-roadmapper` to formalize FB-A..FB-D phases (keep letter scheme, do NOT renumber to 12..15).
 
 ## Session Handoff — Resume Instructions
 
-**What's committed and ready (v1.3 archive):**
+**What's committed and ready (v1.4 open):**
 
-- `.planning/milestones/v1.3-ROADMAP.md` — full milestone archive (phase details, success criteria, key decisions, deferred items)
-- `.planning/milestones/v1.3-REQUIREMENTS.md` — final requirement state (33 shipped, 4 superseded → FB-D, full traceability table)
-- `.planning/milestones/v1.3-phases/{09,10,10.1,11}-*/` — phase artifacts moved out of `.planning/phases/`
-- `.planning/MILESTONES.md` — v1.3 entry prepended with key accomplishments + lessons
-- `.planning/PROJECT.md` — Validated requirements section grew with v1.3 entries; Current Milestone marked between-milestones
-- `.planning/ROADMAP.md` — v1.3 collapsed to `<details>` block with link to archive; v1.4 FB-A..FB-D pre-design preserved
-- Annotated git tag `v1.3.1` (will be created during this commit ceremony)
+- `.planning/PROJECT.md` — Current Milestone section populated with v1.4 goal, FB-A..FB-D target features, scope decisions; Active requirements pointer flipped from "pending" to "defined in REQUIREMENTS.md"
+- `.planning/STATE.md` — milestone metadata flipped from `between-milestones` to `v1.4`; status `defining-requirements`
+- `.planning/seeds/SEED-AUTH-V1.5.md` — planted for FB-D rate-limiting → caller-identity follow-up once v1.5 auth ships
+- `.planning/ROADMAP.md` — v1.4 FB-A..FB-D pre-design (already in repo since 2026-04-23) carries forward unchanged; roadmapper will formalize against fresh REQUIREMENTS.md
 
 **Next action:**
 
-Run `/gsd-new-milestone v1.4` — pre-discussed plan: adopt FB-A..FB-D as-is (consumer-driven by projekt-forge v1.5), keep letter scheme, run targeted FB-C research only (Anthropic + Ollama tool-call format current state), plant `SEED-AUTH-V1.5` for FB-D rate-limiting → caller-identity follow-up, defer manifest/tools UX polish + 10.1-HUMAN-UAT items to v1.4.x patch (not core v1.4 scope).
+Continue `/gsd-new-milestone v1.4` workflow — research decision (targeted FB-C only is the pre-discussed plan), then REQUIREMENTS.md generation, then roadmapper.
 
 **Key constraints (still binding for v1.4 work that builds on v1.3 surfaces):**
 

@@ -12,9 +12,23 @@ forge-bridge is protocol-agnostic middleware for post-production pipelines — a
 
 **Codebase at v1.3 close:** ~30,378 LOC (forge_bridge + tests), 592 tests passing, 411 commits across 11 shipped phases (1, 2, 3, 4, 5, 6, 7, 07.1, 8, 9, 10, 10.1, 11). Public API surface: 16 symbols in `forge_bridge.__all__` (unchanged in v1.3 — console is a private surface).
 
-## Current Milestone: _Between milestones (v1.3 closed; v1.4 pending)_
+## Current Milestone: v1.4 Staged Ops Platform
 
-v1.3 Artist Console shipped 2026-04-25 (`v1.3.1`). v1.4 Staged Ops Platform is pre-designed in `.planning/ROADMAP.md` (Phases FB-A..FB-D, dated 2026-04-23) and will be opened via `/gsd-new-milestone`.
+**Goal:** Extend forge-bridge with the human-in-the-loop primitives that projekt-forge v1.5 needs to become a thin Flame-side consumer — a `staged_operation` entity with proposed→approved→executed lifecycle, MCP + HTTP surface for list/approve/reject, an agentic `complete_with_tools()` on `LLMRouter`, and a chat endpoint that binds it all together.
+
+**Target features (FB-A..FB-D, pre-designed 2026-04-23, opened 2026-04-25):**
+
+- **FB-A** Staged Operation Entity & Lifecycle — `entity_type='staged_operation'` with proposed→approved→executed/rejected/failed state machine, DBEvent audit trail per transition (STAGED-01..04)
+- **FB-B** Staged Ops MCP Tools + Read API — `forge_list/get/approve/reject_staged` MCP tools + `/api/v1/staged/*` HTTP routes + `forge://staged/pending` resource, all served from a single ConsoleReadAPI facade (STAGED-05..07)
+- **FB-C** LLMRouter Tool-Call Loop — `complete_with_tools()` agentic loop, Anthropic + Ollama tool-call formats, sensitive routing preserved, hard iteration cap (default 8) + wall-clock cap (default 120s) (LLMTOOL-01..03)
+- **FB-D** Chat Endpoint (absorbs superseded Phase 12) — `/api/v1/chat` over `complete_with_tools()`, sanitization boundary, rate limiting, single chat surface for Web UI + Flame hooks (CHAT-01..04, carried forward from Phase 12 supersession)
+
+**Scope decisions locked at open (2026-04-25):**
+
+- Phase letter scheme `FB-A..FB-D` is preserved (NOT renumbered to phases 12..15) — consumer-driven by projekt-forge v1.5's declared deps
+- Targeted FB-C research only (Anthropic + Ollama tool-call format current state); FB-A/B/D ride existing patterns from Phases 8/9/10
+- Manifest/tools CLI UX polish + 10.1-HUMAN-UAT items deferred to a v1.4.x patch (NOT core v1.4 scope)
+- `SEED-AUTH-V1.5` planted for FB-D rate-limiting → caller-identity follow-up once auth ships
 
 ## Core Value
 
@@ -60,7 +74,7 @@ Make forge-bridge the single canonical package (`pip install forge-bridge`) that
 
 ### Active
 
-- _v1.4 Staged Ops Platform requirements pending — milestone opening via `/gsd-new-milestone` will populate `.planning/REQUIREMENTS.md` with STAGED-*, LLMTOOL-*, CHAT-* (carry-over from Phase 12 supersession) IDs._
+- _v1.4 Staged Ops Platform — milestone opened 2026-04-25 via `/gsd-new-milestone v1.4`. Requirement IDs (STAGED-01..07, LLMTOOL-01..03, CHAT-01..04) defined in `.planning/REQUIREMENTS.md`; phase plans (FB-A..FB-D) defined in `.planning/ROADMAP.md`._
 
 ### Out of Scope
 
@@ -142,4 +156,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-25 — v1.3 Artist Console milestone closed (`v1.3.1`); ready to open v1.4 Staged Ops Platform via `/gsd-new-milestone`*
+*Last updated: 2026-04-25 — v1.4 Staged Ops Platform milestone opened; FB-A..FB-D phases formalized from 2026-04-23 pre-design; SEED-AUTH-V1.5 planted for FB-D follow-up*
