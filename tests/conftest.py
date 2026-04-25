@@ -62,3 +62,22 @@ def mock_anthropic():
     mock = MagicMock()
     with patch.dict("sys.modules", {"anthropic": mock}):
         yield mock
+
+
+# ============================================================
+# Phase 11 fixtures — shared across all tests/test_cli_*.py files
+# ============================================================
+
+import socket as _phase11_socket  # noqa: E402 — alias to avoid collision with existing imports
+
+
+@pytest.fixture
+def free_port() -> int:
+    """Return an available local port on 127.0.0.1.
+
+    Source: extracted from tests/test_console_http_transport.py:_find_free_port.
+    Used by every Phase 11 CLI integration test that boots a fixture server.
+    """
+    with _phase11_socket.socket(_phase11_socket.AF_INET, _phase11_socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
