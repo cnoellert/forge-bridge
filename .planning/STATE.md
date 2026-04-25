@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Artist Console
-status: executing
-stopped_at: Phase 11 complete
-last_updated: "2026-04-24T23:45:00.000Z"
-last_activity: 2026-04-24 -- Phase 11 verified PASS, ready to plan Phase 9
+status: complete
+stopped_at: v1.3 milestone complete
+last_updated: "2026-04-25T00:30:00.000Z"
+last_activity: 2026-04-25 -- v1.3 milestone closed (Phase 9 bookkeeping reconciled — Phase 9 was shipped 2026-04-22 before Phase 10/10.1/11)
 progress:
   total_phases: 5
   completed_phases: 4
@@ -21,29 +21,27 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-22)
 
 **Core value (v1.3):** Make forge-bridge legible to its operator — artist-first Web UI + CLI console surfacing the synthesis manifest, execution history, provenance, and live tool state, backed by a canonical MCP resource.
-**Current focus:** v1.3 Phase 9 — Read API Foundation (only remaining v1.3 phase; Phase 12 superseded by FB-D)
+**Current focus:** v1.3 milestone complete — ready to open v1.4 (FB-A through FB-D)
 
 ## Current Position
 
-Phase: 11 (cli-companion) — COMPLETE
-Plan: 3 of 3 (all shipped)
-Status: Phase 11 verified PASS — see `.planning/phases/11-cli-companion/11-VERIFICATION.md`
-Last activity: 2026-04-24 -- Phase 11 verified, ready to plan Phase 9
+Milestone: v1.3 Artist Console — COMPLETE
+Phases shipped: 9 (Read API), 10 (Web UI), 10.1 (Artist-UX gap closure), 11 (CLI Companion)
+Phase deferred/superseded: 12 (LLM Chat → folded into v1.4 FB-D)
+Last activity: 2026-04-25 -- bookkeeping reconciled; ROADMAP top-line + progress table now reflect Phase 9 completion (was shipped 2026-04-22, plans/summaries/verification all in place; only the top-line checkbox lagged)
 
-Progress: [████████··] 80% (v1.3 milestone — Phases 10, 10.1, 11 complete; Phase 9 pending; Phase 12 superseded by FB-D)
+Progress: [██████████] 100% (v1.3 milestone — 4 phases shipped, 1 superseded)
 
-**Phase 11 close-out:**
+**v1.3 close-out (all four phases):**
 
-- All 3 plans shipped (11-01 primitives, 11-02 subcommands, 11-03 soft UAT).
-- 13/13 must-haves verified by gsd-verifier; all 4 SC met.
-- 111 CLI tests + 592 full-suite green; 91% CLI coverage (≥80% Nyquist floor); ruff clean.
-- D-08 soft UAT: PASS verdict from CN/dev. One v1.4-deferred UX note (manifest/tools render visually indistinguishable — bundle with Phase 10.1 humanized-timestamps follow-up).
-- Threat model T-11-01..04 all mitigated and tested.
-- Phase 11 did NOT extend the API — W-01 stays open per D-04 (client-side --tool with stderr note).
+- **Phase 9 — Read API Foundation** (shipped 2026-04-22): ConsoleReadAPI sole-read-path discipline; ManifestService singleton; instance-identity gate (API-04); uvicorn task on `:9996` inside `_lifespan`; MCP resources + tool fallback shim. 5/5 must-haves verified, 379 tests green at close. Foundation that Phases 10/10.1/11 all consumed.
+- **Phase 10 — Web UI** (shipped 2026-04-23, blocker resolved 2026-04-24 via 10.1): Jinja2 + htmx + Alpine.js, five views, structured query console, health header strip. D-36 fresh-operator UAT initially failed; 10.1 closed the gap.
+- **Phase 10.1 — Artist-UX Gap Closure** (shipped 2026-04-24): hx-boost nav-swap fix, Status chip column, artist-legible headers, preset chip discoverability, in-browser swap regression test, dogfood UAT re-run PASS.
+- **Phase 11 — CLI Companion** (shipped 2026-04-25): Typer + Rich subcommands (tools, execs, manifest, health, doctor) on top of Phase 9 API; D-08 soft UAT PASS; 13/13 must-haves verified.
 
-**Phase 12 velocity gate (decided):** Phase 12 (LLM Chat) is superseded by FB-D (already locked in ROADMAP `Superseded by FB-D (velocity gate triggered)`). No work leaks back into v1.3. Decision honored, no further action required before milestone close.
+**Phase 12 velocity gate (decided 2026-04-23, confirmed 2026-04-24):** LLM Chat superseded by FB-D in v1.4. No work leaks back into v1.3.
 
-**Next action:** run `/gsd-plan-phase 9` to plan Phase 9 (Read API Foundation) — the only remaining v1.3 phase.
+**Next action:** open v1.4 milestone with `/gsd-new-milestone` (FB-A through FB-D — staged operation entity, MCP tools + read API, LLMRouter tool-call loop, chat endpoint).
 
 ## Session Handoff — Resume Instructions
 
@@ -53,16 +51,16 @@ Progress: [████████··] 80% (v1.3 milestone — Phases 10, 10.1
 - `forge_bridge/cli/` package — five Typer subcommands (`tools`, `execs`, `manifest`, `health`, `doctor`) consuming `:9996` console API; locked exit-code taxonomy (0/1/2); `--json` short-circuits Rich (P-01)
 - `.planning/PROJECT.md` — v1.3 "Artist Console" milestone scope
 - `.planning/REQUIREMENTS.md` — 37 requirements across 8 categories
-- `.planning/ROADMAP.md` — Phases 9-12 with Phase 11 marked Complete (3/3) and Phase 12 marked Superseded
-- `.planning/research/SUMMARY.md` — HIGH confidence research, still applicable to Phase 9
+- `.planning/ROADMAP.md` — Phases 9, 10, 10.1, 11 all marked Complete; Phase 12 marked Superseded by FB-D
+- `.planning/research/SUMMARY.md` — HIGH confidence research from v1.3 milestone open
 
 **Next action:**
 
-Run `/gsd-plan-phase 9` to plan Phase 9 (Read API Foundation): ConsoleReadAPI, ManifestService singleton, instance-identity gate, uvicorn task on `:9996`, MCP resources + tool fallback shim.
+Run `/gsd-new-milestone` to open v1.4 (FB-A staged operation entity → FB-B MCP tools + read API → FB-C LLMRouter tool-call loop → FB-D chat endpoint), or `/gsd-progress` to confirm milestone closure routing.
 
-**Phase 9 ordering note:** Phase 9 is the foundation that Phases 10, 10.1, and 11 *built on top of* — but its plans haven't shipped under the GSD planner yet. The codebase already contains a working ConsoleReadAPI and `:9996` server (those are what Plans 10/10.1/11 consumed). Phase 9 likely needs a `--retro` style scope: confirm the existing implementation matches the locked Phase 9 D-01..D-31 contract, document any drift, and plan only what is genuinely missing. Verify before planning that Phase 9's plans aren't already de-facto complete.
+**Phase 9 bookkeeping note (resolved 2026-04-25):** Phase 9 was actually shipped 2026-04-22 — all 3 plans, summaries, REVIEW, and VERIFICATION present and Phases 10/10.1/11 all consumed it. The ROADMAP top-line `[ ] Phase 9` and progress-table `0/3 Not started` were stale checkbox state that survived past Phase 9 close because it shipped in the same week as Phases 10/10.1 and the bookkeeping pass got skipped. Reconciled in this commit; no code changes.
 
-**Key constraints for v1.3 implementation:**
+**Key constraints (still binding for v1.4 work that touches v1.3 surfaces):**
 
 - Uvicorn task pattern is locked — console runs as a separate uvicorn asyncio task inside `_lifespan` on `:9996`; NOT via `FastMCP.custom_route` (only works in `--http` mode, breaks stdio)
 - ConsoleReadAPI is the sole read path for all surfaces — Web UI, CLI, MCP resources, and chat all call it; no per-surface JSONL parsers

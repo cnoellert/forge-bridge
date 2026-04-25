@@ -45,7 +45,7 @@ Full details: `.planning/milestones/v1.2-ROADMAP.md`
 
 ### 📋 v1.3 Artist Console (Phases 9-12)
 
-- [ ] **Phase 9: Read API Foundation** — ConsoleReadAPI, ManifestService singleton, instance-identity gate, uvicorn task on `:9996`, MCP resources + tool fallback shim
+- [x] **Phase 9: Read API Foundation** — ConsoleReadAPI, ManifestService singleton, instance-identity gate, uvicorn task on `:9996`, MCP resources + tool fallback shim (completed 2026-04-22)
 - [x] **Phase 10: Web UI** — Jinja2 + htmx + Alpine.js, five views (tools, execs, manifest, health, chat nav), structured query console, health header strip — 8/8 plans shipped 2026-04-23, **blocked on D-36 artist-UX gate** (remediated in Phase 10.1)
 - [x] **Phase 10.1: Artist-UX Gap Closure** — fix `hx-boost` nav swap bug, add explicit Status chip to Tools table, artist-legible column headers, discoverable preset chips, in-browser swap regression test; re-run D-36 dogfood UAT (completed 2026-04-24)
 - [x] **Phase 11: CLI Companion** — Typer subcommands (tools, execs, manifest, health, doctor), Rich output, --json flags (completed 2026-04-25)
@@ -247,8 +247,8 @@ redundant. On FB-D ship, mark Phase 12 as superseded in the progress table.
 | 7. Tool Provenance in MCP Annotations | v1.2 | 4/4 | Complete | 2026-04-21 |
 | 07.1. startup_bridge hotfix + deployment UAT | v1.2 | 5/5 | Complete | 2026-04-21 |
 | 8. SQL Persistence Protocol | v1.2 | 3/3 | Complete | 2026-04-22 |
-| 9. Read API Foundation | v1.3 | 0/3 | Not started | - |
-| 10. Web UI | v1.3 | 8/8 | Plans shipped, **blocked on D-36 artist-UX gate** | 2026-04-23 |
+| 9. Read API Foundation | v1.3 | 3/3 | Complete | 2026-04-22 |
+| 10. Web UI | v1.3 | 8/8 | Complete (D-36 gate closed by Phase 10.1) | 2026-04-23 |
 | 10.1. Artist-UX Gap Closure | v1.3 | 6/6 | Complete    | 2026-04-24 |
 | 11. CLI Companion | v1.3 | 3/3 | Complete   | 2026-04-25 |
 | 12. LLM Chat | v1.3 | 0/? | Superseded by FB-D (velocity gate triggered) | - |
