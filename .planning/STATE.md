@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Artist Console
 status: executing
-stopped_at: Phase 11 context gathered
-last_updated: "2026-04-25T04:31:44.689Z"
-last_activity: 2026-04-25 -- Phase 11 execution started
+stopped_at: Phase 11 complete
+last_updated: "2026-04-24T23:45:00.000Z"
+last_activity: 2026-04-24 -- Phase 11 verified PASS, ready to plan Phase 9
 progress:
   total_phases: 5
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 20
-  completed_plans: 17
-  percent: 85
+  completed_plans: 20
+  percent: 100
 ---
 
 # Project State
@@ -21,45 +21,46 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-22)
 
 **Core value (v1.3):** Make forge-bridge legible to its operator — artist-first Web UI + CLI console surfacing the synthesis manifest, execution history, provenance, and live tool state, backed by a canonical MCP resource.
-**Current focus:** Phase 11 — cli-companion
+**Current focus:** v1.3 Phase 9 — Read API Foundation (only remaining v1.3 phase; Phase 12 superseded by FB-D)
 
 ## Current Position
 
-Phase: 11 (cli-companion) — EXECUTING
-Plan: 1 of 3
-Status: Executing Phase 11
-Last activity: 2026-04-25 -- Phase 11 execution started
+Phase: 11 (cli-companion) — COMPLETE
+Plan: 3 of 3 (all shipped)
+Status: Phase 11 verified PASS — see `.planning/phases/11-cli-companion/11-VERIFICATION.md`
+Last activity: 2026-04-24 -- Phase 11 verified, ready to plan Phase 9
 
-Progress: [███·······] 58% (v1.3 milestone — 4 phases, 1 complete + Phase 10 blocked)
+Progress: [████████··] 80% (v1.3 milestone — Phases 10, 10.1, 11 complete; Phase 9 pending; Phase 12 superseded by FB-D)
 
-**Block details:** Phase 10 plans 10-01 through 10-08 all executed. 152/152 automated tests pass (wheel contract, JS-disabled first-paint, path-traversal mitigations confirmed live). The mandatory D-35/D-36 non-developer dogfood UAT returned FAIL — operator verdict "nearly impossible to understand". In the same session a shipping render bug was discovered in `shell.html` line 7: `hx-boost="true"` combined with `hx-target="#view-main" hx-swap="innerHTML"` causes nav clicks to inject the full shell+view inside the existing `#view-main`, duplicating the nav and health strip. Full record: `.planning/phases/10-web-ui/10-UAT.md` + `.planning/phases/10-web-ui/10-08-SUMMARY.md`.
+**Phase 11 close-out:**
 
-**Next action:** run `/gsd-plan-phase 10.1 --gaps` to create a remediation plan targeting:
+- All 3 plans shipped (11-01 primitives, 11-02 subcommands, 11-03 soft UAT).
+- 13/13 must-haves verified by gsd-verifier; all 4 SC met.
+- 111 CLI tests + 592 full-suite green; 91% CLI coverage (≥80% Nyquist floor); ruff clean.
+- D-08 soft UAT: PASS verdict from CN/dev. One v1.4-deferred UX note (manifest/tools render visually indistinguishable — bundle with Phase 10.1 humanized-timestamps follow-up).
+- Threat model T-11-01..04 all mitigated and tested.
+- Phase 11 did NOT extend the API — W-01 stays open per D-04 (client-side --tool with stderr note).
 
-1. shell.html nav swap contract (hx-boost + full-page handler mismatch)
-2. Explicit Status column with visual chip (active / quarantined / loaded)
-3. Artist-oriented column header language; hide or tuck away developer telemetry
-4. Chip discoverability on first paint
-5. In-browser nav-swap test (playwright or equivalent)
-6. Re-run dogfood UAT with fresh operator on the remediated build
+**Phase 12 velocity gate (decided):** Phase 12 (LLM Chat) is superseded by FB-D (already locked in ROADMAP `Superseded by FB-D (velocity gate triggered)`). No work leaks back into v1.3. Decision honored, no further action required before milestone close.
+
+**Next action:** run `/gsd-plan-phase 9` to plan Phase 9 (Read API Foundation) — the only remaining v1.3 phase.
 
 ## Session Handoff — Resume Instructions
 
 **What's committed and ready:**
 
+- All Phase 10 / 10.1 / 11 plans, summaries, UAT records, and verification reports
+- `forge_bridge/cli/` package — five Typer subcommands (`tools`, `execs`, `manifest`, `health`, `doctor`) consuming `:9996` console API; locked exit-code taxonomy (0/1/2); `--json` short-circuits Rich (P-01)
 - `.planning/PROJECT.md` — v1.3 "Artist Console" milestone scope
-- `.planning/REQUIREMENTS.md` — 37 requirements across 8 categories (API, TOOLS, EXECS, MFST, HEALTH, CONSOLE, CLI, CHAT)
-- `.planning/ROADMAP.md` — Phases 9-12 defined with success criteria
-- `.planning/STATE.md` — this file, reset for Phase 9
-- `.planning/research/SUMMARY.md` — HIGH confidence research across stack, features, architecture, pitfalls
+- `.planning/REQUIREMENTS.md` — 37 requirements across 8 categories
+- `.planning/ROADMAP.md` — Phases 9-12 with Phase 11 marked Complete (3/3) and Phase 12 marked Superseded
+- `.planning/research/SUMMARY.md` — HIGH confidence research, still applicable to Phase 9
 
 **Next action:**
 
-Run `/gsd-plan-phase 9` to begin Phase 9: Read API Foundation.
+Run `/gsd-plan-phase 9` to plan Phase 9 (Read API Foundation): ConsoleReadAPI, ManifestService singleton, instance-identity gate, uvicorn task on `:9996`, MCP resources + tool fallback shim.
 
-**Phase 10 planning note:** Before `/gsd-plan-phase 10`, run `/gsd-ui-phase` to produce `UI-SPEC.md`. The Web UI phase plan must reference that spec.
-
-**Phase 12 velocity gate:** Explicitly decide whether to include or defer Phase 12 (LLM Chat) to v1.4 before Phase 11 closes. Do not defer silently.
+**Phase 9 ordering note:** Phase 9 is the foundation that Phases 10, 10.1, and 11 *built on top of* — but its plans haven't shipped under the GSD planner yet. The codebase already contains a working ConsoleReadAPI and `:9996` server (those are what Plans 10/10.1/11 consumed). Phase 9 likely needs a `--retro` style scope: confirm the existing implementation matches the locked Phase 9 D-01..D-31 contract, document any drift, and plan only what is genuinely missing. Verify before planning that Phase 9's plans aren't already de-facto complete.
 
 **Key constraints for v1.3 implementation:**
 
@@ -134,6 +135,9 @@ Recent decisions affecting current work:
 - [v1.3 Roadmap, 2026-04-22]: Console serves on a separate uvicorn task on `:9996` inside `_lifespan` — NOT via FastMCP.custom_route (only works in `--http` mode; stdio is the locked default and custom_route would break Claude Desktop/Claude Code configurations).
 - [v1.3 Roadmap, 2026-04-22]: MFST-02 and MFST-03 (MCP resource + tool fallback shim) ship in the same Phase 9 plan — P-03 prevention; Cursor and Gemini CLI do not support resources and the shim costs one function.
 - [v1.3 Roadmap, 2026-04-22]: Phase 12 (LLM Chat) is velocity-gated — explicitly deferrable to v1.4 if Phases 9-11 run long; must be an explicit scope decision before Phase 11 closes, not a silent drop.
+- [Phase 11, 2026-04-24]: Phase 12 velocity gate decision honored — Phase 12 superseded by FB-D in ROADMAP. v1.3 closes with Phases 9, 10, 10.1, 11 (LLM Chat work moves to v1.4 FB-D).
+- [Phase 11, 2026-04-24]: D-04 W-01 stays open — `execs --tool` runs client-side with locked stderr note. Server-side `/api/v1/execs?tool=...` is a v1.4 API extension; Phase 11 deliberately consumed Phase 9/10 API as-is and added zero server endpoints.
+- [Phase 11, 2026-04-24]: Soft UAT gate (D-08) is the right tool for technical CLI surfaces — developer-as-operator with the "can I decipher" criterion produced a useful PASS plus one v1.4-deferred UX note (manifest/tools render visually indistinguishable). Bundle the manifest caption + cross-link fix with Phase 10.1 humanized-timestamps follow-up in a v1.4 polish pass.
 
 ### Pending Todos
 
@@ -141,7 +145,7 @@ None.
 
 ### Blockers/Concerns
 
-- **Phase 10 blocked on D-36 artist-UX gate (2026-04-23).** Automated tests pass; non-developer dogfood UAT failed qualitatively ("nearly impossible to understand"). Shipping render bug found in `shell.html` `hx-boost` configuration — nav clicks duplicate the shell inside `#view-main`. Do not advance to Phase 11 until remediation lands and the dogfood UAT passes with a fresh operator. Full record: `.planning/phases/10-web-ui/10-UAT.md`.
+- **None.** Phase 10's D-36 artist-UX gate was closed by Phase 10.1 (completed 2026-04-24). Phase 11 verification PASS. v1.3 has no outstanding blockers — Phase 9 is the only remaining slate item.
 
 ## Deferred Items
 
@@ -155,10 +159,11 @@ None.
 | v1.4 | Promotion sparklines / rich historical charts | Deferred | v1.3 roadmap |
 | v1.4 | Admin/mutation actions (quarantine, promote, kill) | Deferred — paired with auth milestone | v1.3 roadmap |
 | v1.4 | Maya/editorial manifest producers | Deferred — Flame only in v1.3 | v1.3 roadmap |
-| v1.4 (maybe) | LLM Chat (Phase 12) | Velocity-gated — explicit decision required before Phase 11 closes | v1.3 roadmap |
+| v1.4 | LLM Chat (Phase 12) | Superseded by FB-D — velocity gate decided 2026-04-23, confirmed at Phase 11 close 2026-04-24 | v1.3 roadmap |
+| v1.4 | CLI manifest/tools differentiation | Deferred — Phase 11 D-08 UAT noted manifest + tools render visually indistinguishable; bundle with Phase 10.1 humanized-timestamps follow-up | Phase 11 UAT 2026-04-24 |
 
 ## Session Continuity
 
-Last session: 2026-04-24T22:41:46.290Z
-Stopped at: Phase 11 context gathered
-Resume file: .planning/phases/11-cli-companion/11-CONTEXT.md
+Last session: 2026-04-24
+Stopped at: Phase 11 complete (verified PASS, ready to plan Phase 9)
+Resume file: .planning/phases/11-cli-companion/11-VERIFICATION.md

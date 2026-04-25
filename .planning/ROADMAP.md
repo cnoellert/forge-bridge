@@ -48,7 +48,7 @@ Full details: `.planning/milestones/v1.2-ROADMAP.md`
 - [ ] **Phase 9: Read API Foundation** — ConsoleReadAPI, ManifestService singleton, instance-identity gate, uvicorn task on `:9996`, MCP resources + tool fallback shim
 - [x] **Phase 10: Web UI** — Jinja2 + htmx + Alpine.js, five views (tools, execs, manifest, health, chat nav), structured query console, health header strip — 8/8 plans shipped 2026-04-23, **blocked on D-36 artist-UX gate** (remediated in Phase 10.1)
 - [x] **Phase 10.1: Artist-UX Gap Closure** — fix `hx-boost` nav swap bug, add explicit Status chip to Tools table, artist-legible column headers, discoverable preset chips, in-browser swap regression test; re-run D-36 dogfood UAT (completed 2026-04-24)
-- [ ] **Phase 11: CLI Companion** — Typer subcommands (tools, execs, manifest, health, doctor), Rich output, --json flags
+- [x] **Phase 11: CLI Companion** — Typer subcommands (tools, execs, manifest, health, doctor), Rich output, --json flags (completed 2026-04-25)
 - [ ] **Phase 12: LLM Chat** — /api/v1/chat endpoint, Web UI chat panel, sanitized context assembly, token budget cap (velocity-gated; may defer to v1.4)
 
 ## Phase Details
@@ -131,7 +131,7 @@ Full details: `.planning/milestones/v1.2-ROADMAP.md`
 **Plans**: 3 plans across 3 waves (Wave 1 primitives; Wave 2 subcommands + registration; Wave 3 soft UAT close-out)
   - [x] 11-01-PLAN.md (wave 1) — CLI foundation primitives: rich pin + cli/ package + client.py (sync httpx + typed exceptions + envelope unwrap) + render.py (Rich helpers + Created ▼) + since.py (--since parser) + Wave 0 conftest fixture + test_cli_client/test_cli_rendering stubs
   - [x] 11-02-PLAN.md (wave 2) — Five subcommands: tools, execs (W-01 client-side --tool), manifest, health, doctor (expanded check matrix + CI-gating exit codes) + console_app.command() registrations in __main__.py + per-command tests + CLI-01 registration tests + P-01 cross-command stdout-purity tests
-  - [ ] 11-03-PLAN.md (wave 3) — Soft self-administered dogfood UAT (D-08): developer-as-operator runs all five commands against live :9996, records PASS/FAIL+note in 11-UAT.md
+  - [x] 11-03-PLAN.md (wave 3) — Soft self-administered dogfood UAT (D-08): developer-as-operator runs all five commands against live :9996, records PASS/FAIL+note in 11-UAT.md
 
 ---
 
@@ -250,7 +250,7 @@ redundant. On FB-D ship, mark Phase 12 as superseded in the progress table.
 | 9. Read API Foundation | v1.3 | 0/3 | Not started | - |
 | 10. Web UI | v1.3 | 8/8 | Plans shipped, **blocked on D-36 artist-UX gate** | 2026-04-23 |
 | 10.1. Artist-UX Gap Closure | v1.3 | 6/6 | Complete    | 2026-04-24 |
-| 11. CLI Companion | v1.3 | 2/3 | In Progress|  |
+| 11. CLI Companion | v1.3 | 3/3 | Complete   | 2026-04-25 |
 | 12. LLM Chat | v1.3 | 0/? | Superseded by FB-D (velocity gate triggered) | - |
 | FB-A. Staged Operation Entity & Lifecycle | v1.4 | 0/? | Designed | - |
 | FB-B. Staged Ops MCP Tools + Read API | v1.4 | 0/? | Designed | - |
