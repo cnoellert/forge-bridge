@@ -205,7 +205,8 @@ class DBProject(Base):
 # ─────────────────────────────────────────────────────────────
 
 ENTITY_TYPES = frozenset({
-    "sequence", "shot", "asset", "version", "media", "layer", "stack"
+    "sequence", "shot", "asset", "version", "media", "layer", "stack",
+    "staged_operation",
 })
 
 
@@ -457,6 +458,12 @@ EVENT_TYPES = frozenset({
     "media.registered",      # A media atom was registered from a publish hook
     "entity.deleted",
     "client.connected", "client.disconnected",
+    # Staged operations (FB-A — proposer/approver/executor lifecycle)
+    "staged.proposed",
+    "staged.approved",
+    "staged.rejected",
+    "staged.executed",
+    "staged.failed",
 })
 
 
