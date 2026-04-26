@@ -58,7 +58,7 @@ Full details: `.planning/milestones/v1.3-ROADMAP.md`
 
 ### 🚧 v1.4 Staged Ops Platform (opened 2026-04-25)
 
-- [ ] **Phase 13 (FB-A): Staged Operation Entity & Lifecycle** — `entity_type='staged_operation'` with proposed→approved→executed/rejected/failed state machine + `DBEvent` audit trail per transition
+- [x] **Phase 13 (FB-A): Staged Operation Entity & Lifecycle** — `entity_type='staged_operation'` with proposed→approved→executed/rejected/failed state machine + `DBEvent` audit trail per transition (completed 2026-04-26)
 - [ ] **Phase 14 (FB-B): Staged Ops MCP Tools + Read API** — `forge_list/get/approve/reject_staged` MCP tools + `/api/v1/staged/*` HTTP routes + `forge://staged/pending` resource via single `ConsoleReadAPI` facade
 - [ ] **Phase 15 (FB-C): LLMRouter Tool-Call Loop** — `complete_with_tools()` agentic coordinator + thin Anthropic + Ollama adapters; iteration cap (default 8) + wall-clock cap (default 120s); repeat-call detection, 8 KB result cap, sanitization boundary, recursive-synthesis guard
 - [ ] **Phase 16 (FB-D): Chat Endpoint** — `/api/v1/chat` over `complete_with_tools()` with rate limiting, sanitization end-to-end, single chat surface for Web UI + projekt-forge Flame hooks (absorbs superseded Phase 12)
@@ -202,7 +202,7 @@ redundant. Phase 12 already marked Superseded in the progress table at v1.3 clos
 | 10.1. Artist-UX Gap Closure | v1.3 | 6/6 | Complete    | 2026-04-24 |
 | 11. CLI Companion | v1.3 | 3/3 | Complete   | 2026-04-25 |
 | 12. LLM Chat | v1.3 | 0/? | Superseded by Phase 16 (FB-D) (velocity gate triggered) | - |
-| 13 (FB-A). Staged Operation Entity & Lifecycle | v1.4 | 3/4 | In Progress|  |
+| 13 (FB-A). Staged Operation Entity & Lifecycle | v1.4 | 4/4 | Complete   | 2026-04-26 |
 | 14 (FB-B). Staged Ops MCP Tools + Read API | v1.4 | 0/? | Open | - |
 | 15 (FB-C). LLMRouter Tool-Call Loop | v1.4 | 0/? | Open | - |
 | 16 (FB-D). Chat Endpoint | v1.4 | 0/? | Open | - |
