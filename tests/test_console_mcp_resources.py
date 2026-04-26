@@ -87,9 +87,14 @@ def test_register_console_resources_registers_two_tool_shims(api):
     mock_mcp = MagicMock()
     register_console_resources(mock_mcp, api._manifest_service, api)
     names = [call.kwargs.get("name") for call in mock_mcp.tool.call_args_list]
+    # Phase 9 shims (2) + Phase 14 FB-B staged-ops tools (4) = 6 total.
     assert "forge_manifest_read" in names
     assert "forge_tools_read" in names
-    assert len(names) == 2
+    assert "forge_list_staged" in names
+    assert "forge_get_staged" in names
+    assert "forge_approve_staged" in names
+    assert "forge_reject_staged" in names
+    assert len(names) == 6
 
 
 def test_all_resources_have_application_json_mime(api):
@@ -99,12 +104,26 @@ def test_all_resources_have_application_json_mime(api):
         assert call.kwargs.get("mime_type") == "application/json"
 
 
+_READ_ONLY_TOOLS = {"forge_manifest_read", "forge_tools_read", "forge_list_staged", "forge_get_staged"}
+_WRITE_TOOLS = {"forge_approve_staged", "forge_reject_staged"}
+
+
 def test_tool_shims_have_read_only_hint(api):
+    """Read-only tools carry readOnlyHint=True; write tools carry readOnlyHint=False.
+
+    Phase 14 FB-B adds 4 staged-ops tools: 2 read (list/get) and 2 write
+    (approve/reject). The write tools intentionally have readOnlyHint=False per D-16.
+    """
     mock_mcp = MagicMock()
     register_console_resources(mock_mcp, api._manifest_service, api)
     for call in mock_mcp.tool.call_args_list:
+        name = call.kwargs.get("name", "")
         ann = call.kwargs.get("annotations") or {}
-        assert ann.get("readOnlyHint") is True
+        if name in _READ_ONLY_TOOLS:
+            assert ann.get("readOnlyHint") is True, f"{name} should have readOnlyHint=True"
+        elif name in _WRITE_TOOLS:
+            assert ann.get("readOnlyHint") is False, f"{name} should have readOnlyHint=False"
+            assert ann.get("destructiveHint") is False, f"{name} should have destructiveHint=False"
 
 
 def test_barrel_exposes_register_console_resources():

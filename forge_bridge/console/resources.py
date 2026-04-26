@@ -114,3 +114,60 @@ def register_console_resources(
                 }
             })
         return _envelope_json(tool.to_dict())
+
+    # -- Phase 14 (FB-B) — staged-ops MCP tools (4 tools) --------------------
+    # Per CONTEXT D-17 revised (Solution C): registered from register_console_resources
+    # so closures capture console_read_api and session_factory natively.
+    # NO registration in register_builtins() — D-17 revised removes them from there.
+    #
+    # Lazy import breaks the circular path:
+    #   mcp.tools → console.handlers → console.__init__ → console.resources → mcp.tools
+    # By importing inside the function (called from _lifespan, not at module load),
+    # both modules are fully initialised before either import runs.
+    from forge_bridge.mcp.tools import (  # noqa: PLC0415 — intentional deferred import
+        ListStagedInput, GetStagedInput, ApproveStagedInput, RejectStagedInput,
+        _list_staged_impl, _get_staged_impl, _approve_staged_impl, _reject_staged_impl,
+    )
+
+    @mcp.tool(
+        name="forge_list_staged",
+        description=(
+            "List staged operations with optional status / project_id filter and "
+            "pagination. status: proposed|approved|rejected|executed|failed (default: all)."
+        ),
+        annotations={"readOnlyHint": True, "idempotentHint": True},
+    )
+    async def forge_list_staged(params: ListStagedInput) -> str:
+        return await _list_staged_impl(params, console_read_api)
+
+    @mcp.tool(
+        name="forge_get_staged",
+        description="Get a single staged operation by UUID.",
+        annotations={"readOnlyHint": True, "idempotentHint": True},
+    )
+    async def forge_get_staged(params: GetStagedInput) -> str:
+        return await _get_staged_impl(params, console_read_api)
+
+    @mcp.tool(
+        name="forge_approve_staged",
+        description="Approve a staged operation. Requires non-empty actor identity.",
+        annotations={
+            "readOnlyHint": False,
+            "idempotentHint": False,
+            "destructiveHint": False,
+        },
+    )
+    async def forge_approve_staged(params: ApproveStagedInput) -> str:
+        return await _approve_staged_impl(params, session_factory)
+
+    @mcp.tool(
+        name="forge_reject_staged",
+        description="Reject a staged operation. Requires non-empty actor identity.",
+        annotations={
+            "readOnlyHint": False,
+            "idempotentHint": False,
+            "destructiveHint": False,
+        },
+    )
+    async def forge_reject_staged(params: RejectStagedInput) -> str:
+        return await _reject_staged_impl(params, session_factory)
