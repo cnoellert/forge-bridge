@@ -81,3 +81,119 @@ def free_port() -> int:
     with _phase11_socket.socket(_phase11_socket.AF_INET, _phase11_socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+# ============================================================
+# Phase 13 (FB-A) fixtures — async-DB session_factory for
+# store-layer integration tests. Reusable by FB-B and beyond.
+# ============================================================
+
+import os as _phase13_os  # noqa: E402 — alias to avoid collision
+import uuid as _phase13_uuid
+
+import pytest_asyncio as _phase13_pytest_asyncio  # noqa: E402
+
+from sqlalchemy import text as _phase13_text
+from sqlalchemy.ext.asyncio import create_async_engine as _phase13_create_async_engine
+
+from forge_bridge.store.models import Base as _phase13_Base
+from forge_bridge.store.session import (
+    get_async_session_factory as _phase13_get_async_session_factory,
+)
+
+
+def _phase13_admin_url() -> str:
+    """Return an asyncpg URL pointing at the 'postgres' admin database.
+
+    Used to CREATE / DROP per-test databases. Derived from FORGE_DB_URL or
+    the default forge-bridge dev URL by replacing the database name.
+    """
+    url = _phase13_os.environ.get(
+        "FORGE_DB_URL",
+        "postgresql+asyncpg://forge:forge@localhost:5432/forge_bridge",
+    )
+    # Swap the trailing /<db> for /postgres
+    scheme_and_host, _slash, _db = url.rpartition("/")
+    return f"{scheme_and_host}/postgres"
+
+
+def _phase13_postgres_available() -> bool:
+    """Probe whether the project's Postgres dev backend is reachable.
+
+    Used at module-collect time so a missing database results in a clean
+    skip rather than a noisy connection error stack. Matches the local-first
+    project philosophy: tests pass on a developer's laptop without Postgres
+    if they are running unrelated suites; they SKIP this file specifically.
+    """
+    import socket
+    try:
+        with socket.create_connection(("localhost", 5432), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+@_phase13_pytest_asyncio.fixture
+async def session_factory():
+    """Yield an async_sessionmaker bound to a freshly-created per-test database.
+
+    Behaviour:
+      1. Create a unique database (forge_bridge_test_<uuid8>) on the same
+         Postgres host as FORGE_DB_URL.
+      2. Run Base.metadata.create_all against the new database — schemas
+         are created from the SQLAlchemy ORM models (NOT via Alembic, so
+         the fixture is independent of migration state). Plan 01's
+         ENTITY_TYPES + EVENT_TYPES extensions and the auto-generated
+         ck_entities_type CHECK constraint propagate via this path.
+      3. Yield an async_sessionmaker. Tests use it as
+         `async with session_factory() as session: ...`.
+      4. Teardown: drop the per-test database.
+
+    Skipped if Postgres at localhost:5432 is unreachable.
+    """
+    if not _phase13_postgres_available():
+        import pytest
+        pytest.skip("Postgres at localhost:5432 unreachable — skipping store-layer integration test")
+
+    # Step 1: provision a fresh per-test database.
+    test_db_name = f"forge_bridge_test_{_phase13_uuid.uuid4().hex[:8]}"
+    admin_engine = _phase13_create_async_engine(
+        _phase13_admin_url(),
+        isolation_level="AUTOCOMMIT",
+    )
+    async with admin_engine.connect() as conn:
+        await conn.execute(_phase13_text(f'CREATE DATABASE "{test_db_name}"'))
+    await admin_engine.dispose()
+
+    # Step 2: build the engine pointing at the new database and create schema.
+    base_url = _phase13_os.environ.get(
+        "FORGE_DB_URL",
+        "postgresql+asyncpg://forge:forge@localhost:5432/forge_bridge",
+    )
+    scheme_and_host, _slash, _ = base_url.rpartition("/")
+    test_db_url = f"{scheme_and_host}/{test_db_name}"
+
+    engine = _phase13_create_async_engine(test_db_url)
+    async with engine.begin() as conn:
+        await conn.run_sync(_phase13_Base.metadata.create_all)
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    try:
+        yield factory
+    finally:
+        # Step 4: teardown — close engine, then drop the database.
+        await engine.dispose()
+        admin_engine = _phase13_create_async_engine(
+            _phase13_admin_url(),
+            isolation_level="AUTOCOMMIT",
+        )
+        async with admin_engine.connect() as conn:
+            # Disconnect any lingering sessions before drop
+            await conn.execute(_phase13_text(
+                f"SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                f"WHERE datname = '{test_db_name}' AND pid <> pg_backend_pid()"
+            ))
+            await conn.execute(_phase13_text(f'DROP DATABASE "{test_db_name}"'))
+        await admin_engine.dispose()
