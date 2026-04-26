@@ -42,6 +42,7 @@ from mcp.server.fastmcp import FastMCP
 
 from forge_bridge.client import AsyncClient
 from forge_bridge.mcp.registry import register_builtins
+from forge_bridge.store.session import get_async_session_factory
 
 if TYPE_CHECKING:
     from forge_bridge.console.manifest_service import ManifestService
@@ -124,18 +125,27 @@ async def _lifespan(mcp_server: FastMCP):
 
     # Step 4 — ConsoleReadAPI (sole read layer)
     console_port = int(os.environ.get("FORGE_CONSOLE_PORT", "9996"))
+    # Step 4 (NEW per FB-B D-05) — Build canonical async session_factory singleton.
+    # Idempotent and lazy at the connection level; missing DB at startup does NOT
+    # crash _lifespan (matches the existing console-task graceful-degradation pattern
+    # at mcp/server.py:252-313). Connection errors surface only on first repo use.
+    session_factory = get_async_session_factory()
     console_read_api = ConsoleReadAPI(
         execution_log=execution_log,
         manifest_service=manifest_service,
         console_port=console_port,
+        session_factory=session_factory,   # NEW (D-05)
     )
 
     # Step 5 — Starlette app + MCP resources/tools registration
     from forge_bridge.console.app import build_console_app
     from forge_bridge.console.resources import register_console_resources
 
-    app = build_console_app(console_read_api)
-    register_console_resources(mcp_server, manifest_service, console_read_api)
+    app = build_console_app(console_read_api, session_factory=session_factory)   # NEW (D-05)
+    register_console_resources(
+        mcp_server, manifest_service, console_read_api,
+        session_factory=session_factory,   # NEW (D-05)
+    )
 
     # Step 6 — launch console uvicorn task (may degrade per D-29)
     console_task, console_server = await _start_console_task(
