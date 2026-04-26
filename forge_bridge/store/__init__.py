@@ -9,6 +9,9 @@ package writes SQL directly.
         RegistryRepo, ProjectRepo, EntityRepo,
         LocationRepo, RelationshipRepo, EventRepo,
     )
+    from forge_bridge.store.staged_operations import (
+        StagedOpRepo, StagedOpLifecycleError,
+    )
 
 The server holds one async engine and creates sessions per-request.
 Clients never access the store directly — they talk to the server
@@ -24,6 +27,10 @@ from forge_bridge.store.repo import (
     RegistryRepo,
     RelationshipRepo,
 )
+from forge_bridge.store.staged_operations import (
+    StagedOpLifecycleError,
+    StagedOpRepo,
+)
 from forge_bridge.store.session import (
     create_tables,
     get_async_engine,
@@ -35,6 +42,7 @@ from forge_bridge.store.session import (
 __all__ = [
     "RegistryRepo", "ProjectRepo", "EntityRepo",
     "LocationRepo", "RelationshipRepo", "EventRepo", "ClientSessionRepo",
+    "StagedOpRepo", "StagedOpLifecycleError",
     "get_session", "get_async_engine", "get_sync_engine",
     "get_db_url", "create_tables",
 ]
