@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
@@ -38,6 +38,8 @@ from forge_bridge.console.ui_handlers import (
 )
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
     from forge_bridge.console.read_api import ConsoleReadAPI
 
 logger = logging.getLogger(__name__)
@@ -49,7 +51,10 @@ _ALLOW_ORIGINS = ["http://127.0.0.1:9996", "http://localhost:9996"]
 _CONSOLE_DIR = Path(__file__).parent
 
 
-def build_console_app(read_api: "ConsoleReadAPI") -> Starlette:
+def build_console_app(
+    read_api: "ConsoleReadAPI",
+    session_factory: Optional["async_sessionmaker"] = None,
+) -> Starlette:
     """Construct the Starlette ASGI app for /api/v1/* and /ui/*.
 
     Phase 9 shipped /api/v1/* JSON routes. Phase 10 adds /ui/* HTML routes

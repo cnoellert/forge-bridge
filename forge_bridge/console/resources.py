@@ -13,12 +13,13 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from forge_bridge.console.handlers import _envelope_json
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
+    from sqlalchemy.ext.asyncio import async_sessionmaker
 
     from forge_bridge.console.manifest_service import ManifestService
     from forge_bridge.console.read_api import ConsoleReadAPI
@@ -30,6 +31,7 @@ def register_console_resources(
     mcp: "FastMCP",
     manifest_service: "ManifestService",
     console_read_api: "ConsoleReadAPI",
+    session_factory: Optional["async_sessionmaker"] = None,
 ) -> None:
     """Register the v1.3 Artist Console MCP surface.
 
