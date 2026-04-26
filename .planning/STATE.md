@@ -4,13 +4,14 @@ milestone: v1.4
 milestone_name: Staged Ops Platform
 status: executing
 stopped_at: Phase 13 (FB-A) context gathered
-last_updated: "2026-04-26T02:03:34.463Z"
-last_activity: 2026-04-25 -- /gsd-discuss-phase invoked for Phase 13 (FB-A); FB-* letter scheme found incompatible with gsd-tools find-phase (requires numeric IDs); dual-naming amendment applied — phases now use Phase 13-16 numeric IDs for tooling with FB-A..FB-D preserved as canonical cross-repo aliases
+last_updated: "2026-04-26T03:10:29.224Z"
+last_activity: 2026-04-26 -- Phase 13 execution started
 progress:
   total_phases: 1
   completed_phases: 0
-  total_plans: 0
+  total_plans: 4
   completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -20,15 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-25 at v1.3 close)
 
 **Project core value:** forge-bridge is the single canonical pip-installable middleware (`pip install forge-bridge`) — protocol-agnostic communication bus with a canonical vocabulary that any endpoint (Flame, Maya, editorial, LLM agents) connects to.
-**Current focus:** **v1.4 Staged Ops Platform** — open milestone, roadmap formalized 2026-04-25; dual-naming amendment applied 2026-04-25 (Phases 13-16 with FB-A..FB-D alias). 19 requirements mapped (STAGED 7 + LLMTOOL 7 + CHAT 5).
+**Current focus:** Phase 13 — fb-a-staged-operation-entity-lifecycle
 
 ## Current Position
 
-Phase: Phase 13 (FB-A) — discuss session in progress
-Plan: —
-Status: In progress (discuss-phase started; dual-naming amendment locked 2026-04-25)
+Phase: 13 (fb-a-staged-operation-entity-lifecycle) — EXECUTING
+Plan: 1 of 4
+Status: Executing Phase 13
 Milestone: v1.4 Staged Ops Platform (opened 2026-04-25)
-Last activity: 2026-04-25 -- /gsd-discuss-phase invoked for Phase 13 (FB-A); FB-* letter scheme found incompatible with gsd-tools find-phase (requires numeric IDs); dual-naming amendment applied — phases now use Phase 13-16 numeric IDs for tooling with FB-A..FB-D preserved as canonical cross-repo aliases
+Last activity: 2026-04-26 -- Phase 13 execution started
 
 **Dual-naming amendment 2026-04-25** — `gsd-discuss-phase FB-A` failed `find-phase` because the tool's `normalizePhaseName()` strips letter prefixes only when followed by a digit (`FB-13` would parse, `FB-A` does not). Resolution: ROADMAP and STATE now use `Phase N (FB-X)` style; numeric IDs 13-16 (skipping superseded Phase 12 "LLM Chat") are internal plumbing for tooling/state/dirs; FB-A..FB-D remains the canonical alias for cross-repo references with projekt-forge v1.5.
 
