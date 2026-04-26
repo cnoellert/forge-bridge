@@ -16,6 +16,9 @@ from forge_bridge.console.handlers import (
     execs_handler,
     health_handler,
     manifest_handler,
+    staged_approve_handler,   # NEW (Plan 14-03)
+    staged_list_handler,      # NEW (Plan 14-03)
+    staged_reject_handler,    # NEW (Plan 14-03)
     tool_detail_handler,
     tools_handler,
 )
@@ -89,17 +92,22 @@ def build_console_app(
         Route("/ui/fragments/health-view", health_view_fragment, methods=["GET"]),
         # Phase 10 — static assets served from forge_bridge/console/static/
         Mount("/ui/static", StaticFiles(directory=str(_CONSOLE_DIR / "static")), name="static"),
+        # Phase 14 (FB-B) — staged operations
+        Route("/api/v1/staged", staged_list_handler, methods=["GET"]),
+        Route("/api/v1/staged/{id}/approve", staged_approve_handler, methods=["POST"]),
+        Route("/api/v1/staged/{id}/reject", staged_reject_handler, methods=["POST"]),
     ]
     middleware = [
         Middleware(
             CORSMiddleware,
             allow_origins=_ALLOW_ORIGINS,
-            allow_methods=["GET"],
-            allow_headers=["*"],
+            allow_methods=["GET", "POST"],  # NEW: POST for /staged/{id}/approve|reject
+            allow_headers=["*"],            # already allows X-Forge-Actor via wildcard
             allow_credentials=False,
         ),
     ]
     app = Starlette(routes=routes, middleware=middleware)
     app.state.console_read_api = read_api
+    app.state.session_factory = session_factory   # NEW (D-05) — write handlers read this
     app.state.templates = templates
     return app
