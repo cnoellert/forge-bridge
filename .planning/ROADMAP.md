@@ -110,7 +110,14 @@ operation name, proposed parameters (JSONB), realized result diff (JSONB), and t
   2. Lifecycle transitions are enforced: `proposed → approved → executed` (happy path), `proposed → rejected` (artist veto), `approved → failed` (execution error). Illegal transitions (e.g., `executed → proposed`, `rejected → executed`) raise `StagedOpLifecycleError` with the attempted transition in the message.
   3. Every transition writes a `DBEvent` row with `old_status`, `new_status`, the actor (proposer for proposed→rejected; approver for proposed→approved; executor for approved→executed/failed), and timestamp — queryable by `entity_id` for full audit replay.
   4. The `parameters` JSONB at `status='proposed'` is preserved verbatim across status advancement (the column is never mutated after creation); the `result` JSONB column is populated only on `executed` or `failed` and is null otherwise. A diff of `parameters` vs `result` is recoverable per operation via SQL alone.
-**Plans**: TBD — `/gsd-discuss-phase 13` next (alias `FB-A` also accepted in references)
+**Plans**: 4 plans across 3 waves (planned 2026-04-25 — execute in dependency order)
+  - Wave 1 (parallel):
+    - [ ] `13-01-PLAN.md` — Extend ENTITY_TYPES + EVENT_TYPES in models.py and ship the 0003_staged_operation Alembic migration (CHECK-constraint update only; events table needs no migration per PATTERNS.md Finding #1)
+    - [ ] `13-02-PLAN.md` — Create the StagedOperation application class (overrides entity_type to return literal "staged_operation" — fixes the #1 silent-bug risk per PATTERNS.md Finding #3) and re-export from forge_bridge.core
+  - Wave 2 (depends on 13-01 + 13-02):
+    - [ ] `13-03-PLAN.md` — StagedOpRepo state machine + StagedOpLifecycleError + EntityRepo extensions; composes EventRepo for audit append per PATTERNS.md Finding #8; atomicity on shared AsyncSession
+  - Wave 3 (depends on 13-03):
+    - [ ] `13-04-PLAN.md` — session_factory async-DB fixture (greenfield per PATTERNS.md Finding #4) + STAGED-01..04 tests + atomicity test
 
 ---
 
@@ -195,7 +202,7 @@ redundant. Phase 12 already marked Superseded in the progress table at v1.3 clos
 | 10.1. Artist-UX Gap Closure | v1.3 | 6/6 | Complete    | 2026-04-24 |
 | 11. CLI Companion | v1.3 | 3/3 | Complete   | 2026-04-25 |
 | 12. LLM Chat | v1.3 | 0/? | Superseded by Phase 16 (FB-D) (velocity gate triggered) | - |
-| 13 (FB-A). Staged Operation Entity & Lifecycle | v1.4 | 0/? | Open | - |
+| 13 (FB-A). Staged Operation Entity & Lifecycle | v1.4 | 0/4 | Planned | - |
 | 14 (FB-B). Staged Ops MCP Tools + Read API | v1.4 | 0/? | Open | - |
 | 15 (FB-C). LLMRouter Tool-Call Loop | v1.4 | 0/? | Open | - |
 | 16 (FB-D). Chat Endpoint | v1.4 | 0/? | Open | - |
