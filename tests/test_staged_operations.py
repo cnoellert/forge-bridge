@@ -1,13 +1,17 @@
-"""Phase 13 (FB-A) — Staged Operation Entity & Lifecycle integration tests.
+"""Phase 13 (FB-A) + Phase 14 (FB-B/Plan 01) — Staged Operation tests.
 
-Five tests, mapped to the v1.4 STAGED requirements + the security_threat_model
-atomicity property:
+FB-A tests (five, mapped to v1.4 STAGED requirements + security_threat_model atomicity):
 
   test_staged_op_round_trip      — STAGED-01 / D-19
   test_transition_legality       — STAGED-02 / D-20 (parameterized cross-product)
   test_audit_replay              — STAGED-03 / D-21 (happy + non-happy paths)
   test_sql_only_parameter_diff   — STAGED-04 / D-22 (raw JSONB-arrow SELECT)
   test_transition_atomicity      — security_threat_model "audit-trail tamper / dropped events"
+
+FB-B Plan 01 tests (added by 14-01):
+
+  test_staged_op_list_*          — StagedOpRepo.list() read method (STAGED-06, D-02)
+  test_transition_*              — WR-01 regression: from_status=None discriminator (D-17a)
 
 All tests use the session_factory fixture from tests/conftest.py (Plan 04 Task 1).
 pytest-asyncio is in `auto` mode — no @pytest.mark.asyncio decorator needed.
@@ -391,4 +395,268 @@ async def test_transition_atomicity(session_factory):
         assert len(event_rows) == 0, (
             "ATOMICITY VIOLATED: events persist after session rollback — "
             "audit-trail tamper risk surfaced"
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 14 Plan 01 — StagedOpRepo.list() tests (STAGED-06, D-02)
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def test_staged_op_list_default_returns_all_statuses(session_factory):
+    """list() with no args returns all staged ops regardless of status."""
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+        op_a = await repo.propose(operation="op_a", proposer="x", parameters={})
+        op_b = await repo.propose(operation="op_b", proposer="x", parameters={})
+        op_c = await repo.propose(operation="op_c", proposer="x", parameters={})
+        await repo.approve(op_b.id, approver="y")
+        await repo.reject(op_c.id, actor="y")
+        await session.commit()
+
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+        records, total = await repo.list()
+        assert total == 3
+        assert len(records) == 3
+
+
+async def test_staged_op_list_filter_by_status_proposed(session_factory):
+    """list(status='proposed') returns only proposed ops."""
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+        await repo.propose(operation="op_a", proposer="x", parameters={})
+        op_b = await repo.propose(operation="op_b", proposer="x", parameters={})
+        await repo.approve(op_b.id, approver="y")
+        await session.commit()
+
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+        records, total = await repo.list(status="proposed")
+        assert total == 1
+        assert len(records) == 1
+        assert records[0].operation == "op_a"
+
+
+async def test_staged_op_list_filter_by_status_approved(session_factory):
+    """list(status='approved') returns only approved ops."""
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+        await repo.propose(operation="op_a", proposer="x", parameters={})
+        op_b = await repo.propose(operation="op_b", proposer="x", parameters={})
+        await repo.approve(op_b.id, approver="y")
+        await session.commit()
+
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+        records, total = await repo.list(status="approved")
+        assert total == 1
+        assert len(records) == 1
+        assert records[0].operation == "op_b"
+
+
+async def test_staged_op_list_filter_by_project_id(session_factory):
+    """list(project_id=project_a) returns only ops for that project."""
+    project_a = uuid.uuid4()
+    project_b = uuid.uuid4()
+
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+        await repo.propose(operation="op_a1", proposer="x", parameters={}, project_id=project_a)
+        await repo.propose(operation="op_a2", proposer="x", parameters={}, project_id=project_a)
+        await repo.propose(operation="op_b1", proposer="x", parameters={}, project_id=project_b)
+        await session.commit()
+
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+        records, total = await repo.list(project_id=project_a)
+        assert total == 2
+        assert len(records) == 2
+        assert all(r.status == "proposed" for r in records)
+
+
+async def test_staged_op_list_combined_filter(session_factory):
+    """list(status='proposed', project_id=project_a) applies both filters via AND."""
+    project_a = uuid.uuid4()
+    project_b = uuid.uuid4()
+
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+        await repo.propose(operation="op_a_proposed", proposer="x", parameters={}, project_id=project_a)
+        op2 = await repo.propose(operation="op_a_approved", proposer="x", parameters={}, project_id=project_a)
+        await repo.approve(op2.id, approver="y")
+        await repo.propose(operation="op_b_proposed", proposer="x", parameters={}, project_id=project_b)
+        await session.commit()
+
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+        records, total = await repo.list(status="proposed", project_id=project_a)
+        assert total == 1
+        assert len(records) == 1
+        assert records[0].operation == "op_a_proposed"
+
+
+async def test_staged_op_list_orders_by_created_at_desc(session_factory):
+    """list() returns results in reverse chronological order (newest first) per D-01."""
+    import asyncio
+
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+        await repo.propose(operation="op_first", proposer="x", parameters={})
+        await session.commit()
+
+    await asyncio.sleep(0.02)
+
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+        await repo.propose(operation="op_second", proposer="x", parameters={})
+        await session.commit()
+
+    await asyncio.sleep(0.02)
+
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+        await repo.propose(operation="op_third", proposer="x", parameters={})
+        await session.commit()
+
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+        records, total = await repo.list()
+        assert total == 3
+        assert len(records) == 3
+        # Newest first (op_third was inserted last)
+        assert records[0].operation == "op_third"
+        assert records[1].operation == "op_second"
+        assert records[2].operation == "op_first"
+
+
+async def test_staged_op_list_pagination_clamp_in_caller(session_factory):
+    """list(limit, offset) supports pagination; total reflects unfiltered count."""
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+        for i in range(10):
+            await repo.propose(operation=f"op_{i:02d}", proposer="x", parameters={})
+        await session.commit()
+
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+        # First page
+        records_p1, total_p1 = await repo.list(limit=3, offset=0)
+        assert len(records_p1) == 3
+        assert total_p1 == 10
+
+        # Second page
+        records_p2, total_p2 = await repo.list(limit=3, offset=3)
+        assert len(records_p2) == 3
+        assert total_p2 == 10
+
+        # Last partial page
+        records_p4, total_p4 = await repo.list(limit=3, offset=9)
+        assert len(records_p4) == 1
+        assert total_p4 == 10
+
+        # Pages don't overlap
+        ids_p1 = {r.id for r in records_p1}
+        ids_p2 = {r.id for r in records_p2}
+        assert ids_p1.isdisjoint(ids_p2)
+
+
+async def test_staged_op_list_empty_result(session_factory):
+    """list() on empty database returns empty list and total == 0."""
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+        records, total = await repo.list(status="proposed")
+        assert total == 0
+        assert records == []
+
+
+async def test_staged_op_list_total_reflects_filtered_set(session_factory):
+    """total reflects the filtered count BEFORE pagination (not post-pagination count)."""
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+        for i in range(5):
+            await repo.propose(operation=f"proposed_{i}", proposer="x", parameters={})
+        for i in range(5):
+            op = await repo.propose(operation=f"approved_{i}", proposer="x", parameters={})
+            await repo.approve(op.id, approver="y")
+        await session.commit()
+
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+        records, total = await repo.list(status="proposed", limit=2)
+        # Only 2 records returned (pagination)
+        assert len(records) == 2
+        # But total reflects full filtered set (5 proposed ops), NOT 10
+        assert total == 5
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 14 Plan 01 — WR-01 regression tests (D-17a)
+# from_status=None discriminator for not-found vs illegal-transition
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def test_transition_unknown_uuid_raises_with_from_status_none(session_factory):
+    """WR-01: approve(bogus_uuid) raises StagedOpLifecycleError with from_status is None."""
+    bogus = uuid.uuid4()
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+        with pytest.raises(StagedOpLifecycleError) as exc_info:
+            await repo.approve(bogus, approver="x")
+        assert exc_info.value.from_status is None, (
+            f"WR-01: not-found must use None discriminator, got {exc_info.value.from_status!r}"
+        )
+
+
+async def test_transition_unknown_uuid_for_reject_also_raises_from_status_none(session_factory):
+    """WR-01: reject(bogus_uuid) raises StagedOpLifecycleError with from_status is None."""
+    bogus = uuid.uuid4()
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+        with pytest.raises(StagedOpLifecycleError) as exc_info:
+            await repo.reject(bogus, actor="x")
+        assert exc_info.value.from_status is None, (
+            f"WR-01: not-found must use None discriminator, got {exc_info.value.from_status!r}"
+        )
+
+
+async def test_transition_wrong_entity_type_raises_from_status_none(session_factory):
+    """WR-01: approve on a non-staged_op entity (wrong entity_type) sets from_status=None."""
+    shot_id = uuid.uuid4()
+    async with session_factory() as session:
+        # Insert a non-staged_operation entity directly
+        shot_entity = DBEntity(
+            id=shot_id,
+            entity_type="shot",
+            name="test_shot",
+            status="active",
+            attributes={},
+        )
+        session.add(shot_entity)
+        await session.commit()
+
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+        with pytest.raises(StagedOpLifecycleError) as exc_info:
+            await repo.approve(shot_id, approver="x")
+        assert exc_info.value.from_status is None, (
+            f"WR-01: wrong entity_type must use None discriminator, got {exc_info.value.from_status!r}"
+        )
+
+
+async def test_transition_illegal_status_keeps_from_status_set(session_factory):
+    """WR-01: re-approving an already-approved op sets from_status='approved' (NOT None)."""
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+        op = await repo.propose(operation="op_a", proposer="x", parameters={})
+        await repo.approve(op.id, approver="y")
+        await session.commit()
+        op_id = op.id
+
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+        with pytest.raises(StagedOpLifecycleError) as exc_info:
+            await repo.approve(op_id, approver="z")
+        # This is the legitimate illegal-transition case — from_status MUST be the actual status
+        assert exc_info.value.from_status == "approved", (
+            f"WR-01 discriminator must NOT apply to legitimate illegal transitions; "
+            f"got from_status={exc_info.value.from_status!r}"
         )
