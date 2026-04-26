@@ -4,14 +4,14 @@ milestone: v1.4
 milestone_name: Staged Ops Platform
 status: executing
 stopped_at: Phase 14 (FB-B) context gathered
-last_updated: "2026-04-26T17:59:25.126Z"
-last_activity: 2026-04-26 -- Phase 14 planning complete
+last_updated: "2026-04-26T19:46:34.257Z"
+last_activity: 2026-04-26 -- Phase 14 execution started
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 9
-  completed_plans: 4
-  percent: 44
+  completed_plans: 6
+  percent: 67
 ---
 
 # Project State
@@ -21,15 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-25 at v1.3 close)
 
 **Project core value:** forge-bridge is the single canonical pip-installable middleware (`pip install forge-bridge`) — protocol-agnostic communication bus with a canonical vocabulary that any endpoint (Flame, Maya, editorial, LLM agents) connects to.
-**Current focus:** Phase 13 — fb-a-staged-operation-entity-lifecycle
+**Current focus:** Phase 14 — fb-b-staged-ops-mcp-tools-read-api
 
 ## Current Position
 
-Phase: 13
-Plan: Not started
-Status: Ready to execute
+Phase: 14 (fb-b-staged-ops-mcp-tools-read-api) — EXECUTING
+Plan: 1 of 5
+Status: Executing Phase 14
 Milestone: v1.4 Staged Ops Platform (opened 2026-04-25)
-Last activity: 2026-04-26 -- Phase 14 planning complete
+Last activity: 2026-04-26 -- Phase 14 execution started
 
 **Dual-naming amendment 2026-04-25** — `gsd-discuss-phase FB-A` failed `find-phase` because the tool's `normalizePhaseName()` strips letter prefixes only when followed by a digit (`FB-13` would parse, `FB-A` does not). Resolution: ROADMAP and STATE now use `Phase N (FB-X)` style; numeric IDs 13-16 (skipping superseded Phase 12 "LLM Chat") are internal plumbing for tooling/state/dirs; FB-A..FB-D remains the canonical alias for cross-repo references with projekt-forge v1.5.
 
