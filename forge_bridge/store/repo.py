@@ -31,6 +31,7 @@ from forge_bridge.core.entities import (
     Asset, BridgeEntity, Layer, Media, Project as CoreProject,
     Sequence as CoreSequence, Shot, Stack, Version,
 )
+from forge_bridge.core.staged import StagedOperation
 from forge_bridge.core.registry import Registry, RoleDefinition, RelationshipTypeDef
 from forge_bridge.core.traits import Relationship
 from forge_bridge.core.vocabulary import FrameRange, Role, Status, Timecode
@@ -254,6 +255,11 @@ class EntityRepo:
         entity_type = entity.entity_type
         attrs       = self._attrs_to_dict(entity)
         name        = getattr(entity, "name", None)
+        if entity_type == "staged_operation":
+            # D-03: denormalize operation string into the name column so
+            # `WHERE entity_type='staged_operation' AND name='flame.publish_sequence'`
+            # uses the ix_entities_type_name index without a JSONB scan.
+            name = getattr(entity, "operation", None)
         status_val  = None
 
         if hasattr(entity, "status"):
@@ -386,6 +392,17 @@ class EntityRepo:
             stk = entity
             a["shot_id"] = str(stk.shot_id) if getattr(stk, "shot_id", None) else None
 
+        elif t == "staged_operation":
+            op = entity
+            a["operation"]   = op.operation
+            a["proposer"]    = op.proposer
+            a["parameters"]  = op.parameters
+            a["result"]      = op.result
+            a["approver"]    = op.approver
+            a["executor"]    = op.executor
+            a["approved_at"] = op.approved_at.isoformat() if op.approved_at else None
+            a["executed_at"] = op.executed_at.isoformat() if op.executed_at else None
+
         return a
 
     def _to_core(self, db: DBEntity) -> BridgeEntity:
@@ -463,6 +480,23 @@ class EntityRepo:
             BridgeEntity.__init__(e, id=db.id, metadata={})
             e.shot_id  = uuid.UUID(a["shot_id"]) if a.get("shot_id") else None
             e._layers  = []
+
+        elif t == "staged_operation":
+            e = StagedOperation.__new__(StagedOperation)
+            BridgeEntity.__init__(e, id=db.id, metadata={})
+            e.operation   = a.get("operation", db.name or "")
+            e.proposer    = a.get("proposer", "")
+            e.parameters  = a.get("parameters", {})
+            e.result      = a.get("result")
+            e.status      = db.status or "proposed"
+            e.approver    = a.get("approver")
+            e.executor    = a.get("executor")
+            e.approved_at = (
+                datetime.fromisoformat(a["approved_at"]) if a.get("approved_at") else None
+            )
+            e.executed_at = (
+                datetime.fromisoformat(a["executed_at"]) if a.get("executed_at") else None
+            )
 
         else:
             e = BridgeEntity.__new__(BridgeEntity)
