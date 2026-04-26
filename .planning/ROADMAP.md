@@ -134,7 +134,15 @@ subscribes to approval events via the existing event bus and executes against it
   2. `GET /api/v1/staged?status=proposed` returns all pending operations; `POST /api/v1/staged/{id}/approve` and `POST /api/v1/staged/{id}/reject` transition lifecycle and return the updated record — same data shape as the MCP tools (zero divergence; verified by side-by-side response comparison test).
   3. `resources/read forge://staged/pending` returns a snapshot of pending operations identical to `forge_list_staged(status='proposed')` output.
   4. Approval does NOT execute the operation itself — forge-bridge is the bookkeeper; the proposer subscribes to approval events via the existing event bus and executes against its own domain (Flame). Verified by unit test: approval transitions the entity and emits a DBEvent without calling any execution code path.
-**Plans**: TBD — `/gsd-discuss-phase 14` next (alias `FB-B`)
+**Plans**: 5 plans across 3 waves (planned 2026-04-26 — execute in dependency order)
+  - Wave 1 (parallel — foundation):
+    - [ ] `14-01-PLAN.md` — StagedOpRepo.list() + WR-01 sentinel fix at staged_operations.py:289
+    - [ ] `14-02-PLAN.md` — ConsoleReadAPI session_factory + get_staged_ops/get_staged_op + _lifespan wiring
+  - Wave 2 (parallel — surfaces; depend on Wave 1):
+    - [ ] `14-03-PLAN.md` — HTTP routes + handlers (staged_list/approve/reject) + _resolve_actor + app.state.session_factory + CORS extension
+    - [ ] `14-04-PLAN.md` — 4 forge_*_staged MCP tools + Pydantic input models + register from register_console_resources per D-17 Solution C
+  - Wave 3 (integration; depends on Wave 2):
+    - [ ] `14-05-PLAN.md` — forge://staged/pending resource + forge_staged_pending_read shim + zero-divergence tests + does_not_execute regression guard + v1.5 SEED files
 
 ---
 
@@ -203,6 +211,6 @@ redundant. Phase 12 already marked Superseded in the progress table at v1.3 clos
 | 11. CLI Companion | v1.3 | 3/3 | Complete   | 2026-04-25 |
 | 12. LLM Chat | v1.3 | 0/? | Superseded by Phase 16 (FB-D) (velocity gate triggered) | - |
 | 13 (FB-A). Staged Operation Entity & Lifecycle | v1.4 | 4/4 | Complete    | 2026-04-26 |
-| 14 (FB-B). Staged Ops MCP Tools + Read API | v1.4 | 0/? | Open | - |
+| 14 (FB-B). Staged Ops MCP Tools + Read API | v1.4 | 0/5 | Planned (5 plans, 3 waves) | - |
 | 15 (FB-C). LLMRouter Tool-Call Loop | v1.4 | 0/? | Open | - |
 | 16 (FB-D). Chat Endpoint | v1.4 | 0/? | Open | - |
