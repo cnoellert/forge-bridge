@@ -20,17 +20,27 @@ Filter contract (D-03):
   - `?tool=<glob>` — REJECTED with 400 `not_implemented` in v1.3 (W-01,
     RESEARCH.md Open Questions (RESOLVED) Q#1). Revisit in v1.4.
   - `?code_hash=<prefix>` — string prefix match.
+
+Phase 14 (FB-B) additions:
+  - staged_list_handler  — GET /api/v1/staged (D-01, D-05, D-10)
+  - staged_approve_handler — POST /api/v1/staged/{id}/approve (D-06, D-09, D-10)
+  - staged_reject_handler  — POST /api/v1/staged/{id}/reject  (D-06, D-09, D-10)
+  - _resolve_actor         — D-06 actor priority helper
+  - _STAGED_STATUSES       — frozenset of valid status values for D-10 invalid_filter
 """
 from __future__ import annotations
 
 import json
 import logging
+import uuid
 from dataclasses import asdict
 from datetime import datetime
 from typing import Optional
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+
+from forge_bridge.store.staged_operations import StagedOpRepo, StagedOpLifecycleError
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +108,164 @@ def _parse_filters(request: Request) -> tuple[Optional[datetime], bool, Optional
     promoted_only = promoted_only_raw in ("1", "true", "yes", "on")
     code_hash = qp.get("code_hash") or None
     return since, promoted_only, code_hash
+
+
+# -- Phase 14 (FB-B) — staged operations ------------------------------------
+
+_STAGED_STATUSES = frozenset({"proposed", "approved", "rejected", "executed", "failed"})
+
+
+async def _resolve_actor(request: Request) -> str:
+    """D-06 priority: X-Forge-Actor header → body 'actor' field → 'http:anonymous'.
+
+    Empty string in EITHER explicit source raises ValueError (caller maps to 400 bad_actor).
+    Missing both → 'http:anonymous' fallback. Body parse failure (malformed JSON) is
+    swallowed silently — falls through to 'http:anonymous'.
+    """
+    header_val = request.headers.get("X-Forge-Actor")
+    if header_val is not None:
+        if not header_val.strip():
+            raise ValueError("X-Forge-Actor header is empty")
+        return header_val
+
+    body: dict | None = None
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    if isinstance(body, dict) and "actor" in body:
+        actor = body["actor"]
+        if not isinstance(actor, str) or not actor.strip():
+            raise ValueError("body 'actor' field is empty or non-string")
+        return actor
+
+    return "http:anonymous"
+
+
+async def staged_list_handler(request: Request) -> JSONResponse:
+    """GET /api/v1/staged — list staged operations with optional filters.
+
+    Reads through request.app.state.console_read_api.get_staged_ops (D-25 single
+    read facade). All input is validated before reaching the DB (T-14-03-01).
+    """
+    try:
+        limit, offset = _parse_pagination(request)
+        status = request.query_params.get("status")
+        if status is not None and status not in _STAGED_STATUSES:
+            return _error(
+                "invalid_filter",
+                f"unknown status {status!r}; expected one of {sorted(_STAGED_STATUSES)}",
+                status=400,
+            )
+        project_id_raw = request.query_params.get("project_id")
+        project_id: uuid.UUID | None = None
+        if project_id_raw is not None:
+            try:
+                project_id = uuid.UUID(project_id_raw)
+            except ValueError:
+                return _error("bad_request", "invalid project_id", status=400)
+        records, total = await request.app.state.console_read_api.get_staged_ops(
+            status=status, limit=limit, offset=offset, project_id=project_id,
+        )
+        return _envelope(
+            [r.to_dict() for r in records],
+            limit=limit, offset=offset, total=total,
+        )
+    except Exception as exc:
+        logger.warning("staged_list_handler failed: %s", type(exc).__name__, exc_info=True)
+        return _error("internal_error", "failed to read staged operations", status=500)
+
+
+async def staged_approve_handler(request: Request) -> JSONResponse:
+    """POST /api/v1/staged/{id}/approve — advance proposed → approved.
+
+    D-04: writes bypass ConsoleReadAPI, go directly through StagedOpRepo.
+    D-06: actor sourced from X-Forge-Actor header → body.actor → 'http:anonymous'.
+    D-09: illegal transitions (including re-approve) return 409, never 200.
+    D-10: from_status is None → 404; otherwise 409 with current_status.
+    T-14-03-02: op_id parsed via uuid.UUID before reaching DB.
+    """
+    op_id_raw = request.path_params["id"]
+    try:
+        op_id = uuid.UUID(op_id_raw)
+    except ValueError:
+        return _error("bad_request", "invalid staged_operation id", status=400)
+
+    try:
+        actor = await _resolve_actor(request)
+    except ValueError as ve:
+        return _error("bad_actor", str(ve), status=400)
+
+    try:
+        session_factory = request.app.state.session_factory
+        async with session_factory() as session:
+            repo = StagedOpRepo(session)
+            try:
+                op = await repo.approve(op_id, approver=actor)
+            except StagedOpLifecycleError as exc:
+                if exc.from_status is None:
+                    return _error(
+                        "staged_op_not_found",
+                        f"no staged_operation with id {op_id}",
+                        status=404,
+                    )
+                return JSONResponse(
+                    {"error": {
+                        "code": "illegal_transition",
+                        "message": str(exc),
+                        "current_status": exc.from_status,
+                    }},
+                    status_code=409,
+                )
+            await session.commit()
+        return _envelope(op.to_dict())
+    except Exception as exc:
+        logger.warning("staged_approve_handler failed: %s", type(exc).__name__, exc_info=True)
+        return _error("internal_error", "failed to approve staged operation", status=500)
+
+
+async def staged_reject_handler(request: Request) -> JSONResponse:
+    """POST /api/v1/staged/{id}/reject — advance proposed → rejected.
+
+    Symmetric to staged_approve_handler. Same D-04/D-06/D-09/D-10 contracts.
+    """
+    op_id_raw = request.path_params["id"]
+    try:
+        op_id = uuid.UUID(op_id_raw)
+    except ValueError:
+        return _error("bad_request", "invalid staged_operation id", status=400)
+
+    try:
+        actor = await _resolve_actor(request)
+    except ValueError as ve:
+        return _error("bad_actor", str(ve), status=400)
+
+    try:
+        session_factory = request.app.state.session_factory
+        async with session_factory() as session:
+            repo = StagedOpRepo(session)
+            try:
+                op = await repo.reject(op_id, actor=actor)
+            except StagedOpLifecycleError as exc:
+                if exc.from_status is None:
+                    return _error(
+                        "staged_op_not_found",
+                        f"no staged_operation with id {op_id}",
+                        status=404,
+                    )
+                return JSONResponse(
+                    {"error": {
+                        "code": "illegal_transition",
+                        "message": str(exc),
+                        "current_status": exc.from_status,
+                    }},
+                    status_code=409,
+                )
+            await session.commit()
+        return _envelope(op.to_dict())
+    except Exception as exc:
+        logger.warning("staged_reject_handler failed: %s", type(exc).__name__, exc_info=True)
+        return _error("internal_error", "failed to reject staged operation", status=500)
 
 
 # -- Handlers ---------------------------------------------------------------
