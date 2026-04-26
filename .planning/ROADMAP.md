@@ -202,7 +202,7 @@ redundant. Phase 12 already marked Superseded in the progress table at v1.3 clos
 | 10.1. Artist-UX Gap Closure | v1.3 | 6/6 | Complete    | 2026-04-24 |
 | 11. CLI Companion | v1.3 | 3/3 | Complete   | 2026-04-25 |
 | 12. LLM Chat | v1.3 | 0/? | Superseded by Phase 16 (FB-D) (velocity gate triggered) | - |
-| 13 (FB-A). Staged Operation Entity & Lifecycle | v1.4 | 2/4 | In Progress|  |
+| 13 (FB-A). Staged Operation Entity & Lifecycle | v1.4 | 3/4 | In Progress|  |
 | 14 (FB-B). Staged Ops MCP Tools + Read API | v1.4 | 0/? | Open | - |
 | 15 (FB-C). LLMRouter Tool-Call Loop | v1.4 | 0/? | Open | - |
 | 16 (FB-D). Chat Endpoint | v1.4 | 0/? | Open | - |
