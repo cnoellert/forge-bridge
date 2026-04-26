@@ -129,6 +129,19 @@ def register_console_resources(
         _list_staged_impl, _get_staged_impl, _approve_staged_impl, _reject_staged_impl,
     )
 
+    # Inject input model names into module globals so FastMCP's get_type_hints()
+    # can resolve `params: ListStagedInput` annotations on the nested @mcp.tool
+    # functions below. Without this, `from __future__ import annotations` keeps
+    # the annotations as strings and get_type_hints() looks them up in
+    # fn.__globals__ — which is this module, not the local scope of the
+    # deferred import. Documented FastMCP requirement for forward-ref tools.
+    globals().update({
+        "ListStagedInput": ListStagedInput,
+        "GetStagedInput": GetStagedInput,
+        "ApproveStagedInput": ApproveStagedInput,
+        "RejectStagedInput": RejectStagedInput,
+    })
+
     @mcp.tool(
         name="forge_list_staged",
         description=(
