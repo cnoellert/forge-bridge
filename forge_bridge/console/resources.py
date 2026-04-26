@@ -184,3 +184,38 @@ def register_console_resources(
     )
     async def forge_reject_staged(params: RejectStagedInput) -> str:
         return await _reject_staged_impl(params, session_factory)
+
+    # -- Phase 14 (FB-B) STAGED-07 — pending-queue snapshot resource + tool shim
+    # Per D-12: ship only forge://staged/pending (proposed-only) + forge_staged_pending_read shim.
+    # Per D-13: hardcoded limit=500 (the max) — guarantees the byte-identity property
+    # with forge_list_staged(status='proposed', limit=500, offset=0).
+    # P-03 prevention: tool shim alongside resource for clients without resources support
+    # (Cursor, Gemini CLI). Same closure-capture as the manifest pair.
+
+    @mcp.resource("forge://staged/pending", mime_type="application/json")
+    async def staged_pending() -> str:
+        records, total = await console_read_api.get_staged_ops(
+            status="proposed", limit=500, offset=0, project_id=None,
+        )
+        return _envelope_json(
+            [r.to_dict() for r in records],
+            limit=500, offset=0, total=total,
+        )
+
+    @mcp.tool(
+        name="forge_staged_pending_read",
+        description=(
+            "Read the snapshot of pending (proposed) staged operations. "
+            "Alias for `resources/read forge://staged/pending` for MCP clients "
+            "that don't support resources (Cursor, Gemini CLI)."
+        ),
+        annotations={"readOnlyHint": True, "idempotentHint": True},
+    )
+    async def forge_staged_pending_read() -> str:
+        records, total = await console_read_api.get_staged_ops(
+            status="proposed", limit=500, offset=0, project_id=None,
+        )
+        return _envelope_json(
+            [r.to_dict() for r in records],
+            limit=500, offset=0, total=total,
+        )

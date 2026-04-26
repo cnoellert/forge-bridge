@@ -80,21 +80,24 @@ def test_register_console_resources_registers_all_four_resources(api):
     assert "forge://tools" in uris
     assert "forge://tools/{name}" in uris
     assert "forge://health" in uris
-    assert len(uris) == 4
+    # Phase 14 (FB-B) STAGED-07 adds forge://staged/pending (D-12)
+    assert "forge://staged/pending" in uris
+    assert len(uris) == 5
 
 
 def test_register_console_resources_registers_two_tool_shims(api):
     mock_mcp = MagicMock()
     register_console_resources(mock_mcp, api._manifest_service, api)
     names = [call.kwargs.get("name") for call in mock_mcp.tool.call_args_list]
-    # Phase 9 shims (2) + Phase 14 FB-B staged-ops tools (4) = 6 total.
+    # Phase 9 shims (2) + Phase 14 FB-B staged-ops tools (4) + STAGED-07 shim (1) = 7 total.
     assert "forge_manifest_read" in names
     assert "forge_tools_read" in names
     assert "forge_list_staged" in names
     assert "forge_get_staged" in names
     assert "forge_approve_staged" in names
     assert "forge_reject_staged" in names
-    assert len(names) == 6
+    assert "forge_staged_pending_read" in names
+    assert len(names) == 7
 
 
 def test_all_resources_have_application_json_mime(api):
@@ -104,7 +107,7 @@ def test_all_resources_have_application_json_mime(api):
         assert call.kwargs.get("mime_type") == "application/json"
 
 
-_READ_ONLY_TOOLS = {"forge_manifest_read", "forge_tools_read", "forge_list_staged", "forge_get_staged"}
+_READ_ONLY_TOOLS = {"forge_manifest_read", "forge_tools_read", "forge_list_staged", "forge_get_staged", "forge_staged_pending_read"}
 _WRITE_TOOLS = {"forge_approve_staged", "forge_reject_staged"}
 
 
@@ -233,3 +236,81 @@ async def test_tool_detail_resource_returns_tool_not_found_for_missing(api):
     body = await spy.resources["forge://tools/{name}"]("does_not_exist")
     decoded = json.loads(body)
     assert decoded["error"]["code"] == "tool_not_found"
+
+
+# -- Phase 14 (FB-B) STAGED-07 D-20 byte-identity tests --------------------
+
+import pytest_asyncio
+from forge_bridge.console.read_api import ConsoleReadAPI as _ConsoleReadAPI
+from forge_bridge.console.manifest_service import ManifestService as _ManifestService
+from forge_bridge.store.staged_operations import StagedOpRepo as _StagedOpRepo
+from forge_bridge.mcp.tools import ListStagedInput
+
+
+@pytest_asyncio.fixture
+async def api_with_staged_data(session_factory):
+    """A ConsoleReadAPI seeded with a mix of statuses for D-20."""
+    ms = _ManifestService()
+    mock_log = MagicMock()
+    mock_log.snapshot.return_value = ([], 0)
+    api = _ConsoleReadAPI(
+        execution_log=mock_log, manifest_service=ms, session_factory=session_factory,
+    )
+    async with session_factory() as session:
+        repo = _StagedOpRepo(session)
+        await repo.propose(operation="op_a", proposer="seed", parameters={})
+        await repo.propose(operation="op_b", proposer="seed", parameters={})
+        op_c = await repo.propose(operation="op_c", proposer="seed", parameters={})
+        op_d = await repo.propose(operation="op_d", proposer="seed", parameters={})
+        await session.commit()
+    async with session_factory() as session:
+        repo = _StagedOpRepo(session)
+        await repo.approve(op_c.id, approver="seed")  # one approved
+        await repo.reject(op_d.id, actor="seed")       # one rejected
+        await session.commit()
+    return api
+
+
+async def test_staged_pending_resource_matches_list_tool(api_with_staged_data, session_factory):
+    """STAGED-07 / D-20 — forge://staged/pending bytes == forge_list_staged(proposed, 500) bytes.
+
+    Also asserts the shim is byte-identical (P-03 prevention pattern)."""
+    spy = _ResourceSpy()
+    register_console_resources(
+        spy, api_with_staged_data._manifest_service, api_with_staged_data,
+        session_factory=session_factory,
+    )
+    resource_body = await spy.resources["forge://staged/pending"]()
+    tool_body = await spy.tools["forge_list_staged"](
+        ListStagedInput(status="proposed", limit=500, offset=0)
+    )
+    shim_body = await spy.tools["forge_staged_pending_read"]()
+
+    assert json.loads(resource_body) == json.loads(tool_body), (
+        f"D-20 resource ↔ list_tool divergence.\n"
+        f"Resource: {resource_body!r}\nTool: {tool_body!r}"
+    )
+    assert json.loads(shim_body) == json.loads(resource_body), (
+        f"P-03 shim ↔ resource divergence.\n"
+        f"Shim: {shim_body!r}\nResource: {resource_body!r}"
+    )
+    decoded = json.loads(resource_body)
+    assert len(decoded["data"]) == 2, decoded   # only proposed ops counted (the 2 un-transitioned)
+    assert decoded["meta"]["total"] == 2
+    assert decoded["meta"]["limit"] == 500
+
+
+async def test_staged_pending_empty_queue(session_factory):
+    ms = _ManifestService()
+    mock_log = MagicMock()
+    mock_log.snapshot.return_value = ([], 0)
+    api = _ConsoleReadAPI(
+        execution_log=mock_log, manifest_service=ms, session_factory=session_factory,
+    )
+    spy = _ResourceSpy()
+    register_console_resources(spy, ms, api, session_factory=session_factory)
+    resource_body = await spy.resources["forge://staged/pending"]()
+    decoded = json.loads(resource_body)
+    assert decoded["data"] == []
+    assert decoded["meta"]["total"] == 0
+    assert decoded["meta"]["limit"] == 500
