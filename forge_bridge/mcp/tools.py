@@ -17,9 +17,165 @@ Design principles:
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Optional
 
 from pydantic import BaseModel, Field
+
+from forge_bridge.console.handlers import _envelope_json
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 14 (FB-B) — Staged-ops MCP tool input models + impl functions
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Valid status values for staged operations (D-01).
+# Re-declared here to avoid importing from handlers.py in a circular path;
+# the frozenset is identical to _STAGED_STATUSES in console/handlers.py.
+_STAGED_STATUSES = frozenset({"proposed", "approved", "rejected", "executed", "failed"})
+
+
+class ListStagedInput(BaseModel):
+    status: Optional[str] = Field(
+        default=None,
+        description="proposed|approved|rejected|executed|failed",
+    )
+    limit: int = Field(default=50, description="Max records (1-500, silently clamped)")
+    offset: int = Field(default=0, description="Pagination offset")
+    project_id: Optional[str] = Field(default=None, description="Project UUID filter")
+
+
+class GetStagedInput(BaseModel):
+    id: str = Field(..., description="Staged operation UUID")
+
+
+class ApproveStagedInput(BaseModel):
+    id: str = Field(..., description="Staged operation UUID")
+    actor: str = Field(
+        ...,
+        min_length=1,
+        description="Caller identity (free string, non-empty per D-07)",
+    )
+
+
+class RejectStagedInput(BaseModel):
+    id: str = Field(..., description="Staged operation UUID")
+    actor: str = Field(
+        ...,
+        min_length=1,
+        description="Caller identity (free string, non-empty per D-07)",
+    )
+
+
+# ── Implementation functions ─────────────────────────────────────────────────
+# These functions are called from register_console_resources() closures (D-17
+# revised, Solution C).  They are intentionally underscore-prefixed to signal
+# that they are NOT the registered tool names — they are the bodies the closures
+# delegate to so that console_read_api and session_factory are captured at the
+# registration site without passing state through module globals.
+
+
+async def _list_staged_impl(params: "ListStagedInput", console_read_api) -> str:
+    """List staged operations with optional status/project_id filter + pagination."""
+    if params.status is not None and params.status not in _STAGED_STATUSES:
+        return json.dumps({
+            "error": {
+                "code": "invalid_filter",
+                "message": (
+                    f"unknown status {params.status!r}; "
+                    f"expected one of {sorted(_STAGED_STATUSES)}"
+                ),
+            }
+        })
+    limit = max(1, min(params.limit, 500))   # D-05 clamp
+    offset = max(0, params.offset)
+    project_id_uuid: uuid.UUID | None = None
+    if params.project_id is not None:
+        try:
+            project_id_uuid = uuid.UUID(params.project_id)
+        except ValueError:
+            return json.dumps({"error": {"code": "bad_request", "message": "invalid project_id"}})
+    records, total = await console_read_api.get_staged_ops(
+        status=params.status, limit=limit, offset=offset, project_id=project_id_uuid,
+    )
+    return _envelope_json(
+        [r.to_dict() for r in records],
+        limit=limit, offset=offset, total=total,
+    )
+
+
+async def _get_staged_impl(params: "GetStagedInput", console_read_api) -> str:
+    """Get a single staged operation by UUID."""
+    try:
+        op_id = uuid.UUID(params.id)
+    except ValueError:
+        return json.dumps({"error": {"code": "bad_request", "message": "invalid staged_operation id"}})
+    op = await console_read_api.get_staged_op(op_id)
+    if op is None:
+        # Return data=None envelope (NOT an error) per the byte-identity table in
+        # RESEARCH.md; there is no HTTP GET single-op route so MCP shape is canonical.
+        return _envelope_json(None)
+    return _envelope_json(op.to_dict())
+
+
+async def _approve_staged_impl(params: "ApproveStagedInput", session_factory) -> str:
+    """Approve a staged operation — write path via session_factory closure (D-04)."""
+    from forge_bridge.store.staged_operations import StagedOpRepo, StagedOpLifecycleError
+    try:
+        op_id = uuid.UUID(params.id)
+    except ValueError:
+        return json.dumps({"error": {"code": "bad_request", "message": "invalid staged_operation id"}})
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+        try:
+            op = await repo.approve(op_id, approver=params.actor)
+        except StagedOpLifecycleError as exc:
+            if exc.from_status is None:
+                return json.dumps({
+                    "error": {
+                        "code": "staged_op_not_found",
+                        "message": f"no staged_operation with id {op_id}",
+                    }
+                })
+            return json.dumps({
+                "error": {
+                    "code": "illegal_transition",
+                    "message": str(exc),
+                    "current_status": exc.from_status,
+                }
+            })
+        await session.commit()
+    return _envelope_json(op.to_dict())
+
+
+async def _reject_staged_impl(params: "RejectStagedInput", session_factory) -> str:
+    """Reject a staged operation — write path via session_factory closure (D-04)."""
+    from forge_bridge.store.staged_operations import StagedOpRepo, StagedOpLifecycleError
+    try:
+        op_id = uuid.UUID(params.id)
+    except ValueError:
+        return json.dumps({"error": {"code": "bad_request", "message": "invalid staged_operation id"}})
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+        try:
+            op = await repo.reject(op_id, actor=params.actor)
+        except StagedOpLifecycleError as exc:
+            if exc.from_status is None:
+                return json.dumps({
+                    "error": {
+                        "code": "staged_op_not_found",
+                        "message": f"no staged_operation with id {op_id}",
+                    }
+                })
+            return json.dumps({
+                "error": {
+                    "code": "illegal_transition",
+                    "message": str(exc),
+                    "current_status": exc.from_status,
+                }
+            })
+        await session.commit()
+    return _envelope_json(op.to_dict())
 
 
 def _client():
