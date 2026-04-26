@@ -23,11 +23,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import uuid
 from datetime import datetime, timezone
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import async_sessionmaker
     from forge_bridge.console.manifest_service import ManifestService, ToolRecord
+    from forge_bridge.core.staged import StagedOperation
     from forge_bridge.learning.execution_log import ExecutionLog, ExecutionRecord
     from forge_bridge.llm.router import LLMRouter
 
@@ -92,6 +95,7 @@ class ConsoleReadAPI:
         flame_bridge_url: Optional[str] = None,
         ws_bridge_url: Optional[str] = None,
         console_port: int = 9996,
+        session_factory: Optional["async_sessionmaker"] = None,
     ) -> None:
         self._execution_log = execution_log
         self._manifest_service = manifest_service
@@ -105,6 +109,7 @@ class ConsoleReadAPI:
             "FORGE_BRIDGE_URL", "ws://127.0.0.1:9998"
         )
         self._console_port = console_port
+        self._session_factory = session_factory  # NEW (D-03) — None by default for backward-compat
 
     # -- Tools --------------------------------------------------------------
 
@@ -142,6 +147,34 @@ class ConsoleReadAPI:
             promoted_only=promoted_only,
             code_hash=code_hash,
         )
+
+    # -- Staged operations --------------------------------------------------
+
+    async def get_staged_ops(
+        self,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        project_id: uuid.UUID | None = None,
+    ) -> tuple[list["StagedOperation"], int]:
+        """Return (records, total) for FB-B staged-ops list surface (D-03).
+
+        Opens a session per call, instantiates StagedOpRepo, returns repo.list().
+        Read-side facade per Phase 9 D-25 single-facade invariant.
+        """
+        from forge_bridge.store.staged_operations import StagedOpRepo
+        async with self._session_factory() as session:
+            repo = StagedOpRepo(session)
+            return await repo.list(
+                status=status, limit=limit, offset=offset, project_id=project_id,
+            )
+
+    async def get_staged_op(self, op_id: uuid.UUID) -> "StagedOperation | None":
+        """Return single op by UUID, or None if absent / wrong entity_type (D-03)."""
+        from forge_bridge.store.staged_operations import StagedOpRepo
+        async with self._session_factory() as session:
+            repo = StagedOpRepo(session)
+            return await repo.get(op_id)
 
     # -- Manifest -----------------------------------------------------------
 
