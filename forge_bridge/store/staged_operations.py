@@ -38,6 +38,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from forge_bridge.core.staged import StagedOperation
@@ -179,6 +180,41 @@ class StagedOpRepo:
             return None
         return self._to_staged_operation(db_entity)
 
+    async def list(
+        self,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        project_id: uuid.UUID | None = None,
+    ) -> tuple[list[StagedOperation], int]:
+        """Return (records, total_before_pagination) for FB-B's staged_list handler.
+
+        D-01 default ordering: created_at DESC. Pagination clamp lives in the handler.
+        Filters compose via SQL AND. `total` reflects filtered set count BEFORE pagination.
+
+        T-14-01-01 (Tampering): uses SQLAlchemy parameterized queries — never f-string
+        into SQL. Analog: EntityRepo.list_by_type (repo.py:295).
+        """
+        base_filter = (DBEntity.entity_type == "staged_operation",)
+        if status is not None:
+            base_filter += (DBEntity.status == status,)
+        if project_id is not None:
+            base_filter += (DBEntity.project_id == project_id,)
+
+        count_stmt = select(func.count()).select_from(DBEntity).where(*base_filter)
+        total = (await self.session.execute(count_stmt)).scalar_one()
+
+        stmt = (
+            select(DBEntity)
+            .where(*base_filter)
+            .order_by(DBEntity.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await self.session.execute(stmt)
+        records = [self._to_staged_operation(db) for db in result.scalars().all()]
+        return records, total
+
     async def approve(self, op_id: uuid.UUID, approver: str) -> StagedOperation:
         """Advance proposed → approved and record the approver identity.
 
@@ -285,9 +321,12 @@ class StagedOpRepo:
         """
         db_entity = await self.session.get(DBEntity, op_id)
         if db_entity is None or db_entity.entity_type != "staged_operation":
-            # UUID doesn't resolve to a staged_op — treat as illegal transition.
+            # UUID doesn't resolve to a staged_op — distinct from illegal-transition.
+            # FB-B handlers (Plan 14-03 + 14-04) map `from_status is None` → HTTP 404
+            # `staged_op_not_found`. Sentinel string "(missing)" was the WR-01 bug; the
+            # None discriminator is now load-bearing for the FB-B 404/409 split.
             raise StagedOpLifecycleError(
-                from_status="(missing)", to_status=new_status, op_id=op_id,
+                from_status=None, to_status=new_status, op_id=op_id,
             )
         old_status = db_entity.status
         if (old_status, new_status) not in self._ALLOWED_TRANSITIONS:
