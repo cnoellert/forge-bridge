@@ -1065,32 +1065,27 @@ This is a **negative-assertion test** (proves something did NOT happen). It is t
 
 Each row → one test case in `tests/console/test_staged_handlers_writes.py`. Mirror MCP equivalents in `tests/mcp/test_staged_tools.py`.
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> Resolved 2026-04-26 — see CONTEXT.md D-17 revised + D-17a, and the per-question RESOLVED markers below. Plans 14-01..14-05 implement these resolutions.
 
 1. **WR-01 fix scope (Finding #4) — does the planner fix `from_status="(missing)"` in this phase, or defer?**
+   - **RESOLVED:** Fix in this phase per CONTEXT D-17a → Plan 14-01 Task 2 replaces the sentinel at `staged_operations.py:289`.
    - **What we know:** The bug is in FB-A code (`staged_operations.py:289`), surfaced by the FB-B handler that needs `from_status is None` to distinguish 404 from 409. 13-REVIEW.md classifies it as Warning, not Critical. FB-B cannot ship clean error mapping without this being addressed somewhere.
    - **What's unclear:** Whether to fix it in `staged_operations.py` (cleanest) OR adapt FB-B handlers to check `exc.from_status == "(missing)"` (couples FB-B to a private FB-A contract).
    - **Recommendation:** Fix in `staged_operations.py` as part of Plan 14-02 (single-line change + add `not_found: bool` field if explicit disambiguation is desired). Cost: <30 minutes; preserves type contract; unblocks the standard 404/409 split.
 
 2. **Tool registration site (Finding #6 Solution C) — does CONTEXT.md D-17 override the closure-pattern need?**
-   - **What we know:** D-17 says "Tool registration site is `forge_bridge/mcp/registry.py::register_builtins()` for the four `forge_*_staged` tools." But `register_builtins(mcp)` runs at import time without `console_read_api` or `session_factory` in scope, while the new tool bodies need both.
-   - **What's unclear:** Whether CONTEXT.md D-17 was a default architectural choice (mirror `forge_list_*` family location) without considering the closure constraint, or a load-bearing decision.
-   - **Recommendation:** The planner brings this to the user via discuss-phase if D-17 is treated as load-bearing, OR proceeds with Solution C (register staged tools from `register_console_resources()`) and documents the deviation. The latter is the cleaner pattern and matches what the existing `forge_manifest_read` shim already does.
+   - **RESOLVED:** Solution C adopted per CONTEXT D-17 revised → Plan 14-04 Task 3 registers all four `forge_*_staged` tools from `register_console_resources()`, NOT from `register_builtins()`. Acceptance criterion grep-checks for ZERO matches in `register_builtins`.
 
 3. **Should `forge_get_staged` also have an HTTP route (e.g., `GET /api/v1/staged/{id}`)?**
-   - **What we know:** STAGED-06 lists three HTTP routes: `GET /api/v1/staged`, `POST .../approve`, `POST .../reject`. No single-op fetch. CONTEXT.md D-04 states three routes only.
-   - **What's unclear:** Whether the omission was intentional or a copy-paste oversight in the requirement. The MCP tool ships, but a Web UI would naturally expect a single-op JSON endpoint.
-   - **Recommendation:** Honor REQUIREMENTS.md as written — three routes only. Web UI consumers can call `GET /api/v1/staged?...` and filter client-side, or use the MCP tool. If a v1.4.x consumer asks for it, add then.
+   - **RESOLVED:** No — honor REQUIREMENTS.md / CONTEXT D-04 (3 routes only). MCP tool covers single-op fetch; deferred to v1.4.x if a consumer asks.
 
 4. **`build_console_app(read_api)` signature change — accept `session_factory` or attach via `read_api`?**
-   - **What we know:** `build_console_app(read_api)` at `console/app.py:52` currently accepts only the read API. Write handlers need `session_factory`.
-   - **What's unclear:** Whether to (A) extend the signature `build_console_app(read_api, session_factory=None)`, (B) attach `session_factory` to `read_api` so handlers read it via `request.app.state.console_read_api._session_factory`, or (C) attach to `app.state.session_factory` directly during `_lifespan`.
-   - **Recommendation:** Option C — `app.state.session_factory = session_factory` next to `app.state.console_read_api = read_api` at `console/app.py:98`. Keeps the read API honest to its name (no write infrastructure leaks into it); keeps the signature stable.
+   - **RESOLVED:** Option C adopted → Plan 14-02 Task 2 attaches `app.state.session_factory = session_factory` next to `app.state.console_read_api = read_api`. Signature stays stable; read API stays honest to its name.
 
 5. **Should planning add `Index("ix_entities_type_status_created", "entity_type", "status", "created_at")` for the list query?**
-   - **What we know:** `WHERE entity_type='staged_operation' AND status='proposed' ORDER BY created_at DESC` is the hot-path query for the pending-queue resource. With existing indexes (`ix_entities_status`, `ix_entities_project_type`), the query plan does a heap sort.
-   - **What's unclear:** Whether v1.4 volumes (dozens/day per CONTEXT.md) make this matter.
-   - **Recommendation:** Skip. Add only if perf testing surfaces a need (would require an Alembic migration `0004_staged_pending_index.py`). Low priority.
+   - **RESOLVED:** Skip — defer to v1.5+ if perf testing surfaces a need. v1.4 volumes (dozens/day) don't justify the migration.
 
 ## Environment Availability
 
