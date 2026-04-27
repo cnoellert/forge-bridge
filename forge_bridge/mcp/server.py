@@ -47,6 +47,7 @@ from forge_bridge.store.session import get_async_session_factory
 if TYPE_CHECKING:
     from forge_bridge.console.manifest_service import ManifestService
     from forge_bridge.learning.execution_log import ExecutionLog
+    from forge_bridge.console.read_api import ConsoleReadAPI  # Phase 16.1 D-07 #1
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,10 @@ _canonical_execution_log: "ExecutionLog | None" = None
 _canonical_manifest_service: "ManifestService | None" = None
 # I-02: canonical watcher task handle for _check_watcher crash detection.
 _canonical_watcher_task: "asyncio.Task | None" = None
+# Phase 16.1 — canonical ConsoleReadAPI for boot-wiring smoke (D-07 #1).
+# Set in _lifespan Step 4; cleared on teardown. Read by
+# tests/console/test_lifespan_wiring.py to assert _llm_router stayed wired.
+_canonical_console_read_api: "ConsoleReadAPI | None" = None
 
 
 def get_client() -> AsyncClient:
@@ -90,7 +95,7 @@ async def _lifespan(mcp_server: FastMCP):
 
     Teardown reverses: cancel console_task, cancel watcher_task, shutdown_bridge.
     """
-    global _server_started, _canonical_execution_log, _canonical_manifest_service, _canonical_watcher_task
+    global _server_started, _canonical_execution_log, _canonical_manifest_service, _canonical_watcher_task, _canonical_console_read_api
 
     # Step 1 — existing behavior
     await startup_bridge()
@@ -142,6 +147,9 @@ async def _lifespan(mcp_server: FastMCP):
         session_factory=session_factory,   # NEW (D-05)
         llm_router=llm_router,             # NEW (FB-D / CHAT-01..05)
     )
+    # Phase 16.1 (D-07 #1): publish ConsoleReadAPI as a module global so
+    # tests/console/test_lifespan_wiring.py can verify _llm_router wiring.
+    _canonical_console_read_api = console_read_api
 
     # Step 5 — Starlette app + MCP resources/tools registration
     from forge_bridge.console.app import build_console_app
@@ -186,6 +194,7 @@ async def _lifespan(mcp_server: FastMCP):
         _canonical_execution_log = None
         _canonical_manifest_service = None
         _canonical_watcher_task = None  # I-02: clear on teardown
+        _canonical_console_read_api = None  # Phase 16.1 D-07 #1: clear on teardown
 
 
 # ─────────────────────────────────────────────────────────────
