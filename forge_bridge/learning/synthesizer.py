@@ -123,6 +123,11 @@ def _check_safety(tree: ast.Module) -> bool:
     - Bare dangerous calls: eval(), exec(), __import__(), compile()
     - Dangerous attribute calls: os.system(), subprocess.run(), shutil.rmtree(), etc.
     - open() calls that are not calling bridge functions
+    - FB-C LLMTOOL-07 (D-14): imports from forge_bridge.llm — recursive-synthesis
+      attack surface. Synthesized tools that import from forge_bridge.llm.router
+      can call back into the LLM, leading to runaway recursion and credential
+      exhaustion (research §6.3). Static rejection at synthesis time is the
+      first of three layers (D-12/D-13 add a runtime ContextVar check).
     """
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
@@ -140,6 +145,27 @@ def _check_safety(tree: ast.Module) -> bool:
                     if module_name in _DANGEROUS_ATTR_CALLS:
                         if attr_name in _DANGEROUS_ATTR_CALLS[module_name]:
                             return False
+
+        # FB-C LLMTOOL-07 (D-14): block recursive synthesis by rejecting any
+        # synthesized code that imports from forge_bridge.llm. Catches both:
+        #   import forge_bridge.llm
+        #   import forge_bridge.llm.router
+        # AND:
+        #   from forge_bridge.llm import router
+        #   from forge_bridge.llm.router import LLMRouter
+        # The bare-prefix `forge_bridge` (without .llm) stays allowed —
+        # synthesized tools legitimately need to import forge_bridge.bridge.
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "forge_bridge.llm" or alias.name.startswith("forge_bridge.llm."):
+                    return False
+        if isinstance(node, ast.ImportFrom):
+            if node.module and (
+                node.module == "forge_bridge.llm"
+                or node.module.startswith("forge_bridge.llm.")
+            ):
+                return False
+
     return True
 
 
