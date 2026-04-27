@@ -444,7 +444,7 @@ class StagedOpRepo:
         from forge_bridge.core.entities import BridgeEntity
         a = db.attributes or {}
         op = StagedOperation.__new__(StagedOperation)
-        BridgeEntity.__init__(op, id=db.id, metadata={})
+        BridgeEntity.__init__(op, id=db.id, created_at=db.created_at, metadata={})
         op.operation   = a.get("operation", db.name or "")
         op.proposer    = a.get("proposer", "")
         op.parameters  = a.get("parameters", {})
