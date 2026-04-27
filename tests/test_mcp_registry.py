@@ -360,3 +360,121 @@ class TestProvenanceMerge:
         )
         meta = mock_mcp.add_tool.call_args.kwargs["meta"]
         assert meta["forge-bridge/tags"] == ["synthesized", "project:acme"]
+
+
+# ── FB-C LLMTOOL-03: invoke_tool default executor ────────────────────────────
+
+
+class TestInvokeTool:
+    """FB-C D-20/D-21/D-22: invoke_tool default executor for LLMRouter.complete_with_tools.
+
+    Coverage:
+        - async coroutine signature matching D-20 contract
+        - hallucinated-name KeyError with available-tool list (research §4.3)
+        - string / dict result handling
+        - tool-internal exception propagation (LLMTOOL-03 acceptance — coordinator
+          wraps as is_error=True; this function MUST NOT swallow)
+        - re-export from forge_bridge.mcp package (D-21 deferred-question resolution)
+    """
+
+    def test_invoke_tool_is_async(self):
+        import inspect
+        from forge_bridge.mcp.registry import invoke_tool
+        assert inspect.iscoroutinefunction(invoke_tool), (
+            "invoke_tool MUST be an async coroutine function per D-20 "
+            "(Callable[[str, dict], Awaitable[str]])"
+        )
+
+    def test_invoke_tool_signature_matches_d20_contract(self):
+        import inspect
+        from forge_bridge.mcp.registry import invoke_tool
+        sig = inspect.signature(invoke_tool)
+        assert list(sig.parameters) == ["name", "args"], (
+            f"D-20 contract: positional params (name, args); got {list(sig.parameters)}"
+        )
+        # Return annotation should be str (or 'str' string under from __future__ import annotations)
+        ret = sig.return_annotation
+        assert ret is str or str(ret) == "str", f"return annotation: {ret!r}"
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_hallucinated_name_raises_KeyError(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from forge_bridge.mcp.registry import invoke_tool
+
+        fake_mcp = MagicMock()
+        # Build two fake registered tools so the available-list isn't empty
+        t_a, t_b = MagicMock(), MagicMock()
+        t_a.name, t_b.name = "forge_real_a", "forge_real_b"
+        fake_mcp.list_tools = AsyncMock(return_value=[t_a, t_b])
+
+        with patch("forge_bridge.mcp.server.mcp", fake_mcp):
+            with pytest.raises(KeyError) as exc_info:
+                await invoke_tool("forge_hallucinated", {})
+
+        msg = str(exc_info.value)
+        # Must name the attempted tool (so the LLM can self-correct next turn)
+        assert "forge_hallucinated" in msg
+        # Must list available tools (research §4.3 hallucinated-tool-name protocol)
+        assert "forge_real_a" in msg or "forge_real_b" in msg, (
+            f"available-tool list missing from KeyError message: {msg}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_string_result_passthrough(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from forge_bridge.mcp.registry import invoke_tool
+
+        fake_mcp = MagicMock()
+        t = MagicMock(); t.name = "forge_x"
+        fake_mcp.list_tools = AsyncMock(return_value=[t])
+        fake_mcp.call_tool = AsyncMock(return_value="plain string result")
+
+        with patch("forge_bridge.mcp.server.mcp", fake_mcp):
+            result = await invoke_tool("forge_x", {})
+
+        assert result == "plain string result"
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_dict_result_json_stringified(self):
+        import json
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from forge_bridge.mcp.registry import invoke_tool
+
+        fake_mcp = MagicMock()
+        t = MagicMock(); t.name = "forge_x"
+        fake_mcp.list_tools = AsyncMock(return_value=[t])
+        fake_mcp.call_tool = AsyncMock(return_value={"key": "value", "count": 3})
+
+        with patch("forge_bridge.mcp.server.mcp", fake_mcp):
+            result = await invoke_tool("forge_x", {})
+
+        parsed = json.loads(result)
+        assert parsed == {"key": "value", "count": 3}
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_exception_propagates(self):
+        """LLMTOOL-03 acceptance: tool exceptions are NOT swallowed here.
+        The coordinator (Wave 3 plan 15-08) catches Exception in its tool-exec
+        block and wraps as is_error=True ToolCallResult."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from forge_bridge.mcp.registry import invoke_tool
+
+        fake_mcp = MagicMock()
+        t = MagicMock(); t.name = "forge_buggy"
+        fake_mcp.list_tools = AsyncMock(return_value=[t])
+        fake_mcp.call_tool = AsyncMock(side_effect=ValueError("tool blew up"))
+
+        with patch("forge_bridge.mcp.server.mcp", fake_mcp):
+            with pytest.raises(ValueError) as exc_info:
+                await invoke_tool("forge_buggy", {})
+
+        assert "tool blew up" in str(exc_info.value)
+
+    def test_invoke_tool_exported_from_mcp_package(self):
+        """D-21 module re-export: planner-locked YES — mirror register_tools symmetry."""
+        import forge_bridge.mcp
+        assert "invoke_tool" in forge_bridge.mcp.__all__
+        from forge_bridge.mcp import invoke_tool
+        from forge_bridge.mcp.registry import invoke_tool as reg_invoke_tool
+        # Single source of truth: same object, no copy
+        assert invoke_tool is reg_invoke_tool
