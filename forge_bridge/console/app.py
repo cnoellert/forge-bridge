@@ -13,6 +13,7 @@ from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
 from forge_bridge.console.handlers import (
+    chat_handler,                      # NEW (Phase 16 / FB-D)
     execs_handler,
     health_handler,
     manifest_handler,
@@ -96,6 +97,8 @@ def build_console_app(
         Route("/api/v1/staged", staged_list_handler, methods=["GET"]),
         Route("/api/v1/staged/{id}/approve", staged_approve_handler, methods=["POST"]),
         Route("/api/v1/staged/{id}/reject", staged_reject_handler, methods=["POST"]),
+        # Phase 16 (FB-D) — chat endpoint
+        Route("/api/v1/chat", chat_handler, methods=["POST"]),
     ]
     middleware = [
         Middleware(
