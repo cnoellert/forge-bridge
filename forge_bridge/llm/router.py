@@ -479,11 +479,31 @@ class LLMRouter:
                     remaining = max_seconds - (time.monotonic() - started)
                     per_tool_budget = max(1.0, min(30.0, remaining))
 
+                    # D-34 belt-and-suspenders: catch SystemExit at the innermost
+                    # layer BEFORE asyncio.wait_for sees it. asyncio re-raises
+                    # BaseException (including SystemExit) from task callbacks even
+                    # if a higher-up frame catches it — so we must convert
+                    # SystemExit into a regular Exception inside the executor's
+                    # own coroutine. This is the layer-2 defense (synthesizer
+                    # blocklist is layer 1; Phase 3 quarantine is layer 3).
+                    # The wrapper records "SystemExit" as a sentinel so the outer
+                    # catch surfaces it to the LLM with the correct origin.
+                    _system_exit_signal: dict = {"hit": False}
+
+                    async def _safe_tool_call(_name=call.tool_name, _args=call.arguments):
+                        try:
+                            return await tool_executor(_name, _args)
+                        except SystemExit:
+                            _system_exit_signal["hit"] = True
+                            # Convert to a regular Exception so asyncio.wait_for
+                            # surfaces it normally and our outer except catches it.
+                            raise RuntimeError("SystemExit") from None
+
                     # Tool execution wrapped in (Exception, SystemExit) per D-34.
                     status = "continuing"
                     try:
                         raw_result = await asyncio.wait_for(
-                            tool_executor(call.tool_name, call.arguments),
+                            _safe_tool_call(),
                             timeout=per_tool_budget,
                         )
                         result_text = _sanitize_tool_result(
@@ -521,7 +541,12 @@ class LLMRouter:
                         # Phase 8 cf221fe: log type name only, never str(exc) which
                         # may carry credentials. The LLM gets the type name + a
                         # generic error message — enough to retry with corrected args.
-                        exc_type = type(exc).__name__
+                        # If the inner _safe_tool_call recorded a SystemExit hit,
+                        # surface "SystemExit" as the type name (D-34 attribution).
+                        if _system_exit_signal["hit"]:
+                            exc_type = "SystemExit"
+                        else:
+                            exc_type = type(exc).__name__
                         msg = f"ERROR: tool {call.tool_name!r} raised {exc_type}"
                         results.append(ToolCallResult(
                             tool_call_ref=call.ref,
