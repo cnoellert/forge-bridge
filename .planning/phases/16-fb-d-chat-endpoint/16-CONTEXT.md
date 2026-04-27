@@ -65,17 +65,21 @@ it does not *propose* operations itself. Operations the LLM proposes via tools l
   Roles: `user | assistant | tool` (matches what FB-C's `_ToolAdapter.append_results()` already produces).
   - **Why:** Both Anthropic and Ollama use `messages` natively (FB-C adapters speak this format). projekt-forge Flame hooks (CHAT-05) build history client-side; single-shot would force a re-prompt round-trip. Caller-overridable loop caps match FB-C's overridable kwargs (research §6.3).
 
+- **D-02a (Pattern B — FB-C surface extension):** FB-C `LLMRouter.complete_with_tools()` currently accepts `prompt: str` only. To honor the wire-shape `messages` contract WITHOUT lossy stitching, FB-C is extended in this phase with an optional `messages: list[dict] | None = None` kwarg. When `messages` is provided, the coordinator skips its internal `[{"role":"user","content":prompt}]` auto-wrap and passes the structured list directly to the adapter. The adapters (`AnthropicToolAdapter`, `OllamaToolAdapter`) already speak the `messages` format natively — this exposes existing capability on the public surface. Backwards-compatible: existing `prompt=` callers unchanged. ~20-30 LOC in `forge_bridge/llm/router.py` + 1 unit test. Lands in FB-D scope as a prerequisite plan in Wave 1.
+  - **Why Pattern B over Pattern A (handler stitches to single prompt string):** Stitching loses structured `tool` role boundaries from prior turns, which degrades multi-turn agentic chat quality (LLM treats tool-call history as opaque user-content blob). Stitching also creates a wire/internal divergence — wire honors `messages`, internal flattens it. Pattern B closes that gap cleanly.
+
 - **D-03:** Response shape:
   ```json
   {
     "messages": [
       // full echoed history including the new assistant + tool turns the loop produced
     ],
-    "stop_reason": "end_turn" | "max_iterations" | "max_seconds_exceeded",
+    "stop_reason": "end_turn",  // only "end_turn" in v1.4; cap-fires return HTTP 504 (D-14a)
     "request_id": "<uuid>"
   }
   ```
   Echoing the full message list (not just the new assistant turn) means the client owns conversation state without parsing `stop_reason` to know "did anything happen?".
+  - **Cap-fire posture:** When `complete_with_tools()` raises `LLMLoopBudgetExceeded` (either `max_iterations` or `max_seconds`), the handler translates BOTH to HTTP 504 with the unified D-09 banner copy. Distinguishing the two cap types in the response surface would require extending FB-C with a `return_history: bool = False` kwarg to expose partial state — deferred to v1.5. `SEED-CHAT-PARTIAL-OUTPUT-V1.5` plants the partial-state response shape.
 
 ### Tool Registry Exposure (Gray Area C)
 
@@ -97,7 +101,7 @@ it does not *propose* operations itself. Operations the LLM proposes via tools l
 - **D-07:** Tool-call transparency: each `tool_use` round renders as a collapsed `<details>`-style block showing `{tool_name}({args_preview})`. Click expands to show full args + result preview (truncated at ~500 chars; expand again for full text).
   - **Why:** Default-collapsed is artist-friendly; expandable is the D-36 fresh-operator gate's "can I tell what happened?" affordance for dev/UAT verification. Mirrors Phase 11 CLI's manifest/tools cross-link pattern.
 
-- **D-08:** LOGIK-PROJEKT amber spinner during in-flight requests. Matches Phase 10 / 10.1 visual language (per project memory: "artist-first, LOGIK-PROJEKT dark+amber palette"). No new SVG asset — reuse the existing spinner from `forge_bridge/console/static/forge-console.css`.
+- **D-08:** LOGIK-PROJEKT amber spinner during in-flight requests. Matches Phase 10 / 10.1 visual language (per project memory: "artist-first, LOGIK-PROJEKT dark+amber palette"). **Pattern-mapper correction:** `forge_bridge/console/static/forge-console.css` does NOT currently ship a spinner. Plan ships a 10-line addition: `@keyframes spin` + `.spinner-amber` class using existing `--color-accent` amber token. No SVG, no new asset, CSS-only.
 
 - **D-09:** Explicit error banners with prescribed copy:
   - HTTP 429: `"Rate limit reached — wait {retry_after}s before retrying."` (`Retry-After` header value substituted)
@@ -108,7 +112,7 @@ it does not *propose* operations itself. Operations the LLM proposes via tools l
 
 - **D-10:** Input: single `<textarea>` auto-growing to ~5 lines max. Enter sends; Shift+Enter inserts a newline. No slash commands, no `@` mentions, no rich formatting in v1.4.
 
-- **D-11:** Assistant message rendering: minimal markdown renderer (no new dep — match whatever Phase 10 uses for execs / manifest detail rendering, or a 50-line vanilla pass through). Code fences preserve monospace; no syntax highlighting in v1.4 (additive, defer).
+- **D-11:** Assistant message rendering: minimal markdown renderer (no new dep). **Researcher correction:** Phase 10 ships ZERO markdown rendering (verified by template/static grep). Plan ships a ~50-line vanilla JS escape-first renderer in `forge_bridge/console/static/forge-chat.js` with the security-required ordering: (1) HTML-escape the entire string; (2) re-render fenced code blocks (` ```...``` `) preserving monospace; (3) re-render inline code (`` `...` ``); (4) re-render bold (`**...**`); (5) re-render http(s)-only links with `rel="noopener noreferrer" target="_blank"` — reject `javascript:`, `data:`, and other schemes. No syntax highlighting in v1.4 (additive, defer).
 
 ### Artist UAT Scope (Gray Area F — restated, locked)
 
@@ -117,7 +121,7 @@ it does not *propose* operations itself. Operations the LLM proposes via tools l
 
 ### Rate Limiting Implementation (CHAT-01)
 
-- **D-13:** In-memory token bucket dict in the chat handler module. NO new dependency (avoid `slowapi` / Redis). Single-process is fine — there's only one bridge process per machine in v1.4.
+- **D-13:** In-memory token bucket dict in a NEW module `forge_bridge/console/_rate_limit.py` (separated from the chat handler for testability — pattern-mapper recommendation; no existing analog in repo). NO new dependency (avoid `slowapi` / Redis). Single-process is fine — there's only one bridge process per machine in v1.4. **Lock primitive:** `threading.Lock` (NOT `asyncio.Lock`) — single-process simplicity, no async-context capture in test fixtures.
   - **Bucket:** Keyed by `request.client.host` (IPv4/IPv6 string). Capacity 10, refill rate 10/60s (sliding window approximation: 11th request in 60s → 429).
   - **TTL sweep:** Stale buckets (no activity in 5 minutes) are evicted lazily on every request to bound memory.
   - **Response on 429:** `{"error": "rate_limit_exceeded", "message": "...", "request_id": "<uuid>"}` + `Retry-After: <seconds>` header. Matches FB-B error envelope.
@@ -141,6 +145,16 @@ it does not *propose* operations itself. Operations the LLM proposes via tools l
   The outer 125s `wait_for` is the response-framing safety net per CHAT-02; the inner 120s is FB-C's wall-clock cap. On `asyncio.TimeoutError` from the outer wrap, the handler returns HTTP 504 with the prescribed banner copy from D-09.
   - **Why:** CHAT-02 verbatim. Two-layer timeout (loop cap + framing buffer) is the published contract.
 
+- **D-14a (timeout/exception code-path translation):** Per Q4 resolution from research+pattern-mapper review, every cap-fire collapses to HTTP 504; structural / programming errors translate to HTTP 500.
+  | Exception raised by FB-C | HTTP status | Error code | Notes |
+  |---|---|---|---|
+  | `LLMLoopBudgetExceeded` (max_seconds) | 504 | `request_timeout` | Inner 120s cap fired first; expected normal path |
+  | `LLMLoopBudgetExceeded` (max_iterations) | 504 | `request_timeout` | Same banner copy (D-03 cap-fire posture) |
+  | `asyncio.TimeoutError` (outer 125s) | 504 | `request_timeout` | Defense-in-depth; only fires if FB-C deadlock |
+  | `RecursiveToolLoopError` | 500 | `internal_error` | Should never reach chat handler — FB-C's `_in_tool_loop` guard is for nested LLM calls inside synthesizer, not HTTP entry. Log as critical. |
+  | `LLMToolError` (any flavor) | 500 | `internal_error` | Wrapped by FB-C; the loop already surfaces tool-internal failures back to the LLM as `is_error=True` per LLMTOOL-03. Reaching the handler with this means coordinator-level breakage. |
+  | Any other exception | 500 | `internal_error` | Caught at outer try/except per FB-B handler convention |
+
 ### Sanitization Boundary (CHAT-03)
 
 - **D-15:** End-to-end sanitization wiring:
@@ -156,13 +170,19 @@ it does not *propose* operations itself. Operations the LLM proposes via tools l
 
 ### Error Envelope Shape
 
-- **D-17:** Match Phase 9 / FB-B envelope verbatim: `{"error": "<machine_code>", "message": "<human>", "request_id": "<uuid>"}`. Specific codes:
-  - `rate_limit_exceeded` — 429
+- **D-17:** Match Phase 9 / FB-B envelope **verbatim** — note this is the **NESTED** shape locked by `forge_bridge/console/handlers.py:60` and `tests/console/test_staged_zero_divergence.py`:
+  ```json
+  {"error": {"code": "<machine_string>", "message": "<human>"}}
+  ```
+  (Pattern-mapper correction: I had previously written a flat `{"error": "<code>", "message": "..."}` shape — that was wrong. The nested shape is the FB-B test-locked contract; FB-D extends it via the existing `_error()` helper at `handlers.py:58-60`.) Specific codes:
+  - `rate_limit_exceeded` — 429 (with `Retry-After` header)
   - `request_timeout` — 504
-  - `validation_error` — 422
+  - `validation_error` — 422 (Pydantic message)
   - `internal_error` — 500
   - `unsupported_role` — 422 (caller passed an invalid role in messages)
-  - **Why:** Zero divergence from the 9 existing API routes. Cross-route consistency tests already exist (FB-B D-37); we extend them.
+  - `bad_request` — 400 (malformed JSON, missing required field, etc.)
+  - **Why:** Zero divergence from the 9 existing API routes. The cross-route consistency test (`test_staged_zero_divergence.py`) already locks this shape; we extend its sweep to include `/api/v1/chat`.
+  - **`request_id`:** included as a top-level sibling of `error` in the success path; for error responses, included in the response headers as `X-Request-ID` (matches FB-B convention — the error envelope itself stays minimal).
 
 ### External-Consumer Parity (CHAT-05)
 
@@ -213,6 +233,10 @@ it does not *propose* operations itself. Operations the LLM proposes via tools l
 **FB-C planning artifacts (cross-cutting):**
 - `.planning/research/FB-C-TOOL-CALL-LOOP.md` — research §6.1-6.4 (loop semantics, message shape rationale, parallel-tool-exec deferral)
 
+**This phase's planning artifacts (must be read by planner + executor):**
+- `.planning/phases/16-fb-d-chat-endpoint/16-RESEARCH.md` — pitfalls (request.client None, asyncio.wait_for nesting, tool snapshot async-API, model-speed risk, sanitization-vs-display semantics)
+- `.planning/phases/16-fb-d-chat-endpoint/16-PATTERNS.md` — exact line-numbered analogs for each new file (handlers.py:179-224 staged_approve template, query_console.html:40-117 Alpine factory, tests/integration/test_complete_with_tools_live.py:49-66 skipif gate)
+
 **Project-level:**
 - `.planning/PROJECT.md` — current milestone scope, FB-A..FB-D consumer-driven naming
 - `.planning/STATE.md` — milestone metadata, last activity
@@ -229,6 +253,7 @@ it does not *propose* operations itself. Operations the LLM proposes via tools l
 | `SEED-CHAT-TOOL-ALLOWLIST-V1.5.md` | When a v1.5 consumer needs request-time tool subsetting | All tools is the minimum-coupling default; subsetting adds payload complexity for hypothetical use |
 | `SEED-CHAT-CLOUD-CALLER-V1.5.md` | When `SEED-AUTH-V1.5` lands (caller identity → cost attribution) | Without identity, opening cloud path means unauthenticated callers rack up Anthropic bills |
 | `SEED-CHAT-PERSIST-HISTORY-V1.5+.md` | When auth + per-user data scoping land | No identity → no per-user persistence boundary; per-tab JS state covers v1.4 |
+| `SEED-CHAT-PARTIAL-OUTPUT-V1.5.md` | When a v1.5 consumer needs partial-message output on cap-fire (vs blanket 504) | Requires extending FB-C with `return_history: bool = False` kwarg to expose partial state. Marginal user value at v1.4 MVP — same banner copy for both cap types makes the wire-shape distinction unnecessary. |
 
 </deferred>
 
@@ -246,9 +271,22 @@ it does not *propose* operations itself. Operations the LLM proposes via tools l
 <open_questions>
 ## Open Questions for Research / Planning
 
-None blocking. The decisions above are tight enough that the planner can proceed directly to plan generation. Two things the research phase may want to validate:
+**All four open questions raised by research+pattern-mapper review (2026-04-27) have been resolved into the decisions above:**
 
-1. **Markdown renderer choice:** does Phase 10's existing renderer handle GFM tables / fenced code well enough for chat output, or do we need a 50-line vanilla pass? (Researcher reads `forge_bridge/console/static/` for whatever Phase 10 ships.)
-2. **Token-bucket library shape:** confirm in-memory dict is sufficient for v1.4 single-process — i.e., is there any planned multi-instance deployment in v1.4? (STATE.md says no, but worth a quick check during research.)
+1. ~~**D-02 messages-vs-prompt mismatch (HIGH)**~~ — Resolved as **D-02a / Pattern B** (extend FB-C with `messages: list | None = None` kwarg; ~20-30 LOC + 1 unit test, backwards-compatible). Pattern B is preferred over Pattern A (handler stitches to single string) because stitching loses structured `tool` role boundaries from prior turns and degrades multi-turn agentic chat quality.
+2. ~~**D-03 stop_reason partial-state on cap-fire (MEDIUM)**~~ — Resolved as **drop `max_iterations`/`max_seconds_exceeded` from response shape; both cap types translate to HTTP 504**. `SEED-CHAT-PARTIAL-OUTPUT-V1.5` plants the v1.5 path requiring FB-C `return_history` extension. Same banner copy for both cap types makes the wire-shape distinction unnecessary at MVP.
+3. ~~**`qwen2.5-coder:32b` <60s latency (MEDIUM, CHAT-04 risk)**~~ — Resolved as **defer smoke test to plan's UAT phase**. If model misses <60s during CHAT-04 UAT on assist-01, that triggers a Phase 16.1 remediation phase mirroring Phase 10.1's pattern. `SEED-DEFAULT-MODEL-BUMP-V1.4.x` (already planted in Phase 15 plan 15-10) is the forward path. Don't gate this plan on a hardware-dependent smoke test.
+4. ~~**Three timeout code paths (LOW)**~~ — Resolved as **D-14a translation matrix**: every cap-fire (outer `asyncio.TimeoutError`, inner `LLMLoopBudgetExceeded` for either max_seconds or max_iterations) translates to HTTP 504; structural errors (`RecursiveToolLoopError`, `LLMToolError`, anything else) translate to HTTP 500.
+
+**Mechanical corrections also folded in:**
+- **D-08 spinner** → ship 10-line CSS as part of plan (forge-console.css has no existing spinner; pattern-mapper verified)
+- **D-11 markdown renderer** → ship 50-line vanilla escape-first JS renderer in `forge-chat.js` (Phase 10 ships zero markdown; researcher verified)
+- **D-13 lock primitive** → `threading.Lock` over `asyncio.Lock` for single-process v1.4 simplicity
+- **D-17 envelope** → corrected to NESTED `{"error": {"code", "message"}}` shape (matches FB-B handlers.py:60 + zero-divergence test lock)
+
+**Genuine open questions remaining (planner can decide inline; not blocking):**
+
+1. **Streaming concurrent test fixture cleanup** — the parity test (D-18) replays the same payload through two clients. Should the second replay reuse the first's session via `httpx.AsyncClient(transport=ASGITransport(app))` or open a fresh client? Researcher's recommendation: fresh client per replay (no shared state, parity is more meaningful).
+2. **Token-bucket lazy-vs-active TTL sweep** — research recommends lazy sweep (every request checks TTL on accessed bucket); active sweep (background task) is overkill for v1.4 single-process. Planner picks.
 
 </open_questions>
