@@ -165,7 +165,22 @@ and a recursive-synthesis guard ship in the same phase.
   5. Tool result size cap: every tool result string is truncated to 8192 bytes before feeding back to the LLM, suffixed with `\n[...truncated, full result was {n} bytes]`. Constant `_TOOL_RESULT_MAX_BYTES = 8192` is overridable via `complete_with_tools(..., tool_result_max_bytes=N)` — verified via integration test with a stub tool returning 100 KB of payload.
   6. Sanitization boundary: `_sanitize_tool_result()` exists in `forge_bridge/llm/_sanitize.py` and runs on every tool_result content string before leaving the coordinator. Pattern set is consolidated with Phase 7's `_sanitize_tag()` (single source of truth in `forge_bridge/_sanitize_patterns.py` or equivalent). Injection markers (case-insensitive) are replaced with `[BLOCKED:INJECTION_MARKER]`; ASCII control chars (other than `\n`, `\t`) are stripped — verified via integration test with a tool returning a known injection string. **Acceptance overlaps with CHAT-03 in Phase 16 (FB-D)**: Phase 15 ships the helper, Phase 16 wires the chat endpoint into it.
   7. Recursive-synthesis guard: a contextvar `_in_tool_loop` is set inside `complete_with_tools()` (try/finally for cleanup); both `acomplete()` and `complete_with_tools()` check the var on entry and raise `RecursiveToolLoopError` if set. The synthesizer's safety blocklist (Phase 3) is updated to flag imports from `forge_bridge.llm` in synthesized code — verified via unit test that a tool function calling `acomplete()` raises `RecursiveToolLoopError` when invoked from within `complete_with_tools()`.
-**Plans**: TBD — `/gsd-discuss-phase 15` next (alias `FB-C`)
+**Plans**: 10 plans across 5 waves (planned 2026-04-26 — execute in dependency order)
+  - Wave 1 (parallel — foundation):
+    - [ ] `15-01-PLAN.md` — Hoist sanitization patterns to `forge_bridge/_sanitize_patterns.py` + shim `learning/sanitize.py` (D-09/D-10)
+    - [ ] `15-02-PLAN.md` — Add `ollama>=0.6.1,<1` to pyproject `[llm]` extra + `LLMRouter._get_local_native_client()` lazy slot (D-02)
+    - [ ] `15-03-PLAN.md` — Three exception classes (`LLMLoopBudgetExceeded`, `RecursiveToolLoopError`, `LLMToolError`) + `forge_bridge.__all__` barrel growth 16→19 (D-15..D-19)
+  - Wave 2 (parallel — core surfaces; depend on Wave 1):
+    - [ ] `15-04-PLAN.md` — `_sanitize_tool_result()` in `forge_bridge/llm/_sanitize.py` + 21 unit tests (LLMTOOL-05/06, D-08/D-11)
+    - [ ] `15-05-PLAN.md` — `_adapters.py` (`_ToolAdapter` Protocol + `AnthropicToolAdapter` + `OllamaToolAdapter` + dataclasses + `_OLLAMA_TOOL_MODELS`) + `_StubAdapter` fixture + adapter wire-format tests (D-01..D-06, D-29, D-31, D-33, D-35, D-37)
+    - [ ] `15-06-PLAN.md` — Recursive-synthesis guard: `_in_tool_loop` ContextVar + `acomplete()` entry check + synthesizer `_check_safety()` AST extension + tests (LLMTOOL-07, D-12..D-14)
+    - [ ] `15-07-PLAN.md` — Public `invoke_tool(name, args)` in `mcp/registry.py` + `mcp` package re-export + tests (D-21)
+  - Wave 3 (coordinator; depends on all of Wave 2):
+    - [ ] `15-08-PLAN.md` — `LLMRouter.complete_with_tools()` coordinator wiring all LLMTOOL-03..07 helpers + 18+ deterministic unit tests against `_StubAdapter` (D-03..D-08, D-17, D-18, D-20..D-27, D-34, D-36)
+  - Wave 4 (live integration; depends on Wave 3):
+    - [ ] `15-09-PLAN.md` — `tests/integration/` subpackage + env-gated live tests against Ollama (`qwen2.5-coder:32b` on assist-01) and Anthropic API (LLMTOOL-01/02, D-32)
+  - Wave 5 (forward-looking seeds; parallel — last):
+    - [ ] `15-10-PLAN.md` — Plant 7 SEED files (DEFAULT-MODEL-BUMP-V1.4.x, CLOUD-MODEL-BUMP-V1.4.x, PARALLEL-TOOL-EXEC-V1.5, MESSAGE-PRUNING-V1.5, TOOL-EXAMPLES-V1.5, CMA-MEMORY-V1.5+, CROSS-PROVIDER-FALLBACK-V1.5)
 
 ---
 
@@ -212,5 +227,5 @@ redundant. Phase 12 already marked Superseded in the progress table at v1.3 clos
 | 12. LLM Chat | v1.3 | 0/? | Superseded by Phase 16 (FB-D) (velocity gate triggered) | - |
 | 13 (FB-A). Staged Operation Entity & Lifecycle | v1.4 | 4/4 | Complete    | 2026-04-26 |
 | 14 (FB-B). Staged Ops MCP Tools + Read API | v1.4 | 5/5 | Complete    | 2026-04-26 |
-| 15 (FB-C). LLMRouter Tool-Call Loop | v1.4 | 0/? | Open | - |
+| 15 (FB-C). LLMRouter Tool-Call Loop | v1.4 | 0/10 | Planned | - |
 | 16 (FB-D). Chat Endpoint | v1.4 | 0/? | Open | - |
