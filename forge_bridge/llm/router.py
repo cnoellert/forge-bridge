@@ -27,11 +27,15 @@ Usage:
     )
 """
 
-import os
-import logging
 import asyncio
+import collections
 import contextvars
-from typing import Optional
+import hashlib
+import json
+import logging
+import os
+import time
+from typing import Awaitable, Callable, Optional, TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
 
@@ -244,6 +248,343 @@ class LLMRouter:
         if sensitive:
             return await self._async_local(prompt, system, temperature)
         return await self._async_cloud(prompt, system, temperature)
+
+    async def complete_with_tools(
+        self,
+        prompt: str,
+        tools: list,
+        sensitive: bool = True,
+        system: Optional[str] = None,
+        temperature: float = 0.1,
+        max_iterations: int = 8,
+        max_seconds: float = 120.0,
+        tool_executor: Optional[Callable[[str, dict], Awaitable[str]]] = None,
+        tool_result_max_bytes: Optional[int] = None,
+        parallel: bool = False,
+    ) -> str:
+        """Run the FB-C agentic tool-call loop end-to-end.
+
+        Sends prompt + tool schemas to the LLM (Anthropic if sensitive=False,
+        Ollama if sensitive=True — verbatim from acomplete sensitive routing).
+        Parses tool_call requests from the response, executes each via the
+        registered MCP tools (or a caller-supplied tool_executor), feeds
+        results back, and repeats until the LLM returns a terminal response
+        or a budget cap fires.
+
+        All five LLMTOOL-03..07 safety nets are enforced here:
+          - Iteration cap + wall-clock cap → LLMLoopBudgetExceeded (LLMTOOL-03)
+          - Repeat-call detection: 3rd identical call injects synthetic is_error
+            without invoking the tool (LLMTOOL-04 / D-07)
+          - Tool result truncation at tool_result_max_bytes (LLMTOOL-05 / D-08)
+          - Tool result sanitization via _sanitize_tool_result before LLM
+            ever sees the content (LLMTOOL-06 / D-11)
+          - Recursive-synthesis guard via _in_tool_loop ContextVar set inside
+            this method (LLMTOOL-07 / D-12..D-14, layer 2 belt-and-suspenders)
+
+        Args:
+            prompt: User message.
+            tools: list[mcp.types.Tool] — registered tool surface for this loop
+                (per D-22). Empty list raises ValueError (D-23).
+            sensitive: True → Ollama (local); False → Anthropic (cloud).
+                Verbatim from acomplete() routing (D-01).
+            system: Override system prompt. Defaults to self.system_prompt
+                for local, minimal prompt for cloud (matches acomplete).
+            temperature: Sampling temperature.
+            max_iterations: Hard iteration cap (D-03 default 8). Each iteration
+                = one full round-trip (send turn → execute tools → append).
+            max_seconds: Wall-clock cap (D-04 default 120s). Wraps the loop
+                via asyncio.wait_for. Order of fire: wall-clock fires first.
+            tool_executor: Optional caller-supplied async (name, args) → str.
+                Defaults to forge_bridge.mcp.registry.invoke_tool (D-20/D-21,
+                lazy-imported only when caller passes None).
+            tool_result_max_bytes: Override the LLMTOOL-05 truncation cap
+                per call. Defaults to _TOOL_RESULT_MAX_BYTES (8192) per D-08.
+            parallel: Reserved for v1.5 (D-06). True raises NotImplementedError;
+                v1.4 ships serial-only.
+
+        Returns:
+            Final assistant text from the terminal turn.
+
+        Raises:
+            ValueError: If tools is empty (D-23).
+            NotImplementedError: If parallel=True (D-06 v1.5 path).
+            RecursiveToolLoopError: If called from within an outer
+                complete_with_tools() — the _in_tool_loop ContextVar guard
+                fires (LLMTOOL-07 / D-13).
+            LLMLoopBudgetExceeded: If max_iterations or max_seconds fires
+                (LLMTOOL-03). reason field is "max_iterations" or "max_seconds".
+            LLMToolError: On unrecoverable adapter / API errors (provider
+                5xx after SDK retries exhausted).
+        """
+        # Imported here to avoid module-load circular import (the helper module
+        # imports LLMToolError from this file).
+        from forge_bridge.llm._adapters import (
+            AnthropicToolAdapter,
+            OllamaToolAdapter,
+            ToolCallResult,
+        )
+        from forge_bridge.llm._sanitize import (
+            _sanitize_tool_result,
+            _TOOL_RESULT_MAX_BYTES,
+        )
+
+        # ---- Pre-loop validation (D-13, D-23, D-06) -----------------------
+
+        # D-13 belt-and-suspenders: refuse to start a new tool-call loop from
+        # within an existing one. Mirror of the acomplete() entry check.
+        if _in_tool_loop.get():
+            raise RecursiveToolLoopError(
+                "complete_with_tools() called from within complete_with_tools() — "
+                "recursive LLM call blocked. See LLMTOOL-07 / D-12..D-14."
+            )
+
+        # D-23: empty tools rejected before adapter init (defensive — no
+        # silent fall-through to plain completion semantics).
+        if not tools:
+            raise ValueError(
+                "complete_with_tools requires at least one tool; "
+                "use acomplete() for plain completion"
+            )
+
+        # D-06: parallel=True is reserved for v1.5; advertised in the kwarg
+        # surface to signal the trajectory.
+        if parallel:
+            raise NotImplementedError(
+                "parallel=True reserved for v1.5; v1.4 ships serial-only "
+                "(per D-06 — Flame's idle-event queue serializes anyway). "
+                "See SEED-PARALLEL-TOOL-EXEC-V1.5 in .planning/seeds/."
+            )
+
+        # Resolve effective truncation cap (D-08 override path).
+        effective_max_bytes = (
+            tool_result_max_bytes
+            if tool_result_max_bytes is not None
+            else _TOOL_RESULT_MAX_BYTES
+        )
+
+        # Default tool executor: forge_bridge.mcp.registry.invoke_tool (D-21).
+        # Lazy import — only when caller did NOT pass tool_executor.
+        if tool_executor is None:
+            from forge_bridge.mcp.registry import invoke_tool as _default_executor
+            tool_executor = _default_executor
+
+        # ---- Adapter selection (D-01 verbatim from acomplete routing) -----
+
+        if sensitive:
+            adapter = OllamaToolAdapter(self._get_local_native_client(), self.local_model)
+            sys_msg = system if system is not None else self.system_prompt
+        else:
+            adapter = AnthropicToolAdapter(self._get_cloud_client(), self.cloud_model)
+            sys_msg = system or "You are a VFX pipeline assistant."
+
+        # ---- Loop state ---------------------------------------------------
+
+        state = adapter.init_state(
+            prompt=prompt, system=sys_msg, tools=tools, temperature=temperature,
+        )
+        seen_calls: collections.Counter = collections.Counter()
+        registered_names = {t.name for t in tools}
+        started = time.monotonic()
+        prompt_tokens_total = 0
+        completion_tokens_total = 0
+        completed_iterations = 0
+
+        # ---- Loop body (LLMTOOL-07 SET inside try/finally) ----------------
+
+        async def _loop_body() -> str:
+            nonlocal prompt_tokens_total, completion_tokens_total, completed_iterations
+            nonlocal state
+
+            for iteration in range(max_iterations):
+                turn_start = time.monotonic()
+                response = await adapter.send_turn(state)
+
+                prompt_tokens_total += response.usage_tokens[0]
+                completion_tokens_total += response.usage_tokens[1]
+                completed_iterations = iteration + 1
+
+                # Terminal: no more tool calls — emit terminal log + return text.
+                if not response.tool_calls:
+                    elapsed_ms = int((time.monotonic() - turn_start) * 1000)
+                    logger.info(
+                        "tool-call iter=%d tool= args_hash= prompt_tokens=%d "
+                        "completion_tokens=%d elapsed_ms=%d status=terminal",
+                        iteration + 1,
+                        response.usage_tokens[0],
+                        response.usage_tokens[1],
+                        elapsed_ms,
+                    )
+                    return response.text
+
+                # Process tool calls (serial — D-06: tool_calls[:1] for non-parallel).
+                results: list[ToolCallResult] = []
+                effective_calls = (
+                    response.tool_calls if adapter.supports_parallel
+                    else response.tool_calls[:1]
+                )
+
+                for call in effective_calls:
+                    # D-26 args hash for log line (NEVER log raw args content).
+                    args_canonical = json.dumps(call.arguments, sort_keys=True)
+                    args_hash = hashlib.sha256(
+                        args_canonical.encode("utf-8")
+                    ).hexdigest()[:8]
+
+                    # D-07 repeat-call detection.
+                    repeat_key = (call.tool_name, args_canonical)
+                    seen_calls[repeat_key] += 1
+                    if seen_calls[repeat_key] >= 3:
+                        synthetic = (
+                            f"You have called {call.tool_name} with the same "
+                            f"arguments {seen_calls[repeat_key]} times. "
+                            "Try different arguments or stop calling this tool."
+                        )
+                        results.append(ToolCallResult(
+                            tool_call_ref=call.ref,
+                            tool_name=call.tool_name,
+                            content=_sanitize_tool_result(synthetic, max_bytes=effective_max_bytes),
+                            is_error=True,
+                        ))
+                        elapsed_ms = int((time.monotonic() - turn_start) * 1000)
+                        logger.info(
+                            "tool-call iter=%d tool=%s args_hash=%s prompt_tokens=%d "
+                            "completion_tokens=%d elapsed_ms=%d status=repeat_blocked",
+                            iteration + 1, call.tool_name, args_hash,
+                            response.usage_tokens[0], response.usage_tokens[1], elapsed_ms,
+                        )
+                        continue
+
+                    # Hallucinated tool name (research §4.3) — caught BEFORE invoke.
+                    if call.tool_name not in registered_names:
+                        msg = (
+                            f"ERROR: tool '{call.tool_name}' is not registered. "
+                            f"Available tools: {', '.join(sorted(registered_names))}"
+                        )
+                        results.append(ToolCallResult(
+                            tool_call_ref=call.ref,
+                            tool_name=call.tool_name,
+                            content=_sanitize_tool_result(msg, max_bytes=effective_max_bytes),
+                            is_error=True,
+                        ))
+                        elapsed_ms = int((time.monotonic() - turn_start) * 1000)
+                        logger.info(
+                            "tool-call iter=%d tool=%s args_hash=%s prompt_tokens=%d "
+                            "completion_tokens=%d elapsed_ms=%d status=hallucinated",
+                            iteration + 1, call.tool_name, args_hash,
+                            response.usage_tokens[0], response.usage_tokens[1], elapsed_ms,
+                        )
+                        continue
+
+                    # Per-tool sub-budget (D-05): max(1.0, min(30.0, remaining)).
+                    remaining = max_seconds - (time.monotonic() - started)
+                    per_tool_budget = max(1.0, min(30.0, remaining))
+
+                    # Tool execution wrapped in (Exception, SystemExit) per D-34.
+                    status = "continuing"
+                    try:
+                        raw_result = await asyncio.wait_for(
+                            tool_executor(call.tool_name, call.arguments),
+                            timeout=per_tool_budget,
+                        )
+                        result_text = _sanitize_tool_result(
+                            str(raw_result), max_bytes=effective_max_bytes,
+                        )
+                        results.append(ToolCallResult(
+                            tool_call_ref=call.ref,
+                            tool_name=call.tool_name,
+                            content=result_text,
+                            is_error=False,
+                        ))
+                    except asyncio.TimeoutError:
+                        msg = f"ERROR: tool '{call.tool_name}' timed out after {per_tool_budget:.1f}s"
+                        results.append(ToolCallResult(
+                            tool_call_ref=call.ref,
+                            tool_name=call.tool_name,
+                            content=_sanitize_tool_result(msg, max_bytes=effective_max_bytes),
+                            is_error=True,
+                        ))
+                        status = "tool_timeout"
+                    except KeyError as exc:
+                        # invoke_tool raises KeyError on hallucinated name — message
+                        # already includes available-tool list per plan 15-07.
+                        # (Defense-in-depth: we already check registered_names above,
+                        # but the executor may know about a different surface.)
+                        msg = f"ERROR: {exc!s}"  # KeyError msg is structural, no creds
+                        results.append(ToolCallResult(
+                            tool_call_ref=call.ref,
+                            tool_name=call.tool_name,
+                            content=_sanitize_tool_result(msg, max_bytes=effective_max_bytes),
+                            is_error=True,
+                        ))
+                        status = "hallucinated"
+                    except (Exception, SystemExit) as exc:  # D-34 belt-and-suspenders
+                        # Phase 8 cf221fe: log type name only, never str(exc) which
+                        # may carry credentials. The LLM gets the type name + a
+                        # generic error message — enough to retry with corrected args.
+                        exc_type = type(exc).__name__
+                        msg = f"ERROR: tool {call.tool_name!r} raised {exc_type}"
+                        results.append(ToolCallResult(
+                            tool_call_ref=call.ref,
+                            tool_name=call.tool_name,
+                            content=_sanitize_tool_result(msg, max_bytes=effective_max_bytes),
+                            is_error=True,
+                        ))
+                        status = "tool_error"
+
+                    elapsed_ms = int((time.monotonic() - turn_start) * 1000)
+                    logger.info(
+                        "tool-call iter=%d tool=%s args_hash=%s prompt_tokens=%d "
+                        "completion_tokens=%d elapsed_ms=%d status=%s",
+                        iteration + 1, call.tool_name, args_hash,
+                        response.usage_tokens[0], response.usage_tokens[1], elapsed_ms, status,
+                    )
+
+                # Update state with assistant turn + tool results.
+                state = adapter.append_results(state, response, results)
+
+            # Iteration cap exhausted (D-03).
+            raise LLMLoopBudgetExceeded(
+                "max_iterations", max_iterations, time.monotonic() - started,
+            )
+
+        # ---- LLMTOOL-07 ContextVar SET (try/finally for cleanup, D-12) ----
+
+        token = _in_tool_loop.set(True)
+        terminal_reason = "end_turn"
+        try:
+            try:
+                # D-04 wall-clock cap wraps the entire loop.
+                result = await asyncio.wait_for(_loop_body(), timeout=max_seconds)
+                return result
+            except asyncio.TimeoutError:
+                terminal_reason = "max_seconds"
+                raise LLMLoopBudgetExceeded(
+                    "max_seconds", -1, time.monotonic() - started,
+                ) from None
+            except LLMLoopBudgetExceeded as exc:
+                terminal_reason = exc.reason
+                raise
+            except RecursiveToolLoopError:
+                terminal_reason = "recursive_call"
+                raise
+            except LLMToolError:
+                terminal_reason = "tool_loop_error"
+                raise
+            except ValueError:
+                terminal_reason = "value_error"
+                raise
+        finally:
+            _in_tool_loop.reset(token)
+            # D-25 per-session terminal log (always emitted, success or failure).
+            logger.info(
+                "tool-call session complete iter=%d elapsed_s=%.1f "
+                "prompt_tokens_total=%d completion_tokens_total=%d reason=%s",
+                completed_iterations,
+                time.monotonic() - started,
+                prompt_tokens_total,
+                completion_tokens_total,
+                terminal_reason,
+            )
 
     def complete(self, prompt: str, **kwargs) -> str:
         """
