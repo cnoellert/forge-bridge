@@ -26,7 +26,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Optional, Protocol
 
 from forge_bridge.llm.router import LLMToolError
 
@@ -137,6 +137,7 @@ class _ToolAdapter(Protocol):
         system: str,
         tools: list[Any],
         temperature: float,
+        messages: Optional[list[dict]] = None,    # D-02a (FB-D plan 16-01)
     ) -> Any: ...
 
     async def send_turn(self, state: Any) -> _TurnResponse: ...
@@ -172,9 +173,17 @@ class AnthropicToolAdapter:
         system: str,
         tools: list[Any],
         temperature: float,
+        messages: Optional[list[dict]] = None,    # D-02a (FB-D plan 16-01)
     ) -> dict:
+        # D-02a Pattern B: when messages is provided, use it verbatim;
+        # otherwise auto-wrap prompt into a single user turn (legacy path).
+        initial_messages = (
+            list(messages)
+            if messages is not None
+            else [{"role": "user", "content": prompt}]
+        )
         return {
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": initial_messages,
             "system": system,
             "temperature": temperature,
             "tools_source": list(tools),
@@ -321,13 +330,24 @@ class OllamaToolAdapter:
         system: str,
         tools: list[Any],
         temperature: float,
+        messages: Optional[list[dict]] = None,    # D-02a (FB-D plan 16-01)
     ) -> dict:
-        messages: list[dict] = []
-        if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
+        # D-02a Pattern B: when messages is provided, use it verbatim
+        # (system is injected as a leading entry only if not already present);
+        # otherwise auto-wrap prompt into [system?, user] (legacy path).
+        if messages is not None:
+            initial_messages: list[dict] = list(messages)
+            # Ollama expects the system prompt as the leading message; only
+            # prepend if the caller did not already include one.
+            if system and not (initial_messages and initial_messages[0].get("role") == "system"):
+                initial_messages = [{"role": "system", "content": system}] + initial_messages
+        else:
+            initial_messages = []
+            if system:
+                initial_messages.append({"role": "system", "content": system})
+            initial_messages.append({"role": "user", "content": prompt})
         return {
-            "messages": messages,
+            "messages": initial_messages,
             "temperature": temperature,
             "tools_compiled": self._compile_tools(tools),
         }

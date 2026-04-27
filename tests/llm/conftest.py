@@ -15,6 +15,7 @@ Provides:
 """
 from __future__ import annotations
 
+from typing import Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -58,13 +59,24 @@ class _StubAdapter:
         system: str,
         tools: list,
         temperature: float,
+        messages: Optional[list[dict]] = None,    # D-02a (FB-D plan 16-01)
     ) -> dict:
+        # D-02a: mirror the production adapters — when messages is provided,
+        # the stub records it verbatim; otherwise auto-wrap prompt.
+        history = (
+            list(messages)
+            if messages is not None
+            else [{"role": "user", "content": prompt}]
+        )
         return {
             "prompt": prompt,
             "system": system,
             "tools": list(tools),
             "temperature": temperature,
-            "history": [{"role": "user", "content": prompt}],
+            "history": history,
+            # Public for tests to inspect what init_state received via the
+            # D-02a messages= kwarg path (None when auto-wrap path was taken).
+            "messages_kwarg": messages,
         }
 
     async def send_turn(self, state: dict) -> _TurnResponse:

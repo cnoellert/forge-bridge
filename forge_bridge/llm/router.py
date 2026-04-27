@@ -251,7 +251,8 @@ class LLMRouter:
 
     async def complete_with_tools(
         self,
-        prompt: str,
+        prompt: str = "",
+        *,
         tools: list,
         sensitive: bool = True,
         system: Optional[str] = None,
@@ -261,6 +262,7 @@ class LLMRouter:
         tool_executor: Optional[Callable[[str, dict], Awaitable[str]]] = None,
         tool_result_max_bytes: Optional[int] = None,
         parallel: bool = False,
+        messages: Optional[list[dict]] = None,
     ) -> str:
         """Run the FB-C agentic tool-call loop end-to-end.
 
@@ -282,7 +284,16 @@ class LLMRouter:
             this method (LLMTOOL-07 / D-12..D-14, layer 2 belt-and-suspenders)
 
         Args:
-            prompt: User message.
+            prompt: User message. Defaults to "" so messages-only callers can
+                omit it. Mutually exclusive with `messages` (D-02a) — passing
+                both raises ValueError; passing neither raises ValueError.
+            messages: Optional structured-history list of dicts in {role, content,
+                tool_call_id?} shape (D-02a Pattern B — added in FB-D plan 16-01).
+                Mutually exclusive with `prompt`. When provided, the coordinator
+                uses this list verbatim as the initial state.messages without
+                auto-wrapping `prompt` into a single user turn. Roles must match
+                what the adapter recognises ("user" | "assistant" | "tool" for
+                both Ollama and Anthropic adapters).
             tools: list[mcp.types.Tool] — registered tool surface for this loop
                 (per D-22). Empty list raises ValueError (D-23).
             sensitive: True → Ollama (local); False → Anthropic (cloud).
@@ -338,6 +349,19 @@ class LLMRouter:
                 "recursive LLM call blocked. See LLMTOOL-07 / D-12..D-14."
             )
 
+        # D-02a: prompt and messages are mutually exclusive — caller picks one shape.
+        # Backwards-compat: prompt-only path remains the default; messages= is the
+        # new structured-history surface added in FB-D plan 16-01.
+        if prompt and messages is not None:
+            raise ValueError(
+                "complete_with_tools: prompt and messages are mutually exclusive — "
+                "pass one or the other (D-02a)"
+            )
+        if not prompt and messages is None:
+            raise ValueError(
+                "complete_with_tools: must provide either prompt= or messages= (D-02a)"
+            )
+
         # D-23: empty tools rejected before adapter init (defensive — no
         # silent fall-through to plain completion semantics).
         if not tools:
@@ -380,7 +404,11 @@ class LLMRouter:
         # ---- Loop state ---------------------------------------------------
 
         state = adapter.init_state(
-            prompt=prompt, system=sys_msg, tools=tools, temperature=temperature,
+            prompt=prompt,
+            system=sys_msg,
+            tools=tools,
+            temperature=temperature,
+            messages=messages,   # D-02a: structured history pass-through (may be None)
         )
         seen_calls: collections.Counter = collections.Counter()
         registered_names = {t.name for t in tools}
