@@ -19,6 +19,7 @@ dependencies = [
     "psycopg2-binary>=2.9",
     "jinja2>=3.1",
     "rich>=13.9.4",
+    "starlette<0.53",
 ]
 
 [project.scripts]
