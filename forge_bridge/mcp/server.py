@@ -130,11 +130,17 @@ async def _lifespan(mcp_server: FastMCP):
     # crash _lifespan (matches the existing console-task graceful-degradation pattern
     # at mcp/server.py:252-313). Connection errors surface only on first repo use.
     session_factory = get_async_session_factory()
+    # FB-D / Phase 16 — LLMRouter wired into ConsoleReadAPI so chat_handler
+    # (handlers.py) can reach it via app.state.console_read_api._llm_router (D-16).
+    # Construction is pure env-reading; clients are lazy on first use.
+    from forge_bridge.llm.router import LLMRouter
+    llm_router = LLMRouter()
     console_read_api = ConsoleReadAPI(
         execution_log=execution_log,
         manifest_service=manifest_service,
         console_port=console_port,
         session_factory=session_factory,   # NEW (D-05)
+        llm_router=llm_router,             # NEW (FB-D / CHAT-01..05)
     )
 
     # Step 5 — Starlette app + MCP resources/tools registration
