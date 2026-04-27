@@ -223,3 +223,159 @@ def test_llm_shim_import():
 
     assert callable(LLMRouter), "forge_bridge.llm_router.LLMRouter must be callable"
     assert callable(get_router), "forge_bridge.llm_router.get_router must be callable"
+
+
+# ── FB-C D-02 (LLMTOOL-01 prereq) — _get_local_native_client lazy slot ───────
+
+def test_local_native_client_slot_initialized_to_none():
+    """LLMRouter() must initialize _local_native_client lazy slot to None.
+
+    Mirrors the existing _local_client / _cloud_client lazy-slot pattern
+    (router.py:98-99) so complete_with_tools() ships with a clean cached slot
+    on every fresh instance.
+    """
+    from forge_bridge.llm.router import LLMRouter
+
+    r = LLMRouter()
+    assert hasattr(r, "_local_native_client"), \
+        "LLMRouter must declare _local_native_client lazy slot in __init__"
+    assert r._local_native_client is None, \
+        "_local_native_client must initialize to None (uninstantiated)"
+
+
+def test_get_local_native_client_method_exists():
+    """LLMRouter._get_local_native_client must exist as a bound method."""
+    from forge_bridge.llm.router import LLMRouter
+
+    r = LLMRouter()
+    assert hasattr(r, "_get_local_native_client"), \
+        "LLMRouter must define _get_local_native_client (D-02 lazy accessor)"
+    assert callable(r._get_local_native_client), \
+        "_get_local_native_client must be callable"
+
+
+def test_get_local_native_client_lazy_caches_returned_instance():
+    """Two consecutive calls to _get_local_native_client must return the SAME
+    object — the slot is lazy-instantiated once and cached, mirroring
+    _get_cloud_client's pattern.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from forge_bridge.llm.router import LLMRouter
+
+    r = LLMRouter()
+    mock_ollama = MagicMock()
+    mock_client_instance = MagicMock()
+    mock_ollama.AsyncClient.return_value = mock_client_instance
+    with patch.dict("sys.modules", {"ollama": mock_ollama}):
+        c1 = r._get_local_native_client()
+        c2 = r._get_local_native_client()
+    assert c1 is c2, \
+        "lazy caching broken — two calls returned different objects"
+    assert mock_ollama.AsyncClient.call_count == 1, \
+        "AsyncClient must be instantiated exactly once across repeated calls"
+
+
+def test_get_local_native_client_strips_v1_suffix_from_host():
+    """The native ollama client takes host without /v1 suffix; the router stores
+    self.local_url with the OpenAI-compat /v1 suffix (default
+    http://localhost:11434/v1) for acomplete(), so _get_local_native_client must
+    strip /v1 before passing to ollama.AsyncClient(host=...).
+    """
+    from unittest.mock import MagicMock, patch
+
+    from forge_bridge.llm.router import LLMRouter
+
+    r = LLMRouter()  # default local_url = http://localhost:11434/v1
+    assert r.local_url.endswith("/v1"), \
+        "test precondition: default local_url must keep /v1 OpenAI-compat suffix"
+
+    mock_ollama = MagicMock()
+    with patch.dict("sys.modules", {"ollama": mock_ollama}):
+        r._get_local_native_client()
+
+    call_kwargs = mock_ollama.AsyncClient.call_args.kwargs
+    host = call_kwargs.get("host")
+    assert host == "http://localhost:11434", \
+        f"host must drop /v1 (got {host!r}); native daemon endpoint, not OpenAI shim"
+
+
+def test_get_local_native_client_handles_host_without_v1_suffix():
+    """If the user supplies a local_url without the /v1 suffix already, the
+    method must pass it through unchanged (idempotent strip)."""
+    from unittest.mock import MagicMock, patch
+
+    from forge_bridge.llm.router import LLMRouter
+
+    r = LLMRouter(local_url="http://localhost:11434")
+    mock_ollama = MagicMock()
+    with patch.dict("sys.modules", {"ollama": mock_ollama}):
+        r._get_local_native_client()
+
+    call_kwargs = mock_ollama.AsyncClient.call_args.kwargs
+    assert call_kwargs.get("host") == "http://localhost:11434", \
+        "no-/v1 host must pass through unchanged"
+
+
+def test_get_local_native_client_raises_runtimeerror_when_ollama_missing():
+    """When the ollama package is not importable, _get_local_native_client must
+    raise RuntimeError whose message contains the standard install hint
+    'pip install forge-bridge[llm]' — verbatim mirror of _get_cloud_client's
+    error path so the UX of the install-extras hint is preserved across all
+    three lazy-import sites.
+    """
+    import importlib
+    import sys
+
+    from forge_bridge.llm.router import LLMRouter
+
+    r = LLMRouter()
+    saved = sys.modules.pop("ollama", None)
+    sys.modules["ollama"] = None  # type: ignore[assignment]  # forces ImportError on next import
+    try:
+        with pytest.raises(RuntimeError) as exc_info:
+            r._get_local_native_client()
+        msg = str(exc_info.value)
+        assert "pip install forge-bridge[llm]" in msg, \
+            f"RuntimeError must carry the install hint; got: {msg!r}"
+        assert "ollama" in msg.lower(), \
+            f"RuntimeError must mention the missing package name; got: {msg!r}"
+    finally:
+        if saved is not None:
+            sys.modules["ollama"] = saved
+        else:
+            sys.modules.pop("ollama", None)
+        # Re-import in case any consumer cached a None-bound module reference.
+        if "ollama" in sys.modules and sys.modules["ollama"] is None:
+            sys.modules.pop("ollama", None)
+        importlib.invalidate_caches()
+
+
+def test_existing_local_and_cloud_accessors_unchanged():
+    """The new _get_local_native_client lazy slot must not regress the existing
+    _get_local_client (OpenAI shim) or _get_cloud_client (AsyncAnthropic) lazy
+    accessors. acomplete() continues to consume _get_local_client; this plan
+    only ADDS the third slot."""
+    from unittest.mock import MagicMock, patch
+
+    from forge_bridge.llm.router import LLMRouter
+
+    r = LLMRouter()
+    # Existing lazy slots still exist and start as None.
+    assert r._local_client is None
+    assert r._cloud_client is None
+
+    # _get_local_client still wires AsyncOpenAI.
+    mock_openai = MagicMock()
+    with patch.dict("sys.modules", {"openai": mock_openai}):
+        r._get_local_client()
+    assert mock_openai.AsyncOpenAI.called, \
+        "_get_local_client must still call openai.AsyncOpenAI (regression)"
+
+    # _get_cloud_client still wires AsyncAnthropic.
+    r2 = LLMRouter()
+    mock_anthropic = MagicMock()
+    with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
+        r2._get_cloud_client()
+    assert mock_anthropic.AsyncAnthropic.called, \
+        "_get_cloud_client must still call anthropic.AsyncAnthropic (regression)"
