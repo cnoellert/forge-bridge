@@ -5,6 +5,7 @@ Public API:
     from forge_bridge import (
         # LLM routing
         LLMRouter, get_router,
+        LLMLoopBudgetExceeded, RecursiveToolLoopError, LLMToolError,
         # Learning pipeline
         ExecutionLog, ExecutionRecord, StorageCallback, StoragePersistence,
         SkillSynthesizer, PreSynthesisContext, PreSynthesisHook,
@@ -29,7 +30,13 @@ except PackageNotFoundError:
     __version__ = "0.0.0+unknown"
 
 # LLM routing
-from forge_bridge.llm.router import LLMRouter, get_router
+from forge_bridge.llm.router import (
+    LLMRouter,
+    get_router,
+    LLMLoopBudgetExceeded,
+    RecursiveToolLoopError,
+    LLMToolError,
+)
 
 # Learning pipeline
 from forge_bridge.learning.execution_log import (
@@ -56,6 +63,9 @@ __all__ = [
     # LLM routing
     "LLMRouter",
     "get_router",
+    "LLMLoopBudgetExceeded",
+    "RecursiveToolLoopError",
+    "LLMToolError",
     # Learning pipeline
     "ExecutionLog",
     "ExecutionRecord",
