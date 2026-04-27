@@ -551,3 +551,43 @@ class TestObservabilityLogs:
                     )
         terminal = [r.message for r in caplog.records if "session complete" in r.message]
         assert any("reason=max_iterations" in m for m in terminal)
+
+
+# ---------------------------------------------------------------------------
+# Plan 16-01 Task 1 RED scaffold — D-02a Pattern B signature surface
+# (Full pin lives in TestCompleteWithToolsMessagesKwarg below, added in Task 2.)
+# ---------------------------------------------------------------------------
+
+
+class TestMessagesKwargSignature:
+    """Plan 16-01 Task 1 RED scaffold — verifies the public surface contract.
+
+    These two tests pin the structural shape of `messages: Optional[list[dict]] = None`
+    on `LLMRouter.complete_with_tools` BEFORE the implementation lands. They are
+    inspect-only (no event loop, no adapter patching) to keep the RED commit
+    minimal and unambiguous.
+    """
+
+    def test_messages_kwarg_is_in_signature_with_default_None(self):
+        """D-02a: complete_with_tools accepts messages: Optional[list[dict]] = None."""
+        import inspect
+        from forge_bridge.llm.router import LLMRouter
+
+        sig = inspect.signature(LLMRouter.complete_with_tools)
+        assert "messages" in sig.parameters, (
+            "complete_with_tools must accept a `messages` kwarg per D-02a"
+        )
+        assert sig.parameters["messages"].default is None, (
+            "messages= must default to None for backwards-compat with prompt= callers"
+        )
+
+    def test_prompt_default_is_empty_string_for_backcompat(self):
+        """D-02a: prompt= remains accepted but defaults to "" so messages-only callers
+        don't need to pass a sentinel string."""
+        import inspect
+        from forge_bridge.llm.router import LLMRouter
+
+        sig = inspect.signature(LLMRouter.complete_with_tools)
+        assert sig.parameters["prompt"].default == "", (
+            "prompt= must default to '' so messages-only callers can omit it"
+        )
