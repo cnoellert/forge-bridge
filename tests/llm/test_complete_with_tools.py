@@ -591,3 +591,102 @@ class TestMessagesKwargSignature:
         assert sig.parameters["prompt"].default == "", (
             "prompt= must default to '' so messages-only callers can omit it"
         )
+
+
+# ---------------------------------------------------------------------------
+# Plan 16-01 Task 2 — Full D-02a Pattern B contract pin
+# ---------------------------------------------------------------------------
+
+
+class TestCompleteWithToolsMessagesKwarg:
+    """D-02a Pattern B: complete_with_tools accepts an optional messages= kwarg
+    that bypasses the prompt auto-wrap. Mutually exclusive with prompt=.
+
+    These tests pin the FB-D contract — without this overload, FB-D's chat
+    handler would have to lossy-stitch the messages list into a single string,
+    losing structured tool-role boundaries from prior turns.
+    """
+
+    @pytest.mark.asyncio
+    async def test_complete_with_tools_messages_kwarg_happy_path(self):
+        """messages= replaces prompt auto-wrap; adapter sees the verbatim list.
+
+        Verifies the structured-history pass-through end-to-end:
+          1. Caller passes messages=[user, assistant, tool] without a prompt.
+          2. Coordinator forwards messages= to adapter.init_state.
+          3. Adapter uses the list verbatim — NO auto-wrap of prompt.
+          4. Loop runs to a terminal response.
+
+        The _StubAdapter (D-02a-aware) records `messages_kwarg` in state so we
+        can assert the coordinator did not silently coerce the list.
+        """
+        history = [
+            {"role": "user", "content": "what synthesis tools were created?"},
+            {"role": "assistant", "content": "Let me check."},
+            {"role": "tool", "content": "found 3 tools", "tool_call_id": "abc"},
+        ]
+        adapter = _StubAdapter([_make_terminal_turn(text="three tools were created")])
+        router = LLMRouter()
+        _patch_clients(router)
+        with _patch_adapters(adapter):
+            result = await router.complete_with_tools(
+                messages=history,
+                tools=[_FakeTool("forge_list")],
+                tool_executor=AsyncMock(return_value="ignored"),
+            )
+        # Loop returned the terminal text from the stub.
+        assert result == "three tools were created"
+        # Adapter saw the verbatim history (no auto-wrap into a synthetic single-turn user message).
+        assert adapter.last_state is not None
+        assert adapter.last_state["messages_kwarg"] == history, (
+            "adapter.init_state must receive the messages list verbatim per D-02a"
+        )
+        # The stub's `history` field was seeded from messages= (not a prompt auto-wrap).
+        assert adapter.last_state["history"] == history
+
+    @pytest.mark.asyncio
+    async def test_complete_with_tools_prompt_and_messages_raises(self):
+        """D-02a: passing both is a usage error — mutual-exclusion guard fires."""
+        router = LLMRouter()
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            await router.complete_with_tools(
+                prompt="hi",
+                messages=[{"role": "user", "content": "hi"}],
+                tools=[_FakeTool("forge_x")],
+            )
+
+    @pytest.mark.asyncio
+    async def test_complete_with_tools_neither_prompt_nor_messages_raises(self):
+        """D-02a: caller must pick a shape — empty prompt + None messages is a usage error."""
+        router = LLMRouter()
+        with pytest.raises(ValueError, match="must provide either"):
+            await router.complete_with_tools(tools=[_FakeTool("forge_x")])
+
+    @pytest.mark.asyncio
+    async def test_complete_with_tools_prompt_only_backcompat(self):
+        """Existing prompt= callers continue to work without messages=.
+
+        Asserts:
+          1. The terminal text is returned unchanged.
+          2. The adapter received messages_kwarg=None (auto-wrap path).
+          3. The adapter's auto-wrapped history matches [{"role":"user",...}].
+        """
+        adapter = _StubAdapter([_make_terminal_turn(text="legacy ok")])
+        router = LLMRouter()
+        _patch_clients(router)
+        with _patch_adapters(adapter):
+            result = await router.complete_with_tools(
+                prompt="legacy prompt",
+                tools=[_FakeTool("forge_x")],
+                tool_executor=AsyncMock(return_value="ignored"),
+            )
+        assert result == "legacy ok"
+        assert adapter.last_state is not None
+        # Auto-wrap path was taken — messages_kwarg is None, history is the
+        # synthetic single-turn user message.
+        assert adapter.last_state["messages_kwarg"] is None, (
+            "prompt-only path must NOT pass a messages list to init_state"
+        )
+        assert adapter.last_state["history"] == [
+            {"role": "user", "content": "legacy prompt"}
+        ]
