@@ -80,6 +80,14 @@ def chat_app_fixed_response():
     return build_console_app(api)
 
 
+async def _passthrough_filter(tools):
+    """Pass-through stub for filter_tools_by_reachable_backends — keeps the
+    real TCP probe (port 9999 / WS server) from running in Strategy-A test
+    context. The Strategy-B live test exercises the real filter on the live
+    deploy host."""
+    return tools
+
+
 # ---------------------------------------------------------------------------
 # Helpers — describe the structural shape both clients must agree on
 # ---------------------------------------------------------------------------
@@ -138,6 +146,9 @@ class TestChatParityStructural:
         with patch(
             "forge_bridge.mcp.server.mcp.list_tools",
             new=AsyncMock(return_value=[_make_test_tool()]),
+        ), patch(
+            "forge_bridge.console.handlers.filter_tools_by_reachable_backends",
+            side_effect=_passthrough_filter,
         ):
             # Client 1 — browser-shape (minimal headers).
             async with httpx.AsyncClient(
@@ -213,6 +224,9 @@ class TestChatParityStructural:
         with patch(
             "forge_bridge.mcp.server.mcp.list_tools",
             new=AsyncMock(return_value=[_make_test_tool()]),
+        ), patch(
+            "forge_bridge.console.handlers.filter_tools_by_reachable_backends",
+            side_effect=_passthrough_filter,
         ):
             async with httpx.AsyncClient(
                 transport=transport, base_url="http://test",

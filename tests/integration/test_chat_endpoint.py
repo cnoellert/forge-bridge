@@ -99,16 +99,27 @@ def chat_app():
     return app, captured
 
 
+async def _passthrough_filter(tools):
+    """Pass-through stub for filter_tools_by_reachable_backends — keeps the
+    real TCP probe (port 9999 / WS server) from running in test context.
+    Tests that exercise the filter directly live in test_chat_tool_filter.py."""
+    return tools
+
+
 @pytest_asyncio.fixture
 async def async_client(chat_app):
     """httpx.AsyncClient + ASGITransport — runs the ASGI app in-process,
     no uvicorn subprocess. Patches mcp.list_tools so the empty-registry
-    guard does NOT short-circuit any test."""
+    guard does NOT short-circuit any test, and patches the backend-aware
+    tool filter to a pass-through (no real TCP probe in test context)."""
     app, captured = chat_app
     transport = ASGITransport(app=app)
     with patch(
         "forge_bridge.mcp.server.mcp.list_tools",
         new=AsyncMock(return_value=[_make_test_tool()]),
+    ), patch(
+        "forge_bridge.console.handlers.filter_tools_by_reachable_backends",
+        side_effect=_passthrough_filter,
     ):
         async with httpx.AsyncClient(
             transport=transport, base_url="http://test",

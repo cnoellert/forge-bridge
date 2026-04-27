@@ -5,7 +5,7 @@ Phase 16.1 (FB-D gap closure). The chat handler invokes
 `complete_with_tools(tools=...)` to drop tools whose runtime backend
 is unreachable on this host. Without this filter the LLM picks tools
 that would hang at execution time (Bug C — 49-tool full-registry hang
-on bare assist-01, see .planning/phases/16-fb-d-chat-endpoint/16-VERIFICATION.md).
+on a bare deploy host with no Flame backend, see Phase 16 VERIFICATION.md).
 
 BACKEND CLASSIFICATION (NOT prefix-based — see in-process exception list):
 
