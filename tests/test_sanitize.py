@@ -143,3 +143,39 @@ class TestApplySizeBudget:
 class TestAllowlistConstant:
     def test_allowlist_contains_four_prefixes(self):
         assert SANITIZE_ALLOWLIST == ("project:", "phase:", "shot:", "type:")
+
+
+class TestSanitizePatternsShim:
+    """FB-C D-09/D-10: INJECTION_MARKERS and _CONTROL_CHAR_RE are hoisted to
+    forge_bridge._sanitize_patterns. forge_bridge.learning.sanitize re-exports
+    them as a backwards-compat shim. Both module paths must resolve to the
+    SAME object — not a copy — so a future edit to the hoisted module
+    propagates to every consumer.
+    """
+
+    def test_injection_markers_is_same_object(self):
+        from forge_bridge._sanitize_patterns import INJECTION_MARKERS as hoisted
+        from forge_bridge.learning.sanitize import INJECTION_MARKERS as shimmed
+        assert hoisted is shimmed, (
+            "INJECTION_MARKERS must be the SAME tuple object across both modules; "
+            "if learning/sanitize.py forks the constant, FB-C's _sanitize_tool_result "
+            "and Phase 7's _sanitize_tag will silently diverge."
+        )
+
+    def test_control_char_re_is_same_object(self):
+        from forge_bridge._sanitize_patterns import _CONTROL_CHAR_RE as hoisted
+        from forge_bridge.learning.sanitize import _CONTROL_CHAR_RE as shimmed
+        assert hoisted is shimmed, (
+            "_CONTROL_CHAR_RE must be the SAME compiled pattern object across "
+            "both modules per FB-C D-09/D-10."
+        )
+
+    def test_injection_markers_count_locked(self):
+        """If new markers are added, they MUST be added to _sanitize_patterns.py
+        (the single source of truth), not to a fork in learning/sanitize.py."""
+        from forge_bridge._sanitize_patterns import INJECTION_MARKERS
+        assert len(INJECTION_MARKERS) == 8, (
+            f"INJECTION_MARKERS currently has {len(INJECTION_MARKERS)} entries; "
+            "if you intentionally added a new marker, update this assertion AND "
+            "the shim source-of-truth comment in learning/sanitize.py."
+        )
