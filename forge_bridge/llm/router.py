@@ -30,6 +30,7 @@ Usage:
 import os
 import logging
 import asyncio
+import contextvars
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -125,6 +126,27 @@ class LLMToolError(RuntimeError):
     """
 
 
+# ---------------------------------------------------------------------------
+# FB-C recursive-synthesis guard (LLMTOOL-07, D-12..D-14)
+# ---------------------------------------------------------------------------
+#
+# Belt-and-suspenders against synthesized tools that try to call back into the
+# LLM (recursive synthesis attack surface — research §6.3). Three layers:
+#
+#   1. Static AST check at synthesis time (forge_bridge/learning/synthesizer.py
+#      _check_safety() — extended in plan 15-06 Task 2 to reject any
+#      synthesized code that imports from forge_bridge.llm).
+#   2. Runtime ContextVar check at LLM-call time (this declaration). Set inside
+#      complete_with_tools() by Wave 3 plan 15-08 via try/finally; checked on
+#      entry to acomplete() (this plan Task 1) and complete_with_tools() (Wave 3).
+#   3. Process-level safeguard via existing synthesizer quarantine (Phase 3 —
+#      already shipped — bad code never makes it into the registered tool surface).
+
+_in_tool_loop: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "_in_tool_loop", default=False
+)
+
+
 class LLMRouter:
     """
     Two-tier async LLM router for forge-bridge pipeline tools.
@@ -202,7 +224,23 @@ class LLMRouter:
 
         Raises:
             RuntimeError: If the selected backend is unavailable.
+            RecursiveToolLoopError: If called from within complete_with_tools()
+                — the _in_tool_loop ContextVar is True. Belt-and-suspenders
+                against the recursive-synthesis attack surface (LLMTOOL-07,
+                D-12/D-13, research §6.3).
         """
+        # FB-C D-13: belt-and-suspenders runtime guard against recursive synthesis.
+        # If a synthesized tool body managed to bypass the synthesizer's static
+        # AST blocklist (D-14, plan 15-06 Task 2) — e.g., via importlib dynamic
+        # import — and called acomplete() from inside a tool-call loop, this
+        # entry check stops the recursion before any provider call is made.
+        if _in_tool_loop.get():
+            raise RecursiveToolLoopError(
+                "acomplete() called from within complete_with_tools() — "
+                "recursive LLM call blocked. See LLMTOOL-07 / D-12..D-14 "
+                "and forge_bridge/learning/synthesizer.py:_check_safety."
+            )
+
         if sensitive:
             return await self._async_local(prompt, system, temperature)
         return await self._async_cloud(prompt, system, temperature)
