@@ -61,7 +61,8 @@ Full details: `.planning/milestones/v1.3-ROADMAP.md`
 - [x] **Phase 13 (FB-A): Staged Operation Entity & Lifecycle** — `entity_type='staged_operation'` with proposed→approved→executed/rejected/failed state machine + `DBEvent` audit trail per transition (completed 2026-04-26)
 - [x] **Phase 14 (FB-B): Staged Ops MCP Tools + Read API** — `forge_list/get/approve/reject_staged` MCP tools + `/api/v1/staged/*` HTTP routes + `forge://staged/pending` resource via single `ConsoleReadAPI` facade (completed 2026-04-26)
 - [x] **Phase 15 (FB-C): LLMRouter Tool-Call Loop** — `complete_with_tools()` agentic coordinator + thin Anthropic + Ollama adapters; iteration cap (default 8) + wall-clock cap (default 120s); repeat-call detection, 8 KB result cap, sanitization boundary, recursive-synthesis guard ✅ 2026-04-27 (operator UAT pending for LLMTOOL-01/02)
-- [x] **Phase 16 (FB-D): Chat Endpoint** — `/api/v1/chat` over `complete_with_tools()` with rate limiting, sanitization end-to-end, single chat surface for Web UI + projekt-forge Flame hooks (absorbs superseded Phase 12) (completed 2026-04-27)
+- [x] **Phase 16 (FB-D): Chat Endpoint** — `/api/v1/chat` over `complete_with_tools()` with rate limiting, sanitization end-to-end, single chat surface for Web UI + projekt-forge Flame hooks (absorbs superseded Phase 12) (complete 2026-04-27; CHAT-04 deploy gap routed to Phase 16.1)
+- [ ] **Phase 16.1 (FB-D gap closure): Chat Tool-List Hang + Wiring Regression Guards** — Close the CHAT-04 artist UAT gap surfaced in the 2026-04-27 assist-01 deploy: bisect + fix the 49-tool `complete_with_tools()` hang, add boot-time regression guard for LLMRouter wiring, migrate `TemplateResponse` callers, re-run the artist UAT (inserted 2026-04-27 per Phase 10/10.1 precedent)
 
 ## Phase Details
 
@@ -218,6 +219,28 @@ redundant. Phase 12 already marked Superseded in the progress table at v1.3 clos
 
 ---
 
+### Phase 16.1 (FB-D gap closure): Chat Tool-List Hang + Wiring Regression Guards (INSERTED)
+
+**Goal**: The CHAT-04 fresh-operator artist UAT actually completes on assist-01 — an artist asks "what synthesis tools were created this week?" in the Web UI chat panel against live `qwen2.5-coder:32b` and receives a useful, plain-English answer within <60s. The 49-tool `complete_with_tools()` hang is bisected and fixed via a tool-list scoping policy for chat; boot-time regression guard prevents LLMRouter wiring drift; deprecated `TemplateResponse(name, ctx)` callers are migrated so the `starlette<0.53` pin can be dropped; an integration-style test exercises the full chat → MCP tool registry → live Ollama path so this class of gap can't reach a deploy again.
+
+**Depends on**: Phase 16 (FB-D) (the shipped chat endpoint surface; 16.1 patches it, doesn't replace it)
+**Inserted**: 2026-04-27 after Phase 16's CHAT-04 deploy UAT FAIL on assist-01 (three Phase-16 wiring/integration bugs surfaced; Bugs A and B patched inline this session, Bug C is structural and routes here per Phase 10/10.1 precedent)
+**Plans**: TBD (gathered via `/gsd-discuss-phase 16.1` → `/gsd-plan-phase 16.1`)
+
+**Requirements**: CHAT-04 (re-verifies the v1.4 must-have that failed in deploy)
+
+**Success Criteria** (what must be TRUE):
+  1. Tool-list bisection produces a deterministic data point: at what tool count (or which specific tool) does `complete_with_tools()` against live `qwen2.5-coder:32b` on assist-01 tip from "fast" (1–10s) to "hangs the full 120s budget with `prompt_tokens_total=0`"? The bisection is captured in a synthetic-test artifact that future regressions can rerun.
+  2. Chat tool-list scoping policy is implemented per the G-1 decision driven through `/gsd-discuss-phase 16.1` (backend-aware filtering vs. static "core" set vs. LLM-assisted routing vs. hard cap — the discuss-phase agent picks one). After the policy ships, `chat_handler` against the full real `mcp.list_tools()` registry returns a useful response on assist-01 within `<60s`, not the 120s `loop_budget_exceeded` hang.
+  3. Boot-time regression guard exists: a TestClient + `_lifespan` smoke test asserts `app.state.console_read_api._llm_router is not None` after boot. Single test, ~10 LOC. This catches the Bug B class of "ConsoleReadAPI constructed without `llm_router=`" silently breaking chat.
+  4. Strategy B integration test (`FB_INTEGRATION_TESTS=1` gated) exercises `chat_handler` end-to-end with the real `mcp.list_tools()` registry plus live Ollama, asserts a useful response within budget, and is wired into the documented integration-test invocation. Mocked-router-only coverage missed all three Bug A/B/C deploy bugs — this gate plugs that hole for the chat surface.
+  5. `TemplateResponse` migration: all `forge_bridge/console/ui_handlers.py` callers move from the deprecated `TemplateResponse(name, ctx)` signature to `TemplateResponse(request, name, ctx)`. The `starlette<0.53` pin in `pyproject.toml` is dropped once the migration verifies green. (~8 mechanical sites; could be one plan within 16.1 or split out — discuss-phase decides.)
+  6. CHAT-04 re-UAT runs on assist-01 with a fresh operator (not `CN/dev`) and records a `PASS` outcome in `.planning/phases/16.1-fb-d-chat-gap-closure/16.1-HUMAN-UAT.md`. Exit criteria: same as Phase 16's CHAT-04 success criterion 4 — useful plain-English answer within <60s for the canonical "what synthesis tools were created this week?" prompt, no error banner, no timeout, no rate-limit fallback.
+
+**Canonical refs**: `.planning/phases/16-fb-d-chat-endpoint/16.1-CONTEXT-PREVIEW.md` (orchestrator handoff with full diagnostic chain, hypotheses, suggested phase shape — this is the discuss-phase entry point), `.planning/phases/16-fb-d-chat-endpoint/16-HUMAN-UAT.md` (the FAIL record), `.planning/phases/16-fb-d-chat-endpoint/16-VERIFICATION.md` Post-Verification Discovery section (full bug A/B/C disposition)
+
+---
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -239,4 +262,5 @@ redundant. Phase 12 already marked Superseded in the progress table at v1.3 clos
 | 13 (FB-A). Staged Operation Entity & Lifecycle | v1.4 | 4/4 | Complete    | 2026-04-26 |
 | 14 (FB-B). Staged Ops MCP Tools + Read API | v1.4 | 5/5 | Complete    | 2026-04-26 |
 | 15 (FB-C). LLMRouter Tool-Call Loop | v1.4 | 10/10 | Complete    | 2026-04-27 |
-| 16 (FB-D). Chat Endpoint | v1.4 | 7/7 | Complete    | 2026-04-27 |
+| 16 (FB-D). Chat Endpoint | v1.4 | 7/7 | Complete (CHAT-04 deploy gap routed to 16.1) | 2026-04-27 |
+| 16.1 (FB-D gap closure). Chat Tool-List Hang + Wiring Regression Guards | v1.4 | 0/? | Pre-context (next: `/gsd-discuss-phase 16.1`) | - |
