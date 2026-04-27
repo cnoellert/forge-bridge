@@ -126,7 +126,7 @@ async def _resolve_actor(request: Request) -> str:
     if header_val is not None:
         if not header_val.strip():
             raise ValueError("X-Forge-Actor header is empty")
-        return header_val
+        return header_val.strip()
 
     body: dict | None = None
     try:
