@@ -104,7 +104,7 @@ def test_wheel_contains_shell_html(built_wheel):
     "forge_bridge/console/templates/execs/detail.html",
     "forge_bridge/console/templates/manifest/list.html",
     "forge_bridge/console/templates/health/detail.html",
-    "forge_bridge/console/templates/chat/stub.html",
+    "forge_bridge/console/templates/chat/panel.html",
     "forge_bridge/console/templates/fragments/tools_table.html",
     "forge_bridge/console/templates/fragments/execs_table.html",
     "forge_bridge/console/templates/fragments/manifest_table.html",
