@@ -9,6 +9,7 @@ Public API:
     register_tool(mcp, fn, name, source, annotations=None)
     register_tools(mcp, fns, prefix="", source="user-taught")
     register_builtins(mcp)
+    invoke_tool(name, args) -> str   # FB-C LLMTOOL-03 default tool executor
 
 Constants:
     _VALID_PREFIXES         — all accepted prefixes
@@ -17,12 +18,16 @@ Constants:
 
 from __future__ import annotations
 
+import json
+import logging
 from collections.abc import Callable
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
 from forge_bridge.learning.sanitize import apply_size_budget
+
+logger = logging.getLogger(__name__)
 
 # Prefixes exclusively owned by the synthesis pipeline.
 # Static (builtin / user-taught) registrations are blocked from using these.
@@ -167,6 +172,111 @@ def register_tools(
     for fn in fns:
         name = f"{prefix}{fn.__name__}" if prefix else fn.__name__
         register_tool(mcp, fn, name=name, source=source)
+
+
+async def invoke_tool(name: str, args: dict) -> str:
+    """Default tool executor for LLMRouter.complete_with_tools (FB-C LLMTOOL).
+
+    Looks up `name` against the live FastMCP tool registry (the canonical
+    singleton owned by forge_bridge.mcp.server.mcp), invokes it with `args`,
+    and returns the result as a string.
+
+    Per FB-C D-20: signature is async (tool_name: str, args: dict) -> str.
+    Per FB-C D-21: this function is the DEFAULT executor when the caller of
+    complete_with_tools(...) does not pass `tool_executor=...`. The coordinator
+    lazy-imports it via:
+
+        if tool_executor is None:
+            from forge_bridge.mcp.registry import invoke_tool
+            tool_executor = invoke_tool
+
+    The coordinator is responsible for:
+      - Sanitizing the returned string via _sanitize_tool_result (plan 15-04).
+      - Truncating to _TOOL_RESULT_MAX_BYTES (plan 15-04).
+      - Wrapping any exception this function raises as is_error=True
+        ToolCallResult (per LLMTOOL-03 acceptance — the coordinator catches
+        Exception, surfaces back to the LLM, loop continues).
+
+    Args:
+        name: Tool name (must match a registered MCP tool — flame_*, forge_*,
+              or synth_* per registry namespace rules).
+        args: Tool arguments dict (JSON-shaped).
+
+    Returns:
+        Tool result as a string. Result-shape handling:
+          - String result → returned verbatim.
+          - Dict / list result → returned as json.dumps(result, default=str).
+          - FastMCP ContentBlock list (the actual call_tool return type) →
+            joined text from each text-typed block.
+          - Other types → str(result).
+
+    Raises:
+        KeyError: If `name` is not a registered tool. Message includes the
+                  attempted name + a sorted list of available tools so the
+                  coordinator can surface the hallucinated-tool-name structured
+                  error to the LLM per research §4.3.
+        Exception: Tool-internal exceptions propagate unmodified to the caller.
+                   The coordinator wraps them as is_error=True ToolCallResult
+                   (LLMTOOL-03 acceptance — one bad tool does not abort the
+                   session).
+    """
+    # Lazy import — same anti-cycle pattern as register_tools (line 165).
+    # Accessing the FastMCP singleton through the module captures the *current*
+    # value, not a stale snapshot.
+    import forge_bridge.mcp.server as _server
+    mcp = _server.mcp
+
+    # Hallucinated-name detection — KeyError with available-tools hint per
+    # research §4.3. Use list_tools() (the public FastMCP API) rather than
+    # poking _tool_manager._tools directly.
+    available = await mcp.list_tools()
+    available_names = sorted(t.name for t in available)
+    if name not in available_names:
+        raise KeyError(
+            f"tool {name!r} is not registered. "
+            f"Available tools: {', '.join(available_names) or '(none)'}"
+        )
+
+    # Invoke via the public FastMCP API. call_tool returns list[ContentBlock]
+    # per the MCP protocol — for text-typed tools (forge-bridge's surface)
+    # the first block's .text attribute carries the result.
+    raw = await mcp.call_tool(name, arguments=args)
+
+    return _stringify_tool_result(raw)
+
+
+def _stringify_tool_result(raw: Any) -> str:
+    """Coerce a FastMCP call_tool return value into a string.
+
+    Handles four shapes the FastMCP protocol may produce:
+      1. list of ContentBlock with .text — concatenate the text fields.
+      2. plain str — return verbatim.
+      3. dict / list — json.dumps with default=str (handles non-JSON-serializable
+         values like UUIDs and datetimes via their str() representation).
+      4. anything else — str(raw).
+
+    Coordinator (plan 15-08) sanitizes + truncates the returned string via
+    _sanitize_tool_result before feeding back to the LLM.
+    """
+    # Case 1: FastMCP list[ContentBlock] (the canonical call_tool return type).
+    if isinstance(raw, list):
+        # Inspect first element shape to disambiguate from a tool that
+        # legitimately returned a list (e.g., list of shot ids).
+        if raw and hasattr(raw[0], "text"):
+            return "".join(getattr(block, "text", "") or "" for block in raw)
+        # Plain list returned by the tool — JSON-stringify.
+        return json.dumps(raw, default=str)
+
+    # Case 2: plain string.
+    if isinstance(raw, str):
+        return raw
+
+    # Case 3: dict.
+    if isinstance(raw, dict):
+        return json.dumps(raw, default=str)
+
+    # Case 4: fallback.
+    return str(raw)
 
 
 def register_builtins(mcp: FastMCP) -> None:
