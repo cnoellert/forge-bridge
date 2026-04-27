@@ -67,3 +67,17 @@ main#view-main{background:var(--color-bg);padding:64px 24px}
 .tool-name-cell .tool-name-secondary{color:var(--color-text-muted);font-size:12px;margin-top:2px}
 .tool-name-cell .tool-name-secondary .sep{margin:0 4px;opacity:.6}
 .tool-name-cell .tool-name-secondary .ns{font-weight:600}
+
+/* === Phase 16 (FB-D) -- chat panel === */
+.chat-transcript{display:flex;flex-direction:column;gap:var(--space-md);max-height:60vh;overflow-y:auto;padding:var(--space-md)}
+.chat-message{padding:var(--space-md);border-radius:4px;background:var(--color-surface)}
+.chat-message--user{border-left:2px solid var(--color-text-muted)}
+.chat-message--assistant{border-left:2px solid var(--color-accent)}
+.chat-message--tool{font-size:var(--text-label);color:var(--color-text-muted);font-family:var(--font-mono)}
+.chat-tool-trace{margin-top:var(--space-sm);background:var(--color-surface-deep);border:1px solid var(--color-border);border-radius:4px;padding:var(--space-sm)}
+.chat-tool-trace summary{cursor:pointer;color:var(--color-accent);font-family:var(--font-mono);font-size:var(--text-label)}
+.chat-tool-trace pre{margin:var(--space-sm) 0 0;white-space:pre-wrap;word-break:break-word;font-family:var(--font-mono);font-size:var(--text-label);color:var(--color-text)}
+.spinner-amber{display:inline-block;width:12px;height:12px;border:2px solid var(--color-accent-muted);border-top-color:var(--color-accent);border-radius:50%;animation:spin 0.7s linear infinite;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
+#chat-input{width:100%;font-family:var(--font-mono);background:var(--color-surface-deep);border:1px solid var(--color-border-md);padding:var(--space-sm) var(--space-md);min-height:32px;color:var(--color-text);resize:vertical}
+#chat-input:focus{outline:none;border-color:var(--color-accent)}
