@@ -49,11 +49,18 @@ def test_public_api_importable():
 
 
 def test_all_contract():
-    """forge_bridge.__all__ matches the 16-name surface exactly (Phase 4 D-01/D-02 + Phase 6 LRN-02/LRN-04 + Phase 8 STORE-02)."""
+    """forge_bridge.__all__ matches the 19-name surface exactly.
+
+    Phase 4 D-01/D-02 (initial 11 + bridge module 3 → 14)
+    + Phase 6 LRN-02/LRN-04 (ExecutionRecord, StorageCallback, PreSynthesisContext, PreSynthesisHook → 15)
+    + Phase 8 STORE-02 (StoragePersistence → 16)
+    + Phase 15 (FB-C) D-15 (LLMLoopBudgetExceeded, RecursiveToolLoopError, LLMToolError → 19).
+    """
     import forge_bridge
 
     expected = {
         "LLMRouter", "get_router",
+        "LLMLoopBudgetExceeded", "RecursiveToolLoopError", "LLMToolError",
         "ExecutionLog", "ExecutionRecord", "StorageCallback", "StoragePersistence",
         "SkillSynthesizer", "PreSynthesisContext", "PreSynthesisHook",
         "register_tools", "get_mcp",
@@ -66,7 +73,7 @@ def test_all_contract():
         f"  Missing:  {expected - set(forge_bridge.__all__)}"
     )
     # Size must equal the expected set (catches duplicates)
-    assert len(forge_bridge.__all__) == 16
+    assert len(forge_bridge.__all__) == 19
 
 
 def test_core_types_not_reexported():
@@ -284,11 +291,12 @@ def test_phase6_symbols_importable_from_root():
         assert name in forge_bridge.__all__, f"{name} missing from forge_bridge.__all__"
 
 
-def test_public_surface_has_16_symbols():
-    """Phase 8 grows forge_bridge.__all__ from 15 to 16 entries (adds StoragePersistence)."""
+def test_public_surface_has_19_symbols():
+    """Phase 15 (FB-C) grows forge_bridge.__all__ from 16 to 19 entries (adds
+    LLMLoopBudgetExceeded, RecursiveToolLoopError, LLMToolError per D-15)."""
     import forge_bridge
 
-    assert len(forge_bridge.__all__) == 16
+    assert len(forge_bridge.__all__) == 19
 
 
 def test_phase8_symbols_importable_from_root():
@@ -312,3 +320,54 @@ def test_phase8_symbols_importable_from_root():
 
     # __all__ membership
     assert "StoragePersistence" in forge_bridge.__all__
+
+
+# ---------------------------------------------------------------------------
+# Phase 15 (FB-C) public-API additions (D-15)
+# ---------------------------------------------------------------------------
+
+
+def test_phase15_exceptions_importable_from_root():
+    """FB-C D-15: three new exception classes are importable from forge_bridge root.
+
+    Caught by Phase 16 (FB-D) /api/v1/chat endpoint and mapped to distinct HTTP
+    status codes — exporting them lets the chat handler discriminate failure
+    modes without falling back to a bare `except RuntimeError` (which would
+    lose the 504/500/502 distinction).
+    """
+    import forge_bridge
+    from forge_bridge import LLMLoopBudgetExceeded, RecursiveToolLoopError, LLMToolError
+
+    for cls in (LLMLoopBudgetExceeded, RecursiveToolLoopError, LLMToolError):
+        assert cls is not None
+        assert issubclass(cls, RuntimeError), (
+            f"{cls.__name__} must inherit RuntimeError per CONVENTIONS.md line 67"
+        )
+        assert cls.__name__ in forge_bridge.__all__, (
+            f"{cls.__name__} missing from forge_bridge.__all__ — D-15 export contract broken"
+        )
+
+
+def test_phase15_LLMLoopBudgetExceeded_signature():
+    """FB-C D-18: signature locked to (reason, iterations, elapsed_s) with the
+    canonical str() format `"{reason} (iterations={iterations}, elapsed={elapsed_s:.1f}s)"`.
+
+    Phase 16 (FB-D) chat endpoint reads .reason / .iterations / .elapsed_s
+    when constructing the HTTP 504 error envelope. Changing the signature
+    here without bumping that contract is a regression.
+    """
+    from forge_bridge import LLMLoopBudgetExceeded
+
+    e = LLMLoopBudgetExceeded("max_iterations", 8, 12.3)
+    assert e.reason == "max_iterations"
+    assert e.iterations == 8
+    assert e.elapsed_s == 12.3
+    assert "max_iterations" in str(e)
+    assert "iterations=8" in str(e)
+    assert "elapsed=12.3s" in str(e)
+
+    # Wall-clock-fired-before-iteration-counted variant uses iterations=-1 (D-18 docstring)
+    e_wallclock = LLMLoopBudgetExceeded("max_seconds", -1, 120.0)
+    assert e_wallclock.iterations == -1
+    assert "iterations=-1" in str(e_wallclock)
+    assert "elapsed=120.0s" in str(e_wallclock)
