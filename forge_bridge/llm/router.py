@@ -53,6 +53,78 @@ Respond with concise, production-ready Python unless asked otherwise.
 """.strip()
 
 
+# ---------------------------------------------------------------------------
+# FB-C public exception classes (D-15..D-19, exported from forge_bridge.__all__)
+#
+# Caught by Phase 16 (FB-D) /api/v1/chat endpoint and mapped to HTTP status:
+#   LLMLoopBudgetExceeded  -> HTTP 504 (gateway timeout)
+#   RecursiveToolLoopError -> HTTP 500 (internal error — caller bug)
+#   LLMToolError           -> HTTP 502 (bad gateway — provider failure)
+#
+# Module-cohesion placement (D-16): defined alongside LLMRouter in router.py,
+# matching the Phase 8 StoragePersistence-next-to-ExecutionLog precedent in
+# learning/storage.py. No separate _errors.py file.
+# ---------------------------------------------------------------------------
+
+
+class LLMLoopBudgetExceeded(RuntimeError):
+    """Raised when complete_with_tools() exceeds its iteration or wall-clock cap.
+
+    Attributes:
+        reason: One of "max_iterations" | "max_seconds". Indicates which cap fired.
+        iterations: Iterations completed before the cap fired. -1 if the wall-clock
+                    timeout fired before the next iteration was counted.
+        elapsed_s: Wall-clock seconds elapsed when the cap fired.
+
+    Caught by Phase 16 (FB-D) and mapped to HTTP 504 (gateway timeout).
+    Signature locked verbatim per FB-C D-18 / research §4.1.
+    """
+
+    def __init__(self, reason: str, iterations: int, elapsed_s: float):
+        super().__init__(
+            f"{reason} (iterations={iterations}, elapsed={elapsed_s:.1f}s)"
+        )
+        self.reason = reason
+        self.iterations = iterations
+        self.elapsed_s = elapsed_s
+
+
+class RecursiveToolLoopError(RuntimeError):
+    """Raised when complete_with_tools() or acomplete() detects a recursive call.
+
+    Detection mechanism: the contextvar `_in_tool_loop` is set on entry to
+    complete_with_tools() (via try/finally for cleanup); both acomplete() and
+    complete_with_tools() check it on entry. A True value means the current
+    coroutine is already inside an outer tool-call loop — typically a
+    synthesized tool body that calls back into the LLM, which is exactly the
+    recursive-synthesis attack surface LLMTOOL-07 (D-12..D-14) blocks.
+
+    Belt-and-suspenders against the synthesizer's static AST blocklist
+    (also extended in plan 15-06 to reject `forge_bridge.llm` imports).
+
+    Caught by Phase 16 (FB-D) and mapped to HTTP 500 (internal error — caller bug).
+    Per FB-C D-19, this exception carries no extra fields in v1.4.
+    """
+
+
+class LLMToolError(RuntimeError):
+    """Raised by the coordinator on unrecoverable adapter / API errors.
+
+    Examples:
+        - Anthropic 5xx after SDK-internal retry budget is exhausted (research §6.7)
+        - Ollama daemon unreachable mid-loop after retry
+        - Schema-translation failures the adapter cannot recover from
+
+    Distinct from per-tool errors (which the coordinator surfaces back to the LLM
+    as `is_error=True` ToolCallResult and continues the loop per LLMTOOL-03 acceptance).
+    LLMToolError aborts the session — there is no recovery path inside the loop.
+
+    Caught by Phase 16 (FB-D) and mapped to HTTP 502 (bad gateway — provider failure).
+    Per FB-C D-19, this exception carries no extra fields in v1.4. Future fields
+    (e.g., chained anthropic.APIError) deferred to v1.5 if FB-D needs them.
+    """
+
+
 class LLMRouter:
     """
     Two-tier async LLM router for forge-bridge pipeline tools.
