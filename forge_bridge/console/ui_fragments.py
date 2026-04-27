@@ -41,8 +41,9 @@ async def health_strip_fragment(request: Request) -> HTMLResponse:
             "instance_identity": {},
         }
     return request.app.state.templates.TemplateResponse(
+        request,
         "fragments/health_strip.html",
-        {"request": request, "health": data},
+        {"health": data},
     )
 
 
@@ -65,9 +66,9 @@ async def tools_table_fragment(request: Request) -> HTMLResponse:
         )
     filtered = _filter_tools(tools, dict(request.query_params))
     return request.app.state.templates.TemplateResponse(
+        request,
         "fragments/tools_table.html",
         {
-            "request": request,
             "tools": [t.to_dict() for t in filtered],
         },
     )
@@ -101,9 +102,9 @@ async def execs_table_fragment(request: Request) -> HTMLResponse:
             status_code=500,
         )
     return request.app.state.templates.TemplateResponse(
+        request,
         "fragments/execs_table.html",
         {
-            "request": request,
             "records": [asdict(r) for r in records],
         },
     )
@@ -127,8 +128,9 @@ async def manifest_table_fragment(request: Request) -> HTMLResponse:
         list(manifest.get("tools", [])), dict(request.query_params),
     )
     return request.app.state.templates.TemplateResponse(
+        request,
         "fragments/manifest_table.html",
-        {"request": request, "entries": filtered},
+        {"entries": filtered},
     )
 
 
@@ -147,6 +149,7 @@ async def health_view_fragment(request: Request) -> HTMLResponse:
             status_code=500,
         )
     return request.app.state.templates.TemplateResponse(
+        request,
         "fragments/health_view.html",
-        {"request": request, "health": health},
+        {"health": health},
     )

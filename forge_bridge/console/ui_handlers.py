@@ -61,8 +61,9 @@ def _query_params_as_tokens(query_params, supported_keys: list[str]) -> str:
 
 def _render_error(request: Request, template: str, message: str, status: int) -> HTMLResponse:
     return request.app.state.templates.TemplateResponse(
+        request,
         template,
-        {"request": request, "message": message, "active_view": None},
+        {"message": message, "active_view": None},
         status_code=status,
     )
 
@@ -192,9 +193,9 @@ async def ui_tools_handler(request: Request) -> HTMLResponse:
     filtered = _filter_tools(tools, dict(request.query_params))
     querystring = "?" + str(request.query_params) if request.query_params else ""
     return request.app.state.templates.TemplateResponse(
+        request,
         "tools/list.html",
         {
-            "request": request,
             "active_view": "tools",
             "tools": [
                 {**t.to_dict(), "status": _derive_tool_status(t)}
@@ -236,9 +237,9 @@ async def ui_tool_detail_handler(request: Request) -> HTMLResponse:
     if tool.origin == "synthesized":
         raw_code = _read_synth_source(name)
     return request.app.state.templates.TemplateResponse(
+        request,
         "tools/detail.html",
         {
-            "request": request,
             "active_view": "tools",
             "tool": tool.to_dict(),
             "raw_code": raw_code,
@@ -297,9 +298,9 @@ async def ui_execs_handler(request: Request) -> HTMLResponse:
     filter_qs = "".join(filter_parts)
     querystring = "?" + str(request.query_params) if request.query_params else ""
     return request.app.state.templates.TemplateResponse(
+        request,
         "execs/list.html",
         {
-            "request": request,
             "active_view": "execs",
             "records": [asdict(r) for r in records],
             "total": total,
@@ -348,9 +349,9 @@ async def ui_exec_detail_handler(request: Request) -> HTMLResponse:
             404,
         )
     return request.app.state.templates.TemplateResponse(
+        request,
         "execs/detail.html",
         {
-            "request": request,
             "active_view": "execs",
             "record": asdict(match),
         },
@@ -419,9 +420,9 @@ async def ui_manifest_handler(request: Request) -> HTMLResponse:
     )
     querystring = "?" + str(request.query_params) if request.query_params else ""
     return request.app.state.templates.TemplateResponse(
+        request,
         "manifest/list.html",
         {
-            "request": request,
             "active_view": "manifest",
             "manifest": manifest,
             "entries": filtered,
@@ -453,9 +454,9 @@ async def ui_health_view_handler(request: Request) -> HTMLResponse:
             500,
         )
     return request.app.state.templates.TemplateResponse(
+        request,
         "health/detail.html",
         {
-            "request": request,
             "active_view": "health",
             "health": health,
         },
@@ -473,9 +474,9 @@ async def ui_chat_handler(request: Request) -> HTMLResponse:
     clears on tab close — no server-side history persistence.
     """
     return request.app.state.templates.TemplateResponse(
+        request,
         "chat/panel.html",
         {
-            "request": request,
             "active_view": "chat",
         },
     )
