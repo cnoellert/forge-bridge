@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Staged Ops Platform
 status: executing
-stopped_at: Phase 15 (FB-C) executed and verified — operator UAT pending for LLMTOOL-01/02
-last_updated: "2026-04-27T03:30:00.000Z"
-last_activity: 2026-04-27 -- Phase 15 execution complete (10/10 plans, 210 tests pass, verified PASS)
+stopped_at: Phase 15 (FB-C) context gathered
+last_updated: "2026-04-27T17:30:42.464Z"
+last_activity: 2026-04-27 -- Phase 16 execution started
 progress:
-  total_phases: 3
+  total_phases: 4
   completed_phases: 3
-  total_plans: 19
+  total_plans: 26
   completed_plans: 19
-  percent: 100
+  percent: 73
 ---
 
 # Project State
@@ -21,15 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-25 at v1.3 close)
 
 **Project core value:** forge-bridge is the single canonical pip-installable middleware (`pip install forge-bridge`) — protocol-agnostic communication bus with a canonical vocabulary that any endpoint (Flame, Maya, editorial, LLM agents) connects to.
-**Current focus:** Phase 15 (FB-C) verified — pending operator UAT, then Phase 16 (FB-D)
+**Current focus:** Phase 16 — fb-d-chat-endpoint
 
 ## Current Position
 
-Phase: 15 (fb-c-llmrouter-tool-call-loop) — VERIFIED PASS (10/10 plans complete)
-Plan: 10 of 10 (all merged to main)
-Status: Phase 15 execution complete — `LLMRouter.complete_with_tools()` shipped; awaits operator live UAT for LLMTOOL-01 (Ollama) and LLMTOOL-02 (Anthropic) before FB-D consumes it
+Phase: 16 (fb-d-chat-endpoint) — EXECUTING
+Plan: 1 of 7
+Status: Executing Phase 16
 Milestone: v1.4 Staged Ops Platform (opened 2026-04-25)
-Last activity: 2026-04-27 -- Phase 15 execution complete
+Last activity: 2026-04-27 -- Phase 16 execution started
 
 **Dual-naming amendment 2026-04-25** — `gsd-discuss-phase FB-A` failed `find-phase` because the tool's `normalizePhaseName()` strips letter prefixes only when followed by a digit (`FB-13` would parse, `FB-A` does not). Resolution: ROADMAP and STATE now use `Phase N (FB-X)` style; numeric IDs 13-16 (skipping superseded Phase 12 "LLM Chat") are internal plumbing for tooling/state/dirs; FB-A..FB-D remains the canonical alias for cross-repo references with projekt-forge v1.5.
 
