@@ -2,6 +2,13 @@
 {% block title %}LLM Chat — Forge Console{% endblock %}
 
 {% block view %}
+{# forge-chat.js MUST load synchronously BEFORE Alpine boots, otherwise
+   Alpine's x-data="chatPanel()" evaluates window.chatPanel === undefined.
+   Alpine.js is in <head> with defer, so it runs after HTML parsing completes;
+   this non-deferred external script blocks parsing here, executes its IIFE
+   to register window.chatPanel, then Alpine sees it during its boot pass. #}
+<script src="/ui/static/forge-chat.js"></script>
+
 <h1 class="view-title">LLM Chat</h1>
 
 <section id="chat-panel"
@@ -60,6 +67,4 @@
     </button>
   </form>
 </section>
-
-<script src="/ui/static/forge-chat.js" defer></script>
 {% endblock %}
