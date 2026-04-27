@@ -462,13 +462,18 @@ async def ui_health_view_handler(request: Request) -> HTMLResponse:
     )
 
 
-# -- Chat stub (D-28/D-29: nav surface ships now; Phase 12 fills in panel) --
+# -- Chat panel (Phase 16 / FB-D — live panel replaces D-28/D-29 nav stub) --
 
-async def ui_chat_stub_handler(request: Request) -> HTMLResponse:
-    """Chat nav stub — D-28/D-29. Full shell.html render; Phase 12 will fill
-    in the panel content without churning shell.html or the route table."""
+async def ui_chat_handler(request: Request) -> HTMLResponse:
+    """GET /ui/chat — Phase 16 (FB-D) live chat panel.
+
+    Renders chat/panel.html which mounts the Alpine.js chatPanel() factory
+    from /ui/static/forge-chat.js. The panel posts to /api/v1/chat (Phase 16
+    plan 16-04). Per D-06, all conversation state lives in browser JS and
+    clears on tab close — no server-side history persistence.
+    """
     return request.app.state.templates.TemplateResponse(
-        "chat/stub.html",
+        "chat/panel.html",
         {
             "request": request,
             "active_view": "chat",

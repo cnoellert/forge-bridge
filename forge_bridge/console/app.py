@@ -31,7 +31,7 @@ from forge_bridge.console.ui_fragments import (
     tools_table_fragment,
 )
 from forge_bridge.console.ui_handlers import (
-    ui_chat_stub_handler,
+    ui_chat_handler,                    # NEW (Phase 16 / FB-D — replaces v1.3 stub handler)
     ui_exec_detail_handler,
     ui_execs_handler,
     ui_health_view_handler,
@@ -84,7 +84,7 @@ def build_console_app(
         Route("/ui/execs/{code_hash}/{timestamp}", ui_exec_detail_handler, methods=["GET"]),
         Route("/ui/manifest", ui_manifest_handler, methods=["GET"]),
         Route("/ui/health", ui_health_view_handler, methods=["GET"]),
-        Route("/ui/chat", ui_chat_stub_handler, methods=["GET"]),
+        Route("/ui/chat", ui_chat_handler, methods=["GET"]),
         # Phase 10 — fragment /ui/fragments/* routes (htmx partial swaps)
         Route("/ui/fragments/health-strip", health_strip_fragment, methods=["GET"]),
         Route("/ui/fragments/tools-table", tools_table_fragment, methods=["GET"]),
