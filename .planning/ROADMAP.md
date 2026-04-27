@@ -198,7 +198,18 @@ behavior. This phase absorbs the previously velocity-gated Phase 12 "LLM Chat" s
   3. Sanitization boundary holds end-to-end: a tool whose sidecar name or parameters contain an injection marker (e.g., `IGNORE PREVIOUS INSTRUCTIONS`) does not propagate that string into the LLM context. Wired through Phase 15 (FB-C)'s `_sanitize_tool_result()` plus Phase 7's tool-definition sanitization — verified via integration test that the LLM-bound prompt does NOT contain the marker substring after a deliberately-poisoned tool runs.
   4. Non-developer dogfood UAT: an artist asks "what synthesis tools were created this week?" in the Web UI chat panel and receives a useful, plain-English answer within the LLM's normal response time (<60s on assist-01 hardware). UAT pattern matches Phase 10's D-36 hard fresh-operator gate; failure here triggers a remediation phase (analogous to Phase 10.1).
   5. External-consumer parity: the same `/api/v1/chat` endpoint serves projekt-forge Flame hooks (projekt-forge v1.5 Phase 22/23 consumers) with zero divergence in behavior or context assembly compared to the Web UI — verified by replaying the same prompt + tool schemas through both clients and comparing terminal responses (modulo non-deterministic LLM output — assert structural shape match).
-**Plans**: TBD — `/gsd-discuss-phase 16` next (alias `FB-D`)
+**Plans**: 7 plans across 4 waves (planned 2026-04-27 — execute in dependency order)
+  - Wave 1 (parallel — foundation):
+    - [ ] `16-01-PLAN.md` — Extend FB-C `complete_with_tools()` with optional `messages: list[dict] | None = None` kwarg (D-02a Pattern B prerequisite)
+    - [ ] `16-02-PLAN.md` — Greenfield `forge_bridge/console/_rate_limit.py` token-bucket module + 8 deterministic tests (D-13 / CHAT-01)
+    - [ ] `16-03-PLAN.md` — Append chat-panel CSS rules to `forge-console.css` (LOGIK-PROJEKT amber spinner + transcript layout, all using existing tokens)
+  - Wave 2 (surfaces; depend on Wave 1):
+    - [ ] `16-04-PLAN.md` — `chat_handler` + `Route("/api/v1/chat", ...)` + 11 deterministic tests (CHAT-01/CHAT-02 + D-09/D-13/D-14/D-14a/D-15/D-16/D-17/D-21)
+    - [ ] `16-05-PLAN.md` — Web UI panel: delete `stub.html`, ship `panel.html` + `forge-chat.js` + rename `ui_chat_stub_handler` → `ui_chat_handler` (D-06/D-07/D-08/D-10/D-11/D-20) — has human-verify checkpoint
+  - Wave 3 (integration; depends on Wave 2):
+    - [ ] `16-06-PLAN.md` — `tests/integration/test_chat_endpoint.py` (CHAT-03 sanitization E2E) + `test_chat_parity.py` (CHAT-05 external-consumer parity)
+  - Wave 4 (forward-looking artifacts; depends on Wave 3):
+    - [ ] `16-07-PLAN.md` — Plant 5 SEED files (STREAMING, TOOL-ALLOWLIST, CLOUD-CALLER, PERSIST-HISTORY, PARTIAL-OUTPUT) + retire orphan stub-regression tests + verify shell.html nav-link
 **UI hint**: yes
 
 **Phase 12 reconciliation**: With FB-D landing, the standalone Phase 12 "LLM Chat" is

@@ -1002,7 +1002,9 @@ class _ChatRequestBody(BaseModel):
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED — see 16-CONTEXT.md `<open_questions>` for verdicts)
+
+All four open questions raised in this section were resolved 2026-04-27 via the orchestrator's recommendation pass and folded into 16-CONTEXT.md as D-02a, D-03 cap-fire posture, D-14a, and the smoke-test deferral. The questions below are preserved for historical context — DO NOT re-open during planning.
 
 1. **`stop_reason: "max_iterations"` per D-03 — how to honor when FB-C drops partial state?**
    - What we know: FB-C raises `LLMLoopBudgetExceeded(reason="max_iterations")` and returns no partial messages.
