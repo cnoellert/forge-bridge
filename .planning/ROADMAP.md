@@ -225,7 +225,15 @@ redundant. Phase 12 already marked Superseded in the progress table at v1.3 clos
 
 **Depends on**: Phase 16 (FB-D) (the shipped chat endpoint surface; 16.1 patches it, doesn't replace it)
 **Inserted**: 2026-04-27 after Phase 16's CHAT-04 deploy UAT FAIL on assist-01 (three Phase-16 wiring/integration bugs surfaced; Bugs A and B patched inline this session, Bug C is structural and routes here per Phase 10/10.1 precedent)
-**Plans**: TBD (gathered via `/gsd-discuss-phase 16.1` → `/gsd-plan-phase 16.1`)
+**Plans**: 5 plans across 3 waves (planned 2026-04-27 — execute in dependency order)
+  - Wave 1 (parallel — three independent fixes, zero file overlap):
+    - [ ] `16.1-01-PLAN.md` — Backend-aware tool-list filter (D-01/D-02): `_tool_filter.py` + chat_handler integration + log fields + filter unit test (covers ROADMAP §16.1 SC-2 partial)
+    - [ ] `16.1-02-PLAN.md` — TemplateResponse migration (D-09/D-10): UI-render guard FIRST + 13 mechanical migrations + drop `starlette<0.53` pin (covers SC-5)
+    - [ ] `16.1-03-PLAN.md` — Boot-wiring guard (D-07 #1): `_canonical_console_read_api` global + `_lifespan` smoke test (covers SC-3)
+  - Wave 2 (depends on 16.1-01):
+    - [ ] `16.1-04-PLAN.md` — Bisection sweep + Strategy B chat E2E (D-04/D-06/D-07 #3): `test_chat_tool_list_threshold.py` + `test_chat_endpoint_live.py` + `16.1-BISECTION.jsonl` (covers SC-1, SC-4, SC-2 final)
+  - Wave 3 (depends on 16.1-01..04):
+    - [ ] `16.1-05-PLAN.md` — Fresh-operator re-UAT (D-11..D-15): deploy + assist-01 pre-flight + canonical CHAT-04 prompt + `16.1-HUMAN-UAT.md` outcome (covers SC-6)
 
 **Requirements**: CHAT-04 (re-verifies the v1.4 must-have that failed in deploy)
 
@@ -263,4 +271,4 @@ redundant. Phase 12 already marked Superseded in the progress table at v1.3 clos
 | 14 (FB-B). Staged Ops MCP Tools + Read API | v1.4 | 5/5 | Complete    | 2026-04-26 |
 | 15 (FB-C). LLMRouter Tool-Call Loop | v1.4 | 10/10 | Complete    | 2026-04-27 |
 | 16 (FB-D). Chat Endpoint | v1.4 | 7/7 | Complete (CHAT-04 deploy gap routed to 16.1) | 2026-04-27 |
-| 16.1 (FB-D gap closure). Chat Tool-List Hang + Wiring Regression Guards | v1.4 | 0/? | Pre-context (next: `/gsd-discuss-phase 16.1`) | - |
+| 16.1 (FB-D gap closure). Chat Tool-List Hang + Wiring Regression Guards | v1.4 | 0/5 | Planned (next: `/gsd-execute-phase 16.1`) | - |
