@@ -59,6 +59,13 @@ def _make_test_tool():
     )
 
 
+async def _passthrough_filter(tools):
+    """Default filter stub: passes all tools through. Used in chat_client fixture
+    so that existing tests (which don't test filtering) are not broken by the real
+    TCP probe attempting to connect to :9999 in test context."""
+    return tools
+
+
 @pytest.fixture
 def chat_client():
     """TestClient with mocked LLMRouter; complete_with_tools returns 'OK'.
@@ -67,6 +74,10 @@ def chat_client():
     handler resolves (`from forge_bridge.mcp import server as _mcp_server;
     await _mcp_server.mcp.list_tools()`) so the empty-registry guard does
     NOT short-circuit any test.
+
+    Also patches filter_tools_by_reachable_backends to pass all tools through
+    (no TCP probe in test context). Tests that exercise filtering behavior provide
+    their own patch that overrides this default.
     """
     mock_router = MagicMock()
     mock_router.complete_with_tools = AsyncMock(return_value="OK from mock LLM")
@@ -84,6 +95,9 @@ def chat_client():
     with patch(
         "forge_bridge.mcp.server.mcp.list_tools",
         new=AsyncMock(return_value=[_make_test_tool()]),
+    ), patch(
+        "forge_bridge.console.handlers.filter_tools_by_reachable_backends",
+        side_effect=_passthrough_filter,
     ):
         yield TestClient(app), mock_router
 

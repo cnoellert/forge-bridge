@@ -46,6 +46,7 @@ from forge_bridge.console._rate_limit import (
     RateLimitDecision,
     check_rate_limit,
 )
+from forge_bridge.console._tool_filter import filter_tools_by_reachable_backends
 from forge_bridge.llm.router import (
     LLMLoopBudgetExceeded,
     LLMToolError,
@@ -542,6 +543,23 @@ async def chat_handler(request: Request) -> JSONResponse:
             request_id,
         )
 
+    # ---- 16.1 D-01: backend-aware tool-list filter ---------------------------
+    # Drop tools whose runtime backend is unreachable. `synth_*` and the
+    # in-process `forge_*` tools (staged-ops, manifest_read, tools_read)
+    # stay regardless. See forge_bridge/console/_tool_filter.py for the
+    # per-tool routing classification; the prefix-only mapping in
+    # 16.1-CONTEXT.md D-01 was incomplete (most `forge_*` are also
+    # Flame-dependent).
+    filtered_tools = await filter_tools_by_reachable_backends(tools)
+    if not filtered_tools:
+        return _chat_error(
+            "service_unavailable",
+            "No tool backends reachable — chat cannot run.",
+            503,
+            request_id,
+        )
+    tools = filtered_tools  # rebind so downstream uses filtered list
+
     # ---- D-14 / CHAT-02: outer 125s wraps FB-C's 120s inner cap --------------
     # D-14a translation matrix applied below — every cap-fire becomes 504, every
     # structural error becomes 500. Sensitivity is hardcoded D-05 (sensitive=True).
@@ -564,8 +582,8 @@ async def chat_handler(request: Request) -> JSONResponse:
         elapsed_ms = int((time.monotonic() - started) * 1000)
         logger.info(
             "chat timeout request_id=%s client_ip=%s message_count_in=%d "
-            "wall_clock_ms=%d stop_reason=outer_wait_for_timeout",
-            request_id, client_ip, len(messages), elapsed_ms,
+            "tools_offered_count=%d wall_clock_ms=%d stop_reason=outer_wait_for_timeout",
+            request_id, client_ip, len(messages), len(tools), elapsed_ms,
         )
         return _chat_error(
             "request_timeout",
@@ -576,9 +594,9 @@ async def chat_handler(request: Request) -> JSONResponse:
     except LLMLoopBudgetExceeded:
         elapsed_ms = int((time.monotonic() - started) * 1000)
         logger.info(
-            "chat loop_budget request_id=%s client_ip=%s wall_clock_ms=%d "
-            "stop_reason=loop_budget_exceeded",
-            request_id, client_ip, elapsed_ms,
+            "chat loop_budget request_id=%s client_ip=%s tools_offered_count=%d "
+            "wall_clock_ms=%d stop_reason=loop_budget_exceeded",
+            request_id, client_ip, len(tools), elapsed_ms,
         )
         return _chat_error(
             "request_timeout",
@@ -626,9 +644,10 @@ async def chat_handler(request: Request) -> JSONResponse:
     out_messages = list(messages) + [{"role": "assistant", "content": result_text}]
     logger.info(
         "chat ok request_id=%s client_ip=%s message_count_in=%d "
-        "message_count_out=%d tool_call_count=%d wall_clock_ms=%d stop_reason=end_turn",
+        "message_count_out=%d tool_call_count=%d tools_offered_count=%d "
+        "wall_clock_ms=%d stop_reason=end_turn",
         request_id, client_ip, len(messages), len(out_messages),
-        tool_call_count_in, elapsed_ms,
+        tool_call_count_in, len(tools), elapsed_ms,
     )
     return JSONResponse(
         {
