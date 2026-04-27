@@ -20,7 +20,7 @@ import json
 import uuid
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from forge_bridge.console.handlers import _envelope_json
 
@@ -57,6 +57,13 @@ class ApproveStagedInput(BaseModel):
         description="Caller identity (free string, non-empty per D-07)",
     )
 
+    @field_validator("actor")
+    @classmethod
+    def actor_not_whitespace_only(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("actor must not be whitespace-only")
+        return v
+
 
 class RejectStagedInput(BaseModel):
     id: str = Field(..., description="Staged operation UUID")
@@ -65,6 +72,13 @@ class RejectStagedInput(BaseModel):
         min_length=1,
         description="Caller identity (free string, non-empty per D-07)",
     )
+
+    @field_validator("actor")
+    @classmethod
+    def actor_not_whitespace_only(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("actor must not be whitespace-only")
+        return v
 
 
 # ── Implementation functions ─────────────────────────────────────────────────
