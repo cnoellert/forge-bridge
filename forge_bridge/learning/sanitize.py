@@ -46,20 +46,13 @@ SANITIZE_ALLOWLIST: tuple[str, ...] = (
     "type:",
 )
 
-# Injection markers — presence in a tag -> reject entirely
-INJECTION_MARKERS: tuple[str, ...] = (
-    "ignore previous",
-    "<|",
-    "|>",
-    "[INST]",
-    "[/INST]",
-    "<|im_start|>",
-    "```",  # triple backtick — markdown code fence
-    "---",  # yaml document separator
-)
+# INJECTION_MARKERS hoisted to forge_bridge._sanitize_patterns per FB-C D-09/D-10
+# (single source of truth — also imported by forge_bridge/llm/_sanitize.py).
+# Re-exported here so existing callers (watcher, registry, tests) remain unchanged.
+from forge_bridge._sanitize_patterns import INJECTION_MARKERS  # noqa: F401, E402
 
-# Control characters: \x00-\x1f plus \x7f (DEL)
-_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
+# _CONTROL_CHAR_RE hoisted per FB-C D-09/D-10 — see import note above.
+from forge_bridge._sanitize_patterns import _CONTROL_CHAR_RE  # noqa: F401, E402
 
 # Canonical meta keys (from Plan 07-01) that must NEVER be evicted by budget pressure
 _PROTECTED_META_KEYS: frozenset[str] = frozenset({
