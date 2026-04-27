@@ -4,7 +4,7 @@ All tests use a mocked LLMRouter (no real Ollama dep). Rate-limit module is
 reset before each test for isolation. Tool registry snapshot is patched to
 return a fixed Tool list so the empty-registry guard does NOT short-circuit.
 
-Test roster (11 tests):
+Test roster (15 tests):
   1. test_chat_happy_path_returns_200
   2. test_chat_invalid_json_body_returns_422
   3. test_chat_missing_messages_field_returns_422
@@ -16,10 +16,15 @@ Test roster (11 tests):
   9. test_chat_tool_error_returns_500
  10. test_chat_envelope_shape_is_nested
  11. test_chat_passes_messages_list_to_router
+ 12. test_ui_chat_handler_renders_panel_template
+ 13. test_chat_filters_unreachable_backends (Phase 16.1 D-01)
+ 14. test_chat_503_when_no_backends_reachable (Phase 16.1 D-01)
+ 15. test_chat_logs_tools_offered_count_on_success (Phase 16.1 D-01 + D-21)
 """
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -254,3 +259,125 @@ def test_ui_chat_handler_renders_panel_template(chat_client):
     # The deleted stub copy MUST NOT appear.
     assert "launches in Phase 12" not in body
     assert "chat-stub-card" not in body
+
+
+# ── Phase 16.1 D-01: backend-aware tool-list filter ───────────────────────────
+
+def test_chat_filters_unreachable_backends(chat_client):
+    """D-01: chat handler drops forge_* and flame_* tools whose backends are
+    unreachable. Asserts complete_with_tools() receives only the filtered list.
+
+    Patches forge_bridge.console.handlers.filter_tools_by_reachable_backends
+    (the module-top import binding) to simulate no Flame backend reachable.
+    """
+    from mcp.types import Tool
+
+    client, mock_router = chat_client
+
+    fake_tools = [
+        Tool(name="forge_test", description="x", inputSchema={"type": "object"}),
+        Tool(name="flame_test", description="x", inputSchema={"type": "object"}),
+        Tool(name="synth_test", description="x", inputSchema={"type": "object"}),
+    ]
+
+    async def fake_filter(tools):
+        # Simulate: only synth_test survives (no Flame, no in-process forge_test)
+        return [t for t in tools if t.name.startswith("synth_")]
+
+    with patch(
+        "forge_bridge.mcp.server.mcp.list_tools",
+        new=AsyncMock(return_value=fake_tools),
+    ), patch(
+        "forge_bridge.console.handlers.filter_tools_by_reachable_backends",
+        side_effect=fake_filter,
+    ):
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [{"role": "user", "content": "hi"}]},
+        )
+
+    assert r.status_code == 200, r.text
+    call_kwargs = mock_router.complete_with_tools.call_args.kwargs
+    forwarded_tools = call_kwargs["tools"]
+    assert len(forwarded_tools) == 1
+    assert forwarded_tools[0].name == "synth_test"
+
+
+def test_chat_503_when_no_backends_reachable(chat_client):
+    """D-01: when filter_tools_by_reachable_backends returns empty list,
+    chat handler returns 503 with service_unavailable envelope.
+    complete_with_tools must NOT be called.
+    """
+    from mcp.types import Tool
+
+    client, mock_router = chat_client
+
+    fake_tools = [
+        Tool(name="forge_test", description="x", inputSchema={"type": "object"}),
+        Tool(name="flame_test", description="x", inputSchema={"type": "object"}),
+    ]
+
+    async def fake_filter_empty(tools):
+        return []
+
+    with patch(
+        "forge_bridge.mcp.server.mcp.list_tools",
+        new=AsyncMock(return_value=fake_tools),
+    ), patch(
+        "forge_bridge.console.handlers.filter_tools_by_reachable_backends",
+        side_effect=fake_filter_empty,
+    ):
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [{"role": "user", "content": "hi"}]},
+        )
+
+    assert r.status_code == 503, r.text
+    body = r.json()
+    assert body["error"]["code"] == "service_unavailable"
+    assert "No tool backends reachable" in body["error"]["message"]
+    assert "X-Request-ID" in r.headers
+    mock_router.complete_with_tools.assert_not_called()
+
+
+def test_chat_logs_tools_offered_count_on_success(chat_client, caplog):
+    """D-21 extension: success log line includes tools_offered_count field.
+
+    Verifies that after filtering, the chat ok log entry records both
+    tool_call_count (existing Phase 16 contract) and tools_offered_count (new).
+    """
+    from mcp.types import Tool
+
+    client, mock_router = chat_client
+
+    fake_tools = [
+        Tool(name="synth_a", description="x", inputSchema={"type": "object"}),
+        Tool(name="synth_b", description="x", inputSchema={"type": "object"}),
+    ]
+
+    async def fake_filter_two(tools):
+        return tools  # return all 2 tools
+
+    with caplog.at_level(logging.INFO, logger="forge_bridge.console.handlers"), \
+         patch(
+             "forge_bridge.mcp.server.mcp.list_tools",
+             new=AsyncMock(return_value=fake_tools),
+         ), patch(
+             "forge_bridge.console.handlers.filter_tools_by_reachable_backends",
+             side_effect=fake_filter_two,
+         ):
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [{"role": "user", "content": "hi"}]},
+        )
+
+    assert r.status_code == 200, r.text
+    # Assert the success log line contains both fields
+    log_messages = [r.message for r in caplog.records]
+    success_logs = [m for m in log_messages if "stop_reason=end_turn" in m]
+    assert len(success_logs) >= 1, (
+        f"Expected at least one 'chat ok' log line, got: {log_messages}"
+    )
+    assert "tools_offered_count=2" in success_logs[0], (
+        f"Expected tools_offered_count=2 in log line, got: {success_logs[0]}"
+    )
