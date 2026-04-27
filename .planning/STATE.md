@@ -4,8 +4,8 @@ milestone: v1.4
 milestone_name: Staged Ops Platform
 status: executing
 stopped_at: Phase 15 (FB-C) context gathered
-last_updated: "2026-04-27T02:25:53.998Z"
-last_activity: 2026-04-27 -- Phase 15 planning complete
+last_updated: "2026-04-27T02:32:25.020Z"
+last_activity: 2026-04-27 -- Phase 15 execution started
 progress:
   total_phases: 3
   completed_phases: 2
@@ -21,15 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-25 at v1.3 close)
 
 **Project core value:** forge-bridge is the single canonical pip-installable middleware (`pip install forge-bridge`) — protocol-agnostic communication bus with a canonical vocabulary that any endpoint (Flame, Maya, editorial, LLM agents) connects to.
-**Current focus:** Phase 14 — fb-b-staged-ops-mcp-tools-read-api
+**Current focus:** Phase 15 — fb-c-llmrouter-tool-call-loop
 
 ## Current Position
 
-Phase: 14
-Plan: Not started
-Status: Ready to execute
+Phase: 15 (fb-c-llmrouter-tool-call-loop) — EXECUTING
+Plan: 1 of 10
+Status: Executing Phase 15
 Milestone: v1.4 Staged Ops Platform (opened 2026-04-25)
-Last activity: 2026-04-27 -- Phase 15 planning complete
+Last activity: 2026-04-27 -- Phase 15 execution started
 
 **Dual-naming amendment 2026-04-25** — `gsd-discuss-phase FB-A` failed `find-phase` because the tool's `normalizePhaseName()` strips letter prefixes only when followed by a digit (`FB-13` would parse, `FB-A` does not). Resolution: ROADMAP and STATE now use `Phase N (FB-X)` style; numeric IDs 13-16 (skipping superseded Phase 12 "LLM Chat") are internal plumbing for tooling/state/dirs; FB-A..FB-D remains the canonical alias for cross-repo references with projekt-forge v1.5.
 
