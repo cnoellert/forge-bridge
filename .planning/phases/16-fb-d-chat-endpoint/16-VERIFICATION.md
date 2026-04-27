@@ -1,13 +1,15 @@
 ---
 phase: 16-fb-d-chat-endpoint
 verified: 2026-04-27T19:45:00Z
-status: human_needed
-score: 5/6 must-haves verified (1 needs human UAT)
+revised: 2026-04-27T21:50:00Z
+status: gaps_found
+score: 5/6 must-haves verified (CHAT-04 failed in deploy → Phase 16.1)
 overrides_applied: 0
 human_verification:
   - test: "CHAT-04 fresh-operator artist UAT — non-developer artist asks 'what synthesis tools were created this week?' in the Web UI chat panel on assist-01 (live qwen2.5-coder:32b)"
-    expected: "Artist receives a useful, plain-English answer within <60s. Spinner stops, assistant message bubble renders with amber left-border, content describes the synthesis tools (no error banner, no timeout, no rate-limit fallback). Artist confirms the answer feels natural and useful."
-    why_human: "D-12 / D-36 hard fresh-operator gate per Phase 10 precedent — UX quality + LLM response quality are not programmatically verifiable. The in-loop dogfood UAT during plan 16-05 ('That's working' after 2-pass fix) verified the wire end-to-end on a dev machine without Ollama (504 fallback path), but the formal CHAT-04 contract requires the actual happy-path question + answer cycle on assist-01 with a non-developer artist. Failure here triggers Phase 16.1 remediation analogous to Phase 10.1."
+    expected: "Artist receives a useful, plain-English answer within <60s. Spinner stops, assistant message bubble renders with amber left-border, content describes the synthesis tools (no error banner, no timeout, no rate-limit fallback)."
+    result: "FAILED on assist-01 deploy 2026-04-27. See `## Post-Verification Discovery` section below and `16-HUMAN-UAT.md` for the three Phase-16 wiring/integration bugs that surfaced. Bugs A and B were patched inline (commits cfc39f2, 60d28fa); Bug C (tool-list hang) is structural and routed to Phase 16.1 for proper gap-closure planning."
+    why_human: "D-12 / D-36 hard fresh-operator gate per Phase 10 precedent. The structural verification (5/6 PASS) was sound at run time, but boot-time wiring + chat-handler tool-list interaction with the live Ollama on assist-01 surfaced gaps that automated coverage missed."
 ---
 
 # Phase 16 (FB-D): Chat Endpoint — Verification Report
@@ -154,5 +156,57 @@ The 5 code review warnings (no criticals) are documented as v1.5+ operational ha
 
 ---
 
-_Verified: 2026-04-27T19:45:00Z_
-_Verifier: Claude (gsd-verifier)_
+## Post-Verification Discovery (2026-04-27 deploy to assist-01)
+
+The structural verification above was sound at run time (5/6 must-haves PASS, all referenced code paths exist). However, the deploy to `assist-01` for the CHAT-04 fresh-operator artist UAT surfaced **three Phase-16 wiring/integration bugs** that automated coverage missed. Two were patched inline; the third is a structural gap that routes to **Phase 16.1**.
+
+### Bug A — Starlette 1.0.0 TemplateResponse incompat (FIXED)
+- **Symptom:** Fresh `pip install -e ".[dev,llm]"` on assist-01 resolved `starlette` to 1.0.0 (released after the dev env was created). Every `/ui/*` page returned `TypeError: unhashable type: 'dict'` from `jinja2/utils.py` because the deprecated `TemplateResponse(name, ctx)` positional order had its back-compat shim removed in Starlette ≥0.53.
+- **Root cause:** Every UI handler in `forge_bridge/console/ui_handlers.py` uses the deprecated signature; `pyproject.toml` had no upper bound on `starlette`.
+- **Fix:** Pinned `starlette<0.53` in `pyproject.toml` (commit `cfc39f2`).
+- **Why automated coverage missed:** Dev env was created when Starlette was <0.53 and never refreshed; tests run against the dev env. No test exercises a fresh-install dependency resolution.
+- **Follow-up (Phase 16.1):** Migrate all UI handlers to the new `TemplateResponse(request, name, ctx)` signature, then drop the pin.
+
+### Bug B — LLMRouter never wired into ConsoleReadAPI (FIXED)
+- **Symptom:** Every `POST /api/v1/chat` returned 500 `"LLM router not configured"` because `chat_handler` at `handlers.py:511` short-circuits when `app.state.console_read_api._llm_router is None`.
+- **Root cause:** `ConsoleReadAPI(...)` was constructed at `forge_bridge/mcp/server.py:_lifespan` line 133 **without** the `llm_router=` kwarg, leaving `_llm_router` permanently `None`.
+- **Fix:** Wired `LLMRouter()` instantiation + `llm_router=` kwarg into the boot path (commit `60d28fa`). `LLMRouter.__init__` is pure env-reading — no I/O at construction — so always-construct is safe.
+- **Why automated coverage missed:** Integration tests inject a mocked router via `app.state` directly, bypassing the real `_lifespan` boot path. No test asserts `app.state.console_read_api._llm_router is not None` after lifespan init.
+- **Why dev-machine UAT missed it:** The in-loop dogfood UAT during plan 16-05 saw an error banner and we explained it as "no Ollama → expected 504 fallback" — but it was actually this 500-internal-error path that we never read the dev server logs for.
+- **Follow-up (Phase 16.1):** Add a TestClient-based smoke test that boots `_lifespan()` and asserts the router is wired.
+
+### Bug C — chat_handler hangs on full MCP tool list (DEFERRED → 16.1)
+- **Symptom:** With Bugs A+B fixed and Ollama healthy on assist-01 (`qwen2.5-coder:32b` loaded 100% GPU, `ollama run "say hi"` returns in 1.4s), `complete_with_tools()` hangs the full 120s wall-clock budget on iter=0 with `prompt_tokens_total=0` / `completion_tokens_total=0` — the model never emits a single token.
+- **Bisection:**
+  - 1-tool synthetic test (`SimpleNamespace(name='get_time', ...)`) via `complete_with_tools()` → returns in **2.3s**, 269 prompt tokens, `end_turn`. Native ollama client + tool-calling fundamentally works.
+  - `mcp.list_tools()` returns **49 tools** (21 `forge_*` + 28 `flame_*`).
+  - When chat_handler passes the full 49-tool list to `complete_with_tools()`, Ollama hangs the full budget with zero token output.
+  - Bisection between 1 and 49 tools NOT yet performed.
+- **Hypotheses (to disprove in Phase 16.1):**
+  1. Tool-schema bloat exceeds qwen2.5-coder's tool-selection capacity within 120s
+  2. One or more tool schemas have malformed/oversized fields confusing the model
+  3. Bare assist-01 has no projekt-forge bridge on `:9998` and no Flame, so every `forge_*` and `flame_*` tool the model picks would fail at execution — but the FIRST iteration never even completes, so this isn't itself the hang
+- **Why automated coverage missed:** Integration tests inject a small synthetic tool list via the mocked router; no test exercises the chat handler against a real `mcp.list_tools()` registry with a live Ollama.
+
+### Disposition
+
+- Bugs A and B are real Phase-16 gaps that would have failed any deploy verification — fixes pushed to `gsd/v1.4-staged-ops-platform`. Both should be retro-tested in Phase 16.1 with regression guards.
+- Bug C is a structural gap (likely tool-list scoping needed for chat) routed to Phase 16.1 for proper planning. The 49-tool full-registry exposure is a planning question, not a debug-and-patch question, and needs a discuss-phase pass.
+- The verifier's original `5/6 verified` score remains accurate: CHAT-01..03, CHAT-05, LLMTOOL-06 are STILL satisfied structurally — those checks didn't go stale. Only CHAT-04 changes status from `human_needed` → `failed` (deploy-tested, blocked on Bug C).
+
+### Phase 16.1 Scope (preview)
+
+The full handoff lives in `.planning/phases/16-fb-d-chat-endpoint/16.1-CONTEXT-PREVIEW.md`. Headlines:
+
+1. **Tool-list scoping for chat** — design how chat_handler decides which MCP tools to expose. Likely: a small "core" set (manifest reads, registry queries) that doesn't depend on Flame/projekt-forge backends, with backend-aware expansion at request time. Replaces the current "expose all 49" model.
+2. **Bisection of the 49-tool hang** — confirm it's count vs. content; if count, find the threshold; if content, identify which schema(s) confuse qwen2.5-coder.
+3. **Boot-time wiring regression guard** — TestClient + _lifespan smoke test that catches Bug B class issues.
+4. **TemplateResponse migration** — move all UI handlers to new signature so the `starlette<0.53` pin can be dropped.
+5. **Live-Ollama integration test** — Strategy B test (`FB_INTEGRATION_TESTS=1` gated) that exercises chat_handler end-to-end with the real MCP registry against a live qwen2.5-coder, replacing the mocked-router-only coverage.
+6. **Re-attempt CHAT-04 artist UAT** on assist-01 once 1–5 are done.
+
+---
+
+_Verified: 2026-04-27T19:45:00Z (initial structural verification)_
+_Revised: 2026-04-27T21:50:00Z (post-deploy discovery — gaps_found, routing to Phase 16.1)_
+_Verifier: Claude (gsd-verifier) + orchestrator post-deploy session_
