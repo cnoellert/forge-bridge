@@ -97,6 +97,10 @@ class LLMRouter:
         )
         self._local_client: Optional["AsyncOpenAI"] = None  # type: ignore[name-defined]
         self._cloud_client: Optional["AsyncAnthropic"] = None  # type: ignore[name-defined]
+        # FB-C D-02: native ollama.AsyncClient slot for complete_with_tools().
+        # The OpenAI-compat shim above (self._local_client) stays in place for
+        # acomplete() — two clients in the router for two purposes per research §3.7.
+        self._local_native_client: Optional["ollama.AsyncClient"] = None  # type: ignore[name-defined]
 
     # ------------------------------------------------------------------
     # Public async API
@@ -211,6 +215,35 @@ class LLMRouter:
                 )
             self._cloud_client = AsyncAnthropic()
         return self._cloud_client
+
+    def _get_local_native_client(self):
+        """Return the native ollama.AsyncClient (D-02), lazy-instantiated.
+
+        Used by complete_with_tools() for the local/sensitive tool-call path.
+        Distinct from _get_local_client() (OpenAI-compat shim, used by acomplete()):
+          - acomplete() uses the shim because the wire format is identical for
+            plain completions and the existing tests / pin (openai>=1.0) cover it.
+          - complete_with_tools() uses the native client because the OpenAI shim
+            drops tool_calls.function.arguments parsing quirks, hides
+            message.thinking, and silently coerces error types (research §3.7).
+
+        The native client takes host without the OpenAI /v1 suffix; we strip it
+        from self.local_url if present (default self.local_url is
+        "http://localhost:11434/v1" and the daemon is at "http://localhost:11434").
+        """
+        if self._local_native_client is None:
+            try:
+                from ollama import AsyncClient
+            except ImportError:
+                raise RuntimeError(
+                    "ollama package not installed. "
+                    "Install LLM support: pip install forge-bridge[llm]"
+                )
+            host = self.local_url
+            if host.endswith("/v1"):
+                host = host[:-3]
+            self._local_native_client = AsyncClient(host=host)
+        return self._local_native_client
 
     # ------------------------------------------------------------------
     # Internal async backend methods
