@@ -1,0 +1,65 @@
+{% extends "shell.html" %}
+{% block title %}LLM Chat — Forge Console{% endblock %}
+
+{% block view %}
+<h1 class="view-title">LLM Chat</h1>
+
+<section id="chat-panel"
+         class="chat-panel"
+         x-data="chatPanel()"
+         x-init="init()"
+         aria-labelledby="chat-heading">
+
+  <h2 id="chat-heading" class="visually-hidden">Chat transcript</h2>
+
+  <!-- error banner (D-09 — prescribed copy) -->
+  <div class="error-card chat-error" x-show="error" x-text="error" x-cloak></div>
+
+  <!-- transcript stream (D-06 per-tab history) -->
+  <div class="card chat-transcript"
+       role="log"
+       aria-live="polite"
+       aria-atomic="false">
+    <template x-for="msg in renderableMessages()" :key="msg.id">
+      <div :class="messageClass(msg)">
+        <!-- user / assistant content (escape-first markdown via forge-chat.js) -->
+        <template x-if="msg.role === 'user' || msg.role === 'assistant'">
+          <div class="chat-message-content" x-html="renderContent(msg.content)"></div>
+        </template>
+
+        <!-- tool round trace (D-07 default-collapsed details) -->
+        <template x-if="msg.role === 'tool'">
+          <details class="chat-tool-trace">
+            <summary>
+              <span x-text="msg.toolPreview || msg.content.substring(0, 80)"></span>
+            </summary>
+            <pre x-text="msg.content"></pre>
+          </details>
+        </template>
+      </div>
+    </template>
+    <p x-show="messages.length === 0" class="chat-empty">
+      Ask about pipeline state, tools, or execution history.
+    </p>
+  </div>
+
+  <!-- input (D-10: single textarea, Enter sends, Shift+Enter newline) -->
+  <form class="chat-form" @submit.prevent="send()">
+    <textarea id="chat-input"
+              x-model="draft"
+              x-ref="input"
+              @keydown.enter="onEnter($event)"
+              placeholder="Ask about pipeline state, tools, executions…"
+              rows="2"
+              :disabled="inflight"
+              aria-label="Chat input"></textarea>
+    <button class="btn chat-send" type="submit" :disabled="inflight || !draft.trim()">
+      <span x-show="!inflight">Send</span>
+      <span x-show="inflight" class="spinner-amber" aria-hidden="true"></span>
+      <span x-show="inflight" class="visually-hidden">Sending…</span>
+    </button>
+  </form>
+</section>
+
+<script src="/ui/static/forge-chat.js" defer></script>
+{% endblock %}
