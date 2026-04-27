@@ -27,7 +27,8 @@ forge-bridge = "forge_bridge.__main__:app"
 [project.optional-dependencies]
 llm = [
     "openai>=1.0",
-    "anthropic>=0.25",
+    "anthropic>=0.97,<1",
+    "ollama>=0.6.1,<1",
 ]
 dev = [
     "pytest",
