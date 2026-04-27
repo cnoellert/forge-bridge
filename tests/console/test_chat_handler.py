@@ -237,3 +237,20 @@ def test_chat_passes_messages_list_to_router(chat_client):
     assert call_kwargs["messages"] == history
     # And NOT the legacy prompt= path.
     assert call_kwargs.get("prompt", "") == ""
+
+
+# ── Plan 16-07 post-rename guard ───────────────────────────────────────────────
+
+def test_ui_chat_handler_renders_panel_template(chat_client):
+    """Plan 16-07: post-rename guard — /ui/chat must render chat/panel.html
+    (NOT the deleted chat/stub.html). Replaces tests/test_ui_chat_stub.py."""
+    client, _ = chat_client
+    r = client.get("/ui/chat")
+    assert r.status_code == 200
+    assert "text/html" in r.headers.get("content-type", "")
+    body = r.text
+    # The new live panel mounts the chatPanel Alpine factory.
+    assert 'x-data="chatPanel()"' in body
+    # The deleted stub copy MUST NOT appear.
+    assert "launches in Phase 12" not in body
+    assert "chat-stub-card" not in body
