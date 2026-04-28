@@ -92,7 +92,7 @@ def test_default_fallback(monkeypatch):
     router = LLMRouter()
     assert router.local_url == "http://localhost:11434/v1"
     assert router.local_model == "qwen2.5-coder:32b"
-    assert router.cloud_model == "claude-opus-4-6"
+    assert router.cloud_model == "claude-sonnet-4-6"
     assert "Flame" in router.system_prompt  # generic prompt intact
 
 
