@@ -73,7 +73,13 @@ class TestAnthropicToolAdapterCompile:
         assert len(compiled) == 1
         assert compiled[0]["name"] == "forge_list"
         assert compiled[0]["description"] == "list things"
-        assert compiled[0]["input_schema"] == {"type": "object", "properties": {}}
+        # Strict-mode tools must carry `additionalProperties: false` per
+        # Anthropic API enforcement (corrected during v1.4 LLMTOOL-02 live UAT).
+        assert compiled[0]["input_schema"] == {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        }
 
     def test_strict_true_by_default(self):
         client = MagicMock()
@@ -123,7 +129,11 @@ class TestAnthropicToolAdapterSendTurn:
         state = adapter.init_state(prompt="hi", system="sys", tools=[], temperature=0.1)
         await adapter.send_turn(state)
         kwargs = client.messages.create.call_args.kwargs
-        assert kwargs["disable_parallel_tool_use"] is True  # D-06
+        # D-06 (v1.4 corrected form): disable_parallel_tool_use lives inside
+        # tool_choice, not as a top-level kwarg. Older Anthropic SDKs accepted
+        # it at the top level; SDK 0.97+ requires the nested form.
+        assert kwargs["tool_choice"] == {"type": "auto", "disable_parallel_tool_use": True}
+        assert "disable_parallel_tool_use" not in kwargs
 
     @pytest.mark.asyncio
     async def test_usage_tokens_normalized(self):

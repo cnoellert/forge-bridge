@@ -249,13 +249,29 @@ class AnthropicToolAdapter:
         """Translate forge MCP Tool list → Anthropic tools[] (research §5.1).
 
         D-31: strict=True by default; downgraded tools omit it.
+
+        Anthropic's strict mode requires every JSON-schema `object` to set
+        `additionalProperties: false` explicitly (enforced server-side as of
+        late 2025 — request returns 400 `tools.N.custom: For 'object' type,
+        'additionalProperties' must be explicitly set to false` otherwise).
+        We inject the flag where missing for strict tools so MCP Tool
+        definitions that omit it (the common case — projekt-forge's MCP
+        tools rely on the implicit-false default) still validate.
         """
         compiled: list[dict] = []
         for tool in tools_source:
+            schema = tool.inputSchema
+            if (
+                tool.name not in self._downgraded_tools
+                and isinstance(schema, dict)
+                and schema.get("type") == "object"
+                and "additionalProperties" not in schema
+            ):
+                schema = {**schema, "additionalProperties": False}
             entry: dict[str, Any] = {
                 "name": tool.name,
                 "description": tool.description or "",
-                "input_schema": tool.inputSchema,
+                "input_schema": schema,
             }
             if tool.name not in self._downgraded_tools:
                 entry["strict"] = True
@@ -265,7 +281,11 @@ class AnthropicToolAdapter:
     async def send_turn(self, state: dict) -> _TurnResponse:
         """Send turn to Anthropic. On schema-validation 400, downgrade and retry.
 
-        D-06: disable_parallel_tool_use=True at top level.
+        D-06: disable parallel tool use. The Anthropic SDK exposes this via
+        `tool_choice={"type": "auto", "disable_parallel_tool_use": True}` —
+        not as a top-level kwarg. Original FB-C D-06 commit predated the
+        SDK move to the nested form; corrected during v1.4 LLMTOOL-02
+        live UAT (Anthropic SDK 0.97).
         D-35: usage_tokens = (input_tokens, output_tokens).
         Phase 8 cf221fe credential-leak rule: log type(exc).__name__ only.
         """
@@ -279,7 +299,7 @@ class AnthropicToolAdapter:
                 messages=state["messages"],
                 temperature=state["temperature"],
                 tools=tools_payload,
-                disable_parallel_tool_use=True,
+                tool_choice={"type": "auto", "disable_parallel_tool_use": True},
             )
         except Exception as exc:  # noqa: BLE001 — credential-leak rule
             exc_type = type(exc).__name__

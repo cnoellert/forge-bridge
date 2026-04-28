@@ -84,7 +84,7 @@ These were considered and explicitly excluded — they have a target milestone o
 | STAGED-06 | FB-B | Closed | Phase 14 VERIFICATION passed; HTTP routes registered at `console/app.py:97-98` |
 | STAGED-07 | FB-B | Closed | Phase 14 VERIFICATION passed; D-20 byte-identity test for `forge://staged/pending` resource |
 | LLMTOOL-01 | FB-C | Closed | Phase 15 structurally verified + retroactively confirmed live by Phase 16.2 D-08 #1 (`test_chat_canonical_uat_prompt_under_60s` PASS in 21.38s on assist-01) |
-| LLMTOOL-02 | FB-C | Pending UAT | Phase 15 structurally verified by 14 wire-format unit tests in `tests/llm/test_anthropic_adapter.py`; live integration with `ANTHROPIC_API_KEY` not yet run. Not on critical path (`chat_handler` hardcodes `sensitive=True`) |
+| LLMTOOL-02 | FB-C | Closed | Live UAT PASSED 2026-04-28 (34.78s) against `claude-sonnet-4-6`. Surfaced + fixed two SDK API-drift bugs in `forge_bridge/llm/_adapters.py` during the run: (a) `disable_parallel_tool_use` moved from top-level kwarg → inside `tool_choice` per Anthropic SDK 0.97; (b) `additionalProperties: false` injected for `strict: true` tools per Anthropic API enforcement. Default `cloud_model=claude-opus-4-6` returns 500 (deprecated alias) — bump to v1.4.x scope. Set `FORGE_CLOUD_MODEL=claude-sonnet-4-6` to reproduce |
 | LLMTOOL-03 | FB-C | Closed | Phase 15 VERIFICATION 7/7; `LLMLoopBudgetExceeded` exported in `forge_bridge.__all__`; honored at `console/handlers.py:594-606` |
 | LLMTOOL-04 | FB-C | Closed | Phase 15 VERIFICATION 7/7; repeat-call detection at `router.py:435-446` |
 | LLMTOOL-05 | FB-C | Closed | Phase 15 VERIFICATION 7/7; `_TOOL_RESULT_MAX_BYTES = 8192` truncation at FB-C boundary; threaded through chat at `handlers.py:495-503,577` |
@@ -96,10 +96,7 @@ These were considered and explicitly excluded — they have a target milestone o
 | CHAT-04 | FB-D → 16.1 → 16.2 | Closed | Chained closure: 16 (gaps_found) → 16.1 (gaps_found) → 16.2 (passed). PASS-with-deviations recorded in `16.2-HUMAN-UAT.md` (D-08 #1/#2/#3 all PASS on assist-01) |
 | CHAT-05 | FB-D | Closed | Phase 16 VERIFICATION; `test_chat_parity_browser_vs_flame_hooks` asserts structural+content equality; D-17 envelope locked |
 
-**Coverage:** 19/19 requirements mapped (100%). 18 Closed + 1 Pending UAT (LLMTOOL-02 Anthropic live run). FB-A: 4 reqs (Closed 2026-04-28 on dev Postgres `127.0.0.1:7533/forge_bridge`) · FB-B: 3 reqs (Closed) · FB-C: 7 reqs (6 Closed + 1 Pending UAT) · FB-D: 5 reqs (Closed).
-
-**Pending-UAT closure paths:**
-- `FB_INTEGRATION_TESTS=1 ANTHROPIC_API_KEY=sk-... pytest tests/integration/test_complete_with_tools_live.py::test_anthropic_tool_call_loop_live -v` → closes LLMTOOL-02 (cloud path; not on critical path because `chat_handler` hardcodes `sensitive=True`)
+**Coverage:** 19/19 requirements mapped (100%). **19 Closed, 0 Pending UAT.** FB-A: 4 reqs (Closed 2026-04-28 on dev Postgres `127.0.0.1:7533/forge_bridge`) · FB-B: 3 reqs (Closed) · FB-C: 7 reqs (Closed; LLMTOOL-02 Anthropic live UAT closed 2026-04-28 against `claude-sonnet-4-6`) · FB-D: 5 reqs (Closed).
 
 ---
 
