@@ -188,41 +188,40 @@ async def test_complete_with_tools_threshold_linear(tool_count: int) -> None:
 # Post-bisection threshold lock — ADD AFTER ANALYZING 16.1-BISECTION.jsonl
 # ---------------------------------------------------------------------------
 #
-# After the sweep above completes on assist-01, read the artifact:
-#
-#   cat .planning/phases/16.1-fb-d-chat-gap-closure/16.1-BISECTION.jsonl \
-#       | python -m json.tool --json-lines
-#
-# Find the highest tool_count with stop_reason="end_turn". Round down by 5
-# for margin (e.g. if 25 is end_turn and 30 hangs, lock _CHOSEN_SCOPING_COUNT = 20).
-#
-# Then un-comment this test and set _CHOSEN_SCOPING_COUNT:
-#
-# _CHOSEN_SCOPING_COUNT = 20  # set after analyzing 16.1-BISECTION.jsonl
-#
-# @requires_integration
-# @requires_ollama
-# @pytest.mark.asyncio
-# async def test_complete_with_tools_at_chosen_scoping_count_returns_useful() -> None:
-#     """At the chosen scoping count (set from BISECTION.jsonl analysis),
-#     complete_with_tools returns end_turn with non-zero completion tokens.
-#     This is the locked threshold the chat handler's filter must produce.
-#
-#     After this test is enabled, any future regression of Plan 01's filter
-#     that lets the tool count drift above _CHOSEN_SCOPING_COUNT will cause
-#     this test to hang and fail — the live signal that the filter is broken.
-#     """
-#     from forge_bridge.llm.router import LLMRouter
-#
-#     all_tools = await _list_real_tools_sorted()
-#     tools = all_tools[:_CHOSEN_SCOPING_COUNT]
-#     router = LLMRouter()
-#     result = await router.complete_with_tools(
-#         messages=[{"role": "user", "content": "List a few of the tools you can use."}],
-#         tools=tools,
-#         sensitive=True,
-#         max_iterations=2,
-#         max_seconds=120.0,
-#     )
-#     assert isinstance(result, str), f"expected str, got {type(result)}"
-#     assert len(result) > 0, "completion_tokens must be > 0 (end_turn, not loop_budget)"
+# Locked from 16.1-BISECTION.jsonl sweep on assist-01 (2026-04-28):
+#   counts 5..25 returned stop_reason="end_turn" with healthy completion_tokens
+#   count 30 returned end_turn but with only 42 completion_tokens (degraded refusal)
+#   counts 35, 40, 49 hit loop_budget:max_seconds (hung)
+# Last clean useful response = 25; last point with margin = 20.
+# We lock at 20 (one sample below the cliff) so Ollama version drift or model
+# swaps don't push the threshold into the degraded zone and flake the test.
+
+_CHOSEN_SCOPING_COUNT = 20
+
+
+@requires_integration
+@requires_ollama
+@pytest.mark.asyncio
+async def test_complete_with_tools_at_chosen_scoping_count_returns_useful() -> None:
+    """At the chosen scoping count (locked from BISECTION.jsonl analysis),
+    complete_with_tools returns end_turn with non-zero completion tokens.
+    This is the locked threshold the chat handler's filter must produce.
+
+    Any future regression of Plan 01's filter that lets the tool count
+    drift above _CHOSEN_SCOPING_COUNT will cause this test to hang and
+    fail — the live signal that the filter is broken.
+    """
+    from forge_bridge.llm.router import LLMRouter
+
+    all_tools = await _list_real_tools_sorted()
+    tools = all_tools[:_CHOSEN_SCOPING_COUNT]
+    router = LLMRouter()
+    result = await router.complete_with_tools(
+        messages=[{"role": "user", "content": "List a few of the tools you can use."}],
+        tools=tools,
+        sensitive=True,
+        max_iterations=2,
+        max_seconds=120.0,
+    )
+    assert isinstance(result, str), f"expected str, got {type(result)}"
+    assert len(result) > 0, "completion_tokens must be > 0 (end_turn, not loop_budget)"
