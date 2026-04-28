@@ -4,14 +4,14 @@ milestone: v1.4
 milestone_name: Staged Ops Platform
 status: executing
 stopped_at: Phase 16.1 context gathered
-last_updated: "2026-04-27T23:24:50.030Z"
-last_activity: 2026-04-27 -- Phase 16.1 execution started
+last_updated: "2026-04-28T01:49:30.320Z"
+last_activity: 2026-04-28
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 31
-  completed_plans: 26
-  percent: 84
+  completed_plans: 30
+  percent: 97
 ---
 
 # Project State
@@ -25,11 +25,11 @@ See: .planning/PROJECT.md (updated 2026-04-25 at v1.3 close)
 
 ## Current Position
 
-Phase: 16.1 (fb-d-chat-gap-closure) — EXECUTING
-Plan: 1 of 5
+Phase: 16.1
+Plan: Not started
 Status: Executing Phase 16.1
 Milestone: v1.4 Staged Ops Platform (opened 2026-04-25)
-Last activity: 2026-04-27 -- Phase 16.1 execution started
+Last activity: 2026-04-28
 
 **Dual-naming amendment 2026-04-25** — `gsd-discuss-phase FB-A` failed `find-phase` because the tool's `normalizePhaseName()` strips letter prefixes only when followed by a digit (`FB-13` would parse, `FB-A` does not). Resolution: ROADMAP and STATE now use `Phase N (FB-X)` style; numeric IDs 13-16 (skipping superseded Phase 12 "LLM Chat") are internal plumbing for tooling/state/dirs; FB-A..FB-D remains the canonical alias for cross-repo references with projekt-forge v1.5.
 
@@ -71,7 +71,7 @@ Phase 13 (FB-A) discuss session is the active work. Dual-naming amendment (this 
 
 **Velocity (v1.0–v1.3 baseline):**
 
-- Total plans completed: 67 (across milestones v1.0–v1.3)
+- Total plans completed: 71 (across milestones v1.0–v1.3)
 - v1.0 phases: 3 phases, 13 plans
 - v1.1 phases: 3 phases, 13 plans
 - v1.2 phases: 3 phases (7, 07.1, 8), 12 plans, 17 tasks

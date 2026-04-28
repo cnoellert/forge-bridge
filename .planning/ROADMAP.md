@@ -62,7 +62,7 @@ Full details: `.planning/milestones/v1.3-ROADMAP.md`
 - [x] **Phase 14 (FB-B): Staged Ops MCP Tools + Read API** — `forge_list/get/approve/reject_staged` MCP tools + `/api/v1/staged/*` HTTP routes + `forge://staged/pending` resource via single `ConsoleReadAPI` facade (completed 2026-04-26)
 - [x] **Phase 15 (FB-C): LLMRouter Tool-Call Loop** — `complete_with_tools()` agentic coordinator + thin Anthropic + Ollama adapters; iteration cap (default 8) + wall-clock cap (default 120s); repeat-call detection, 8 KB result cap, sanitization boundary, recursive-synthesis guard ✅ 2026-04-27 (operator UAT pending for LLMTOOL-01/02)
 - [x] **Phase 16 (FB-D): Chat Endpoint** — `/api/v1/chat` over `complete_with_tools()` with rate limiting, sanitization end-to-end, single chat surface for Web UI + projekt-forge Flame hooks (absorbs superseded Phase 12) (complete 2026-04-27; CHAT-04 deploy gap routed to Phase 16.1)
-- [ ] **Phase 16.1 (FB-D gap closure): Chat Tool-List Hang + Wiring Regression Guards** — Close the CHAT-04 artist UAT gap surfaced in the 2026-04-27 assist-01 deploy: bisect + fix the 49-tool `complete_with_tools()` hang, add boot-time regression guard for LLMRouter wiring, migrate `TemplateResponse` callers, re-run the artist UAT (inserted 2026-04-27 per Phase 10/10.1 precedent)
+- [x] **Phase 16.1 (FB-D gap closure): Chat Tool-List Hang + Wiring Regression Guards** — Close the CHAT-04 artist UAT gap surfaced in the 2026-04-27 assist-01 deploy: bisect + fix the 49-tool `complete_with_tools()` hang, add boot-time regression guard for LLMRouter wiring, migrate `TemplateResponse` callers, re-run the artist UAT (inserted 2026-04-27 per Phase 10/10.1 precedent) (completed 2026-04-28)
 
 ## Phase Details
 
@@ -271,4 +271,4 @@ redundant. Phase 12 already marked Superseded in the progress table at v1.3 clos
 | 14 (FB-B). Staged Ops MCP Tools + Read API | v1.4 | 5/5 | Complete    | 2026-04-26 |
 | 15 (FB-C). LLMRouter Tool-Call Loop | v1.4 | 10/10 | Complete    | 2026-04-27 |
 | 16 (FB-D). Chat Endpoint | v1.4 | 7/7 | Complete (CHAT-04 deploy gap routed to 16.1) | 2026-04-27 |
-| 16.1 (FB-D gap closure). Chat Tool-List Hang + Wiring Regression Guards | v1.4 | 4/5 | In Progress|  |
+| 16.1 (FB-D gap closure). Chat Tool-List Hang + Wiring Regression Guards | v1.4 | 4/5 | Complete    | 2026-04-28 |
