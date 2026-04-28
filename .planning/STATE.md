@@ -102,6 +102,7 @@ Phase 13 (FB-A) discuss session is the active work. Dual-naming amendment (this 
 - v1.3 roadmap written 2026-04-22: 4 phases (9-12), 37 requirements across 8 categories. Phase 12 (LLM Chat) explicitly velocity-gated — may defer to v1.4 if Phases 9-11 run long.
 - v1.4 pre-design dated 2026-04-23 in ROADMAP.md alongside v1.3 close — FB-A..FB-D scoped against projekt-forge v1.5 declared deps (consumer-driven naming). Phase 12 superseded by FB-D in same audit.
 - v1.4 roadmap formalized 2026-04-25 by gsd-roadmapper: FB-C success criteria grew from 4→7 (absorbed LLMTOOL-04 repeat-call detection, LLMTOOL-05 8KB result truncation, LLMTOOL-06 sanitization boundary, LLMTOOL-07 recursive-synthesis guard — all surfaced by targeted FB-C research). FB-D success criteria grew from 4→5 (absorbed CHAT-05 external-consumer parity with projekt-forge Flame hooks). Total v1.4 requirements: 19 (STAGED 7 + LLMTOOL 7 + CHAT 5).
+- Phase 16.2 inserted after Phase 16.1: Bug D — chat tool-call loop renders raw JSON instead of executing tools and synthesizing answer (URGENT) — surfaced in Phase 16.1 fresh-operator UAT on assist-01 2026-04-28; v1.4 milestone close blocked until Bug D fixed and CHAT-04 fresh-operator UAT records PASS. Investigation scope: LLMRouter agentic loop, chat handler tool dispatch, UI rendering, plus strengthen Strategy B chat E2E assertion to reject tool-call-only responses.
 
 ### Decisions
 
