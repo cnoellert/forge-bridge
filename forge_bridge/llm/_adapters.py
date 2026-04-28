@@ -151,7 +151,7 @@ def _try_parse_text_tool_call(text: str) -> Optional[_ToolCall]:
     Phase 16.2 REVIEW.md WR-01 flagged the prefix/suffix-prose limitation
     of the original implementation; closed during v1.4 milestone close
     when the LLMTOOL-01 sentinel test surfaced the trailing-prose variant
-    against qwen2.5-coder:32b on assist-01.
+    against a live qwen2.5-coder:32b deploy.
     """
     if not isinstance(text, str) or not text:
         return None
