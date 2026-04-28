@@ -64,10 +64,12 @@ Respond with concise, production-ready Python unless asked otherwise.
 _DEFAULT_LOCAL_MODEL = "qwen2.5-coder:32b"
 
 # Default Anthropic model used for non-sensitive (cloud) completions.
-# claude-opus-4-6 is the v1.4 ship value (Phase 15 D-30); a Phase 17 bump to
-# claude-sonnet-4-6 is the next planned change (MODEL-01).
+# claude-sonnet-4-6 is the Phase 17 (v1.4.x) bump from claude-opus-4-6 (deprecated;
+# returned 500 from the live Anthropic API per v1.4 LLMTOOL-02 UAT). Verified
+# passing in v1.4 LLMTOOL-02 UAT after the tool_choice + additionalProperties:
+# false adapter fixes. See SEED-OPUS-4-7-TEMPERATURE-V1.5 for the next bump path.
 # Override via the FORGE_CLOUD_MODEL env var or the cloud_model= kwarg on LLMRouter().
-_DEFAULT_CLOUD_MODEL = "claude-opus-4-6"
+_DEFAULT_CLOUD_MODEL = "claude-sonnet-4-6"
 
 
 # ---------------------------------------------------------------------------
@@ -173,12 +175,12 @@ class LLMRouter:
 
     Tier 2 (sensitive=False):
         -> Anthropic Claude (cloud, non-sensitive queries only)
-        -> Model: claude-opus-4-6
+        -> Model: claude-sonnet-4-6
 
     Environment overrides:
         FORGE_LOCAL_LLM_URL    default: http://localhost:11434/v1
         FORGE_LOCAL_MODEL      default: qwen2.5-coder:32b
-        FORGE_CLOUD_MODEL      default: claude-opus-4-6
+        FORGE_CLOUD_MODEL      default: claude-sonnet-4-6
         FORGE_SYSTEM_PROMPT    default: built-in VFX pipeline prompt
         ANTHROPIC_API_KEY      required for cloud calls
 
