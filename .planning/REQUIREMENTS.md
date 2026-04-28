@@ -1,0 +1,67 @@
+# Requirements — v1.4.x Carry-Forward Debt
+
+**Milestone:** v1.4.x Carry-Forward Debt
+**Status:** Active — defined 2026-04-28
+**Source:** v1.4 milestone audit carry-forward (`.planning/milestones/v1.4-MILESTONE-AUDIT.md`) + matching seeds (SEED-CLOUD-MODEL-BUMP-V1.4.x, SEED-DEFAULT-MODEL-BUMP-V1.4.x)
+
+---
+
+## v1.4.x Goal
+
+Pay down v1.4 carry-forward debt as a clean patch release. Ship a polished v1.4.1 that projekt-forge v1.5 can pin against without test-harness or model-default surprises. Each requirement maps to a specific debt item surfaced during v1.4 close-out.
+
+## Requirements
+
+### MODEL — Default model bumps (Phase 17)
+
+- [ ] **MODEL-01**: `LLMRouter._cloud_model` default flips from `claude-opus-4-6` (deprecated; returns 500 against the live API per v1.4 LLMTOOL-02 UAT) to `claude-sonnet-4-6` (verified passing in v1.4 LLMTOOL-02 UAT after the `tool_choice` + `additionalProperties: false` adapter fixes). Single-commit isolated change to `_DEFAULT_*` constants in `forge_bridge/llm/router.py` per the SEED-CLOUD-MODEL-BUMP-V1.4.x decoupled-commit mandate. Acceptance: `LLMRouter().cloud_model == "claude-sonnet-4-6"`; LLMTOOL-02 still passes against the new default with no env override; no other source files touched in the same commit.
+- [ ] **MODEL-02**: `LLMRouter._local_model` default flips from `qwen2.5-coder:32b` to `qwen3:32b` IF a re-run of LLMTOOL-01 against qwen3:32b on assist-01 PASSES with the widened salvage helper. Otherwise hold the bump and record the empirical evidence in the SUMMARY for v1.5 reconsideration. Single-commit isolated change to `_DEFAULT_*` constants in `forge_bridge/llm/router.py`. Acceptance: either (a) `LLMRouter().local_model == "qwen3:32b"` AND `test_ollama_tool_call_loop_live` passes against the new default in <60s on assist-01, OR (b) bump deferred with a phase-17 SUMMARY note citing specific qwen3:32b failure modes that block the conservative-bump-first pattern.
+
+### HARNESS — Staged-handlers test harness rework (Phase 18)
+
+- [ ] **HARNESS-01**: `tests/console/test_staged_handlers_writes.py` (11 tests), `tests/console/test_staged_handlers_list.py` (7 tests), and `tests/console/test_staged_zero_divergence.py` (5 tests) all PASS against live Postgres on dev `:7533/forge_bridge`. Migrate from `starlette.TestClient` (sync) to `httpx.AsyncClient(transport=ASGITransport(app=...))` so the test event loop matches the asyncpg session loop — eliminates the `RuntimeError: got Future ... attached to a different loop` failures surfaced during v1.4 close. Acceptance: `pytest tests/console/test_staged_*.py -v` returns 23/23 passed against live Postgres with `FORGE_TEST_DB=1`.
+- [ ] **HARNESS-02**: `tests/test_staged_operations.py::test_transition_atomicity`, `::test_staged_op_list_filter_by_project_id`, `::test_staged_op_list_combined_filter` all PASS against live Postgres. Seed parent `Project` rows in the `session_factory` fixture (or in a shared `proposed_op` factory) before staged-operation inserts that carry `project_id` — eliminates the `entities_project_id_fkey` FK violations. Acceptance: `pytest tests/test_staged_operations.py -v` returns 47 passed (was 44/47 with 3 FK-violation failures), 0 by-design skips for the FK paths.
+- [ ] **HARNESS-03**: `tests/conftest.py::_phase13_postgres_available()` honors `FORGE_DB_URL` host/port unconditionally (no `FORGE_TEST_DB=1` opt-in gate). Default `pytest tests/` run in CI: still skips silently if no Postgres reachable; runs (and passes) if `FORGE_DB_URL` is set. Acceptance: removing `FORGE_TEST_DB=1` from the audit/UAT commands no longer causes any skip-vs-fail divergence; `_phase13_postgres_available()` source code uses `urlparse(FORGE_DB_URL).hostname/.port` directly.
+
+### POLISH — Code-quality debt (Phase 19)
+
+- [ ] **POLISH-01**: WR-02 closure — `_try_parse_text_tool_call` in `forge_bridge/llm/_adapters.py` no longer hard-codes `ref="0:{name}"`. Replace with a derived ref that cannot collide with structured-path refs even if the salvage guard ever loosens (e.g., `ref=f"{len(tool_calls)}:{name}"` computed at the call site, or assert the precondition explicitly). Acceptance: no string literal `"0:"` appears in the salvage helper or its call site; new unit test verifies the ref derivation when salvage runs alongside zero structured tool_calls.
+- [ ] **POLISH-02**: Phase 13 WR-01 closure — type-contract issue with `from_status="(missing)"` at `forge_bridge/store/staged_operations.py:290`. Replace the sentinel string with a proper `Optional[str]` (or use `None` consistently) so the type contract is honest. Acceptance: no `"(missing)"` literal in `staged_operations.py`; type checker (mypy/pyright if configured, or grep) shows no string-vs-None type ambiguity at the FB-B exception-surface boundary.
+- [ ] **POLISH-03**: Phase 13 WR-02 closure — placeholder cross-session atomicity sub-test at `tests/test_staged_operations.py:356` becomes a real assertion. The sub-test currently passes trivially (placeholder); replace with a test that actually exercises atomicity across two `AsyncSession` lifetimes and asserts the audit trail integrity. Acceptance: the test fails on a deliberately-broken atomicity path (RED guard) and passes on the current code (GREEN), with both behaviors recorded in the phase summary.
+- [ ] **POLISH-04**: qwen2.5-coder `<|im_start|>` tail-token strip in the chat handler. Phase 16.2 UAT recorded the model occasionally appending `<|im_start|><|im_start|>{...}` chat-template noise at the tail of synthesized prose. Strip terminal special tokens (`<|im_start|>`, `<|im_end|>`, `<|endoftext|>`, etc.) from the assistant's terminal content in `forge_bridge/console/handlers.py` before returning to the client. Acceptance: a fresh fixture capturing the noise-tail variant from qwen2.5-coder is encoded as a unit test that fails on the unstripped current behavior and passes after the strip; no impact on legitimate prose responses.
+
+## Coverage at Open
+
+| Category | Count | REQ-IDs |
+|----------|-------|---------|
+| MODEL | 2 | MODEL-01..02 |
+| HARNESS | 3 | HARNESS-01..03 |
+| POLISH | 4 | POLISH-01..04 |
+| **Total** | **9** | All v1.4.x requirements |
+
+## Traceability
+
+| REQ-ID | Phase | Status |
+|--------|-------|--------|
+| MODEL-01 | 17 | Open |
+| MODEL-02 | 17 | Open |
+| HARNESS-01 | 18 | Open |
+| HARNESS-02 | 18 | Open |
+| HARNESS-03 | 18 | Open |
+| POLISH-01 | 19 | Open |
+| POLISH-02 | 19 | Open |
+| POLISH-03 | 19 | Open |
+| POLISH-04 | 19 | Open |
+
+**Coverage:** 9/9 requirements mapped (100%). Phase 17: 2 reqs · Phase 18: 3 reqs · Phase 19: 4 reqs.
+
+## Out of Scope (carry-forward to v1.5)
+
+- SEED-CHAT-STREAMING-V1.4.x — trigger condition ("spinner runs too long, no progress feedback") was NOT reported in Phase 16.2 UAT; deferred until/unless artist feedback surfaces it
+- New feature work (planted seeds: AUTH, CHAT-CLOUD-CALLER, CHAT-PARTIAL-OUTPUT, CHAT-PERSIST-HISTORY, CHAT-TOOL-ALLOWLIST, CMA-MEMORY, CROSS-PROVIDER-FALLBACK, MESSAGE-PRUNING, PARALLEL-TOOL-EXEC, STAGED-CLOSURE, STAGED-REASON, TOOL-EXAMPLES) — all planted for v1.5+ milestone consideration
+- LLMRouter sensitive-routing changes — sensitive=True hardcoding in chat_handler is by design for v1.4; caller-identity routing waits on auth (SEED-AUTH-V1.5)
+
+## Closed Seeds
+
+- ✓ SEED-CLOUD-MODEL-BUMP-V1.4.x — closed via MODEL-01
+- ✓ SEED-DEFAULT-MODEL-BUMP-V1.4.x — closed via MODEL-02

@@ -7,6 +7,7 @@
 - ✅ **v1.2 Observability & Provenance** — Phases 7, 07.1, 8 (shipped 2026-04-22 — v1.2.0, v1.2.1 hotfix, v1.3.0)
 - ✅ **v1.3 Artist Console** — Phases 9, 10, 10.1, 11 (shipped 2026-04-25 — v1.3.1; Phase 12 superseded by v1.4 FB-D)
 - ✅ **v1.4 Staged Ops Platform** — Phases 13, 14, 15, 16, 16.1, 16.2 (FB-A..FB-D + two inserted gap-closure phases) (shipped 2026-04-28 — consumed by projekt-forge v1.5)
+- 🚧 **v1.4.x Carry-Forward Debt** — Phases 17-19 (opened 2026-04-28 — patch milestone targeting `v1.4.1` tag)
 
 ## Phases
 
@@ -71,6 +72,19 @@ Audit: `.planning/milestones/v1.4-MILESTONE-AUDIT.md`
 
 </details>
 
+### 🚧 v1.4.x Carry-Forward Debt (opened 2026-04-28)
+
+- [ ] **Phase 17: Default model bumps** — `LLMRouter._cloud_model` and `_local_model` default flips. Closes SEED-CLOUD-MODEL-BUMP-V1.4.x and SEED-DEFAULT-MODEL-BUMP-V1.4.x. Single-commit isolated `_DEFAULT_*` constant changes per the SEED decoupled-commit mandate. **Requirements**: MODEL-01, MODEL-02
+- [ ] **Phase 18: Staged-handlers test harness rework** — Migrate 3 test files (23 tests) from `starlette.TestClient` (sync) to `httpx.AsyncClient(transport=ASGITransport(app=...))` so the test event loop matches the asyncpg session loop. Seed parent `Project` rows in the `session_factory` fixture. Remove the `FORGE_TEST_DB=1` opt-in gate. **Requirements**: HARNESS-01, HARNESS-02, HARNESS-03
+- [ ] **Phase 19: Code-quality polish** — WR-02 ref-collision guard in salvage helper; Phase 13 type-contract + atomicity sub-test fixes; qwen2.5-coder `<|im_start|>` tail-token strip in chat handler. **Requirements**: POLISH-01, POLISH-02, POLISH-03, POLISH-04
+
+**Milestone Goal**: Pay down v1.4 carry-forward debt as a clean patch release. Ship a polished `v1.4.1` that projekt-forge v1.5 can pin against without test-harness or model-default surprises. Each requirement maps to a specific debt item surfaced during v1.4 close-out (`.planning/milestones/v1.4-MILESTONE-AUDIT.md`).
+
+**Out of scope (carry to v1.5)**: SEED-CHAT-STREAMING-V1.4.x (its trigger condition was not reported in Phase 16.2 UAT); all V1.5+ planted seeds; sensitive-routing changes (waits on auth).
+
+**Target tag**: `v1.4.1` after Phase 19 ships and a single post-milestone audit confirms 9/9 requirements closed.
+
+---
 
 ## Progress
 

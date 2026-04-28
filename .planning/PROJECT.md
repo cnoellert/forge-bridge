@@ -82,7 +82,7 @@ Make forge-bridge the single canonical package (`pip install forge-bridge`) that
 
 ### Active
 
-- _None — v1.4 milestone closed 2026-04-28. Open the next milestone via `/gsd-new-milestone <version>` (v1.5 for new feature work, or v1.4.x for the accumulated tech-debt cleanup tracked in `project_v1_4_x_harness_debt.md` memory)._
+- _v1.4.x Carry-Forward Debt — milestone opened 2026-04-28 via `/gsd-new-milestone v1.4.x`. Targets tag `v1.4.1`. 9 requirements (MODEL-01..02, HARNESS-01..03, POLISH-01..04) across 3 phases (17, 18, 19) defined in `.planning/REQUIREMENTS.md` and `.planning/ROADMAP.md`. Closes SEED-CLOUD-MODEL-BUMP-V1.4.x and SEED-DEFAULT-MODEL-BUMP-V1.4.x._
 
 ### Out of Scope
 

@@ -1,39 +1,45 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.4
-milestone_name: Staged Ops Platform
-status: executing
-stopped_at: Completed 16.2-03-PLAN.md (Strategy B regression guard — two D-06 assertions added; default pytest skip-clean; live verification gated by Plan 04 on assist-01)
-last_updated: "2026-04-28T16:40:44.364Z"
+milestone: v1.4.x
+milestone_name: Carry-Forward Debt
+status: opened
+stopped_at: v1.4.x milestone opened 2026-04-28; REQUIREMENTS + ROADMAP committed; ready to start Phase 17 (default model bumps).
+last_updated: "2026-04-28T16:55:00Z"
 last_activity: 2026-04-28
 progress:
-  total_phases: 6
-  completed_phases: 5
-  total_plans: 35
-  completed_plans: 34
-  percent: 97
+  total_phases: 3
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-04-25 at v1.3 close)
+See: .planning/PROJECT.md (updated 2026-04-28 at v1.4 close)
 
 **Project core value:** forge-bridge is the single canonical pip-installable middleware (`pip install forge-bridge`) — protocol-agnostic communication bus with a canonical vocabulary that any endpoint (Flame, Maya, editorial, LLM agents) connects to.
-**Current focus:** Phase 16.2 — bug-d-chat-tool-call-loop
+**Current focus:** v1.4.x Carry-Forward Debt — Phase 17 (default model bumps) is the next active workstream.
 
 ## Current Position
 
-Phase: 16.2
+Phase: 17 (not yet planned)
 Plan: Not started
-Status: Ready to execute
-Milestone: v1.4 Staged Ops Platform (opened 2026-04-25)
+Status: Ready to discuss/plan
+Milestone: v1.4.x Carry-Forward Debt (opened 2026-04-28)
 Last activity: 2026-04-28
 
-**Dual-naming amendment 2026-04-25** — `gsd-discuss-phase FB-A` failed `find-phase` because the tool's `normalizePhaseName()` strips letter prefixes only when followed by a digit (`FB-13` would parse, `FB-A` does not). Resolution: ROADMAP and STATE now use `Phase N (FB-X)` style; numeric IDs 13-16 (skipping superseded Phase 12 "LLM Chat") are internal plumbing for tooling/state/dirs; FB-A..FB-D remains the canonical alias for cross-repo references with projekt-forge v1.5.
+**v1.4 closed 2026-04-28** — milestone shipped at tag `v1.4.0` (commit `fad8615`). All 19 requirements closed with direct live evidence (STAGED-01..04 Postgres UAT, LLMTOOL-01 Ollama qwen2.5-coder UAT, LLMTOOL-02 Anthropic claude-sonnet-4-6 UAT, Phase 16.2 chat E2E live walkthrough on assist-01). Local LLM tool-call parity with Claude is real, not aspirational. Branches reconciled across dev / origin / assist-01.
 
-**Next action:** Phase 13 (FB-A) is the next active workstream — `/gsd-discuss-phase 13`. FB-A and FB-C are parallelizable; FB-C is now the FB-D dependency-satisfied side, FB-A is the remaining critical-path entity work. Operator UAT for FB-C live tests (LLMTOOL-01/02) can run in parallel via `FB_INTEGRATION_TESTS=1 ANTHROPIC_API_KEY=... pytest tests/integration/`.
+**v1.4.x scope** — 9 requirements / 3 phases targeting tag `v1.4.1`:
+
+- **Phase 17** (MODEL-01..02): default cloud_model bump claude-opus-4-6 → claude-sonnet-4-6; default local_model bump qwen2.5-coder:32b → qwen3:32b IF assist-01 UAT passes. Single-commit isolated `_DEFAULT_*` constant changes per the SEED decoupled-commit mandate. Closes SEED-CLOUD-MODEL-BUMP-V1.4.x and SEED-DEFAULT-MODEL-BUMP-V1.4.x.
+- **Phase 18** (HARNESS-01..03): migrate 3 staged-handlers test files (23 tests) from starlette.TestClient → httpx.AsyncClient(transport=ASGITransport) so the test event loop matches asyncpg's; seed parent Project rows in session_factory; remove the FORGE_TEST_DB=1 opt-in gate.
+- **Phase 19** (POLISH-01..04): WR-02 ref-collision guard in salvage helper; Phase 13 type-contract + atomicity test fixes; qwen2.5-coder `<|im_start|>` tail-token strip in chat handler.
+
+**Next action:** `/gsd-discuss-phase 17` to scope MODEL-01/02 decisions (primary unknowns: empirical qwen3:32b UAT path; whether to ship MODEL-01 first standalone OR pair with MODEL-02; how to handle claude-opus-4-7 temperature-deprecation if MODEL-01 ever needs to bump beyond sonnet-4-6).
 
 ## Session Handoff — Resume Instructions
 
