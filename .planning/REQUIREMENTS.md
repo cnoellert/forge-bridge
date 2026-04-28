@@ -76,10 +76,10 @@ These were considered and explicitly excluded — they have a target milestone o
 
 | REQ-ID | Phase | Status | Closure evidence |
 |--------|-------|--------|------------------|
-| STAGED-01 | FB-A | Pending UAT | Phase 13 VERIFICATION 4/4 structurally; Postgres-backed pytest run pending on a DB-equipped host (`13-HUMAN-UAT.md` status partial) |
-| STAGED-02 | FB-A | Pending UAT | Same as STAGED-01 — Phase 13 collective gate |
-| STAGED-03 | FB-A | Pending UAT | Same as STAGED-01 |
-| STAGED-04 | FB-A | Pending UAT | Same as STAGED-01 |
+| STAGED-01 | FB-A | Closed | `test_staged_op_round_trip` PASSED live on dev Postgres `127.0.0.1:7533/forge_bridge` 2026-04-28; recorded in `13-HUMAN-UAT.md` |
+| STAGED-02 | FB-A | Closed | `test_transition_legality[*]` 5 legal cases PASSED + 25 illegal-as-`should_raise` cases by-design skipped; live Postgres run 2026-04-28 |
+| STAGED-03 | FB-A | Closed | `test_audit_replay` PASSED live 2026-04-28 |
+| STAGED-04 | FB-A | Closed | `test_sql_only_parameter_diff` PASSED live 2026-04-28 |
 | STAGED-05 | FB-B | Closed | Phase 14 VERIFICATION passed; D-19 byte-identity tests in `tests/console/test_staged_zero_divergence.py` |
 | STAGED-06 | FB-B | Closed | Phase 14 VERIFICATION passed; HTTP routes registered at `console/app.py:97-98` |
 | STAGED-07 | FB-B | Closed | Phase 14 VERIFICATION passed; D-20 byte-identity test for `forge://staged/pending` resource |
@@ -96,11 +96,10 @@ These were considered and explicitly excluded — they have a target milestone o
 | CHAT-04 | FB-D → 16.1 → 16.2 | Closed | Chained closure: 16 (gaps_found) → 16.1 (gaps_found) → 16.2 (passed). PASS-with-deviations recorded in `16.2-HUMAN-UAT.md` (D-08 #1/#2/#3 all PASS on assist-01) |
 | CHAT-05 | FB-D | Closed | Phase 16 VERIFICATION; `test_chat_parity_browser_vs_flame_hooks` asserts structural+content equality; D-17 envelope locked |
 
-**Coverage:** 19/19 requirements mapped (100%). 14 Closed + 5 Pending UAT (4 from FB-A Postgres run + 1 from FB-C Anthropic live run). FB-A: 4 reqs (Pending UAT) · FB-B: 3 reqs (Closed) · FB-C: 7 reqs (6 Closed + 1 Pending UAT) · FB-D: 5 reqs (Closed).
+**Coverage:** 19/19 requirements mapped (100%). 18 Closed + 1 Pending UAT (LLMTOOL-02 Anthropic live run). FB-A: 4 reqs (Closed 2026-04-28 on dev Postgres `127.0.0.1:7533/forge_bridge`) · FB-B: 3 reqs (Closed) · FB-C: 7 reqs (6 Closed + 1 Pending UAT) · FB-D: 5 reqs (Closed).
 
 **Pending-UAT closure paths:**
-- `pytest tests/test_staged_operations.py -v` on a Postgres-equipped host → closes STAGED-01..04
-- `FB_INTEGRATION_TESTS=1 ANTHROPIC_API_KEY=sk-... pytest tests/integration/test_complete_with_tools_live.py::test_anthropic_tool_call_loop_live -v` → closes LLMTOOL-02
+- `FB_INTEGRATION_TESTS=1 ANTHROPIC_API_KEY=sk-... pytest tests/integration/test_complete_with_tools_live.py::test_anthropic_tool_call_loop_live -v` → closes LLMTOOL-02 (cloud path; not on critical path because `chat_handler` hardcodes `sensitive=True`)
 
 ---
 

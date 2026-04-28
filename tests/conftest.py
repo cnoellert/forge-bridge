@@ -124,10 +124,28 @@ def _phase13_postgres_available() -> bool:
     skip rather than a noisy connection error stack. Matches the local-first
     project philosophy: tests pass on a developer's laptop without Postgres
     if they are running unrelated suites; they SKIP this file specifically.
+
+    Honors FORGE_DB_URL host/port if set so the project's non-default port
+    (7533 on dev, per the environment var FORGE_DB_URL) is probed instead of
+    the SQL server default 5432 (which on dev hosts the Autodesk Flame DB,
+    not forge_bridge).
     """
     import socket
+    from urllib.parse import urlparse
+
+    url = _phase13_os.environ.get("FORGE_DB_URL", "")
+    if url:
+        # urlparse needs a scheme without "+driver" to recognize the netloc cleanly.
+        scheme, _, rest = url.partition("://")
+        scheme = scheme.split("+", 1)[0] or "postgresql"
+        parsed = urlparse(f"{scheme}://{rest}")
+        host = parsed.hostname or "localhost"
+        port = parsed.port or 5432
+    else:
+        host, port = "localhost", 5432
+
     try:
-        with socket.create_connection(("localhost", 5432), timeout=0.5):
+        with socket.create_connection((host, port), timeout=0.5):
             return True
     except OSError:
         return False
