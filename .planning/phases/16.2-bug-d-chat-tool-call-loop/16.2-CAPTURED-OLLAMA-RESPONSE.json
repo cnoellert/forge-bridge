@@ -1,0 +1,36 @@
+{
+  "capture_date_iso": "2026-04-27T21:17:03-07:00",
+  "captured_by": "cnoellert",
+  "host": "assist-01.local",
+  "ollama_version": "ollama version is 0.21.0",
+  "model": "qwen2.5-coder:32b",
+  "prompt": "what synthesis tools were created this week?",
+  "tools_offered": [
+    "forge_tools_read"
+  ],
+  "bug_d_shape_confirmed": true,
+  "shape_evidence": {
+    "tool_calls_empty_or_absent": true,
+    "content_parses_as_json": true,
+    "content_has_name_and_arguments": true,
+    "raw_content_first_120": "{\"name\": \"forge_tools_read\", \"arguments\": {\"name\": \"synthesis-tools\"}}",
+    "raw_tool_calls": null
+  },
+  "notes": "Captured via capture-bug-d.sh — Phase 16.2-01 Task 1 (RED diagnosis lock).",
+  "raw_response": {
+    "model": "qwen2.5-coder:32b",
+    "created_at": "2026-04-28T04:17:03.733717Z",
+    "message": {
+      "role": "assistant",
+      "content": "{\"name\": \"forge_tools_read\", \"arguments\": {\"name\": \"synthesis-tools\"}}"
+    },
+    "done": true,
+    "done_reason": "stop",
+    "total_duration": 5504234917,
+    "load_duration": 1514427125,
+    "prompt_eval_count": 162,
+    "prompt_eval_duration": 2351525250,
+    "eval_count": 20,
+    "eval_duration": 1630090585
+  }
+}
