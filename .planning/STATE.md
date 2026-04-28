@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Staged Ops Platform
 status: executing
-stopped_at: Phase 16.2 context gathered
-last_updated: "2026-04-28T02:01:41.141Z"
+stopped_at: Completed 16.2-01-PLAN.md (RED diagnosis lock — Bug D adapter test fails on main)
+last_updated: "2026-04-28T04:23:50.017Z"
 last_activity: 2026-04-28
 progress:
   total_phases: 6
   completed_phases: 4
-  total_plans: 31
-  completed_plans: 30
-  percent: 97
+  total_plans: 35
+  completed_plans: 31
+  percent: 89
 ---
 
 # Project State
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-25 at v1.3 close)
 
 **Project core value:** forge-bridge is the single canonical pip-installable middleware (`pip install forge-bridge`) — protocol-agnostic communication bus with a canonical vocabulary that any endpoint (Flame, Maya, editorial, LLM agents) connects to.
-**Current focus:** Phase 16.1 — fb-d-chat-gap-closure
+**Current focus:** Phase 16.2 — bug-d-chat-tool-call-loop
 
 ## Current Position
 
-Phase: 16.1
-Plan: Not started
-Status: Executing Phase 16.1
+Phase: 16.2 (bug-d-chat-tool-call-loop) — EXECUTING
+Plan: 2 of 4
+Status: Ready to execute
 Milestone: v1.4 Staged Ops Platform (opened 2026-04-25)
 Last activity: 2026-04-28
 
@@ -93,6 +93,7 @@ Phase 13 (FB-A) discuss session is the active work. Dual-naming amendment (this 
 | Phase 05 P04 | ~12min | 1 task  | 1 file  |
 | Phase 07.1 P02 | 9min | 2 tasks | 2 files |
 | Phase 07.1-startup-bridge-graceful-degradation-hotfix-deployment-uat P03 | 8min | 1 tasks | 1 files |
+| Phase 16.2 P01 | 3min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -144,6 +145,8 @@ Recent decisions affecting current work:
 - [v1.4 Roadmap, 2026-04-25]: Sanitization patterns consolidate into a single source of truth in FB-C — Phase 7's `_sanitize_tag()` and FB-C's `_sanitize_tool_result()` share `forge_bridge/_sanitize_patterns.py` (or equivalent). This is a FB-C scope item, not a new phase.
 - [v1.4 Roadmap, 2026-04-25]: `LLMLoopBudgetExceeded` exported from `forge_bridge.__all__`. Barrel grows 16→17. Required so callers (FB-D chat endpoint) can catch it and translate to HTTP 504/408.
 - [v1.4 Roadmap amendment, 2026-04-25]: Dual-naming applied — `Phase 13..16` numeric IDs added alongside preserved `FB-A..FB-D` aliases. Forced by `gsd-tools` impedance: `normalizePhaseName()` only strips letter prefixes when followed by a digit, so `FB-A` cannot resolve via `find-phase` and the discuss/plan/execute pipeline silently fails. Numeric mapping skips 12 (taken by superseded "LLM Chat" — 12 still exists in v1.3 history as superseded). The original locked decision (no renumber) was about preserving the cross-repo contract with projekt-forge v1.5; the amendment satisfies that intent (alias preserved everywhere) while adding the numeric plumbing tooling needs.
+- [Phase 16.2]: [Phase 16.2-01]: Bug D D-03 hypothesis CONFIRMED with reproduce-from-disk evidence — captured Ollama response from assist-01 shows tool_calls=null and content='{"name": "forge_tools_read", "arguments": {"name": "synthesis-tools"}}'. RED adapter test landed at tests/llm/test_ollama_adapter.py::TestOllamaToolAdapterBugDFallback::test_text_content_tool_call_salvaged with explicit Bug D regression message. Plan 02 GREEN fix unblocked.
+- [Phase 16.2]: [Phase 16.2-01]: Captured fixture lives in BOTH operator-readable JSON in planning tree AND verbatim Python constant in test file; equality asserted at verify time per threat T-16.2.01-01 to prevent drift. Pattern reusable for future captured-fixture testing.
 
 ### Pending Todos
 
@@ -176,6 +179,6 @@ None. Roadmap formalized; awaiting user approval.
 
 ## Session Continuity
 
-Last session: 2026-04-28T02:01:41.138Z
-Stopped at: Phase 16.2 context gathered
-Resume file: .planning/phases/16.2-bug-d-chat-tool-call-loop/16.2-CONTEXT.md
+Last session: 2026-04-28T04:23:50.014Z
+Stopped at: Completed 16.2-01-PLAN.md (RED diagnosis lock — Bug D adapter test fails on main)
+Resume file: None
