@@ -249,19 +249,17 @@ async def test_chat_canonical_uat_prompt_under_60s(live_chat_client: httpx.Async
         f"Content: {content!r}"
     )
 
-    # Phase 16.2 D-06 #2: assert the loop iterated. Healthy shape requires
-    # >=1 role=tool turn (proves a tool was actually executed) AND
-    # >=2 role=assistant turns (one with the tool_call request, one with
-    # the terminal text answer). Minimum healthy 4-message shape:
-    #   [user, assistant(tool_call), tool, assistant(text)]
-    # Bug D failed at zero-iteration: just [user, assistant(raw-JSON-text)].
-    tool_turns = [m for m in messages if m.get("role") == "tool"]
-    assistant_turns = [m for m in messages if m.get("role") == "assistant"]
-    assert len(tool_turns) >= 1 and len(assistant_turns) >= 2, (
-        f"Bug D regression — the agentic loop did not iterate. Expected >=1 "
-        f"role=tool turn AND >=2 role=assistant turns; got tool={len(tool_turns)}, "
-        f"assistant={len(assistant_turns)}. Full messages: {messages}"
-    )
+    # Phase 16.2 D-06 #2 was originally a loop-iteration check on the messages[]
+    # array (require >=1 role=tool + >=2 role=assistant). Dropped 2026-04-28
+    # during the Plan 04 fresh-operator UAT on assist-01: the chat API response
+    # exposes only [user_input, final_assistant_answer] — intermediate tool and
+    # assistant turns happen inside LLMRouter.complete_with_tools() and are NOT
+    # forwarded into body["messages"]. The assertion as planned could not
+    # succeed against any healthy response, only against itself. D-06 #1 above
+    # is the load-bearing Bug D guard; iteration is implicit in producing a
+    # useful natural-language answer rather than raw JSON. Server-side iteration
+    # evidence (router.py "iter=N" log markers) is captured in 16.2-HUMAN-UAT.md
+    # rather than re-encoded here.
 
     assert elapsed < 60.0, (
         f"CHAT-04 budget exceeded: {elapsed:.1f}s > 60.0s. "
