@@ -40,6 +40,7 @@ Expected on dev machine (no Ollama):
 from __future__ import annotations
 
 import os
+import re
 import time
 from unittest.mock import MagicMock
 
@@ -76,6 +77,22 @@ requires_ollama = pytest.mark.skipif(
     not _ollama_reachable(),
     reason="Ollama daemon not reachable at http://localhost:11434",
 )
+
+
+# ---------------------------------------------------------------------------
+# Phase 16.2 Bug D regression-guard regex (D-06 #1)
+# ---------------------------------------------------------------------------
+
+# Matches the canonical Bug D failure shape: a terminal assistant response
+# whose content begins with a JSON object containing a "name" key — i.e.,
+# the LLM emitted a tool call as text and the adapter / loop failed to
+# execute it. Permissive whitespace handling covers pretty-printed variants.
+# See Phase 16.2 D-06 #1; the exact captured shape is recorded at
+#   .planning/phases/16.2-bug-d-chat-tool-call-loop/16.2-CAPTURED-OLLAMA-RESPONSE.json
+# CONTEXT D-07 explicitly rejects natural-prose-detection heuristics; this
+# regex is surgical — it fires on the exact symptom and not on legitimate
+# short answers like "yes" or numeric responses.
+_BUG_D_TERMINAL_JSON_RE = re.compile(r'^\s*\{\s*"name"\s*:', re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +235,32 @@ async def test_chat_canonical_uat_prompt_under_60s(live_chat_client: httpx.Async
     )
     assert "rate limit" not in content.lower(), (
         f"rate-limit fallback text leaked into response: {content!r}"
+    )
+
+    # Phase 16.2 D-06 #1: reject raw tool-call JSON as terminal content.
+    # Phase 16.1 HUMAN-UAT recorded `{"name": "forge_tools_read", ...}` as
+    # the assistant's terminal text on assist-01 — a 57-char string that
+    # satisfies len(content) >= 40 and stop_reason == "end_turn" but is NOT
+    # a useful answer. Strengthen the assertion to fail on this exact shape.
+    assert not _BUG_D_TERMINAL_JSON_RE.match(content), (
+        f"Bug D regression — terminal content is raw tool-call JSON, not a "
+        f"natural-language answer. The Ollama adapter likely failed to salvage "
+        f"a text-shaped tool call (see Phase 16.2 D-03 + Phase 16.1 HUMAN-UAT). "
+        f"Content: {content!r}"
+    )
+
+    # Phase 16.2 D-06 #2: assert the loop iterated. Healthy shape requires
+    # >=1 role=tool turn (proves a tool was actually executed) AND
+    # >=2 role=assistant turns (one with the tool_call request, one with
+    # the terminal text answer). Minimum healthy 4-message shape:
+    #   [user, assistant(tool_call), tool, assistant(text)]
+    # Bug D failed at zero-iteration: just [user, assistant(raw-JSON-text)].
+    tool_turns = [m for m in messages if m.get("role") == "tool"]
+    assistant_turns = [m for m in messages if m.get("role") == "assistant"]
+    assert len(tool_turns) >= 1 and len(assistant_turns) >= 2, (
+        f"Bug D regression — the agentic loop did not iterate. Expected >=1 "
+        f"role=tool turn AND >=2 role=assistant turns; got tool={len(tool_turns)}, "
+        f"assistant={len(assistant_turns)}. Full messages: {messages}"
     )
 
     assert elapsed < 60.0, (
