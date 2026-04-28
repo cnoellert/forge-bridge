@@ -27,6 +27,20 @@ from forge_bridge.llm.router import LLMToolError
 
 
 # ---------------------------------------------------------------------------
+# Phase 16.2 Bug D — captured fixture (D-04)
+# ---------------------------------------------------------------------------
+
+# Captured 2026-04-27 from assist-01 reproducing Bug D against
+# qwen2.5-coder:32b on Ollama 0.21.0. The model emits the tool call as
+# JSON-shaped text in message.content instead of in the structured
+# tool_calls field — see Phase 16.2 D-03 + D-04. Operator-readable
+# artifact with full capture metadata lives at:
+#   .planning/phases/16.2-bug-d-chat-tool-call-loop/16.2-CAPTURED-OLLAMA-RESPONSE.json
+# Prompt: "what synthesis tools were created this week?"
+_OLLAMA_BUG_D_RESPONSE_CONTENT = '{"name": "forge_tools_read", "arguments": {"name": "synthesis-tools"}}'
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -260,3 +274,78 @@ class TestOllamaToolAdapterErrors:
         assert "ConnectionError" in msg
         assert "sk-xxx" not in msg
         assert "daemon at" not in msg
+
+
+# ---------------------------------------------------------------------------
+# Phase 16.2 Bug D fallback tests (D-02 step 2 / D-05)
+# ---------------------------------------------------------------------------
+
+
+class TestOllamaToolAdapterBugDFallback:
+    """Phase 16.2 (D-02 step 2 / D-05): when Ollama emits a tool call as
+    JSON-shaped text in message.content (instead of structured tool_calls),
+    the adapter salvages it. RED commit lands as Plan 01 (this file's
+    addition); GREEN commit lands as Plan 02 with the
+    _try_parse_text_tool_call helper inside _adapters.py.
+
+    See Phase 16.2 D-03 for the failure-mode evidence trail and the
+    captured fixture at .planning/phases/16.2-.../16.2-CAPTURED-OLLAMA-RESPONSE.json.
+
+    These tests are ALWAYS-ON — no FB_INTEGRATION_TESTS gate (per D-05).
+    The captured fixture is the entire input; no live Ollama needed.
+    """
+
+    @pytest.mark.asyncio
+    async def test_text_content_tool_call_salvaged(self):
+        """qwen2.5-coder:32b emits {"name": ..., "arguments": ...} as text
+        with empty structured tool_calls. The salvage path must produce a
+        non-empty _ToolCall list so router.py:435 keeps iterating instead
+        of terminating with the JSON-text as terminal content (Bug D).
+        """
+        client = MagicMock()
+        client.chat = AsyncMock(return_value=_fake_response_dict(
+            content=_OLLAMA_BUG_D_RESPONSE_CONTENT,
+            tool_calls=None,  # Bug D shape: structured field empty
+        ))
+        adapter = OllamaToolAdapter(client, "qwen2.5-coder:32b")
+        state = adapter.init_state(prompt="hi", system="s", tools=[], temperature=0.1)
+        resp = await adapter.send_turn(state)
+
+        # Core fix: non-empty tool_calls keeps router.py:435 iterating.
+        assert len(resp.tool_calls) >= 1, (
+            f"Bug D regression — text-shaped tool call not salvaged. "
+            f"Got tool_calls={resp.tool_calls!r}, text={resp.text!r}. "
+            f"See Phase 16.2 D-03; the OllamaToolAdapter must fall back "
+            f"to parsing message.content when message.tool_calls is empty."
+        )
+        # Tool name + args extracted from the salvaged JSON.
+        assert resp.tool_calls[0].tool_name == "forge_tools_read"
+        assert resp.tool_calls[0].arguments == {"name": "synthesis-tools"}
+        # Salvaged content is consumed — must NOT also surface as terminal text
+        # (would re-trigger Bug D rendering in the chat panel).
+        assert resp.text == "", (
+            "salvaged text must not double-emit as terminal content "
+            f"(would re-trigger Bug D); got text={resp.text!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_plain_text_terminal_response_not_misclassified(self):
+        """Regression guard: legitimate non-JSON terminal text MUST still
+        return tool_calls=[] so the router exits with the text answer.
+        This must pass both BEFORE Plan 02 (currently no salvage path —
+        already passes trivially) AND AFTER Plan 02 (the salvage path must
+        return None for plain prose, falling through to existing behavior).
+        """
+        client = MagicMock()
+        client.chat = AsyncMock(return_value=_fake_response_dict(
+            content="The synthesis tools created this week are: forge_x, forge_y.",
+        ))
+        adapter = OllamaToolAdapter(client, "qwen2.5-coder:32b")
+        state = adapter.init_state(prompt="hi", system="s", tools=[], temperature=0.1)
+        resp = await adapter.send_turn(state)
+
+        assert resp.tool_calls == [], (
+            f"plain text terminal response misclassified as tool call; "
+            f"got tool_calls={resp.tool_calls!r}"
+        )
+        assert resp.text.startswith("The synthesis tools")
