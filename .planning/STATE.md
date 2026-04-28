@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Staged Ops Platform
 status: executing
-stopped_at: Completed 16.2-01-PLAN.md (RED diagnosis lock — Bug D adapter test fails on main)
-last_updated: "2026-04-28T04:23:50.017Z"
+stopped_at: Completed 16.2-02-PLAN.md (GREEN fix — Bug D salvage helper landed in OllamaToolAdapter; tests/llm/ 91/91 green)
+last_updated: "2026-04-28T04:30:13.524Z"
 last_activity: 2026-04-28
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 35
-  completed_plans: 31
-  percent: 89
+  completed_plans: 32
+  percent: 91
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-25 at v1.3 close)
 ## Current Position
 
 Phase: 16.2 (bug-d-chat-tool-call-loop) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
 Milestone: v1.4 Staged Ops Platform (opened 2026-04-25)
 Last activity: 2026-04-28
@@ -94,6 +94,7 @@ Phase 13 (FB-A) discuss session is the active work. Dual-naming amendment (this 
 | Phase 07.1 P02 | 9min | 2 tasks | 2 files |
 | Phase 07.1-startup-bridge-graceful-degradation-hotfix-deployment-uat P03 | 8min | 1 tasks | 1 files |
 | Phase 16.2 P01 | 3min | 2 tasks | 4 files |
+| Phase 16.2 P02 | 2min | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -147,6 +148,8 @@ Recent decisions affecting current work:
 - [v1.4 Roadmap amendment, 2026-04-25]: Dual-naming applied — `Phase 13..16` numeric IDs added alongside preserved `FB-A..FB-D` aliases. Forced by `gsd-tools` impedance: `normalizePhaseName()` only strips letter prefixes when followed by a digit, so `FB-A` cannot resolve via `find-phase` and the discuss/plan/execute pipeline silently fails. Numeric mapping skips 12 (taken by superseded "LLM Chat" — 12 still exists in v1.3 history as superseded). The original locked decision (no renumber) was about preserving the cross-repo contract with projekt-forge v1.5; the amendment satisfies that intent (alias preserved everywhere) while adding the numeric plumbing tooling needs.
 - [Phase 16.2]: [Phase 16.2-01]: Bug D D-03 hypothesis CONFIRMED with reproduce-from-disk evidence — captured Ollama response from assist-01 shows tool_calls=null and content='{"name": "forge_tools_read", "arguments": {"name": "synthesis-tools"}}'. RED adapter test landed at tests/llm/test_ollama_adapter.py::TestOllamaToolAdapterBugDFallback::test_text_content_tool_call_salvaged with explicit Bug D regression message. Plan 02 GREEN fix unblocked.
 - [Phase 16.2]: [Phase 16.2-01]: Captured fixture lives in BOTH operator-readable JSON in planning tree AND verbatim Python constant in test file; equality asserted at verify time per threat T-16.2.01-01 to prevent drift. Pattern reusable for future captured-fixture testing.
+- [Phase 16.2]: [Phase 16.2-02]: Bug D GREEN fix landed in OllamaToolAdapter. _try_parse_text_tool_call helper at module scope salvages a _ToolCall from message.content when message.tool_calls is empty AND content matches the canonical {name, arguments} JSON shape. Helper never raises (returns None on parse failure). Salvage hook in send_turn resets text="" on success to prevent double-emit. Plan 01's RED test flipped to PASSED; full tests/llm/ suite 91/91 green; router.py + handlers.py byte-identical to main.
+- [Phase 16.2]: [Phase 16.2-02]: Helper placement decision — _try_parse_text_tool_call lives at module scope between _TurnResponse (line 114) and _ToolAdapter Protocol (line 195) because it constructs _ToolCall (line 86). Plan-compliant; the plan's 'after _OLLAMA_KEEP_ALIVE' hint was a module-level placement directive, not a strict line constraint. Reusable pattern for future adapter-layer salvage helpers.
 
 ### Pending Todos
 
@@ -179,6 +182,6 @@ None. Roadmap formalized; awaiting user approval.
 
 ## Session Continuity
 
-Last session: 2026-04-28T04:23:50.014Z
-Stopped at: Completed 16.2-01-PLAN.md (RED diagnosis lock — Bug D adapter test fails on main)
+Last session: 2026-04-28T04:30:13.522Z
+Stopped at: Completed 16.2-02-PLAN.md (GREEN fix — Bug D salvage helper landed in OllamaToolAdapter; tests/llm/ 91/91 green)
 Resume file: None
