@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Staged Ops Platform
 status: executing
-stopped_at: Completed 16.2-02-PLAN.md (GREEN fix — Bug D salvage helper landed in OllamaToolAdapter; tests/llm/ 91/91 green)
-last_updated: "2026-04-28T04:30:13.524Z"
+stopped_at: Completed 16.2-03-PLAN.md (Strategy B regression guard — two D-06 assertions added; default pytest skip-clean; live verification gated by Plan 04 on assist-01)
+last_updated: "2026-04-28T04:35:33.715Z"
 last_activity: 2026-04-28
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 35
-  completed_plans: 32
-  percent: 91
+  completed_plans: 33
+  percent: 94
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-25 at v1.3 close)
 ## Current Position
 
 Phase: 16.2 (bug-d-chat-tool-call-loop) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 Status: Ready to execute
 Milestone: v1.4 Staged Ops Platform (opened 2026-04-25)
 Last activity: 2026-04-28
@@ -95,6 +95,7 @@ Phase 13 (FB-A) discuss session is the active work. Dual-naming amendment (this 
 | Phase 07.1-startup-bridge-graceful-degradation-hotfix-deployment-uat P03 | 8min | 1 tasks | 1 files |
 | Phase 16.2 P01 | 3min | 2 tasks | 4 files |
 | Phase 16.2 P02 | 2min | 1 tasks | 1 files |
+| Phase 16.2 P03 | 1min | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -150,6 +151,7 @@ Recent decisions affecting current work:
 - [Phase 16.2]: [Phase 16.2-01]: Captured fixture lives in BOTH operator-readable JSON in planning tree AND verbatim Python constant in test file; equality asserted at verify time per threat T-16.2.01-01 to prevent drift. Pattern reusable for future captured-fixture testing.
 - [Phase 16.2]: [Phase 16.2-02]: Bug D GREEN fix landed in OllamaToolAdapter. _try_parse_text_tool_call helper at module scope salvages a _ToolCall from message.content when message.tool_calls is empty AND content matches the canonical {name, arguments} JSON shape. Helper never raises (returns None on parse failure). Salvage hook in send_turn resets text="" on success to prevent double-emit. Plan 01's RED test flipped to PASSED; full tests/llm/ suite 91/91 green; router.py + handlers.py byte-identical to main.
 - [Phase 16.2]: [Phase 16.2-02]: Helper placement decision — _try_parse_text_tool_call lives at module scope between _TurnResponse (line 114) and _ToolAdapter Protocol (line 195) because it constructs _ToolCall (line 86). Plan-compliant; the plan's 'after _OLLAMA_KEEP_ALIVE' hint was a module-level placement directive, not a strict line constraint. Reusable pattern for future adapter-layer salvage helpers.
+- [Phase 16.2-03]: Strategy B chat E2E (test_chat_canonical_uat_prompt_under_60s) strengthened with two additive D-06 assertions: regex-reject raw tool-call JSON (^\s*\{\s*"name"\s*:) as terminal content, AND assert agentic loop iterated (>=1 role=tool turn AND >=2 role=assistant turns). Module-top compiled regex _BUG_D_TERMINAL_JSON_RE; module-top import re. Fixture body byte-identical; no router/adapter mocks introduced. CONTEXT D-07 'natural prose detection' heuristic explicitly rejected — too brittle, false-positives on legitimate one-word answers. Default pytest skips cleanly (1 skipped, 0 failed).
 
 ### Pending Todos
 
@@ -182,6 +184,6 @@ None. Roadmap formalized; awaiting user approval.
 
 ## Session Continuity
 
-Last session: 2026-04-28T04:30:13.522Z
-Stopped at: Completed 16.2-02-PLAN.md (GREEN fix — Bug D salvage helper landed in OllamaToolAdapter; tests/llm/ 91/91 green)
+Last session: 2026-04-28T04:35:33.712Z
+Stopped at: Completed 16.2-03-PLAN.md (Strategy B regression guard — two D-06 assertions added; default pytest skip-clean; live verification gated by Plan 04 on assist-01)
 Resume file: None
