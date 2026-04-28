@@ -101,7 +101,9 @@ async def live_chat_client():
     from forge_bridge.console.app import build_console_app
     from forge_bridge.console.manifest_service import ManifestService
     from forge_bridge.console.read_api import ConsoleReadAPI
+    from forge_bridge.console.resources import register_console_resources
     from forge_bridge.llm.router import LLMRouter
+    from forge_bridge.mcp.server import mcp as mcp_server
 
     _rate_limit._reset_for_tests()
 
@@ -126,6 +128,14 @@ async def live_chat_client():
         llm_router=real_router,  # REAL router — not a mock
     )
     app = build_console_app(api)
+
+    # Mirror _lifespan's Step 5: register the 7 in-process console tools that
+    # the backend-aware filter relies on for graceful degradation when the
+    # Flame bridge (:9999) is unreachable. Without this call only backend-
+    # dependent tools exist in mcp.list_tools(), the filter drops them all,
+    # and the handler returns 503. Production goes through _lifespan which
+    # always runs this; the test would silently mock it away otherwise.
+    register_console_resources(mcp_server, ms, api)
     transport = ASGITransport(app=app)
 
     async with httpx.AsyncClient(
