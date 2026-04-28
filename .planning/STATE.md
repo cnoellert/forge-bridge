@@ -4,14 +4,14 @@ milestone: v1.4
 milestone_name: Staged Ops Platform
 status: executing
 stopped_at: Completed 16.2-03-PLAN.md (Strategy B regression guard — two D-06 assertions added; default pytest skip-clean; live verification gated by Plan 04 on assist-01)
-last_updated: "2026-04-28T04:35:33.715Z"
+last_updated: "2026-04-28T16:40:44.364Z"
 last_activity: 2026-04-28
 progress:
   total_phases: 6
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 35
-  completed_plans: 33
-  percent: 94
+  completed_plans: 34
+  percent: 97
 ---
 
 # Project State
@@ -25,8 +25,8 @@ See: .planning/PROJECT.md (updated 2026-04-25 at v1.3 close)
 
 ## Current Position
 
-Phase: 16.2 (bug-d-chat-tool-call-loop) — EXECUTING
-Plan: 4 of 4
+Phase: 16.2
+Plan: Not started
 Status: Ready to execute
 Milestone: v1.4 Staged Ops Platform (opened 2026-04-25)
 Last activity: 2026-04-28
@@ -71,7 +71,7 @@ Phase 13 (FB-A) discuss session is the active work. Dual-naming amendment (this 
 
 **Velocity (v1.0–v1.3 baseline):**
 
-- Total plans completed: 71 (across milestones v1.0–v1.3)
+- Total plans completed: 75 (across milestones v1.0–v1.3)
 - v1.0 phases: 3 phases, 13 plans
 - v1.1 phases: 3 phases, 13 plans
 - v1.2 phases: 3 phases (7, 07.1, 8), 12 plans, 17 tasks
