@@ -115,6 +115,62 @@ class _TurnResponse:
 
 
 # ---------------------------------------------------------------------------
+# Phase 16.2 Bug D fallback parser (D-03 / D-04)
+# ---------------------------------------------------------------------------
+
+
+def _try_parse_text_tool_call(text: str) -> Optional[_ToolCall]:
+    """Salvage a tool call from text-shaped JSON when Ollama's structured
+    tool_calls field is empty.
+
+    qwen2.5-coder:32b sometimes emits the tool invocation as a JSON object
+    in message.content instead of in the structured tool_calls field. When
+    the structured field is empty AND the content parses as the canonical
+    {"name": <str>, "arguments": <dict>} shape, return a _ToolCall mirroring
+    the structured-parse output at line ~415. Otherwise return None and let
+    the existing terminal-text path stand.
+
+    The helper NEVER raises — return None on any parse failure, mirroring
+    the existing line 412-414 try/except json.JSONDecodeError pattern.
+    Raising would replace Bug D with a worse failure mode (HTTP 500 on the
+    chat endpoint instead of degraded-but-recoverable text output).
+
+    See Phase 16.2 D-03 for the failure-mode evidence trail and the
+    captured fixture at
+    .planning/phases/16.2-bug-d-chat-tool-call-loop/16.2-CAPTURED-OLLAMA-RESPONSE.json.
+    """
+    if not text:
+        return None
+    stripped = text.strip()
+    # Cheap pre-filter: must look like a JSON object before paying json.loads cost.
+    if not stripped.startswith("{"):
+        return None
+    try:
+        parsed = json.loads(stripped)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    name = parsed.get("name")
+    if not isinstance(name, str) or not name:
+        return None
+    args = parsed.get("arguments", {})
+    # Tolerate the same string-args quirk the structured path handles at line 410.
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except (json.JSONDecodeError, ValueError):
+            args = {}
+    if not isinstance(args, dict):
+        args = {}
+    return _ToolCall(
+        ref=f"0:{name}",  # idx is always 0 — the salvage path emits one tool call per turn
+        tool_name=name,
+        arguments=dict(args),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Adapter Protocol contract (research §4.4)
 # ---------------------------------------------------------------------------
 
@@ -417,6 +473,19 @@ class OllamaToolAdapter:
                 tool_name=name,
                 arguments=dict(args) if args else {},
             ))
+
+        # Phase 16.2 Bug D salvage (D-03): qwen2.5-coder:32b sometimes emits
+        # the tool call as JSON-shaped text in message.content instead of in
+        # the structured tool_calls field. When the structured field is empty
+        # AND content matches the canonical tool-call JSON shape, salvage it
+        # so router.py:435 keeps iterating instead of terminating with the
+        # raw JSON as terminal text (Bug D). See Phase 16.2 D-04 for the
+        # captured fixture this guards against.
+        if not tool_calls and text:
+            salvaged = _try_parse_text_tool_call(text)
+            if salvaged is not None:
+                tool_calls.append(salvaged)
+                text = ""  # consumed — don't double-emit as terminal content (re-Bug-D risk)
 
         if isinstance(response, dict):
             prompt_tokens = response.get("prompt_eval_count", 0) or 0
