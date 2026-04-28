@@ -58,6 +58,18 @@ Respond with concise, production-ready Python unless asked otherwise.
 """.strip()
 
 
+# Default Ollama model used for sensitive (local-network) completions.
+# qwen2.5-coder:32b is the v1.4 conservative-bump-first baseline (Phase 15 D-28).
+# Override via the FORGE_LOCAL_MODEL env var or the local_model= kwarg on LLMRouter().
+_DEFAULT_LOCAL_MODEL = "qwen2.5-coder:32b"
+
+# Default Anthropic model used for non-sensitive (cloud) completions.
+# claude-opus-4-6 is the v1.4 ship value (Phase 15 D-30); a Phase 17 bump to
+# claude-sonnet-4-6 is the next planned change (MODEL-01).
+# Override via the FORGE_CLOUD_MODEL env var or the cloud_model= kwarg on LLMRouter().
+_DEFAULT_CLOUD_MODEL = "claude-opus-4-6"
+
+
 # ---------------------------------------------------------------------------
 # FB-C public exception classes (D-15..D-19, exported from forge_bridge.__all__)
 #
@@ -185,10 +197,10 @@ class LLMRouter:
             "FORGE_LOCAL_LLM_URL", "http://localhost:11434/v1"
         )
         self.local_model = local_model or os.environ.get(
-            "FORGE_LOCAL_MODEL", "qwen2.5-coder:32b"
+            "FORGE_LOCAL_MODEL", _DEFAULT_LOCAL_MODEL
         )
         self.cloud_model = cloud_model or os.environ.get(
-            "FORGE_CLOUD_MODEL", "claude-opus-4-6"
+            "FORGE_CLOUD_MODEL", _DEFAULT_CLOUD_MODEL
         )
         self.system_prompt = system_prompt or os.environ.get(
             "FORGE_SYSTEM_PROMPT", _DEFAULT_SYSTEM_PROMPT
