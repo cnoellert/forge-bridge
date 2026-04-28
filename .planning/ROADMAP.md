@@ -63,7 +63,7 @@ Full details: `.planning/milestones/v1.3-ROADMAP.md`
 - [x] **Phase 15 (FB-C): LLMRouter Tool-Call Loop** — `complete_with_tools()` agentic coordinator + thin Anthropic + Ollama adapters; iteration cap (default 8) + wall-clock cap (default 120s); repeat-call detection, 8 KB result cap, sanitization boundary, recursive-synthesis guard ✅ 2026-04-27 (operator UAT pending for LLMTOOL-01/02)
 - [x] **Phase 16 (FB-D): Chat Endpoint** — `/api/v1/chat` over `complete_with_tools()` with rate limiting, sanitization end-to-end, single chat surface for Web UI + projekt-forge Flame hooks (absorbs superseded Phase 12) (complete 2026-04-27; CHAT-04 deploy gap routed to Phase 16.1)
 - [x] **Phase 16.1 (FB-D gap closure): Chat Tool-List Hang + Wiring Regression Guards** — Close the CHAT-04 artist UAT gap surfaced in the 2026-04-27 assist-01 deploy: bisect + fix the 49-tool `complete_with_tools()` hang, add boot-time regression guard for LLMRouter wiring, migrate `TemplateResponse` callers, re-run the artist UAT (inserted 2026-04-27 per Phase 10/10.1 precedent) (completed 2026-04-28)
-- [ ] **Phase 16.2 (FB-D Bug D closure): Chat Tool-Call Loop + Fresh-Operator UAT** (INSERTED) — Close the Bug D gap surfaced in Phase 16.1's UAT on assist-01 (2026-04-27): chat surface returns raw tool-call JSON `{"name": "forge_tools_read", ...}` as assistant text instead of executing the chosen tool and synthesizing a useful answer. Investigate three plausible loci (`LLMRouter.complete_with_tools()` agentic loop, chat handler tool dispatch via `mcp.call_tool()`, UI rendering of structured tool_calls), strengthen `tests/integration/test_chat_endpoint_live.py` so it cannot pass on a tool-call-only response, and re-run a fresh-operator UAT to satisfy CHAT-04 and unblock v1.4 milestone close (inserted 2026-04-28 per Phase 10/10.1/16.1 precedent)
+- [ ] **Phase 16.2 (FB-D Bug D closure): Chat Tool-Call Loop + Fresh-Operator UAT** (INSERTED) — Close the Bug D gap surfaced in Phase 16.1's UAT on assist-01 (2026-04-27): chat surface returns raw tool-call JSON `{"name": "forge_tools_read", ...}` as assistant text instead of executing the chosen tool and synthesizing a useful answer. Investigate three plausible loci (`LLMRouter.complete_with_tools()` agentic loop, chat handler tool dispatch via `mcp.call_tool()`, UI rendering of structured tool_calls), strengthen `tests/integration/test_chat_endpoint_live.py` so it cannot pass on a tool-call-only response, and re-run a fresh-operator UAT to satisfy CHAT-04 and unblock v1.4 milestone close (inserted 2026-04-28 per Phase 10/10.1/16.1 precedent) — **Plans: 4 plans across 3 waves**
 
 ## Phase Details
 
@@ -250,6 +250,36 @@ redundant. Phase 12 already marked Superseded in the progress table at v1.3 clos
 
 ---
 
+### Phase 16.2 (FB-D Bug D closure): Chat Tool-Call Loop + Fresh-Operator UAT (INSERTED)
+
+**Goal**: Close Bug D — the Phase 16.1 fresh-operator UAT on assist-01 (2026-04-27) recorded the chat surface returning raw tool-call JSON `{"name": "forge_tools_read", "arguments": {"name": ""}}` as the assistant's terminal text instead of executing the chosen tool and synthesizing a useful natural-language answer. Investigate bottom-up against the three plausible loci (`OllamaToolAdapter.parse_response()` empty `tool_calls` path → `LLMRouter.complete_with_tools()` agentic loop termination → chat handler tool dispatch via `mcp.call_tool()` → UI rendering). Strong working hypothesis: qwen2.5-coder:32b emits the tool call as JSON-shaped text in `message.content` instead of structured `message.tool_calls`; the adapter at `_adapters.py:395` reads `message.get("tool_calls") or []`, returns empty, and `router.py:435` terminates with the JSON-text as terminal content. Fix: salvage helper in the Ollama adapter when structured `tool_calls` is empty AND `content` matches the canonical `{"name": ..., "arguments": ...}` shape. Strengthen `tests/integration/test_chat_endpoint_live.py::test_chat_canonical_uat_prompt_under_60s` with two D-06 assertions (regex-reject Bug D shape + assert agentic loop iterated). Re-run a fresh-operator UAT to satisfy CHAT-04 and unblock v1.4 milestone close.
+
+**Depends on**: Phase 16.1 (FB-D gap closure) (the strengthened `test_chat_endpoint_live.py` fixture and the backend-aware filter; 16.2 patches the adapter/E2E test surface, doesn't replace it)
+**Inserted**: 2026-04-28 after Phase 16.1's CHAT-04 fresh-operator UAT recorded `Outcome: FAIL` on assist-01 with Bug D as the structural failure (Plans 16.1-01..04 successfully closed Bugs A/B/C; Bug D is distinct and routes here per Phase 10/10.1/16.1 precedent)
+**Plans**: 4 plans across 3 waves (planned 2026-04-28 — execute in dependency order)
+  - Wave 1 (the diagnosis lock — RED test commit before any fix):
+    - [ ] `16.2-01-PLAN.md` — Capture Ollama Bug D response on assist-01 + RED adapter unit test in `tests/llm/test_ollama_adapter.py::TestOllamaToolAdapterBugDFallback` (covers G-1 D-01..D-04 diagnosis methodology)
+  - Wave 2 (parallel — adapter fix + E2E strengthening, zero file overlap):
+    - [ ] `16.2-02-PLAN.md` — GREEN fix: `_try_parse_text_tool_call` helper + salvage hook inside `OllamaToolAdapter.send_turn()` between lines 419-421 (covers G-1 D-03 fix per captured fixture)
+    - [ ] `16.2-03-PLAN.md` — Strengthen `test_chat_endpoint_live.py::test_chat_canonical_uat_prompt_under_60s` with two D-06 assertions: regex-reject raw tool-call JSON terminal content + assert agentic loop iterated (>=1 tool turn + >=2 assistant turns) (covers G-2 D-05..D-07 test strengthening)
+  - Wave 3 (depends on 16.2-02 + 16.2-03):
+    - [ ] `16.2-04-PLAN.md` — Fresh-operator UAT capture per D-08 technical floor: Strategy B PASSES live + adapter unit tests PASS dev+assist-01 + CN/dev manual walkthrough at `http://localhost:9996/ui/chat` produces useful natural-language answer; record in `16.2-HUMAN-UAT.md` per Phase 10.1 / 16.1 D-14 format (covers G-3 D-08..D-11 fresh-operator UAT path; D-10 ratification path stays open as post-close annotation hook)
+
+**Requirements**: CHAT-04 (re-verifies the v1.4 must-have that failed in Phase 16.1's fresh-operator UAT)
+
+**Success Criteria** (what must be TRUE):
+  1. Captured Ollama HTTP response from assist-01 reproducing Bug D is committed at `.planning/phases/16.2-bug-d-chat-tool-call-loop/16.2-CAPTURED-OLLAMA-RESPONSE.json` and as the verbatim `_OLLAMA_BUG_D_RESPONSE_CONTENT` constant in `tests/llm/test_ollama_adapter.py`. The captured shape MUST exhibit empty/null/absent `message.tool_calls` AND a `message.content` that parses as `{"name": ..., "arguments": ...}`. If not, the working hypothesis (D-03) is falsified and Phase 16.2 re-opens.
+  2. RED adapter test in `TestOllamaToolAdapterBugDFallback::test_text_content_tool_call_salvaged` exists and FAILS on `main` with explicit Bug D regression message — locks the diagnosis as a regression guard before any fix. Negative companion test `test_plain_text_terminal_response_not_misclassified` PASSES on `main` (proves no false-positive on legitimate prose).
+  3. GREEN fix lands in `forge_bridge/llm/_adapters.py` only: module-private `_try_parse_text_tool_call` helper + salvage hook between lines 419-421 inside `OllamaToolAdapter.send_turn()`. The helper NEVER raises (returns `None` on parse failure). After GREEN, the RED test flips to PASSED, the negative test still passes, and `AnthropicToolAdapter` / `router.py` / `console/handlers.py` are byte-identical to main.
+  4. `tests/integration/test_chat_endpoint_live.py::test_chat_canonical_uat_prompt_under_60s` gains two new D-06 assertions: regex-reject `^\s*\{\s*"name"\s*:` terminal content with explicit Bug D citation, AND assert `len(tool_turns) >= 1 AND len(assistant_turns) >= 2` (proves the agentic loop iterated). No "natural prose detection" heuristic (D-07 reject). Default `pytest` skips cleanly without `FB_INTEGRATION_TESTS=1`; with the env on assist-01 the test FAILS pre-Plan-02 and PASSES post-Plan-02.
+  5. Fresh-operator UAT records `Outcome: PASS with deviations` in `.planning/phases/16.2-bug-d-chat-tool-call-loop/16.2-HUMAN-UAT.md` per Phase 10.1 / 16.1 D-14 precedent IF AND ONLY IF all three D-08 conditions hold: (1) Strategy B PASSES live, (2) adapter unit tests PASS on dev AND assist-01, (3) CN/dev walkthrough at `http://localhost:9996/ui/chat` produces a useful natural-language answer (NOT raw JSON, NOT refusal, NOT loop_budget). D-10 ratification path documented as post-close annotation hook (does NOT gate close).
+
+**Out of scope (D-13)**: Health-strip "Degraded" rendering on the chat panel. On bare assist-01 (no Flame on `:9999`, no projekt-forge bridge on `:9998`), the health probes for those backends SHOULD return unreachable; "Degraded" with reds for those services is the correct signal. If during 16.2 investigation a dot is discovered to actually be wrong (green-vs-red inverted, wrong service mapped, etc.), that becomes a separate Phase 16.3 / v1.4.x issue, NOT a scope expansion of 16.2.
+
+**Canonical refs**: `.planning/phases/16.2-bug-d-chat-tool-call-loop/16.2-CONTEXT.md` (locked decisions D-01..D-13), `.planning/phases/16.2-bug-d-chat-tool-call-loop/16.2-PATTERNS.md` (analog map with verbatim code excerpts), `.planning/phases/16.1-fb-d-chat-gap-closure/16.1-HUMAN-UAT.md` (Bug D symptom evidence), `.planning/phases/16.1-fb-d-chat-gap-closure/16.1-VERIFICATION.md` (gap analysis routing this work)
+
+---
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -273,3 +303,4 @@ redundant. Phase 12 already marked Superseded in the progress table at v1.3 clos
 | 15 (FB-C). LLMRouter Tool-Call Loop | v1.4 | 10/10 | Complete    | 2026-04-27 |
 | 16 (FB-D). Chat Endpoint | v1.4 | 7/7 | Complete (CHAT-04 deploy gap routed to 16.1) | 2026-04-27 |
 | 16.1 (FB-D gap closure). Chat Tool-List Hang + Wiring Regression Guards | v1.4 | 4/5 | Complete    | 2026-04-28 |
+| 16.2 (FB-D Bug D closure). Chat Tool-Call Loop + Fresh-Operator UAT | v1.4 | 0/4 | Open | - |
