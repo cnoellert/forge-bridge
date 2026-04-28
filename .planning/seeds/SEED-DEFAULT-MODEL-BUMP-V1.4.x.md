@@ -1,9 +1,9 @@
 ---
 name: SEED-DEFAULT-MODEL-BUMP-V1.4.x
-description: Bump default Ollama tool-call model qwen2.5-coder:32b → qwen3:32b after assist-01 UAT
+description: Bump default Ollama tool-call model qwen2.5-coder:32b → qwen3:32b in v1.5 (deferred from v1.4.x Phase 17 — see empirical evidence below)
 type: forward-looking-idea
 planted_during: v1.4 FB-C planning (2026-04-26)
-trigger_when: A v1.4.x patch milestone opens after FB-C ships AND the assist-01 UAT for the FB-C tool-call loop on qwen2.5-coder:32b has produced a baseline reading
+trigger_when: A v1.5 milestone planning session AND one of (a) the default complete_with_tools `max_seconds` budget has been bumped to ≥120s, (b) `OllamaToolAdapter` gains a per-model `think=False` / qwen3 `/no_think` directive, OR (c) router-init adds a warmup-ping path that absorbs cold-start cost
 ---
 
 # SEED-DEFAULT-MODEL-BUMP-V1.4.x: Default Ollama tool-call model bump
@@ -43,3 +43,79 @@ This seed should NOT resurface during the v1.4 FB-C ship itself — the conserva
 - REQUIREMENTS.md Out of Scope row "Default Ollama tool model bump".
 - forge_bridge/llm/router.py:90 — current `_DEFAULT_LOCAL_MODEL` value.
 - forge_bridge/llm/_adapters.py — `_OLLAMA_TOOL_MODELS` allow-list (qwen3:32b already present per D-29; only the default changes).
+
+## Empirical Evidence (Phase 17 pre-run UAT, 2026-04-28)
+
+Per CONTEXT.md D-02, the qwen3:32b live UAT was run on assist-01 BEFORE
+Phase 17 plan-phase locked. The empirical result was non-deterministic
+against the v1.4.x default `max_seconds=60` budget, so MODEL-02 took
+acceptance branch (b) — defer with a phase-17 SUMMARY note.
+
+**Test:** `test_ollama_tool_call_loop_live` against
+`FORGE_LOCAL_MODEL=qwen3:32b` on assist-01 (M-series GPU, 32 GB) at HEAD
+`fad8615` (v1.4.0; identical source as current main for `forge_bridge/`
+and `tests/`).
+
+### Run 1 — cold start, default 60 s budget
+
+- iter 1: 55.2 s, 522 completion tokens, `status=continuing` (tool dispatched correctly)
+- iter 2: never reached — `LLMLoopBudgetExceeded reason=max_seconds`
+- Sentinel `FORGE-INTEGRATION-SENTINEL-XJK29Q`: NOT returned
+
+### Run 2 — warm start, extended 180 s budget (`tmp/qwen3_extended_uat.py` script, same prompt + tools + executor as the test, `max_seconds=180`)
+
+- iter 1: 39.6 s, 445 completion tokens, `status=continuing`
+- iter 2: 18.4 s, 195 completion tokens, `status=terminal`
+- Total elapsed: 58.0 s
+- Sentinel returned verbatim: `FORGE-INTEGRATION-SENTINEL-XJK29Q` ✅
+
+### Diagnosis
+
+The salvage helper (`forge_bridge/llm/_adapters.py::_try_parse_text_tool_call`)
+handles the qwen3 tool-call shape correctly — **no 6th shape, no widening
+required**. The 2-step LLMTOOL-01 loop completes end-to-end on qwen3:32b
+when given enough wall-clock budget.
+
+The failure mode is **completion-token verbosity**: qwen3 thinking-mode
+emits 400-525 tokens per turn (vs ~50 for qwen2.5-coder). At ~10-11 tok/s
+on assist-01, iter 1 alone consumes 40-55 s. This puts the total run at
+55-75 s — borderline against the 60 s default, with cold-start sensitivity
+pushing the cold path past budget.
+
+**Bottom line:** zero regression risk to MODEL-02 itself (mechanics work);
+the bump is gated on either widening the budget or quieting qwen3's
+thinking-mode emit.
+
+## Candidate v1.5 Fixes (pick one or stack)
+
+1. **Bump default `max_seconds`** in `forge_bridge/llm/router.py`
+   `complete_with_tools` from 60 → ~120 s. Decision is whether the same
+   budget bump is acceptable for the cloud (Anthropic) path too. Lowest-
+   implementation-cost option; trades latency budget for model coverage.
+
+2. **Add qwen3 `/no_think` (or `think=False`) directive support** in
+   `forge_bridge/llm/_adapters.py::OllamaToolAdapter`. qwen3 supports a
+   directive that suppresses chain-of-thought emit. Cleanest fix —
+   removes the verbosity at the source — but requires per-model adapter
+   awareness similar to the cloud-side `temperature`-elision pattern in
+   SEED-OPUS-4-7-TEMPERATURE-V1.5.
+
+3. **Router-init warmup ping**. Cold start dominates the borderline cases
+   (Run 1 vs Run 2). A small warmup request at `LLMRouter` instantiation
+   (or first `acomplete()` call) absorbs the cold cost out of the
+   tool-call loop's measured budget. Lightest behavioral change; doesn't
+   solve the verbosity issue but materially reduces cold-path failure
+   rate.
+
+Pick during v1.5 planning based on whether a default-budget bump is
+acceptable for the cloud path too.
+
+## Phase 17 Closure (2026-04-28)
+
+- MODEL-02 closed against acceptance branch (b): "bump deferred with a
+  phase-17 SUMMARY note citing specific qwen3:32b failure modes that
+  block the conservative-bump-first pattern."
+- `forge_bridge/llm/router.py` `_DEFAULT_LOCAL_MODEL` remains
+  `qwen2.5-coder:32b` (preserved through Phase 17 P-01 + P-03).
+- This seed is the durable home for the empirical evidence; the Phase 17
+  SUMMARY references this section.
