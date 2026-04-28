@@ -123,32 +123,71 @@ def _try_parse_text_tool_call(text: str) -> Optional[_ToolCall]:
     """Salvage a tool call from text-shaped JSON when Ollama's structured
     tool_calls field is empty.
 
-    qwen2.5-coder:32b sometimes emits the tool invocation as a JSON object
-    in message.content instead of in the structured tool_calls field. When
-    the structured field is empty AND the content parses as the canonical
-    {"name": <str>, "arguments": <dict>} shape, return a _ToolCall mirroring
-    the structured-parse output at line ~415. Otherwise return None and let
-    the existing terminal-text path stand.
+    qwen2.5-coder:32b (and similar local models) sometimes emit the tool
+    invocation as a JSON object in message.content instead of in the
+    structured tool_calls field. The model also sometimes wraps that JSON
+    in markdown fences or pads it with leading/trailing prose (often a
+    fabricated answer the model made up alongside the tool call). When the
+    structured field is empty AND a canonical {"name": <str>, "arguments":
+    <dict>} JSON object can be located in the content (with or without
+    fence/prose padding), return a _ToolCall mirroring the structured-parse
+    output. Otherwise return None and let the existing terminal-text path
+    stand.
 
-    The helper NEVER raises — return None on any parse failure, mirroring
-    the existing line 412-414 try/except json.JSONDecodeError pattern.
-    Raising would replace Bug D with a worse failure mode (HTTP 500 on the
-    chat endpoint instead of degraded-but-recoverable text output).
+    Variants handled (Phase 16.2 + v1.4 close WR-01 closure):
+      1. Pure JSON: '{"name": "x", "arguments": {...}}'  (Phase 16.2 capture)
+      2. Trailing prose: '{"name": ...}\\nThe secret is: ...'  (LLMTOOL-01)
+      3. Leading prose: 'I will call the tool now: {"name": ...}'
+      4. Markdown-fenced: '```json\\n{"name": ...}\\n```' (or bare ```)
+      5. Combined: leading prose + fenced JSON + trailing prose
 
-    See Phase 16.2 D-03 for the failure-mode evidence trail and the
-    captured fixture at
+    The helper NEVER raises — return None on any parse failure. Raising
+    would replace Bug D with a worse failure mode (HTTP 500 on the chat
+    endpoint instead of degraded-but-recoverable text output).
+
+    See Phase 16.2 D-03 for the original failure-mode evidence trail and
+    the captured fixture at
     .planning/phases/16.2-bug-d-chat-tool-call-loop/16.2-CAPTURED-OLLAMA-RESPONSE.json.
+    Phase 16.2 REVIEW.md WR-01 flagged the prefix/suffix-prose limitation
+    of the original implementation; closed during v1.4 milestone close
+    when the LLMTOOL-01 sentinel test surfaced the trailing-prose variant
+    against qwen2.5-coder:32b on assist-01.
     """
-    if not text:
+    if not isinstance(text, str) or not text:
         return None
-    stripped = text.strip()
-    # Cheap pre-filter: must look like a JSON object before paying json.loads cost.
-    if not stripped.startswith("{"):
+
+    candidate = text.strip()
+    if not candidate:
         return None
+
+    # Strip markdown fences if present. Handle both ```json\n...\n``` and ```\n...\n```.
+    if candidate.startswith("```"):
+        # Drop the opening fence line (everything up to and including the first newline).
+        nl = candidate.find("\n")
+        if nl == -1:
+            # Single-line fence with no body — nothing to parse.
+            return None
+        candidate = candidate[nl + 1:]
+        # Drop the closing fence and anything after it.
+        end = candidate.rfind("```")
+        if end != -1:
+            candidate = candidate[:end]
+        candidate = candidate.strip()
+
+    # Find the first '{' — leading prose (e.g., "I will call ... ") is dropped.
+    open_idx = candidate.find("{")
+    if open_idx == -1:
+        return None
+    candidate = candidate[open_idx:]
+
+    # Use raw_decode so trailing prose (e.g., "\nThe secret is: ...") doesn't
+    # invalidate the parse — we extract the first valid JSON object and
+    # discard the suffix. This is the WR-01 fix.
     try:
-        parsed = json.loads(stripped)
+        parsed, _end_pos = json.JSONDecoder().raw_decode(candidate)
     except (json.JSONDecodeError, ValueError):
         return None
+
     if not isinstance(parsed, dict):
         return None
     name = parsed.get("name")

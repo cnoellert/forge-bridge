@@ -349,3 +349,85 @@ class TestOllamaToolAdapterBugDFallback:
             f"got tool_calls={resp.tool_calls!r}"
         )
         assert resp.text.startswith("The synthesis tools")
+
+    @pytest.mark.asyncio
+    async def test_text_content_tool_call_with_trailing_prose(self):
+        """Phase 16.2 REVIEW.md WR-01 closure (v1.4 LLMTOOL-01 surface):
+        qwen2.5-coder:32b sometimes emits the tool-call JSON AND a
+        fabricated answer in the same turn. Without WR-01 widening, the
+        salvage helper's json.loads on the entire content failed and the
+        Bug D shape leaked through.
+        """
+        client = MagicMock()
+        client.chat = AsyncMock(return_value=_fake_response_dict(
+            content=(
+                '{"name": "forge_get_integration_secret", "arguments": {}}\n'
+                "The secret value is: 12345-fake-fabricated"
+            ),
+            tool_calls=None,
+        ))
+        adapter = OllamaToolAdapter(client, "qwen2.5-coder:32b")
+        state = adapter.init_state(prompt="hi", system="s", tools=[], temperature=0.1)
+        resp = await adapter.send_turn(state)
+        assert len(resp.tool_calls) == 1
+        assert resp.tool_calls[0].tool_name == "forge_get_integration_secret"
+        assert resp.tool_calls[0].arguments == {}
+        assert resp.text == ""
+
+    @pytest.mark.asyncio
+    async def test_text_content_tool_call_with_leading_prose(self):
+        """Leading-prose variant: model narrates intent before emitting JSON."""
+        client = MagicMock()
+        client.chat = AsyncMock(return_value=_fake_response_dict(
+            content=(
+                "I'll call the tool now: "
+                '{"name": "forge_tools_read", "arguments": {"name": ""}}'
+            ),
+            tool_calls=None,
+        ))
+        adapter = OllamaToolAdapter(client, "qwen2.5-coder:32b")
+        state = adapter.init_state(prompt="hi", system="s", tools=[], temperature=0.1)
+        resp = await adapter.send_turn(state)
+        assert len(resp.tool_calls) == 1
+        assert resp.tool_calls[0].tool_name == "forge_tools_read"
+        assert resp.text == ""
+
+    @pytest.mark.asyncio
+    async def test_text_content_tool_call_in_markdown_fence(self):
+        """Markdown-fenced variant: model wraps JSON in ```json ... ``` blocks."""
+        client = MagicMock()
+        client.chat = AsyncMock(return_value=_fake_response_dict(
+            content=(
+                "```json\n"
+                '{"name": "forge_tools_read", "arguments": {}}\n'
+                "```"
+            ),
+            tool_calls=None,
+        ))
+        adapter = OllamaToolAdapter(client, "qwen2.5-coder:32b")
+        state = adapter.init_state(prompt="hi", system="s", tools=[], temperature=0.1)
+        resp = await adapter.send_turn(state)
+        assert len(resp.tool_calls) == 1
+        assert resp.tool_calls[0].tool_name == "forge_tools_read"
+        assert resp.text == ""
+
+    @pytest.mark.asyncio
+    async def test_natural_prose_with_brace_not_misclassified(self):
+        """Negative-case companion to the new variants: legitimate prose that
+        happens to contain a `{` somewhere (e.g., explaining a JSON schema in
+        natural language) MUST NOT be salvaged as a tool call.
+        """
+        client = MagicMock()
+        client.chat = AsyncMock(return_value=_fake_response_dict(
+            content=(
+                "There are no synthesis tools this week. The manifest schema "
+                "uses a 'tools' key like {tools: [...]} but is currently empty."
+            ),
+        ))
+        adapter = OllamaToolAdapter(client, "qwen2.5-coder:32b")
+        state = adapter.init_state(prompt="hi", system="s", tools=[], temperature=0.1)
+        resp = await adapter.send_turn(state)
+        # The candidate JSON `{tools: [...]}` is invalid (unquoted key); raw_decode fails.
+        # Even if it parsed, it lacks `name`/`arguments` keys → still rejected.
+        assert resp.tool_calls == []
+        assert resp.text.startswith("There are no synthesis tools")
