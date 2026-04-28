@@ -74,29 +74,33 @@ These were considered and explicitly excluded — they have a target milestone o
 
 ## Traceability
 
-| REQ-ID | Phase | Status |
-|--------|-------|--------|
-| STAGED-01 | FB-A | Open |
-| STAGED-02 | FB-A | Open |
-| STAGED-03 | FB-A | Open |
-| STAGED-04 | FB-A | Open |
-| STAGED-05 | FB-B | Open |
-| STAGED-06 | FB-B | Open |
-| STAGED-07 | FB-B | Open |
-| LLMTOOL-01 | FB-C | Open |
-| LLMTOOL-02 | FB-C | Open |
-| LLMTOOL-03 | FB-C | Open |
-| LLMTOOL-04 | FB-C | Open |
-| LLMTOOL-05 | FB-C | Open |
-| LLMTOOL-06 | FB-C | Open |
-| LLMTOOL-07 | FB-C | Open |
-| CHAT-01 | FB-D | Open |
-| CHAT-02 | FB-D | Open |
-| CHAT-03 | FB-D | Open |
-| CHAT-04 | FB-D | Open |
-| CHAT-05 | FB-D | Open |
+| REQ-ID | Phase | Status | Closure evidence |
+|--------|-------|--------|------------------|
+| STAGED-01 | FB-A | Pending UAT | Phase 13 VERIFICATION 4/4 structurally; Postgres-backed pytest run pending on a DB-equipped host (`13-HUMAN-UAT.md` status partial) |
+| STAGED-02 | FB-A | Pending UAT | Same as STAGED-01 — Phase 13 collective gate |
+| STAGED-03 | FB-A | Pending UAT | Same as STAGED-01 |
+| STAGED-04 | FB-A | Pending UAT | Same as STAGED-01 |
+| STAGED-05 | FB-B | Closed | Phase 14 VERIFICATION passed; D-19 byte-identity tests in `tests/console/test_staged_zero_divergence.py` |
+| STAGED-06 | FB-B | Closed | Phase 14 VERIFICATION passed; HTTP routes registered at `console/app.py:97-98` |
+| STAGED-07 | FB-B | Closed | Phase 14 VERIFICATION passed; D-20 byte-identity test for `forge://staged/pending` resource |
+| LLMTOOL-01 | FB-C | Closed | Phase 15 structurally verified + retroactively confirmed live by Phase 16.2 D-08 #1 (`test_chat_canonical_uat_prompt_under_60s` PASS in 21.38s on assist-01) |
+| LLMTOOL-02 | FB-C | Pending UAT | Phase 15 structurally verified by 14 wire-format unit tests in `tests/llm/test_anthropic_adapter.py`; live integration with `ANTHROPIC_API_KEY` not yet run. Not on critical path (`chat_handler` hardcodes `sensitive=True`) |
+| LLMTOOL-03 | FB-C | Closed | Phase 15 VERIFICATION 7/7; `LLMLoopBudgetExceeded` exported in `forge_bridge.__all__`; honored at `console/handlers.py:594-606` |
+| LLMTOOL-04 | FB-C | Closed | Phase 15 VERIFICATION 7/7; repeat-call detection at `router.py:435-446` |
+| LLMTOOL-05 | FB-C | Closed | Phase 15 VERIFICATION 7/7; `_TOOL_RESULT_MAX_BYTES = 8192` truncation at FB-C boundary; threaded through chat at `handlers.py:495-503,577` |
+| LLMTOOL-06 | FB-C | Closed | Phase 15 VERIFICATION 7/7; `_sanitize_tool_result()` invoked at 6 sites in `router.py`; single-source `INJECTION_MARKERS` at `_sanitize_patterns.py:19` |
+| LLMTOOL-07 | FB-C | Closed | Phase 15 VERIFICATION 7/7; `_in_tool_loop` ContextVar; `RecursiveToolLoopError` translated to 500 at `handlers.py:607-617`; synthesizer AST blocklist at `learning/synthesizer.py:149-167` |
+| CHAT-01 | FB-D | Closed | Phase 16 VERIFICATION; rate limiting via `_rate_limit.py:check_rate_limit` at `handlers.py:418-432`; 11th request → 429 + `Retry-After` |
+| CHAT-02 | FB-D | Closed | Phase 16 VERIFICATION; outer 125s `asyncio.wait_for` at `handlers.py:570,580` wraps FB-C 120s inner cap |
+| CHAT-03 | FB-D | Closed | Phase 16 VERIFICATION; FB-C `_sanitize_tool_result` runs inside `complete_with_tools()`; INJECTION_MARKERS includes "ignore previous" |
+| CHAT-04 | FB-D → 16.1 → 16.2 | Closed | Chained closure: 16 (gaps_found) → 16.1 (gaps_found) → 16.2 (passed). PASS-with-deviations recorded in `16.2-HUMAN-UAT.md` (D-08 #1/#2/#3 all PASS on assist-01) |
+| CHAT-05 | FB-D | Closed | Phase 16 VERIFICATION; `test_chat_parity_browser_vs_flame_hooks` asserts structural+content equality; D-17 envelope locked |
 
-**Coverage:** 19/19 requirements mapped (100%). FB-A: 4 reqs · FB-B: 3 reqs · FB-C: 7 reqs · FB-D: 5 reqs.
+**Coverage:** 19/19 requirements mapped (100%). 14 Closed + 5 Pending UAT (4 from FB-A Postgres run + 1 from FB-C Anthropic live run). FB-A: 4 reqs (Pending UAT) · FB-B: 3 reqs (Closed) · FB-C: 7 reqs (6 Closed + 1 Pending UAT) · FB-D: 5 reqs (Closed).
+
+**Pending-UAT closure paths:**
+- `pytest tests/test_staged_operations.py -v` on a Postgres-equipped host → closes STAGED-01..04
+- `FB_INTEGRATION_TESTS=1 ANTHROPIC_API_KEY=sk-... pytest tests/integration/test_complete_with_tools_live.py::test_anthropic_tool_call_loop_live -v` → closes LLMTOOL-02
 
 ---
 
