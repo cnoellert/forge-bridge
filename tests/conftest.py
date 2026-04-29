@@ -125,31 +125,26 @@ def _phase13_postgres_available() -> bool:
     project philosophy: tests pass on a developer's laptop without Postgres
     if they are running unrelated suites; they SKIP this file specifically.
 
-    Probe is opt-in: it honors FORGE_DB_URL only when FORGE_TEST_DB=1 is set.
-    Default (no opt-in) probes localhost:5432 to preserve historical CI
-    behavior where these tests skipped silently. The opt-in path was added
-    during the v1.4 milestone close to allow STAGED-01..04 to be run live
-    on dev's :7533; it is gated by an env var so the broader staged-test
-    surface (which has a pre-existing starlette-TestClient/asyncpg event-loop
-    harness gap) does not regress CI when the probe is naively true. Track:
-    project_v1_4_x_harness_debt memory.
+    Honors FORGE_DB_URL host/port unconditionally when set; falls back to
+    localhost:5432 when unset; returns False (silent skip) on OSError.
+
+    Phase 18 HARNESS-03 removed the FORGE_TEST_DB=1 opt-in gate that was
+    introduced during v1.4 close to mask the staged-handler test event-loop
+    conflict (HARNESS-01) and FK-violation issues (HARNESS-02). With those
+    fixed, the gate is no longer needed; CI stays green via the silent-skip
+    on OSError when no Postgres is reachable.
     """
     import socket
     from urllib.parse import urlparse
-
-    if _phase13_os.environ.get("FORGE_TEST_DB") == "1":
-        url = _phase13_os.environ.get("FORGE_DB_URL", "")
-        if url:
-            scheme, _, rest = url.partition("://")
-            scheme = scheme.split("+", 1)[0] or "postgresql"
-            parsed = urlparse(f"{scheme}://{rest}")
-            host = parsed.hostname or "localhost"
-            port = parsed.port or 5432
-        else:
-            host, port = "localhost", 5432
+    url = _phase13_os.environ.get("FORGE_DB_URL", "")
+    if url:
+        scheme, _, rest = url.partition("://")
+        scheme = scheme.split("+", 1)[0] or "postgresql"
+        parsed = urlparse(f"{scheme}://{rest}")
+        host = parsed.hostname or "localhost"
+        port = parsed.port or 5432
     else:
         host, port = "localhost", 5432
-
     try:
         with socket.create_connection((host, port), timeout=0.5):
             return True
@@ -214,11 +209,22 @@ async def session_factory():
             isolation_level="AUTOCOMMIT",
         )
         async with admin_engine.connect() as conn:
-            # Disconnect any lingering sessions before drop
-            await conn.execute(_phase13_text(
-                f"SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-                f"WHERE datname = '{test_db_name}' AND pid <> pg_backend_pid()"
-            ))
+            # Disconnect any lingering sessions before drop. Phase 18 HARNESS-03:
+            # the dev `forge` role is not SUPERUSER, so pg_terminate_backend raises
+            # a wrapped InsufficientPrivilegeError. Catch broadly because the
+            # SQLAlchemy ProgrammingError doesn't expose the asyncpg-level type
+            # cleanly; the DROP DATABASE that follows still succeeds once asyncpg
+            # closes its remaining connections via engine.dispose() above.
+            try:
+                await conn.execute(_phase13_text(
+                    f"SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                    f"WHERE datname = '{test_db_name}' AND pid <> pg_backend_pid()"
+                ))
+            except Exception:
+                # forge role lacks SUPERUSER; skip the terminate-backend step.
+                # The DROP DATABASE that follows will still succeed once asyncpg
+                # closes its remaining connections via engine.dispose() above.
+                pass
             await conn.execute(_phase13_text(f'DROP DATABASE "{test_db_name}"'))
         await admin_engine.dispose()
 
