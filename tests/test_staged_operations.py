@@ -30,7 +30,7 @@ from forge_bridge.store import (
     StagedOpLifecycleError,
     StagedOpRepo,
 )
-from forge_bridge.store.models import DBEntity, DBEvent
+from forge_bridge.store.models import DBEntity, DBEvent, DBProject
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -454,10 +454,17 @@ async def test_staged_op_list_filter_by_status_approved(session_factory):
         assert records[0].operation == "op_b"
 
 
-async def test_staged_op_list_filter_by_project_id(session_factory):
+async def test_staged_op_list_filter_by_project_id(session_factory, seeded_project):
     """list(project_id=project_a) returns only ops for that project."""
-    project_a = uuid.uuid4()
-    project_b = uuid.uuid4()
+    project_a = seeded_project
+    # Inline-seed a second DBProject for project_b — UNIQUE constraint on `code`
+    # forces a different code value from the seeded_project fixture's "HARNESS".
+    async with session_factory() as session:
+        proj_b = DBProject(name="harness-test-project-b", code="HARNESS-B")
+        session.add(proj_b)
+        await session.commit()
+        await session.refresh(proj_b)
+        project_b = proj_b.id
 
     async with session_factory() as session:
         repo = StagedOpRepo(session)
@@ -474,10 +481,17 @@ async def test_staged_op_list_filter_by_project_id(session_factory):
         assert all(r.status == "proposed" for r in records)
 
 
-async def test_staged_op_list_combined_filter(session_factory):
+async def test_staged_op_list_combined_filter(session_factory, seeded_project):
     """list(status='proposed', project_id=project_a) applies both filters via AND."""
-    project_a = uuid.uuid4()
-    project_b = uuid.uuid4()
+    project_a = seeded_project
+    # Inline-seed a second DBProject for project_b — UNIQUE constraint on `code`
+    # forces a different code value.
+    async with session_factory() as session:
+        proj_b = DBProject(name="harness-test-project-b", code="HARNESS-B")
+        session.add(proj_b)
+        await session.commit()
+        await session.refresh(proj_b)
+        project_b = proj_b.id
 
     async with session_factory() as session:
         repo = StagedOpRepo(session)

@@ -221,3 +221,40 @@ async def session_factory():
             ))
             await conn.execute(_phase13_text(f'DROP DATABASE "{test_db_name}"'))
         await admin_engine.dispose()
+
+
+# ============================================================
+# Phase 18 (HARNESS-02) — seeded_project fixture
+# ------------------------------------------------------------
+# Three staged-operation tests carry `project_id` parameters and run
+# against live Postgres via session_factory. Without a parent DBProject
+# row, the entities_project_id_fkey constraint rejects the insert.
+#
+# This fixture inserts ONE DBProject and yields its UUID. Tests that
+# need a SECOND distinct project_id (filter-discrimination tests)
+# inline-insert another DBProject in the test body — keeps the fixture
+# API minimal and the discrimination logic visible at the call site.
+#
+# Auto-seeding inside session_factory was rejected (would couple 90% of
+# unrelated tests to a default project they don't need). Lazy-creating
+# inside the proposed_op factory was rejected (would hide the FK
+# requirement from the test reader). See CONTEXT D-03.
+# ============================================================
+
+@_phase13_pytest_asyncio.fixture
+async def seeded_project(session_factory):
+    """Insert one DBProject row and yield its UUID.
+
+    For tests that need a real parent project for staged_operation rows
+    that carry project_id. Tests needing TWO distinct project ids should
+    use this fixture for the first id and inline-seed a second DBProject
+    in the test body using a different `code` value (the projects table
+    has a UNIQUE constraint on code).
+    """
+    from forge_bridge.store.models import DBProject
+    async with session_factory() as session:
+        proj = DBProject(name="harness-test-project", code="HARNESS")
+        session.add(proj)
+        await session.commit()
+        await session.refresh(proj)
+        yield proj.id

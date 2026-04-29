@@ -15,6 +15,7 @@ import pytest
 import pytest_asyncio
 
 from forge_bridge.store.staged_operations import StagedOpRepo
+from forge_bridge.store.models import DBProject
 
 
 # ── Envelope shape ──────────────────────────────────────────────────────────────
@@ -89,10 +90,18 @@ async def test_staged_list_bad_project_id_returns_400(staged_client):
     assert "invalid project_id" in body["error"]["message"]
 
 
-async def test_staged_list_filter_by_project_id(session_factory, staged_client):
+async def test_staged_list_filter_by_project_id(session_factory, staged_client, seeded_project):
     """?project_id=<uuid> returns only records for that project."""
-    project_a = uuid.uuid4()
-    project_b = uuid.uuid4()
+    project_a = seeded_project
+    # Inline-seed a second DBProject for project_b — UNIQUE constraint on `code`
+    # forces a different code value from the seeded_project fixture's "HARNESS".
+    async with session_factory() as session:
+        proj_b = DBProject(name="harness-test-project-b", code="HARNESS-B")
+        session.add(proj_b)
+        await session.commit()
+        await session.refresh(proj_b)
+        project_b = proj_b.id
+
     async with session_factory() as session:
         repo = StagedOpRepo(session)
         await repo.propose(operation="op.a", proposer="test", parameters={}, project_id=project_a)
