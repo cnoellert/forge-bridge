@@ -4,14 +4,14 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Phase 17 context gathered
-last_updated: "2026-04-28T23:43:54.859Z"
-last_activity: 2026-04-28 -- Phase 17 execution started
+last_updated: "2026-04-29T01:15:35.639Z"
+last_activity: 2026-04-29
 progress:
   total_phases: 1
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 3
-  completed_plans: 0
-  percent: 0
+  completed_plans: 3
+  percent: 100
 ---
 
 # Project State
@@ -25,11 +25,11 @@ See: .planning/PROJECT.md (updated 2026-04-28 at v1.4 close)
 
 ## Current Position
 
-Phase: 17 (default-model-bumps) — EXECUTING
-Plan: 1 of 3
+Phase: 17
+Plan: Not started
 Status: Executing Phase 17
 Milestone: v1.4.x Carry-Forward Debt (opened 2026-04-28)
-Last activity: 2026-04-28 -- Phase 17 execution started
+Last activity: 2026-04-29
 
 **v1.4 closed 2026-04-28** — milestone shipped at tag `v1.4.0` (commit `fad8615`). All 19 requirements closed with direct live evidence (STAGED-01..04 Postgres UAT, LLMTOOL-01 Ollama qwen2.5-coder UAT, LLMTOOL-02 Anthropic claude-sonnet-4-6 UAT, Phase 16.2 chat E2E live walkthrough on assist-01). Local LLM tool-call parity with Claude is real, not aspirational. Branches reconciled across dev / origin / assist-01.
 
@@ -77,7 +77,7 @@ Phase 13 (FB-A) discuss session is the active work. Dual-naming amendment (this 
 
 **Velocity (v1.0–v1.3 baseline):**
 
-- Total plans completed: 75 (across milestones v1.0–v1.3)
+- Total plans completed: 78 (across milestones v1.0–v1.3)
 - v1.0 phases: 3 phases, 13 plans
 - v1.1 phases: 3 phases, 13 plans
 - v1.2 phases: 3 phases (7, 07.1, 8), 12 plans, 17 tasks
