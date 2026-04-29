@@ -14,7 +14,8 @@ import uuid
 import pytest
 import pytest_asyncio
 from unittest.mock import MagicMock
-from starlette.testclient import TestClient
+import httpx
+from httpx import ASGITransport
 
 from forge_bridge.console.app import build_console_app
 from forge_bridge.console.manifest_service import ManifestService
@@ -41,7 +42,10 @@ async def staged_api(session_factory):
 
 @pytest_asyncio.fixture
 async def staged_client(staged_api, session_factory):
-    return TestClient(build_console_app(staged_api, session_factory=session_factory))
+    app = build_console_app(staged_api, session_factory=session_factory)
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        yield client
 
 
 @pytest_asyncio.fixture
@@ -77,7 +81,7 @@ async def test_list_staged_no_filter_byte_identity(staged_spy, staged_client, se
     """forge_list_staged() == GET /api/v1/staged (no filters)."""
     await _seed_proposed(session_factory, n=2)
     tool_body = await staged_spy.tools["forge_list_staged"](ListStagedInput())
-    http_body = staged_client.get("/api/v1/staged").content.decode()
+    http_body = (await staged_client.get("/api/v1/staged")).content.decode()
     assert json.loads(tool_body) == json.loads(http_body), (
         f"Tool: {tool_body!r}\nHTTP: {http_body!r}"
     )
@@ -95,14 +99,14 @@ async def test_list_staged_filtered_byte_identity(staged_spy, staged_client, ses
     tool_body = await staged_spy.tools["forge_list_staged"](
         ListStagedInput(status="proposed", limit=50, offset=0)
     )
-    http_body = staged_client.get("/api/v1/staged?status=proposed&limit=50&offset=0").content.decode()
+    http_body = (await staged_client.get("/api/v1/staged?status=proposed&limit=50&offset=0")).content.decode()
     assert json.loads(tool_body) == json.loads(http_body)
 
 
 async def test_list_staged_invalid_filter_byte_identity(staged_spy, staged_client):
     """Both surfaces return the same invalid_filter envelope."""
     tool_body = await staged_spy.tools["forge_list_staged"](ListStagedInput(status="bogus"))
-    http_body = staged_client.get("/api/v1/staged?status=bogus").content.decode()
+    http_body = (await staged_client.get("/api/v1/staged?status=bogus")).content.decode()
     assert json.loads(tool_body) == json.loads(http_body)
     decoded = json.loads(tool_body)
     assert decoded["error"]["code"] == "invalid_filter"
@@ -115,10 +119,10 @@ async def test_approve_lifecycle_error_byte_identity(staged_spy, staged_client, 
     tool_body = await staged_spy.tools["forge_approve_staged"](
         ApproveStagedInput(id=str(approved_id), actor="test")
     )
-    http_body = staged_client.post(
+    http_body = (await staged_client.post(
         f"/api/v1/staged/{approved_id}/approve",
         headers={"X-Forge-Actor": "test"},
-    ).content.decode()
+    )).content.decode()
     tool_decoded = json.loads(tool_body)
     http_decoded = json.loads(http_body)
     assert tool_decoded == http_decoded, (
@@ -134,10 +138,10 @@ async def test_approve_not_found_byte_identity(staged_spy, staged_client):
     tool_body = await staged_spy.tools["forge_approve_staged"](
         ApproveStagedInput(id=str(bogus), actor="test")
     )
-    http_body = staged_client.post(
+    http_body = (await staged_client.post(
         f"/api/v1/staged/{bogus}/approve",
         headers={"X-Forge-Actor": "test"},
-    ).content.decode()
+    )).content.decode()
     assert json.loads(tool_body) == json.loads(http_body)
     decoded = json.loads(tool_body)
     assert decoded["error"]["code"] == "staged_op_not_found"
@@ -154,10 +158,10 @@ async def test_reject_lifecycle_error_byte_identity(staged_spy, staged_client, s
     tool_body = await staged_spy.tools["forge_reject_staged"](
         RejectStagedInput(id=str(rejected_id), actor="test")
     )
-    http_body = staged_client.post(
+    http_body = (await staged_client.post(
         f"/api/v1/staged/{rejected_id}/reject",
         headers={"X-Forge-Actor": "test"},
-    ).content.decode()
+    )).content.decode()
     assert json.loads(tool_body) == json.loads(http_body)
     decoded = json.loads(tool_body)
     assert decoded["error"]["current_status"] == "rejected"

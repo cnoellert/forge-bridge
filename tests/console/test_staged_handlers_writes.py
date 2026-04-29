@@ -12,7 +12,6 @@ import uuid
 
 import pytest
 import pytest_asyncio
-from starlette.testclient import TestClient
 
 from forge_bridge.store.staged_operations import StagedOpRepo
 
@@ -21,7 +20,7 @@ from forge_bridge.store.staged_operations import StagedOpRepo
 
 async def test_approve_with_header_actor(staged_client, proposed_op_id):
     """Header X-Forge-Actor takes priority; no body needed."""
-    r = staged_client.post(
+    r = await staged_client.post(
         f"/api/v1/staged/{proposed_op_id}/approve",
         headers={"X-Forge-Actor": "test-suite"},
     )
@@ -33,7 +32,7 @@ async def test_approve_with_header_actor(staged_client, proposed_op_id):
 
 async def test_approve_with_body_actor_no_header(staged_client, proposed_op_id):
     """JSON body actor used when no header present."""
-    r = staged_client.post(
+    r = await staged_client.post(
         f"/api/v1/staged/{proposed_op_id}/approve",
         json={"actor": "test-suite"},
     )
@@ -44,14 +43,14 @@ async def test_approve_with_body_actor_no_header(staged_client, proposed_op_id):
 
 async def test_approve_fallback_actor_no_header_no_body(staged_client, proposed_op_id):
     """No header, no body → 'http:anonymous' fallback."""
-    r = staged_client.post(f"/api/v1/staged/{proposed_op_id}/approve")
+    r = await staged_client.post(f"/api/v1/staged/{proposed_op_id}/approve")
     assert r.status_code == 200
     assert r.json()["data"]["approver"] == "http:anonymous"
 
 
 async def test_approve_empty_header_actor_returns_400(staged_client, proposed_op_id):
     """Empty X-Forge-Actor header returns 400 bad_actor."""
-    r = staged_client.post(
+    r = await staged_client.post(
         f"/api/v1/staged/{proposed_op_id}/approve",
         headers={"X-Forge-Actor": ""},
     )
@@ -63,7 +62,7 @@ async def test_approve_empty_header_actor_returns_400(staged_client, proposed_op
 
 async def test_approve_empty_body_actor_returns_400(staged_client, proposed_op_id):
     """Empty body actor returns 400 bad_actor."""
-    r = staged_client.post(
+    r = await staged_client.post(
         f"/api/v1/staged/{proposed_op_id}/approve",
         json={"actor": ""},
     )
@@ -73,7 +72,7 @@ async def test_approve_empty_body_actor_returns_400(staged_client, proposed_op_i
 
 async def test_approve_non_string_body_actor_returns_400(staged_client, proposed_op_id):
     """Non-string body actor (e.g. 123) returns 400 bad_actor."""
-    r = staged_client.post(
+    r = await staged_client.post(
         f"/api/v1/staged/{proposed_op_id}/approve",
         json={"actor": 123},
     )
@@ -83,7 +82,7 @@ async def test_approve_non_string_body_actor_returns_400(staged_client, proposed
 
 async def test_approve_malformed_json_body_falls_back(staged_client, proposed_op_id):
     """Malformed JSON body swallowed silently → falls back to 'http:anonymous'."""
-    r = staged_client.post(
+    r = await staged_client.post(
         f"/api/v1/staged/{proposed_op_id}/approve",
         content=b"{{not valid json}}",
         headers={"Content-Type": "application/json"},
@@ -97,7 +96,7 @@ async def test_approve_malformed_json_body_falls_back(staged_client, proposed_op
 
 async def test_approve_proposed_returns_200(staged_client, proposed_op_id):
     """Happy-path: approve a proposed op returns 200 with status=approved."""
-    r = staged_client.post(
+    r = await staged_client.post(
         f"/api/v1/staged/{proposed_op_id}/approve",
         headers={"X-Forge-Actor": "test-suite"},
     )
@@ -108,7 +107,7 @@ async def test_approve_proposed_returns_200(staged_client, proposed_op_id):
 async def test_re_approve_returns_409_with_current_status(staged_client, approved_op_id):
     """Re-approving an already-approved op returns 409 with error.code=illegal_transition
     and error.current_status=approved (D-09 strict, no idempotent 200)."""
-    r = staged_client.post(
+    r = await staged_client.post(
         f"/api/v1/staged/{approved_op_id}/approve",
         headers={"X-Forge-Actor": "test-suite"},
     )
@@ -122,7 +121,7 @@ async def test_re_approve_returns_409_with_current_status(staged_client, approve
 async def test_approve_unknown_uuid_returns_404(staged_client):
     """Unknown UUID returns 404 with error.code=staged_op_not_found."""
     bogus = uuid.uuid4()
-    r = staged_client.post(
+    r = await staged_client.post(
         f"/api/v1/staged/{bogus}/approve",
         headers={"X-Forge-Actor": "test-suite"},
     )
@@ -134,7 +133,7 @@ async def test_approve_unknown_uuid_returns_404(staged_client):
 
 async def test_approve_malformed_uuid_returns_400(staged_client):
     """Non-UUID path param returns 400 with error.code=bad_request."""
-    r = staged_client.post(
+    r = await staged_client.post(
         "/api/v1/staged/not-a-uuid/approve",
         headers={"X-Forge-Actor": "test-suite"},
     )
@@ -148,7 +147,7 @@ async def test_approve_malformed_uuid_returns_400(staged_client):
 
 async def test_reject_proposed_returns_200(staged_client, proposed_op_id):
     """Happy-path: reject a proposed op returns 200 with status=rejected."""
-    r = staged_client.post(
+    r = await staged_client.post(
         f"/api/v1/staged/{proposed_op_id}/reject",
         headers={"X-Forge-Actor": "test-suite"},
     )
@@ -160,7 +159,7 @@ async def test_reject_proposed_returns_200(staged_client, proposed_op_id):
 
 async def test_re_reject_returns_409(staged_client, rejected_op_id):
     """Re-rejecting a rejected op returns 409 with current_status=rejected."""
-    r = staged_client.post(
+    r = await staged_client.post(
         f"/api/v1/staged/{rejected_op_id}/reject",
         headers={"X-Forge-Actor": "test-suite"},
     )
@@ -172,7 +171,7 @@ async def test_re_reject_returns_409(staged_client, rejected_op_id):
 
 async def test_approve_then_reject_returns_409(staged_client, approved_op_id):
     """Approved op cannot be rejected → 409 with current_status=approved."""
-    r = staged_client.post(
+    r = await staged_client.post(
         f"/api/v1/staged/{approved_op_id}/reject",
         headers={"X-Forge-Actor": "test-suite"},
     )
@@ -185,7 +184,7 @@ async def test_approve_then_reject_returns_409(staged_client, approved_op_id):
 async def test_reject_unknown_uuid_returns_404(staged_client):
     """Unknown UUID returns 404 with error.code=staged_op_not_found."""
     bogus = uuid.uuid4()
-    r = staged_client.post(
+    r = await staged_client.post(
         f"/api/v1/staged/{bogus}/reject",
         headers={"X-Forge-Actor": "test-suite"},
     )
@@ -195,7 +194,7 @@ async def test_reject_unknown_uuid_returns_404(staged_client):
 
 async def test_reject_malformed_uuid_returns_400(staged_client):
     """Non-UUID path param returns 400 on reject route."""
-    r = staged_client.post(
+    r = await staged_client.post(
         "/api/v1/staged/not-a-uuid/reject",
         headers={"X-Forge-Actor": "test-suite"},
     )

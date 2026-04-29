@@ -13,7 +13,8 @@ import uuid
 import pytest
 import pytest_asyncio
 from unittest.mock import MagicMock
-from starlette.testclient import TestClient
+import httpx
+from httpx import ASGITransport
 
 from forge_bridge.console.app import build_console_app
 from forge_bridge.console.manifest_service import ManifestService
@@ -23,8 +24,11 @@ from forge_bridge.store.staged_operations import StagedOpRepo
 
 @pytest_asyncio.fixture
 async def staged_client(session_factory):
-    """TestClient wired to a real session_factory + ConsoleReadAPI (no pre-seeded data).
+    """httpx.AsyncClient wired to a real session_factory + ConsoleReadAPI via ASGITransport.
 
+    Phase 18 HARNESS-01 migration (was starlette.testclient.TestClient — its private
+    sync event loop conflicted with asyncpg's session loop, masking 22 of 23 console
+    staged tests with `RuntimeError: got Future ... attached to a different loop`).
     Use this fixture when the test seeds its own data.
     """
     ms = ManifestService()
@@ -36,7 +40,9 @@ async def staged_client(session_factory):
         session_factory=session_factory,
     )
     app = build_console_app(api, session_factory=session_factory)
-    return TestClient(app)
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        yield client
 
 
 @pytest_asyncio.fixture

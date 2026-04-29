@@ -13,7 +13,6 @@ import time
 
 import pytest
 import pytest_asyncio
-from starlette.testclient import TestClient
 
 from forge_bridge.store.staged_operations import StagedOpRepo
 
@@ -22,7 +21,7 @@ from forge_bridge.store.staged_operations import StagedOpRepo
 
 async def test_staged_list_default_returns_envelope(staged_client):
     """GET /api/v1/staged with no filters returns 200 with data + meta envelope."""
-    r = staged_client.get("/api/v1/staged")
+    r = await staged_client.get("/api/v1/staged")
     assert r.status_code == 200
     body = r.json()
     assert "data" in body, f"Expected 'data' key; got {list(body.keys())}"
@@ -50,7 +49,7 @@ async def test_staged_list_filter_by_status(session_factory, staged_client):
         await repo.approve(op2.id, approver="test")
         await session.commit()
 
-    r = staged_client.get("/api/v1/staged?status=proposed")
+    r = await staged_client.get("/api/v1/staged?status=proposed")
     assert r.status_code == 200
     body = r.json()
     assert all(op["status"] == "proposed" for op in body["data"]), (
@@ -61,7 +60,7 @@ async def test_staged_list_filter_by_status(session_factory, staged_client):
 
 async def test_staged_list_unknown_status_returns_400(staged_client):
     """?status=foo returns 400 with error.code=invalid_filter."""
-    r = staged_client.get("/api/v1/staged?status=foo")
+    r = await staged_client.get("/api/v1/staged?status=foo")
     assert r.status_code == 400
     body = r.json()
     assert body["error"]["code"] == "invalid_filter"
@@ -74,7 +73,7 @@ async def test_staged_list_unknown_status_returns_400(staged_client):
 
 async def test_staged_list_clamps_limit_to_500(staged_client):
     """?limit=1000 is silently clamped to 500 per Phase 9 D-05."""
-    r = staged_client.get("/api/v1/staged?limit=1000")
+    r = await staged_client.get("/api/v1/staged?limit=1000")
     assert r.status_code == 200
     assert r.json()["meta"]["limit"] == 500
 
@@ -83,7 +82,7 @@ async def test_staged_list_clamps_limit_to_500(staged_client):
 
 async def test_staged_list_bad_project_id_returns_400(staged_client):
     """?project_id=not-a-uuid returns 400 with error.code=bad_request."""
-    r = staged_client.get("/api/v1/staged?project_id=not-a-uuid")
+    r = await staged_client.get("/api/v1/staged?project_id=not-a-uuid")
     assert r.status_code == 400
     body = r.json()
     assert body["error"]["code"] == "bad_request"
@@ -100,7 +99,7 @@ async def test_staged_list_filter_by_project_id(session_factory, staged_client):
         await repo.propose(operation="op.b", proposer="test", parameters={}, project_id=project_b)
         await session.commit()
 
-    r = staged_client.get(f"/api/v1/staged?project_id={project_a}")
+    r = await staged_client.get(f"/api/v1/staged?project_id={project_a}")
     assert r.status_code == 200
     body = r.json()
     assert body["meta"]["total"] == 1
@@ -117,7 +116,7 @@ async def test_staged_list_pagination_offset(session_factory, staged_client):
             await repo.propose(operation=f"op.{i}", proposer="test", parameters={})
         await session.commit()
 
-    r = staged_client.get("/api/v1/staged?limit=2&offset=2")
+    r = await staged_client.get("/api/v1/staged?limit=2&offset=2")
     assert r.status_code == 200
     body = r.json()
     assert len(body["data"]) == 2
@@ -140,7 +139,7 @@ async def test_staged_list_orders_by_created_at_desc(session_factory, staged_cli
         # Small sleep to ensure distinct created_at timestamps
         await asyncio.sleep(0.01)
 
-    r = staged_client.get("/api/v1/staged?limit=3&offset=0")
+    r = await staged_client.get("/api/v1/staged?limit=3&offset=0")
     assert r.status_code == 200
     records = r.json()["data"]
     # Extract created_at strings and verify DESC order
@@ -168,7 +167,7 @@ async def test_staged_list_empty_result_returns_empty_data(session_factory, stag
         await repo.approve(op.id, approver="test")
         await session.commit()
 
-    r = staged_client.get("/api/v1/staged?status=rejected")
+    r = await staged_client.get("/api/v1/staged?status=rejected")
     assert r.status_code == 200
     body = r.json()
     assert body["data"] == []
