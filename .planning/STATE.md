@@ -4,8 +4,8 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Phase 18 context gathered
-last_updated: "2026-04-29T17:50:17.141Z"
-last_activity: 2026-04-29 -- Phase 18 planning complete
+last_updated: "2026-04-29T18:17:42.617Z"
+last_activity: 2026-04-29 -- Phase 18 execution started
 progress:
   total_phases: 2
   completed_phases: 1
@@ -21,15 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-28 at v1.4 close)
 
 **Project core value:** forge-bridge is the single canonical pip-installable middleware (`pip install forge-bridge`) — protocol-agnostic communication bus with a canonical vocabulary that any endpoint (Flame, Maya, editorial, LLM agents) connects to.
-**Current focus:** Phase 17 — default-model-bumps
+**Current focus:** Phase 18 — staged-handlers-test-harness-rework
 
 ## Current Position
 
-Phase: 17
-Plan: Not started
-Status: Ready to execute
+Phase: 18 (staged-handlers-test-harness-rework) — EXECUTING
+Plan: 1 of 3
+Status: Executing Phase 18
 Milestone: v1.4.x Carry-Forward Debt (opened 2026-04-28)
-Last activity: 2026-04-29 -- Phase 18 planning complete
+Last activity: 2026-04-29 -- Phase 18 execution started
 
 **v1.4 closed 2026-04-28** — milestone shipped at tag `v1.4.0` (commit `fad8615`). All 19 requirements closed with direct live evidence (STAGED-01..04 Postgres UAT, LLMTOOL-01 Ollama qwen2.5-coder UAT, LLMTOOL-02 Anthropic claude-sonnet-4-6 UAT, Phase 16.2 chat E2E live walkthrough on assist-01). Local LLM tool-call parity with Claude is real, not aspirational. Branches reconciled across dev / origin / assist-01.
 
