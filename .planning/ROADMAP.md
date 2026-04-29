@@ -80,13 +80,13 @@ Audit: `.planning/milestones/v1.4-MILESTONE-AUDIT.md`
   - [x] 17-01-PLAN.md — Extract `_DEFAULT_LOCAL_MODEL` + `_DEFAULT_CLOUD_MODEL` module constants (pure refactor, values preserved)
   - [x] 17-02-PLAN.md — MODEL-01: bump `_DEFAULT_CLOUD_MODEL` to `claude-sonnet-4-6` + plant SEED-OPUS-4-7-TEMPERATURE-V1.5 + live LLMTOOL-02 gate
   - [x] 17-03-PLAN.md — MODEL-02: defer (per 2026-04-28 assist-01 pre-run UAT) — retarget SEED-DEFAULT-MODEL-BUMP-V1.4.x to v1.5 with empirical evidence
-- [ ] **Phase 18: Staged-handlers test harness rework** — Migrate 3 test files (23 tests) from `starlette.TestClient` (sync) to `httpx.AsyncClient(transport=ASGITransport(app=...))` so the test event loop matches the asyncpg session loop. Seed parent `DBProject` rows via a new `seeded_project` fixture. Remove the `FORGE_TEST_DB=1` opt-in gate AND wrap the `pg_terminate_backend` teardown SQL. **Requirements**: HARNESS-01, HARNESS-02, HARNESS-03
+- [x] **Phase 18: Staged-handlers test harness rework** — Migrate 3 test files (23 tests) from `starlette.TestClient` (sync) to `httpx.AsyncClient(transport=ASGITransport(app=...))` so the test event loop matches the asyncpg session loop. Seed parent `DBProject` rows via a new `seeded_project` fixture. Remove the `FORGE_TEST_DB=1` opt-in gate AND wrap the `pg_terminate_backend` teardown SQL. **Requirements**: HARNESS-01, HARNESS-02, HARNESS-03 (completed 2026-04-29)
   **Plans:** 3 plans
   Plans:
   - [x] 18-01-PLAN.md — HARNESS-01: migrate `staged_client` fixture from `starlette.testclient.TestClient` to `httpx.AsyncClient(transport=ASGITransport)` + add `await` at 31 call sites across 3 console test files
   - [x] 18-02-PLAN.md — HARNESS-02: add `seeded_project` fixture in `tests/conftest.py` + wire into 3 FK-violating tests (2 store + 1 console); inline-seed second `DBProject` for filter discrimination; atomicity test logic bug deferred to POLISH-03 per CONTEXT D-07
-  - [ ] 18-03-PLAN.md — HARNESS-03: remove `FORGE_TEST_DB=1` gate from `_phase13_postgres_available()` + wrap `pg_terminate_backend` teardown SQL in `try/except Exception` (sequenced LAST per CONTEXT D-01)
-- [ ] **Phase 19: Code-quality polish** — WR-02 ref-collision guard in salvage helper; Phase 13 type-contract + atomicity sub-test fixes; qwen2.5-coder `<|im_start|>` tail-token strip in chat handler. **Requirements**: POLISH-01, POLISH-02, POLISH-03, POLISH-04
+  - [x] 18-03-PLAN.md — HARNESS-03: remove `FORGE_TEST_DB=1` gate from `_phase13_postgres_available()` + wrap `pg_terminate_backend` teardown SQL in `try/except Exception` (sequenced LAST per CONTEXT D-01)
+- [x] **Phase 19: Code-quality polish** — WR-02 ref-collision guard in salvage helper; Phase 13 type-contract + atomicity sub-test fixes; qwen2.5-coder `<|im_start|>` tail-token strip in chat handler. **Requirements**: POLISH-01, POLISH-02, POLISH-03, POLISH-04
 
 **Milestone Goal**: Pay down v1.4 carry-forward debt as a clean patch release. Ship a polished `v1.4.1` that projekt-forge v1.5 can pin against without test-harness or model-default surprises. Each requirement maps to a specific debt item surfaced during v1.4 close-out (`.planning/milestones/v1.4-MILESTONE-AUDIT.md`).
 
@@ -121,5 +121,5 @@ Audit: `.planning/milestones/v1.4-MILESTONE-AUDIT.md`
 | 16.1 (FB-D gap closure). Chat Tool-List Hang + Wiring Regression Guards | v1.4 | 4/5 | Complete    | 2026-04-28 |
 | 16.2 (FB-D Bug D closure). Chat Tool-Call Loop + Fresh-Operator UAT | v1.4 | 4/4 | Complete    | 2026-04-28 |
 | 17. Default model bumps | v1.4.x | 3/3 | Complete    | 2026-04-29 |
-| 18. Staged-handlers test harness rework | v1.4.x | 2/3 | In Progress|  |
+| 18. Staged-handlers test harness rework | v1.4.x | 4/3 | Complete   | 2026-04-29 |
 | 19. Code-quality polish | v1.4.x | 0/? | Open | - |
