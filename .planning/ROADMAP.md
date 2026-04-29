@@ -86,7 +86,7 @@ Audit: `.planning/milestones/v1.4-MILESTONE-AUDIT.md`
   - [x] 18-01-PLAN.md — HARNESS-01: migrate `staged_client` fixture from `starlette.testclient.TestClient` to `httpx.AsyncClient(transport=ASGITransport)` + add `await` at 31 call sites across 3 console test files
   - [x] 18-02-PLAN.md — HARNESS-02: add `seeded_project` fixture in `tests/conftest.py` + wire into 3 FK-violating tests (2 store + 1 console); inline-seed second `DBProject` for filter discrimination; atomicity test logic bug deferred to POLISH-03 per CONTEXT D-07
   - [x] 18-03-PLAN.md — HARNESS-03: remove `FORGE_TEST_DB=1` gate from `_phase13_postgres_available()` + wrap `pg_terminate_backend` teardown SQL in `try/except Exception` (sequenced LAST per CONTEXT D-01)
-- [x] **Phase 19: Code-quality polish** — WR-02 ref-collision guard in salvage helper; Phase 13 type-contract + atomicity sub-test fixes; qwen2.5-coder `<|im_start|>` tail-token strip in chat handler. **Requirements**: POLISH-01, POLISH-02, POLISH-03, POLISH-04
+- [ ] **Phase 19: Code-quality polish** — WR-02 ref-collision guard in salvage helper; Phase 13 type-contract + atomicity sub-test fixes; qwen2.5-coder `<|im_start|>` tail-token strip in chat handler. **Requirements**: POLISH-01, POLISH-02, POLISH-03, POLISH-04
 
 **Milestone Goal**: Pay down v1.4 carry-forward debt as a clean patch release. Ship a polished `v1.4.1` that projekt-forge v1.5 can pin against without test-harness or model-default surprises. Each requirement maps to a specific debt item surfaced during v1.4 close-out (`.planning/milestones/v1.4-MILESTONE-AUDIT.md`).
 
