@@ -74,11 +74,11 @@ Audit: `.planning/milestones/v1.4-MILESTONE-AUDIT.md`
 
 ### 🚧 v1.4.x Carry-Forward Debt (opened 2026-04-28)
 
-- [ ] **Phase 17: Default model bumps** — `LLMRouter._cloud_model` and `_local_model` default flips. Closes SEED-CLOUD-MODEL-BUMP-V1.4.x and SEED-DEFAULT-MODEL-BUMP-V1.4.x. Single-commit isolated `_DEFAULT_*` constant changes per the SEED decoupled-commit mandate. **Requirements**: MODEL-01, MODEL-02
+- [x] **Phase 17: Default model bumps** — `LLMRouter._cloud_model` and `_local_model` default flips. Closes SEED-CLOUD-MODEL-BUMP-V1.4.x and SEED-DEFAULT-MODEL-BUMP-V1.4.x. Single-commit isolated `_DEFAULT_*` constant changes per the SEED decoupled-commit mandate. **Requirements**: MODEL-01, MODEL-02 (completed 2026-04-29)
   **Plans:** 3 plans
   Plans:
   - [x] 17-01-PLAN.md — Extract `_DEFAULT_LOCAL_MODEL` + `_DEFAULT_CLOUD_MODEL` module constants (pure refactor, values preserved)
-  - [ ] 17-02-PLAN.md — MODEL-01: bump `_DEFAULT_CLOUD_MODEL` to `claude-sonnet-4-6` + plant SEED-OPUS-4-7-TEMPERATURE-V1.5 + live LLMTOOL-02 gate
+  - [x] 17-02-PLAN.md — MODEL-01: bump `_DEFAULT_CLOUD_MODEL` to `claude-sonnet-4-6` + plant SEED-OPUS-4-7-TEMPERATURE-V1.5 + live LLMTOOL-02 gate
   - [x] 17-03-PLAN.md — MODEL-02: defer (per 2026-04-28 assist-01 pre-run UAT) — retarget SEED-DEFAULT-MODEL-BUMP-V1.4.x to v1.5 with empirical evidence
 - [ ] **Phase 18: Staged-handlers test harness rework** — Migrate 3 test files (23 tests) from `starlette.TestClient` (sync) to `httpx.AsyncClient(transport=ASGITransport(app=...))` so the test event loop matches the asyncpg session loop. Seed parent `Project` rows in the `session_factory` fixture. Remove the `FORGE_TEST_DB=1` opt-in gate. **Requirements**: HARNESS-01, HARNESS-02, HARNESS-03
 - [ ] **Phase 19: Code-quality polish** — WR-02 ref-collision guard in salvage helper; Phase 13 type-contract + atomicity sub-test fixes; qwen2.5-coder `<|im_start|>` tail-token strip in chat handler. **Requirements**: POLISH-01, POLISH-02, POLISH-03, POLISH-04
@@ -115,6 +115,6 @@ Audit: `.planning/milestones/v1.4-MILESTONE-AUDIT.md`
 | 16 (FB-D). Chat Endpoint | v1.4 | 7/7 | Complete (CHAT-04 deploy gap routed to 16.1) | 2026-04-27 |
 | 16.1 (FB-D gap closure). Chat Tool-List Hang + Wiring Regression Guards | v1.4 | 4/5 | Complete    | 2026-04-28 |
 | 16.2 (FB-D Bug D closure). Chat Tool-Call Loop + Fresh-Operator UAT | v1.4 | 4/4 | Complete    | 2026-04-28 |
-| 17. Default model bumps | v1.4.x | 2/3 | In Progress|  |
+| 17. Default model bumps | v1.4.x | 3/3 | Complete   | 2026-04-29 |
 | 18. Staged-handlers test harness rework | v1.4.x | 0/? | Open | - |
 | 19. Code-quality polish | v1.4.x | 0/? | Open | - |
