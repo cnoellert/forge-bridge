@@ -323,8 +323,9 @@ class StagedOpRepo:
         if db_entity is None or db_entity.entity_type != "staged_operation":
             # UUID doesn't resolve to a staged_op — distinct from illegal-transition.
             # FB-B handlers (Plan 14-03 + 14-04) map `from_status is None` → HTTP 404
-            # `staged_op_not_found`. Sentinel string "(missing)" was the WR-01 bug; the
-            # None discriminator is now load-bearing for the FB-B 404/409 split.
+            # `staged_op_not_found`. WR-01 (Phase 13 review) was closed by passing
+            # `from_status=None` here; the original sentinel string is no longer used
+            # in the codebase. POLISH-02 (Phase 19) confirmed this with a regression test.
             raise StagedOpLifecycleError(
                 from_status=None, to_status=new_status, op_id=op_id,
             )

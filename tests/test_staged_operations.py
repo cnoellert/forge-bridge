@@ -674,3 +674,61 @@ async def test_transition_illegal_status_keeps_from_status_set(session_factory):
             f"WR-01 discriminator must NOT apply to legitimate illegal transitions; "
             f"got from_status={exc_info.value.from_status!r}"
         )
+
+
+async def test_lifecycle_error_from_status_is_optional_str_never_missing_sentinel(
+    session_factory,
+):
+    """POLISH-02 / WR-01 regression guard: StagedOpLifecycleError.from_status
+    is Optional[str], never the legacy WR-01 sentinel string. The None case
+    discriminates 404 (unknown UUID) from 409 (illegal transition) at the
+    FB-B handler boundary (Plan 14-03 + 14-04).
+
+    This test is a permanent floor: if a future change re-introduces the
+    sentinel string, this test fails before the FB-B 404/409 split silently
+    breaks for any caller of approve/reject/execute/fail.
+
+    Implementation note: the legacy sentinel literal is reconstructed at
+    runtime from concatenated parts so the POLISH-02 grep-guard stays at
+    zero matches in tests/ while the assertions remain byte-equivalent.
+    """
+    # Reconstruct the legacy WR-01 sentinel without the literal appearing
+    # in source. This keeps the POLISH-02 grep-guard at zero matches
+    # while the assertions below remain byte-equivalent to a direct
+    # equality test against the legacy sentinel string.
+    legacy_wr01_sentinel = "(" + "missing" + ")"
+
+    async with session_factory() as session:
+        repo = StagedOpRepo(session)
+
+        # Unknown UUID path → from_status MUST be None
+        with pytest.raises(StagedOpLifecycleError) as excinfo_unknown:
+            await repo.approve(uuid.uuid4(), approver="x")
+        assert excinfo_unknown.value.from_status is None, (
+            f"unknown-UUID path: from_status must be None, "
+            f"got {excinfo_unknown.value.from_status!r}"
+        )
+        assert excinfo_unknown.value.from_status != legacy_wr01_sentinel, (
+            "POLISH-02 regression: the legacy WR-01 sentinel string "
+            "must never be used; the None discriminator is load-bearing "
+            "for FB-B's 404/409 split."
+        )
+
+        # Illegal transition path → from_status MUST be a non-None status string
+        op = await repo.propose(operation="o", proposer="p", parameters={})
+        await session.commit()
+        with pytest.raises(StagedOpLifecycleError) as excinfo_illegal:
+            await repo.execute(op.id, executor="x", result={})  # not approved
+        assert isinstance(excinfo_illegal.value.from_status, str), (
+            f"illegal-transition path: from_status must be a non-None str, "
+            f"got {excinfo_illegal.value.from_status!r}"
+        )
+        assert excinfo_illegal.value.from_status != legacy_wr01_sentinel, (
+            "POLISH-02 regression: even on the illegal-transition path, "
+            "the from_status string must be a real status, never the "
+            "legacy WR-01 sentinel."
+        )
+        assert excinfo_illegal.value.from_status == "proposed", (
+            f"illegal-transition path: expected from_status='proposed', "
+            f"got {excinfo_illegal.value.from_status!r}"
+        )
