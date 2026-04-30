@@ -86,13 +86,13 @@ Audit: `.planning/milestones/v1.4-MILESTONE-AUDIT.md`
   - [x] 18-01-PLAN.md — HARNESS-01: migrate `staged_client` fixture from `starlette.testclient.TestClient` to `httpx.AsyncClient(transport=ASGITransport)` + add `await` at 31 call sites across 3 console test files
   - [x] 18-02-PLAN.md — HARNESS-02: add `seeded_project` fixture in `tests/conftest.py` + wire into 3 FK-violating tests (2 store + 1 console); inline-seed second `DBProject` for filter discrimination; atomicity test logic bug deferred to POLISH-03 per CONTEXT D-07
   - [x] 18-03-PLAN.md — HARNESS-03: remove `FORGE_TEST_DB=1` gate from `_phase13_postgres_available()` + wrap `pg_terminate_backend` teardown SQL in `try/except Exception` (sequenced LAST per CONTEXT D-01)
-- [ ] **Phase 19: Code-quality polish** — WR-02 ref-collision guard in salvage helper; Phase 13 type-contract + atomicity sub-test fixes; qwen2.5-coder `<|im_start|>` tail-token strip in OllamaToolAdapter. **Requirements**: POLISH-01, POLISH-02, POLISH-03, POLISH-04
+- [x] **Phase 19: Code-quality polish** — WR-02 ref-collision guard in salvage helper; Phase 13 type-contract + atomicity sub-test fixes; qwen2.5-coder `<|im_start|>` tail-token strip in OllamaToolAdapter. **Requirements**: POLISH-01, POLISH-02, POLISH-03, POLISH-04 (completed 2026-04-30)
   **Plans:** 4 plans
   Plans:
   - [x] 19-01-PLAN.md — POLISH-01: derive salvage tool-call ref at the call site (`replace(salvaged, ref=f"{len(tool_calls)}:{salvaged.tool_name}")`) + helper placeholder + Bug-D-fallback-class regression test (Wave 1)
   - [x] 19-02-PLAN.md — POLISH-02: rewrite historical `(missing)` comment in `staged_operations.py:325-330` to past-tense closure + Optional[str] contract regression test asserting `from_status` is never the `(missing)` sentinel (Wave 1)
   - [x] 19-03-PLAN.md — POLISH-03: rewrite `test_transition_atomicity` body to single-session approve+flush+rollback observation; drop placeholder + contradiction-assertion; RED→GREEN evidence captured documents-only in SUMMARY (Wave 1)
-  - [ ] 19-04-PLAN.md — POLISH-04: add `_strip_terminal_chat_template_tokens` helper to `OllamaToolAdapter.send_turn` + extend `INJECTION_MARKERS` (8→10) + bump count-lock test + new `TestOllamaToolAdapterChatTemplateTailStrip` class (Wave 2; depends on 19-01 — same `_adapters.py` file)
+  - [x] 19-04-PLAN.md — POLISH-04: add `_strip_terminal_chat_template_tokens` helper to `OllamaToolAdapter.send_turn` + extend `INJECTION_MARKERS` (8→10) + bump count-lock test + new `TestOllamaToolAdapterChatTemplateTailStrip` class (Wave 2; depends on 19-01 — same `_adapters.py` file)
 
 **Milestone Goal**: Pay down v1.4 carry-forward debt as a clean patch release. Ship a polished `v1.4.1` that projekt-forge v1.5 can pin against without test-harness or model-default surprises. Each requirement maps to a specific debt item surfaced during v1.4 close-out (`.planning/milestones/v1.4-MILESTONE-AUDIT.md`).
 
@@ -128,4 +128,4 @@ Audit: `.planning/milestones/v1.4-MILESTONE-AUDIT.md`
 | 16.2 (FB-D Bug D closure). Chat Tool-Call Loop + Fresh-Operator UAT | v1.4 | 4/4 | Complete    | 2026-04-28 |
 | 17. Default model bumps | v1.4.x | 3/3 | Complete    | 2026-04-29 |
 | 18. Staged-handlers test harness rework | v1.4.x | 4/3 | Complete    | 2026-04-29 |
-| 19. Code-quality polish | v1.4.x | 3/4 | In Progress|  |
+| 19. Code-quality polish | v1.4.x | 4/4 | Complete   | 2026-04-30 |
