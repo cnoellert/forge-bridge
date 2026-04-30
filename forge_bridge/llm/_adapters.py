@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Optional, Protocol
 
@@ -207,6 +208,47 @@ def _try_parse_text_tool_call(text: str) -> Optional[_ToolCall]:
         tool_name=name,
         arguments=dict(args),
     )
+
+
+# ---------------------------------------------------------------------------
+# POLISH-04: terminal chat-template token strip (qwen2.5-coder noise tail)
+# ---------------------------------------------------------------------------
+
+
+# Tokens that may appear as a contiguous tail run on qwen2.5-coder responses.
+# Sourced from the chat-template emitted by the model; observed during the
+# Phase 16.2 fresh-operator UAT (see .planning/milestones/v1.4-phases/
+# 16.2-bug-d-chat-tool-call-loop/16.2-HUMAN-UAT.md:106-107). Mid-content
+# occurrences are NOT this helper's concern — see _sanitize_tool_result()
+# (FB-C LLMTOOL-06) for the prompt-injection defense.
+_CHAT_TEMPLATE_TAIL_TOKENS: tuple[str, ...] = (
+    "<|im_start|>",
+    "<|im_end|>",
+    "<|endoftext|>",
+)
+
+# Greedy regex anchored at end-of-string: consumes a contiguous tail run of
+# any chat-template token, optionally interleaved with whitespace. Mid-content
+# occurrences are intentionally untouched.
+_CHAT_TEMPLATE_TAIL_RE: re.Pattern[str] = re.compile(
+    r"(?:" + "|".join(re.escape(t) for t in _CHAT_TEMPLATE_TAIL_TOKENS) + r"|\s)+\Z"
+)
+
+
+def _strip_terminal_chat_template_tokens(text: str) -> str:
+    """Strip a contiguous tail-run of chat-template special tokens from `text`.
+
+    Phase 16.2 UAT (HUMAN-UAT.md:106-107) recorded qwen2.5-coder occasionally
+    appending `<|im_start|><|im_start|>...` chat-template noise after the real
+    answer prose. This helper removes that tail; mid-content occurrences are
+    a sanitization concern handled by `_sanitize_tool_result()` (FB-C D-09).
+
+    Returns the input unchanged when there is no terminal tail to strip,
+    or when `text` is empty.
+    """
+    if not text:
+        return text
+    return _CHAT_TEMPLATE_TAIL_RE.sub("", text)
 
 
 # ---------------------------------------------------------------------------
@@ -549,6 +591,11 @@ class OllamaToolAdapter:
                 salvaged = replace(salvaged, ref=f"{len(tool_calls)}:{salvaged.tool_name}")
                 tool_calls.append(salvaged)
                 text = ""  # consumed — don't double-emit as terminal content (re-Bug-D risk)
+
+        # POLISH-04: strip qwen2.5-coder chat-template noise tail (HUMAN-UAT.md:106-107).
+        # Runs AFTER salvage so the salvage path sees the full original text; if
+        # salvage emitted a tool call, `text` is already "" and this is a no-op.
+        text = _strip_terminal_chat_template_tokens(text)
 
         if isinstance(response, dict):
             prompt_tokens = response.get("prompt_eval_count", 0) or 0

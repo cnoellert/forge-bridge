@@ -174,7 +174,7 @@ class TestSanitizePatternsShim:
         """If new markers are added, they MUST be added to _sanitize_patterns.py
         (the single source of truth), not to a fork in learning/sanitize.py."""
         from forge_bridge._sanitize_patterns import INJECTION_MARKERS
-        assert len(INJECTION_MARKERS) == 8, (
+        assert len(INJECTION_MARKERS) == 10, (
             f"INJECTION_MARKERS currently has {len(INJECTION_MARKERS)} entries; "
             "if you intentionally added a new marker, update this assertion AND "
             "the shim source-of-truth comment in learning/sanitize.py."

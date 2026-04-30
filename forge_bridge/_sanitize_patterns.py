@@ -25,6 +25,8 @@ INJECTION_MARKERS: tuple[str, ...] = (
     "<|im_start|>",
     "```",  # triple backtick — markdown code fence
     "---",  # yaml document separator
+    "<|im_end|>",     # qwen chat template — terminal token (POLISH-04)
+    "<|endoftext|>",  # qwen chat template — sequence terminator (POLISH-04)
 )
 
 # Control characters: \x00-\x1f plus \x7f (DEL)

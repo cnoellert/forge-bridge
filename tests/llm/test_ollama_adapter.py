@@ -467,3 +467,84 @@ class TestOllamaToolAdapterBugDFallback:
             f"POLISH-01: helper placeholder ref leaked through to consumer; "
             f"call site failed to override. Got ref={resp.tool_calls[0].ref!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# POLISH-04 — qwen2.5-coder chat-template tail-token strip (Phase 19)
+# ---------------------------------------------------------------------------
+
+
+class TestOllamaToolAdapterChatTemplateTailStrip:
+    """POLISH-04: qwen2.5-coder occasionally appends `<|im_start|>` chat-template
+    tokens at the tail of synthesized prose. Verify the strip in send_turn().
+
+    Synthetic fixture mirrors the verbatim noise tail captured during Phase 16.2
+    fresh-operator UAT — see:
+      .planning/milestones/v1.4-phases/16.2-bug-d-chat-tool-call-loop/
+      16.2-HUMAN-UAT.md:106-107
+    The captured JSON sibling (16.2-CAPTURED-OLLAMA-RESPONSE.json) does NOT
+    contain the noise tail; the HUMAN-UAT artifact is the canonical source.
+    """
+
+    # Verbatim from HUMAN-UAT.md:101-107 (the prose answer + the noise tail).
+    # Embedded second-tool-call JSON omitted: that is a separate model-quality
+    # artifact orthogonal to the tail-token strip — see CONTEXT D-15 + RESEARCH
+    # Example 5's "BY DESIGN" note. The strip removes the contiguous tail run
+    # of chat-template tokens; embedded JSON would survive (and would be
+    # caught by the salvage path on a future turn).
+    NOISE_TAIL_PROSE = (
+        "It seems there are no synthesis tools registered this week. "
+        "If you meant to check for staged operations or something else "
+        "related to this week's activity, please specify.\n"
+        "<|im_start|><|im_start|>\n"
+        "<|im_start|><|im_start|>"
+    )
+
+    @pytest.mark.asyncio
+    async def test_terminal_chat_template_tokens_stripped(self):
+        """Noise-tail prose (HUMAN-UAT.md:106-107 verbatim) → strip the tail."""
+        client = MagicMock()
+        client.chat = AsyncMock(return_value=_fake_response_dict(
+            content=self.NOISE_TAIL_PROSE,
+            tool_calls=None,  # terminal-text shape (not a tool-call path)
+        ))
+        adapter = OllamaToolAdapter(client, "qwen2.5-coder:32b")
+        state = adapter.init_state(prompt="hi", system="s", tools=[], temperature=0.1)
+        resp = await adapter.send_turn(state)
+
+        # Tail tokens stripped — none remain in the returned text.
+        assert "<|im_start|>" not in resp.text, (
+            f"POLISH-04: chat-template `<|im_start|>` tokens must be stripped "
+            f"from the tail; got resp.text={resp.text!r}"
+        )
+        assert "<|im_end|>" not in resp.text, (
+            f"POLISH-04: chat-template `<|im_end|>` tokens must be stripped "
+            f"from the tail; got resp.text={resp.text!r}"
+        )
+        assert "<|endoftext|>" not in resp.text, (
+            f"POLISH-04: chat-template `<|endoftext|>` tokens must be stripped "
+            f"from the tail; got resp.text={resp.text!r}"
+        )
+        # Real prose survives — answer ends with "please specify."
+        assert resp.text.rstrip().endswith("please specify."), (
+            f"POLISH-04: real prose must survive the strip; got "
+            f"resp.text={resp.text!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_clean_prose_passes_through_unchanged(self):
+        """Acceptance: 'no impact on legitimate prose responses.'"""
+        clean = "No synthesis tools were created this week."
+        client = MagicMock()
+        client.chat = AsyncMock(return_value=_fake_response_dict(
+            content=clean,
+            tool_calls=None,
+        ))
+        adapter = OllamaToolAdapter(client, "qwen2.5-coder:32b")
+        state = adapter.init_state(prompt="hi", system="s", tools=[], temperature=0.1)
+        resp = await adapter.send_turn(state)
+
+        assert resp.text == clean, (
+            f"POLISH-04: clean prose without chat-template tokens must pass "
+            f"through unchanged; got resp.text={resp.text!r}"
+        )
