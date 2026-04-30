@@ -72,24 +72,22 @@ Carry-forward seeds remain planted in `.planning/seeds/`:
 
 | REQ-ID | Description | Phase |
 |---|---|---|
-| DOCS-01 | README is accurate to v1.4.1 |  |
-| DOCS-02 | CLAUDE.md ground-truth refresh |  |
-| DOCS-03 | GETTING-STARTED surface map |  |
-| DOCS-04 | projekt-forge relationship documented |  |
-| INSTALL-01 | INSTALL.md verified on clean machine |  |
-| INSTALL-02 | install-flame-hook.sh default v1.4.1 |  |
-| INSTALL-03 | README install ↔ INSTALL.md consistency |  |
-| INSTALL-04 | External dep inventory complete |  |
-| RECIPES-01 | First-time setup recipe |  |
-| RECIPES-02 | Claude Desktop / Code wiring recipe |  |
-| RECIPES-03 | Tool synthesis observation recipe |  |
-| RECIPES-04 | Multi-step Flame chat recipe |  |
-| RECIPES-05 | Staged-ops approval recipe |  |
-| RECIPES-06 | Manifest inspection recipe |  |
-| DIAG-01 | Flame crash recovery |  |
-| DIAG-02 | Postgres restart recovery |  |
-| DIAG-03 | Ollama hang recovery |  |
-| DIAG-04 | qwen3 cold-start LLMLoopBudgetExceeded |  |
-| DIAG-05 | forge doctor coverage parity |  |
-
-(Phase column populated by `gsd-roadmapper` after roadmap approval.)
+| DOCS-01 | README is accurate to v1.4.1 | Phase 21 |
+| DOCS-02 | CLAUDE.md ground-truth refresh | Phase 20 |
+| DOCS-03 | GETTING-STARTED surface map | Phase 21 |
+| DOCS-04 | projekt-forge relationship documented | Phase 21 |
+| INSTALL-01 | INSTALL.md verified on clean machine | Phase 20 |
+| INSTALL-02 | install-flame-hook.sh default v1.4.1 | Phase 20 |
+| INSTALL-03 | README install ↔ INSTALL.md consistency | Phase 20 |
+| INSTALL-04 | External dep inventory complete | Phase 20 |
+| RECIPES-01 | First-time setup recipe | Phase 22 |
+| RECIPES-02 | Claude Desktop / Code wiring recipe | Phase 22 |
+| RECIPES-03 | Tool synthesis observation recipe | Phase 22 |
+| RECIPES-04 | Multi-step Flame chat recipe | Phase 22 |
+| RECIPES-05 | Staged-ops approval recipe | Phase 22 |
+| RECIPES-06 | Manifest inspection recipe | Phase 22 |
+| DIAG-01 | Flame crash recovery | Phase 23 |
+| DIAG-02 | Postgres restart recovery | Phase 23 |
+| DIAG-03 | Ollama hang recovery | Phase 23 |
+| DIAG-04 | qwen3 cold-start LLMLoopBudgetExceeded | Phase 23 |
+| DIAG-05 | forge doctor coverage parity | Phase 23 |

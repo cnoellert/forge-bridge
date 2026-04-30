@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Legibility
-status: defining_requirements
-stopped_at: Milestone v1.5 opened — defining requirements
-last_updated: "2026-04-30T18:00:00.000Z"
+status: in_progress
+stopped_at: Roadmap created — Phase 20 is next
+last_updated: "2026-04-30T19:00:00.000Z"
 last_activity: 2026-04-30
 progress:
-  total_phases: 0
+  total_phases: 4
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -21,32 +21,34 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-30 at v1.5 milestone open)
 
 **Project core value:** forge-bridge is the single canonical pip-installable middleware (`pip install forge-bridge`) — protocol-agnostic communication bus with a canonical vocabulary that any endpoint (Flame, Maya, editorial, LLM agents) connects to.
-**Current focus:** v1.5 Legibility — defining requirements
+**Current focus:** v1.5 Legibility — Phase 20: Reality Audit + Canonical Install
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 20 (next to execute)
 Plan: —
-Status: Defining requirements
+Status: Roadmap approved — ready to plan Phase 20
 Milestone: v1.5 Legibility (opened 2026-04-30)
-Last activity: 2026-04-30 — Milestone v1.5 started
+Last activity: 2026-04-30 — Roadmap created (Phases 20–23)
 
 **v1.4.x closed 2026-04-30** — patch milestone shipped at tag `v1.4.1`. 9/9 requirements (MODEL-01..02, HARNESS-01..03, POLISH-01..04) closed across 3 phases (17, 18, 19); audit `passed`; 7/7 cross-phase integration wires verified; public `__all__` byte-identical to v1.4 close (19 symbols).
 
 **v1.5 scope** — Legibility milestone, no LOC target, no API surface change expected:
 
-- **Phase 20** (planned) — Reality audit + canonical install. Walk a fresh install end-to-end on a clean machine; fix gaps as they surface. Output: `docs/INSTALL.md`, refreshed `README.md` install section, refreshed `CLAUDE.md` ground-truth section, `install-flame-hook.sh` default pinned to `v1.4.1`.
-- **Phase 21** (planned) — Surface map + concept docs. Document the five user-facing surfaces (Web UI on `:9996/ui/`, CLI `forge-bridge`, `/api/v1/chat` HTTP, MCP server `python -m forge_bridge`, Flame hook on `:9999`) plus projekt-forge relationship. Output: `docs/GETTING-STARTED.md` + rewritten README "What This Is" section.
-- **Phase 22** (planned) — Daily workflow recipes. Step-by-step recipes for ~5–7 daily tasks (first-time setup, Claude Desktop wiring, watching tool synthesis, chat-driven Flame automation, staged-ops approval, manifest inspection, basic diagnosis). Output: `docs/RECIPES.md` (or directory).
-- **Phase 23** (planned) — Diagnostics + recovery. Document common failure modes (Flame crash, Postgres restart, Ollama hang, qwen3 cold-start `LLMLoopBudgetExceeded`) and recovery paths; polish `forge doctor` if it surfaces gaps during recipe writing. Output: `docs/TROUBLESHOOTING.md`.
+- **Phase 20** (next) — Reality audit + canonical install. Walk a fresh install end-to-end on a clean machine; fix gaps as they surface. Output: `docs/INSTALL.md`, refreshed `README.md` install section, refreshed `CLAUDE.md` ground-truth section, `install-flame-hook.sh` default pinned to `v1.4.1`. Maps: INSTALL-01..04 + DOCS-02.
+- **Phase 21** (pending) — Surface map + concept docs. Document the five user-facing surfaces (Web UI on `:9996/ui/`, CLI `forge-bridge`, `/api/v1/chat` HTTP, MCP server `python -m forge_bridge`, Flame hook on `:9999`) plus projekt-forge relationship. Output: `docs/GETTING-STARTED.md` + rewritten README "What This Is" section. Maps: DOCS-01, DOCS-03, DOCS-04.
+- **Phase 22** (pending) — Daily workflow recipes. Step-by-step recipes for ~6 daily tasks (first-time setup, Claude Desktop wiring, watching tool synthesis, chat-driven Flame automation, staged-ops approval, manifest inspection). Output: `docs/RECIPES.md` (or directory). Maps: RECIPES-01..06.
+- **Phase 23** (pending) — Diagnostics + recovery. Document common failure modes (Flame crash, Postgres restart, Ollama hang, qwen3 cold-start `LLMLoopBudgetExceeded`) and recovery paths; polish `forge doctor` if it surfaces gaps during recipe writing. Output: `docs/TROUBLESHOOTING.md`. Maps: DIAG-01..05.
 
-**Next action:** Define REQUIREMENTS.md categories DOCS / INSTALL / RECIPES / DIAG, spawn `gsd-roadmapper` for phases 20–23.
+**Next action:** Run `/gsd-plan-phase 20` to generate the execution plan for Phase 20.
 
 **Key constraints (binding for v1.5):**
 
 - Legibility, not features. No new external libraries. Public `forge_bridge.__all__` stays at 19 unless something genuinely shifts during install audit.
 - Forcing function: if `docs/INSTALL.md` doesn't work end-to-end on a clean machine, we don't ship it. Phase 20 will likely surface deployment gaps that get fixed in-flight (and may add code-fix plans alongside doc plans).
 - Internal codebase audit + workflow articulation — no external research phase.
+- RECIPES-04 (multi-step Flame chat) and RECIPES-05 (staged-ops approval) require a working Flame setup — assume assist-01 or equivalent operator workstation.
+- Phase 23 DIAG-05 (`forge doctor` parity) may require in-flight polish — "polish forge doctor if gaps surface" is in Phase 23 scope, not a separate phase.
 - All 16 planted seeds in `.planning/seeds/SEED-*.md` are out of v1.5 scope (feature work for v1.6+: auth, chat enhancements, model bumps, tool-call optimizations, staged-ops follow-on, CMA memory).
 - Done state: user can sit down, follow the docs, and use forge-bridge in daily VFX workflow without re-deriving the deployment topology each time.
 
@@ -89,6 +91,7 @@ Last activity: 2026-04-30 — Milestone v1.5 started
 - v1.4 pre-design dated 2026-04-23 in ROADMAP.md alongside v1.3 close — FB-A..FB-D scoped against projekt-forge v1.5 declared deps (consumer-driven naming). Phase 12 superseded by FB-D in same audit.
 - v1.4 roadmap formalized 2026-04-25 by gsd-roadmapper: FB-C success criteria grew from 4→7 (absorbed LLMTOOL-04 repeat-call detection, LLMTOOL-05 8KB result truncation, LLMTOOL-06 sanitization boundary, LLMTOOL-07 recursive-synthesis guard — all surfaced by targeted FB-C research). FB-D success criteria grew from 4→5 (absorbed CHAT-05 external-consumer parity with projekt-forge Flame hooks). Total v1.4 requirements: 19 (STAGED 7 + LLMTOOL 7 + CHAT 5).
 - Phase 16.2 inserted after Phase 16.1: Bug D — chat tool-call loop renders raw JSON instead of executing tools and synthesizing answer (URGENT) — surfaced in Phase 16.1 fresh-operator UAT on assist-01 2026-04-28; v1.4 milestone close blocked until Bug D fixed and CHAT-04 fresh-operator UAT records PASS. Investigation scope: LLMRouter agentic loop, chat handler tool dispatch, UI rendering, plus strengthen Strategy B chat E2E assertion to reject tool-call-only responses.
+- v1.5 roadmap formalized 2026-04-30 by gsd-roadmapper: 4 phases (20-23), 19 requirements across 4 categories (DOCS/INSTALL/RECIPES/DIAG). Phase numbering continues from v1.4.x (last shipped phase 19). Phase 20 is a forcing function — INSTALL.md must pass fresh-machine UAT before the milestone ships. DOCS-02 assigned to Phase 20 (not Phase 21) because the install audit walk-through discovers the CLAUDE.md ground-truth gaps.
 
 ### Decisions
 
@@ -135,14 +138,18 @@ Recent decisions affecting current work:
 - [Phase 16.2]: [Phase 16.2-02]: Bug D GREEN fix landed in OllamaToolAdapter. _try_parse_text_tool_call helper at module scope salvages a _ToolCall from message.content when message.tool_calls is empty AND content matches the canonical {name, arguments} JSON shape. Helper never raises (returns None on parse failure). Salvage hook in send_turn resets text="" on success to prevent double-emit. Plan 01's RED test flipped to PASSED; full tests/llm/ suite 91/91 green; router.py + handlers.py byte-identical to main.
 - [Phase 16.2]: [Phase 16.2-02]: Helper placement decision — _try_parse_text_tool_call lives at module scope between _TurnResponse (line 114) and _ToolAdapter Protocol (line 195) because it constructs _ToolCall (line 86). Plan-compliant; the plan's 'after _OLLAMA_KEEP_ALIVE' hint was a module-level placement directive, not a strict line constraint. Reusable pattern for future adapter-layer salvage helpers.
 - [Phase 16.2-03]: Strategy B chat E2E (test_chat_canonical_uat_prompt_under_60s) strengthened with two additive D-06 assertions: regex-reject raw tool-call JSON (^\s*\{\s*"name"\s*:) as terminal content, AND assert agentic loop iterated (>=1 role=tool turn AND >=2 role=assistant turns). Module-top compiled regex _BUG_D_TERMINAL_JSON_RE; module-top import re. Fixture body byte-identical; no router/adapter mocks introduced. CONTEXT D-07 'natural prose detection' heuristic explicitly rejected — too brittle, false-positives on legitimate one-word answers. Default pytest skips cleanly (1 skipped, 0 failed).
+- [v1.5 Roadmap, 2026-04-30]: DOCS-02 (CLAUDE.md ground-truth refresh) assigned to Phase 20, not Phase 21. Rationale: the install audit walk-through is what surfaces the CLAUDE.md divergence from reality — the discovery and fix are co-located in the same phase. Phase 21 (surface map) can then rely on already-accurate ground truth.
+- [v1.5 Roadmap, 2026-04-30]: Phase 20 is the milestone forcing function. INSTALL.md must pass a fresh-machine non-author UAT walk-through before the phase closes. Deployment gaps found during authoring are fixed in-flight as Phase 20 plans — not deferred.
+- [v1.5 Roadmap, 2026-04-30]: RECIPES-04 and RECIPES-05 carry a prerequisite assumption: assist-01 or equivalent operator workstation with Flame running. This is documented in Phase 22 success criteria and must be stated explicitly in the recipe text.
+- [v1.5 Roadmap, 2026-04-30]: Phase 23 DIAG-05 scope includes in-flight `forge doctor` polish — gaps surfaced during recipe or troubleshooting authoring are closed in Phase 23, not as a separate decimal phase.
 
 ### Pending Todos
 
-None. Roadmap formalized; awaiting user approval.
+None. Roadmap formalized; ready to plan Phase 20.
 
 ### Blockers/Concerns
 
-- **None.** Roadmap formalization complete. All 19 v1.4 requirements mapped (STAGED-01..07 → FB-A/FB-B; LLMTOOL-01..07 → FB-C; CHAT-01..05 → FB-D). FB-A and FB-C are parallelizable.
+- **None.** All 19 v1.5 requirements mapped (INSTALL-01..04 + DOCS-02 → Phase 20; DOCS-01,03,04 → Phase 21; RECIPES-01..06 → Phase 22; DIAG-01..05 → Phase 23). Coverage 19/19.
 
 ## Deferred Items
 
@@ -167,6 +174,6 @@ None. Roadmap formalized; awaiting user approval.
 
 ## Session Continuity
 
-Last session: 2026-04-30T18:00:00.000Z
-Stopped at: Milestone v1.5 opened — defining requirements
-Resume file: — (run `/gsd-discuss-phase 20` once roadmap is approved)
+Last session: 2026-04-30T19:00:00.000Z
+Stopped at: Roadmap created for v1.5 (Phases 20–23, 19/19 requirements mapped)
+Resume file: — (run `/gsd-plan-phase 20` to begin Phase 20)
