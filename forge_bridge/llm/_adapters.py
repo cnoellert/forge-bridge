@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Optional, Protocol
 
 from forge_bridge.llm.router import LLMToolError
@@ -203,7 +203,7 @@ def _try_parse_text_tool_call(text: str) -> Optional[_ToolCall]:
     if not isinstance(args, dict):
         args = {}
     return _ToolCall(
-        ref=f"0:{name}",  # idx is always 0 — the salvage path emits one tool call per turn
+        ref=f"salvage:{name}",  # placeholder; call site overwrites with f"{idx}:{name}" (POLISH-01)
         tool_name=name,
         arguments=dict(args),
     )
@@ -543,6 +543,10 @@ class OllamaToolAdapter:
         if not tool_calls and text:
             salvaged = _try_parse_text_tool_call(text)
             if salvaged is not None:
+                # Derive ref from current tool_calls position — collision-free even if
+                # the salvage guard ever loosens. Was hardcoded "0:{name}" inside the
+                # helper (WR-02 closure / POLISH-01).
+                salvaged = replace(salvaged, ref=f"{len(tool_calls)}:{salvaged.tool_name}")
                 tool_calls.append(salvaged)
                 text = ""  # consumed — don't double-emit as terminal content (re-Bug-D risk)
 

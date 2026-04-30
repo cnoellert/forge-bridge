@@ -431,3 +431,39 @@ class TestOllamaToolAdapterBugDFallback:
         # Even if it parsed, it lacks `name`/`arguments` keys → still rejected.
         assert resp.tool_calls == []
         assert resp.text.startswith("There are no synthesis tools")
+
+    @pytest.mark.asyncio
+    async def test_salvaged_tool_call_ref_uses_index_zero_when_first_call(self):
+        """POLISH-01 (WR-02 closure): the salvage path's tool-call ref is derived
+        at the call site from the current `tool_calls` length, not hardcoded
+        inside the helper. When salvage is the first (and only) tool call of
+        the turn, the empirical ref is `"0:{tool_name}"` — pinned here so a
+        future loosening of the salvage guard that emits a 2nd salvaged call
+        cannot silently collide with structured-path refs.
+        """
+        client = MagicMock()
+        client.chat = AsyncMock(return_value=_fake_response_dict(
+            content=_OLLAMA_BUG_D_RESPONSE_CONTENT,
+            tool_calls=None,  # Bug D shape: structured field empty, salvage runs
+        ))
+        adapter = OllamaToolAdapter(client, "qwen2.5-coder:32b")
+        state = adapter.init_state(prompt="hi", system="s", tools=[], temperature=0.1)
+        resp = await adapter.send_turn(state)
+
+        assert len(resp.tool_calls) == 1, (
+            f"salvage path must emit exactly one tool call for the captured "
+            f"Bug D fixture; got {len(resp.tool_calls)}"
+        )
+        # Composite ref: f"{len(tool_calls)}:{salvaged.tool_name}" computed at
+        # the call site. tool_calls is empty when salvage runs, so idx=0.
+        assert resp.tool_calls[0].ref == "0:forge_tools_read", (
+            f"POLISH-01: salvage ref must be derived from call-site index, "
+            f"not a literal `\"0:\"` baked into the helper. Got "
+            f"ref={resp.tool_calls[0].ref!r}"
+        )
+        # Helper-side placeholder (`salvage:{name}`) MUST NOT leak through —
+        # the call site overrides via dataclasses.replace before append.
+        assert not resp.tool_calls[0].ref.startswith("salvage:"), (
+            f"POLISH-01: helper placeholder ref leaked through to consumer; "
+            f"call site failed to override. Got ref={resp.tool_calls[0].ref!r}"
+        )
