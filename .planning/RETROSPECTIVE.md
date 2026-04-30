@@ -55,6 +55,63 @@
 
 ---
 
+## Milestone: v1.4.x — Carry-Forward Debt
+
+**Shipped:** 2026-04-30
+**Phases:** 3 (17, 18, 19) | **Plans:** 10 | **Tasks:** 14
+**Release:** v1.4.1 (annotated patch tag on top of v1.4.0)
+**Audit:** `passed` — 9/9 requirements satisfied, 7/7 cross-phase integration wires verified, public `__all__` byte-identical to v1.4 close
+
+### What Was Built
+
+- **Phase 17 — Default model bumps (MODEL-01..02).** Cloud default flipped `claude-opus-4-6` → `claude-sonnet-4-6` as a single-line literal change after Plan 17-01 first extracted the two inline literals into `_DEFAULT_LOCAL_MODEL` / `_DEFAULT_CLOUD_MODEL` module constants (pure refactor, byte-identical values). MODEL-02 took deferral branch (b) — pre-run UAT against `qwen3:32b` produced cold-start `LLMLoopBudgetExceeded` driven by thinking-mode token verbosity (400-525 tokens/turn); empirical evidence + named candidate v1.5 fixes captured in `SEED-DEFAULT-MODEL-BUMP-V1.4.x` (retargeted v1.4.x → v1.5). `SEED-OPUS-4-7-TEMPERATURE-V1.5` planted alongside.
+- **Phase 18 — Staged-handlers test harness rework (HARNESS-01..03).** Migrated `staged_client` from `starlette.testclient.TestClient` (sync, private event loop) to `httpx.AsyncClient(transport=ASGITransport(app=app))`; awaited all 31 call sites across 3 console test files (HARNESS-01). `seeded_project` `@pytest_asyncio.fixture` wired into 3 FK-violating tests (HARNESS-02). Removed `FORGE_TEST_DB=1` opt-in gate from `_phase13_postgres_available()` and wrapped `pg_terminate_backend` teardown SQL in `try/except Exception` for the non-SUPERUSER `forge` role (HARNESS-03). Result: 22+ previously silently-skipped console tests now run; default `pytest tests/` 763p/117s/0err.
+- **Phase 19 — Code-quality polish (POLISH-01..04).** WR-02 ref-collision guard — salvage helper now emits placeholder ref, call site overrides via `dataclasses.replace(salvaged, ref=f"{len(tool_calls)}:{salvaged.tool_name}")`; same `len(tool_calls)`-indexed namespace as the structured path so collisions are impossible (POLISH-01). Phase 13 `from_status="(missing)"` sentinel replaced with proper `Optional[str]`; FB-B 404/409 split discriminators rewired to `exc.from_status is None` (POLISH-02). `test_transition_atomicity` rewritten to single-session approve+flush+rollback observation against live Postgres (POLISH-03). `_strip_terminal_chat_template_tokens` helper in `OllamaToolAdapter` strips contiguous `<|im_start|>` / `<|im_end|>` / `<|endoftext|>` tail-token runs; `INJECTION_MARKERS` extended 8 → 10; provider-scoped — Anthropic untouched, no double-strip path through `console/handlers.py` (POLISH-04).
+
+### What Worked
+
+- **Audit-driven scoping at milestone open.** v1.4.x was scoped from the v1.4 close-out audit's `Known deferred items at close` list — every requirement traced back to a specific debt item with a concrete acceptance criterion. No re-litigation at discuss-phase time. The audit-as-spec pattern (v1.4 audit → v1.4.x requirements) made the patch milestone a mechanical execution of pre-locked debt.
+- **Decoupled-commit purity for value flips paid off immediately.** Phase 17's split (17-01 refactor → 17-02 flip → 17-03 deferral docs) means `git blame` on `_DEFAULT_CLOUD_MODEL` line 72 reads "bump _DEFAULT_CLOUD_MODEL to claude-sonnet-4-6 (MODEL-01)" — not muddled with surrounding refactor noise. Future model bumps inherit a 1-line value-flip surface.
+- **Pre-run UAT for default-value flips caught a regression before it shipped.** The MODEL-02 cold-start `LLMLoopBudgetExceeded` would have shipped to projekt-forge v1.5 as a degraded operator surface. Conservative-bump-first preserved the v1.4.0 baseline; the seed retargeting captured everything v1.5 needs to revisit (Run 1/Run 2 numerics, qwen3 thinking-mode token verbosity, named candidate fixes).
+- **Removing the `FORGE_TEST_DB=1` gate immediately surfaced a hidden Phase 13 bug.** The previously-silently-skipped `test_transition_atomicity` was a vacuous `assert True  # placeholder` + a contradictory `assert row is None`. POLISH-03 then closed it with a real cross-session atomicity assertion. The opt-in gate had hidden the bug across the entire v1.4 milestone.
+- **Worktree-isolated parallel execution scaled to wave-based plans within a phase.** Phase 19 ran POLISH-01/02/03 as Wave 1 in parallel worktrees (no shared files), then POLISH-04 as Wave 2 (depends on 19-01 — same `_adapters.py` file). The orchestrator merged each wave back atomically. No race conditions; wave dependency analysis was correct.
+
+### What Was Inefficient
+
+- **`gsd-tools audit-open` is still broken.** `ReferenceError: output is not defined` at line 786 (same as v1.2 close-out). Fell back to manual audit again. Worth fixing before the next milestone close.
+- **`gsd-tools milestone complete` accomplishments auto-extraction is still noisy.** Pulled fragments like `"One-liner:"`, `"Phase:"`, `"None."`, and `"1. [Rule 1 - Bug] Plan-internal contradiction: ..."` from SUMMARY.md files whose structure varies. Hand-curated the MILESTONES.md entry to replace the auto-extracted bullets with structured per-phase narratives. The CLI's bullet-extraction heuristic should look for a specific `# One-liner` H1 anchor or skip extraction entirely.
+- **`gsd-tools milestone complete` did not flip REQUIREMENTS.md traceability checkboxes.** All 9 v1.4.x requirements still showed `[ ]` (Open) in the archived REQUIREMENTS.md after the CLI ran. The audit had verified them all SATISFIED, but `requirements_updated: false` in the phase-complete output meant the checkbox flip didn't propagate. Hand-flipping at archive time was needed (the archive captures whatever state the source file is in).
+- **STATE.md `Last Activity Description` field warning.** `gsd-tools milestone complete` printed `WARNING: STATE.md field "Last Activity Description" not found — update skipped.` Suggests STATE.md template drift between the CLI's expected schema and the actual file format. Cosmetic but worth tracking.
+- **VALIDATION.md coverage is thin** — Phase 17 missing, Phase 18 missing, Phase 19 partial (draft generated by planner, not finalized). The Nyquist auditor never ran for any v1.4.x phase; documented as advisory tech debt in the audit but represents a genuine coverage gap. Consider making `nyquist_validation: true` config a hard pre-archive gate, not a soft advisory.
+- **SUMMARY frontmatter `requirements_completed` field missing in 6 of 10 plans** (17-02, 17-03, 18-02, 18-03, 19-01, 19-02). The audit fell back to VERIFICATION.md as authoritative — so the milestone is correct — but the SUMMARY-template discipline gap means automated cross-references (3-source matrix in the audit) had to use `partial`-with-evidence rather than `pass`. Worth a planner-template tightening pass before v1.5.
+
+### Patterns Established
+
+- **Decoupled-commit purity for tunable defaults.** Phase 15 D-30 mandate (FB-C) generalized to all default-value flips — pure refactor (extract literal to module constant) ships separately from value flip (single-line literal change). `git blame` on the bumped line shows the bump message; `git blame` on the constant declaration shows the refactor. Re-validated in Phase 17 (cloud + local model defaults).
+- **Conservative-bump-first with empirical-evidence deferral as a first-class outcome.** MODEL-02 deferral branch (b) is not a punt — it's a documented engineering decision with concrete numerics, named failure modes, and forward-pointing v1.5 candidate fixes. The seed retargeting (v1.4.x → v1.5) preserves both the historical context and the trigger conditions for revisit.
+- **Default-on test fixture probes with `OSError` silent-skip.** Phase 18 HARNESS-03 removed the `FORGE_TEST_DB=1` opt-in gate from `_phase13_postgres_available()` and replaced with a `urlparse`-based probe that silently skips on `OSError`. CI green-state preserved (no Postgres reachable → silent skip); development hidden-regression surface eliminated.
+- **Provider-scoped strip helpers colocated with consumer.** Phase 19 POLISH-04: `_strip_terminal_chat_template_tokens` lives in `OllamaToolAdapter` only; AnthropicAdapter source contains zero references; no double-strip path through `console/handlers.py`. FB-C D-09 colocation principle re-validated.
+- **Single-session atomicity observation pins the actual SQLAlchemy/Postgres contract.** Phase 19 POLISH-03 replaced cross-session assertions that contradicted committed-state durability with a 26-line single-session observation: propose+commit (baseline persists) → approve+flush (in-flight visible) → rollback (in-flight reverts) → re-observe. Pattern reusable for any audit-trail tamper guard.
+- **Audit-as-spec for patch milestones.** v1.4 milestone audit's `Known deferred items at close` list became v1.4.x's REQUIREMENTS.md. No re-research, no re-discuss — every requirement was a closed-form acceptance criterion against a specific debt item. Patch milestones earn their efficiency from this constraint.
+
+### Key Lessons
+
+1. **Sentinel-string discriminators are debt — replace with `Optional[T]` so the type system can see the contract.** Phase 13's `from_status="(missing)"` sentinel survived three phases routing FB-B 404/409 splits on a string literal that mypy/pyright couldn't see. POLISH-02 replaced with proper `Optional[str]` and rewired the discriminators. If a sentinel value carries semantic discrimination, it belongs in the type system.
+2. **Pre-run UAT before flipping a default value.** MODEL-02 would have regressed the live operator surface. Run the candidate value through the actual operator UAT path first; capture cold-start, warm-run, and steady-state numerics; only flip if all three PASS. If any FAIL, document the failure mode + named candidate fixes in the seed and defer with empirical evidence.
+3. **Default-on probes beat opt-in env gates for test fixtures.** Opt-in gates are silent disablers — the v1.4 `FORGE_TEST_DB=1` gate hid 22+ tests across the entire milestone, including a Phase 13 logic bug carried since FB-A. Default-on probes with `OSError` silent-skip preserve CI green state without hiding regressions in development.
+4. **Helper placeholders + caller overrides via `dataclasses.replace`.** When a helper produces an immutable dataclass that the caller needs to amend (POLISH-01: ref derivation moved from helper literal to call-site composition), `dataclasses.replace(instance, field=value)` is the locked pattern. Helper emits placeholder, caller overrides at the call site — same indexing namespace as siblings prevents collisions.
+5. **Audit-driven scoping makes patch milestones mechanical.** v1.4.x didn't need a research phase or a discuss phase per requirement — every requirement traced back to a specific debt item in the v1.4 audit's `Known deferred items` list with a concrete acceptance criterion. The patch milestone shipped in 3 days because the spec was already locked at v1.4 close.
+6. **Worktree-based wave parallelization scales to within-phase plan groups.** Phase 19's Wave 1 (POLISH-01/02/03 — no shared files) executed in parallel worktrees; Wave 2 (POLISH-04 — depends on 19-01 — same `_adapters.py`) executed serially. Wave dependency analysis caught the file-overlap correctly. No race conditions, no manual merge conflicts.
+
+### Cost Observations
+
+- Model mix this milestone: primarily Opus 4.7 1M-context (orchestration, planning, audit, milestone close); Sonnet 4.6 for executor + verifier agents.
+- Sessions: ~2 focused sessions (Phase 17/18 in one, Phase 19 + audit + close in another).
+- Notable: 1M-context orchestrator held all 10 plan SUMMARYs + 3 phase VERIFICATIONs + REVIEW.md + REQUIREMENTS.md + ROADMAP.md + the v1.4 audit + the v1.4.x audit simultaneously during close. The 3-source cross-reference (REQUIREMENTS.md × VERIFICATION.md × SUMMARY frontmatter) ran in a single context window — much faster than v1.2's per-phase cross-reference passes.
+- Notable: `gsd-tools milestone complete` saved time on archive scaffolding (created the milestone roadmap + requirements files + audit move + MILESTONES.md base entry in one command) but the AI-curation work (ROADMAP.md reorganization + accomplishment narratives + PROJECT.md evolution + retrospective + key-decision audit) remained the bulk of the close-out effort. The CLI handles ~15% of the close; the AI handles ~85%.
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -64,6 +121,7 @@
 | v1.0 | 3 | Standalone package extraction; learning-pipeline port from FlameSavant (JS → Python) |
 | v1.1 | 3 | projekt-forge cutover to pip dependency; Option A shadow-remediation pattern emerged (Phase 5) |
 | v1.2 | 3 | Observability + provenance end-to-end; `@runtime_checkable` Protocol pattern locked; cross-repo release ceremony proven at 3x (v1.2.0, v1.2.1, v1.3.0) |
+| v1.4.x | 3 | Audit-as-spec for patch milestones; decoupled-commit purity for tunable defaults; default-on probes vs. opt-in env gates for test fixtures |
 
 ### Cumulative Quality
 
@@ -72,6 +130,7 @@
 | v1.0 | 2026-04-15 | 159 | 11 | 66 |
 | v1.1 | 2026-04-19 | 276 | 15 | 198 |
 | v1.2 | 2026-04-22 | 289 | 16 | 263 |
+| v1.4.x | 2026-04-30 | 865 | 19 | 689 |
 
 ### Top Lessons (Verified Across Milestones)
 
