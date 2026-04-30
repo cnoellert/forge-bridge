@@ -10,7 +10,7 @@ forge-bridge is protocol-agnostic middleware for post-production pipelines — a
 
 **Previously shipped:** v1.3.1 (2026-04-25) — Artist Console (Read API foundation, Web UI, CLI companion). See `.planning/milestones/v1.3-ROADMAP.md`.
 
-**In progress:** None. v1.4 milestone closed 2026-04-28; ready to open the next milestone via `/gsd-new-milestone v1.5` (or `v1.4.x` for accumulated tech-debt cleanup — staged-handlers test harness rework, `LLMRouter._cloud_model` default bump, Anthropic strict-mode markdown-fenced variant guard, qwen2.5-coder `<|im_start|>` tail-token strip).
+**In progress:** None. v1.4 milestone closed 2026-04-28; v1.4.x patch track (Phases 17 / 18 / 19) closed 2026-04-30, all 9 v1.4.x carry-forward items resolved (default model bumps; staged-handlers test-harness rework; POLISH-01..04 polish closures — WR-02 ref-collision guard, Phase 13 type-contract + atomicity sub-test fixes, qwen2.5-coder `<|im_start|>` tail-token strip). Ready for `v1.4.1` tag and post-milestone audit, then opening v1.5 via `/gsd-new-milestone v1.5`.
 
 **Codebase at v1.4 close:** ~40,038 LOC (forge_bridge + tests), 754 unit tests passing (102 skipped, 0 failed in default CI), 629 commits across 17 shipped phases (1, 2, 3, 4, 5, 6, 7, 07.1, 8, 9, 10, 10.1, 11, 13, 14, 15, 16, 16.1, 16.2). Public API surface: 17 symbols in `forge_bridge.__all__` (`LLMLoopBudgetExceeded` added in FB-C). Tag at close: `v1.4.0` (proposed; not yet pushed).
 
@@ -165,4 +165,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-29 — Phase 18 (Staged-handlers test harness rework) complete; HARNESS-01..03 closed (9/9 must-haves verified); 860 tests passing in default suite, 1 by-design fail (`test_transition_atomicity`) routed to POLISH-03 / Phase 19*
+*Last updated: 2026-04-30 — Phase 19 (Code-quality polish) complete; POLISH-01..04 closed (14/14 must-haves verified); 860 unit tests passing in default suite plus 6 new POLISH-targeted regression tests, 0 failed; v1.4.x carry-forward track fully closed across Phases 17/18/19 — ready for `v1.4.1` tag*
