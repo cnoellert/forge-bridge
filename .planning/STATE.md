@@ -1,77 +1,54 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: executing
-stopped_at: Phase 19 context gathered
-last_updated: "2026-04-30T16:40:30.090Z"
+milestone: v1.5
+milestone_name: Legibility
+status: defining_requirements
+stopped_at: Milestone v1.5 opened — defining requirements
+last_updated: "2026-04-30T18:00:00.000Z"
 last_activity: 2026-04-30
 progress:
-  total_phases: 3
-  completed_phases: 3
-  total_plans: 10
-  completed_plans: 11
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-04-28 at v1.4 close)
+See: .planning/PROJECT.md (updated 2026-04-30 at v1.5 milestone open)
 
 **Project core value:** forge-bridge is the single canonical pip-installable middleware (`pip install forge-bridge`) — protocol-agnostic communication bus with a canonical vocabulary that any endpoint (Flame, Maya, editorial, LLM agents) connects to.
-**Current focus:** Phase 19 — code-quality-polish
+**Current focus:** v1.5 Legibility — defining requirements
 
 ## Current Position
 
-Phase: 19
-Plan: Not started
-Status: Executing Phase 19
-Milestone: v1.4.x Carry-Forward Debt (opened 2026-04-28)
-Last activity: 2026-04-30
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Milestone: v1.5 Legibility (opened 2026-04-30)
+Last activity: 2026-04-30 — Milestone v1.5 started
 
-**v1.4 closed 2026-04-28** — milestone shipped at tag `v1.4.0` (commit `fad8615`). All 19 requirements closed with direct live evidence (STAGED-01..04 Postgres UAT, LLMTOOL-01 Ollama qwen2.5-coder UAT, LLMTOOL-02 Anthropic claude-sonnet-4-6 UAT, Phase 16.2 chat E2E live walkthrough on assist-01). Local LLM tool-call parity with Claude is real, not aspirational. Branches reconciled across dev / origin / assist-01.
+**v1.4.x closed 2026-04-30** — patch milestone shipped at tag `v1.4.1`. 9/9 requirements (MODEL-01..02, HARNESS-01..03, POLISH-01..04) closed across 3 phases (17, 18, 19); audit `passed`; 7/7 cross-phase integration wires verified; public `__all__` byte-identical to v1.4 close (19 symbols).
 
-**v1.4.x scope** — 9 requirements / 3 phases targeting tag `v1.4.1`:
+**v1.5 scope** — Legibility milestone, no LOC target, no API surface change expected:
 
-- **Phase 17** (MODEL-01..02): default cloud_model bump claude-opus-4-6 → claude-sonnet-4-6; default local_model bump qwen2.5-coder:32b → qwen3:32b IF assist-01 UAT passes. Single-commit isolated `_DEFAULT_*` constant changes per the SEED decoupled-commit mandate. Closes SEED-CLOUD-MODEL-BUMP-V1.4.x and SEED-DEFAULT-MODEL-BUMP-V1.4.x.
-- **Phase 18** (HARNESS-01..03): migrate 3 staged-handlers test files (23 tests) from starlette.TestClient → httpx.AsyncClient(transport=ASGITransport) so the test event loop matches asyncpg's; seed parent Project rows in session_factory; remove the FORGE_TEST_DB=1 opt-in gate.
-- **Phase 19** (POLISH-01..04): WR-02 ref-collision guard in salvage helper; Phase 13 type-contract + atomicity test fixes; qwen2.5-coder `<|im_start|>` tail-token strip in chat handler.
+- **Phase 20** (planned) — Reality audit + canonical install. Walk a fresh install end-to-end on a clean machine; fix gaps as they surface. Output: `docs/INSTALL.md`, refreshed `README.md` install section, refreshed `CLAUDE.md` ground-truth section, `install-flame-hook.sh` default pinned to `v1.4.1`.
+- **Phase 21** (planned) — Surface map + concept docs. Document the five user-facing surfaces (Web UI on `:9996/ui/`, CLI `forge-bridge`, `/api/v1/chat` HTTP, MCP server `python -m forge_bridge`, Flame hook on `:9999`) plus projekt-forge relationship. Output: `docs/GETTING-STARTED.md` + rewritten README "What This Is" section.
+- **Phase 22** (planned) — Daily workflow recipes. Step-by-step recipes for ~5–7 daily tasks (first-time setup, Claude Desktop wiring, watching tool synthesis, chat-driven Flame automation, staged-ops approval, manifest inspection, basic diagnosis). Output: `docs/RECIPES.md` (or directory).
+- **Phase 23** (planned) — Diagnostics + recovery. Document common failure modes (Flame crash, Postgres restart, Ollama hang, qwen3 cold-start `LLMLoopBudgetExceeded`) and recovery paths; polish `forge doctor` if it surfaces gaps during recipe writing. Output: `docs/TROUBLESHOOTING.md`.
 
-**Next action:** `/gsd-discuss-phase 17` to scope MODEL-01/02 decisions (primary unknowns: empirical qwen3:32b UAT path; whether to ship MODEL-01 first standalone OR pair with MODEL-02; how to handle claude-opus-4-7 temperature-deprecation if MODEL-01 ever needs to bump beyond sonnet-4-6).
+**Next action:** Define REQUIREMENTS.md categories DOCS / INSTALL / RECIPES / DIAG, spawn `gsd-roadmapper` for phases 20–23.
 
-## Session Handoff — Resume Instructions
+**Key constraints (binding for v1.5):**
 
-**What's committed and ready (v1.4 roadmap formalized):**
-
-- `.planning/PROJECT.md` — Current Milestone section populated with v1.4 goal, FB-A..FB-D target features, scope decisions
-- `.planning/REQUIREMENTS.md` — STAGED-01..07, LLMTOOL-01..07, CHAT-01..05 (19 reqs); traceability table filled in by roadmapper 2026-04-25
-- `.planning/ROADMAP.md` — v1.4 status flipped 📐→🚧; FB-A..FB-D phase blocks updated with refreshed success criteria, dependencies, parallelization note; Progress table rows flipped Designed→Open
-- `.planning/STATE.md` — milestone metadata updated to reflect roadmap formalization
-- `.planning/seeds/SEED-AUTH-V1.5.md` — planted for FB-D rate-limiting → caller-identity follow-up once v1.5 auth ships
-- `.planning/research/FB-C-TOOL-CALL-LOOP.md` — targeted FB-C research (Anthropic + Ollama tool-call format current state)
-
-**Next action:**
-
-Phase 13 (FB-A) discuss session is the active work. Dual-naming amendment (this session, 2026-04-25) is committed alongside the discuss artifacts.
-
-`/gsd-discuss-phase 13` (FB-A) is the resumable entry point. Phase 15 (FB-C) discuss can run in parallel via `/gsd-discuss-phase 15` once FB-A locks its decisions.
-
-**Key constraints (still binding for v1.4 work that builds on v1.3 surfaces):**
-
-- Phase naming uses dual-naming (amended 2026-04-25): numeric IDs `Phase 13..16` for gsd tooling AND preserved `FB-A..FB-D` as canonical cross-repo alias. The letter scheme stays the public identifier (projekt-forge v1.5 declared `FB-A..FB-D` as required deps); the numeric IDs are internal plumbing required by `gsd-tools find-phase`. Numeric mapping skips Phase 12 (already taken by superseded "LLM Chat") so commit history stays unambiguous.
-- Uvicorn task pattern is locked — console runs as a separate uvicorn asyncio task inside `_lifespan` on `:9996`; NOT via `FastMCP.custom_route` (only works in `--http` mode, breaks stdio)
-- ConsoleReadAPI is the sole read path for all surfaces — Web UI, CLI, MCP resources, and chat all call it; no per-surface JSONL parsers. FB-B's HTTP routes consume this same facade.
-- ManifestService singleton injected into watcher (write path) and console router (read path) — watcher is sole writer, console API reads via `snapshot()`
-- Instance-identity gate (API-04): `_lifespan` owns the canonical ExecutionLog and ManifestService; no duplicate instances anywhere in the process
-- MFST-02 and MFST-03 ship in the SAME plan (MCP resource + tool fallback shim together — P-03 prevention for Cursor/Gemini CLI). Apply same pattern to STAGED-05/STAGED-07 in FB-B.
-- Only new pip dep on top of v1.3: `ollama>=0.6.1,<1` (FB-C native Ollama tool-call client; OpenAI-compat shim stays for `acomplete()`)
-- CLI commands must be sync functions calling sync `httpx.get()` — Typer 0.24.1 silently drops `async def` (verified via live test)
-- Every UI-touching phase (FB-D) includes mandatory non-developer dogfood UAT: D-36 fresh-operator gate pattern from Phase 10
-- FB-A and FB-C are parallelizable — no shared dependency. FB-B → FB-A. FB-D → FB-C.
-- `LLMLoopBudgetExceeded` exported from `forge_bridge.__all__` (barrel grows 16→17) — FB-C deliverable
-- Sanitization patterns consolidate into single source of truth (Phase 7 + FB-C share `forge_bridge/_sanitize_patterns.py` or equivalent) — refactor target during FB-C, not a new plan
+- Legibility, not features. No new external libraries. Public `forge_bridge.__all__` stays at 19 unless something genuinely shifts during install audit.
+- Forcing function: if `docs/INSTALL.md` doesn't work end-to-end on a clean machine, we don't ship it. Phase 20 will likely surface deployment gaps that get fixed in-flight (and may add code-fix plans alongside doc plans).
+- Internal codebase audit + workflow articulation — no external research phase.
+- All 16 planted seeds in `.planning/seeds/SEED-*.md` are out of v1.5 scope (feature work for v1.6+: auth, chat enhancements, model bumps, tool-call optimizations, staged-ops follow-on, CMA memory).
+- Done state: user can sit down, follow the docs, and use forge-bridge in daily VFX workflow without re-deriving the deployment topology each time.
 
 ## Performance Metrics
 
@@ -190,6 +167,6 @@ None. Roadmap formalized; awaiting user approval.
 
 ## Session Continuity
 
-Last session: 2026-04-30T00:10:47.387Z
-Stopped at: Phase 19 context gathered
-Resume file: .planning/phases/19-code-quality-polish/19-CONTEXT.md
+Last session: 2026-04-30T18:00:00.000Z
+Stopped at: Milestone v1.5 opened — defining requirements
+Resume file: — (run `/gsd-discuss-phase 20` once roadmap is approved)

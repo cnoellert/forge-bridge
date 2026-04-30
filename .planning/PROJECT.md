@@ -10,13 +10,27 @@ forge-bridge is protocol-agnostic middleware for post-production pipelines — a
 
 **Previously shipped:** v1.4.0 (2026-04-28) — Staged Ops Platform (FB-A..FB-D — staged_operation entity, MCP tools + HTTP routes + chat endpoint with agentic tool-call loop). Consumed by projekt-forge v1.5. See `.planning/milestones/v1.4-ROADMAP.md`.
 
-**In progress:** None. v1.4.x patch track closed 2026-04-30; ready for `v1.4.1` annotated tag and v1.5 milestone open via `/gsd-new-milestone v1.5`.
+**In progress:** v1.5 Legibility (opened 2026-04-30) — see Current Milestone below.
 
 **Codebase at v1.4.1 close:** ~40,594 LOC (forge_bridge + tests; +556 over v1.4.0), 865 unit tests passing in default suite (19 skipped, 0 failed), 689 commits across 17 shipped phases (1, 2, 3, 4, 5, 6, 7, 07.1, 8, 9, 10, 10.1, 11, 13, 14, 15, 16, 16.1, 16.2, 17, 18, 19). Public API surface: 19 symbols in `forge_bridge.__all__` — byte-identical to v1.4.0 close. Carry-forward seeds for v1.5: `SEED-OPUS-4-7-TEMPERATURE-V1.5` (planted Phase 17), `SEED-DEFAULT-MODEL-BUMP-V1.4.x` (retargeted v1.4.x → v1.5), `SEED-CHAT-STREAMING-V1.4.x`, `SEED-AUTH-V1.5`.
 
-## Next Milestone: v1.5 (Planning)
+## Current Milestone: v1.5 Legibility
 
-To be defined via `/gsd-new-milestone v1.5`. Carry-forward seeds from v1.4 + v1.4.x:
+**Goal:** Make forge-bridge usable by its first daily user — close the gap between what's shipped (19 phases, 5 user-facing surfaces, ~40k LOC) and what a person can sit down and actually use without re-deriving the deployment topology each time.
+
+**Target features:**
+- **Reality audit + canonical install** — walk a fresh install end-to-end, fix gaps as they surface, ship `docs/INSTALL.md`, refresh README install section, refresh CLAUDE.md ground-truth, pin `install-flame-hook.sh` default to `v1.4.1`.
+- **Surface map + concept docs** — document the five user-facing surfaces (Web UI on `:9996/ui/`, CLI `forge-bridge`, `/api/v1/chat` HTTP, MCP server `python -m forge_bridge`, Flame hook on `:9999`) and forge-bridge's relationship to projekt-forge. Output: `docs/GETTING-STARTED.md` + rewritten README "What This Is".
+- **Daily workflow recipes** — step-by-step guides for ~5–7 daily tasks: first-time setup, Claude Desktop / Claude Code wiring, watching tool synthesis happen, driving multi-step Flame automation via chat, approving/rejecting staged ops, inspecting auto-promoted tools in the manifest, basic failure diagnosis.
+- **Diagnostics + recovery** — document common failure modes (Flame crash, Postgres restart, Ollama hang, qwen3 cold-start `LLMLoopBudgetExceeded`), recovery paths, polish `forge doctor` if needed. Output: `docs/TROUBLESHOOTING.md`.
+
+**Key context:**
+- Legibility, not features. No new external libraries. Public `forge_bridge.__all__` should stay at 19 unless something genuinely shifts.
+- Forcing function: if the install doc doesn't work end-to-end on a clean machine, we don't ship it. Phase 20 will likely surface deployment gaps that get fixed in-flight.
+- Internal codebase audit + workflow articulation — no external research phase.
+- Done state: user can sit down, follow the docs, and use forge-bridge in daily VFX workflow.
+
+**Carry-forward seeds (deferred to v1.6+, NOT v1.5 scope):**
 
 - **`SEED-OPUS-4-7-TEMPERATURE-V1.5`** (planted Phase 17, v1.4.1) — AnthropicAdapter unconditionally sends `temperature`, but `claude-opus-4-7` rejects it. Required before any future opus-4-7 default bump can be considered.
 - **`SEED-DEFAULT-MODEL-BUMP-V1.4.x`** (retargeted v1.4.x → v1.5) — `_DEFAULT_LOCAL_MODEL` bump to `qwen3:32b` deferred with empirical evidence: cold-start `LLMLoopBudgetExceeded` driven by qwen3 thinking-mode token verbosity (400-525 tokens/turn). Trigger: widened salvage helper, qwen3 thinking-mode token-budget mitigation, or a tool-coordinator wall-clock fix.
@@ -92,7 +106,7 @@ Make forge-bridge the single canonical package (`pip install forge-bridge`) that
 
 ### Active
 
-(None — v1.4.x patch milestone closed 2026-04-30; v1.5 to be defined via `/gsd-new-milestone v1.5`)
+v1.5 Legibility — see Current Milestone above. Requirements written to `.planning/REQUIREMENTS.md` at milestone-init; categories are DOCS / INSTALL / RECIPES / DIAG.
 
 ### Out of Scope
 
@@ -180,4 +194,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-30 after v1.4.x Carry-Forward Debt milestone shipped — `v1.4.1` patch tag. 9/9 requirements (MODEL-01..02, HARNESS-01..03, POLISH-01..04) closed across 3 phases (17, 18, 19); audit `passed`; 7/7 cross-phase integration wires verified; public `__all__` byte-identical to v1.4 close.*
+*Last updated: 2026-04-30 — milestone v1.5 Legibility opened. Theme: make forge-bridge usable by its first daily user (canonical install + surface map + workflow recipes + diagnostics). Phases continue numbering from v1.4.x (last shipped phase 19).*
