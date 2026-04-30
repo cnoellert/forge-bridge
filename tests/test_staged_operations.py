@@ -329,73 +329,25 @@ async def test_transition_atomicity(session_factory):
     async with session_factory() as session:
         repo = StagedOpRepo(session)
         op = await repo.propose(
-            operation="flame.publish_sequence",
-            proposer="setup",
-            parameters={"shot_id": "abc"},
+            operation="op-atom", proposer="p", parameters={},
         )
-        await session.commit()
-        op_id = op.id
+        await session.commit()  # baseline: 1 entity + 1 staged.proposed event committed
 
-    # In a new session: approve, then explicitly rollback (simulates an error
-    # raised by a downstream caller — e.g., FB-B's HTTP handler aborting after
-    # the repo call).
-    async with session_factory() as session:
-        repo = StagedOpRepo(session)
-        await repo.approve(op_id, approver="web-ui:artist")
-        # Verify mid-flight state inside the open transaction
-        await session.flush()  # don't commit — push to DB so rollback has work
-        await session.rollback()
-
-    # Verify post-rollback state in a fresh session: status is still 'proposed'
-    # AND only the original 'staged.proposed' event exists. No staged.approved.
-    async with session_factory() as session:
-        repo = StagedOpRepo(session)
-        fetched = await repo.get(op_id)
-        # NOTE: because each session_factory() call provisions a fresh DB, the
-        # rollback test must be self-contained within a single session. Above we
-        # asserted the rollback happened inside the open session; this final
-        # assertion uses the SAME session_factory but a different DB instance —
-        # which makes the test trivially pass. To make the atomicity claim
-        # observable, we verify it WITHIN the rollback session:
-        assert True  # placeholder; the meaningful check is below
-
-    # Reconstruct the test in a single session for atomicity observation:
-    async with session_factory() as session:
-        repo = StagedOpRepo(session)
-        op2 = await repo.propose(operation="op-atom", proposer="p", parameters={})
-        await session.commit()
-
-        events_before = await EventRepo(session).get_recent(entity_id=op2.id, limit=10)
-        assert len(events_before) == 1  # staged.proposed
-        assert events_before[0].event_type == "staged.proposed"
-
-        # Now approve and rollback within the same session
-        await repo.approve(op2.id, approver="artist")
+        # Approve in same session, flush (push to DB), observe pre-rollback state
+        await repo.approve(op.id, approver="artist")
         await session.flush()
-
-        events_mid_flight = await EventRepo(session).get_recent(entity_id=op2.id, limit=10)
-        assert len(events_mid_flight) == 2  # both rows visible pre-commit
+        events_mid = await EventRepo(session).get_recent(entity_id=op.id, limit=10)
+        assert len(events_mid) == 2, "both events visible pre-rollback"
 
         await session.rollback()
 
-        # In the same session post-rollback, both writes are gone
-        db_entity = await session.get(DBEntity, op2.id)
-        # (depending on session expiration, db_entity may be None after rollback;
-        # re-fetch via fresh query to be safe)
-        row = (await session.execute(
-            select(DBEntity).where(DBEntity.id == op2.id)
-        )).scalar_one_or_none()
-        assert row is None, (
-            "post-rollback: even the original proposed entity is rolled back "
-            "because its commit was tied to the rolled-back session"
-        )
-        event_rows = (await session.execute(
-            select(DBEvent).where(DBEvent.entity_id == op2.id)
-        )).scalars().all()
-        assert len(event_rows) == 0, (
-            "ATOMICITY VIOLATED: events persist after session rollback — "
-            "audit-trail tamper risk surfaced"
-        )
+        # Post-rollback: only the originally-committed state remains
+        events_after = await EventRepo(session).get_recent(entity_id=op.id, limit=10)
+        assert len(events_after) == 1
+        assert events_after[0].event_type == "staged.proposed"
+        fetched = await repo.get(op.id)
+        assert fetched is not None
+        assert fetched.status == "proposed"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
