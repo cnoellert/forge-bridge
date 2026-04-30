@@ -128,4 +128,4 @@ Audit: `.planning/milestones/v1.4-MILESTONE-AUDIT.md`
 | 16.2 (FB-D Bug D closure). Chat Tool-Call Loop + Fresh-Operator UAT | v1.4 | 4/4 | Complete    | 2026-04-28 |
 | 17. Default model bumps | v1.4.x | 3/3 | Complete    | 2026-04-29 |
 | 18. Staged-handlers test harness rework | v1.4.x | 4/3 | Complete    | 2026-04-29 |
-| 19. Code-quality polish | v1.4.x | 4/4 | Complete   | 2026-04-30 |
+| 19. Code-quality polish | v1.4.x | 4/4 | Complete    | 2026-04-30 |
