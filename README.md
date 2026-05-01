@@ -51,15 +51,29 @@ A [Model Context Protocol](https://modelcontextprotocol.io) server that wraps th
 
 ## Current Status
 
+Shipped at **v1.4.1** (2026-04-30). 19 phases across 6 milestones. Active milestone: **v1.5 Legibility** (Phases 20-23 — install + concept docs + recipes + diagnostics).
+
 | Component | Status |
 |-----------|--------|
-| Flame HTTP bridge | ✅ Working |
-| MCP server (LLM tools) | ✅ Working |
-| Canonical vocabulary spec | 🔧 In design |
-| Dependency graph engine | 📋 Planned |
+| Flame HTTP bridge (`:9999`) | ✅ Shipped (v1.0) |
+| MCP server (`python -m forge_bridge`, stdio) | ✅ Shipped (v1.0; expanded through v1.4) |
+| Canonical vocabulary layer (`forge_bridge/core/`) | ✅ Shipped (v1.0) |
+| Postgres persistence + migrations | ✅ Shipped (v1.0) |
+| Async/sync WebSocket clients | ✅ Shipped (v1.0) |
+| Tool provenance in MCP `_meta` (PROV-01..06) | ✅ Shipped (v1.2.0) |
+| StoragePersistence Protocol + SQL mirror | ✅ Shipped (v1.3.0) |
+| Artist Console / Web UI (`:9996/ui/`) | ✅ Shipped (v1.3.1, Phases 10/10.1) |
+| CLI `forge-bridge console tools \| execs \| manifest \| health \| doctor` | ✅ Shipped (v1.3.1, Phase 11) |
+| Staged-operations platform (`/api/v1/staged`, MCP tools, lifecycle) | ✅ Shipped (v1.4, FB-A + FB-B) |
+| LLMRouter agentic tool-call loop (`complete_with_tools()`) | ✅ Shipped (v1.4, FB-C) |
+| Chat endpoint (`POST /api/v1/chat`) | ✅ Shipped (v1.4, FB-D + 16.1 + 16.2) |
+| WebSocket event server (`:9998`) | ✅ Shipped (graceful degradation per Phase 07.1) |
+| Learning pipeline (synthesis + probation + manifest) | ✅ Shipped (v1.0; refined through v1.4) |
+| Dependency graph traversal engine | 📋 Planned (relationships persist; no traversal module yet) |
+| Canonical event-driven pub/sub abstraction | 📋 Planned (WS server ships; canonical layer does not) |
 | Maya endpoint | 📋 Planned |
-| Editorial/shot tracking adapters | 📋 Planned |
-| Event-driven channel system | 📋 Planned |
+| Editorial / shot-tracking adapters | 📋 Planned |
+| Authentication (multi-user, caller identity) | 📋 Planned (SEED-AUTH-V1.5; v1.6+) |
 
 ---
 
@@ -117,28 +131,62 @@ FORGE_BRIDGE_PORT=9999        # port (default: 9999)
 FORGE_BRIDGE_ENABLED=0        # disable entirely
 ```
 
-### Install the MCP server
+### Install forge-bridge
+
+Install with the LLM extras (mandatory for chat + learning-pipeline synthesis):
 
 ```bash
-pip install -e .
+pip install -e ".[dev,llm]"
 ```
+
+`[dev]` adds pytest + ruff. `[llm]` adds `openai`, `anthropic`, `ollama`. Bare `pip install -e .` skips both extras and silently breaks the chat endpoint and tool synthesis.
 
 ### Run the MCP server
 
+The same process boots the MCP server (stdio for Claude Desktop / Claude Code), the Artist Console Web UI on `:9996`, and the `/api/v1/chat` endpoint:
+
 ```bash
-# Local (stdio — for use with Claude Desktop or similar)
+# Daily local launch — uses FORGE_DB_URL, FORGE_LOCAL_LLM_URL, FORGE_BRIDGE_HOST defaults
 python -m forge_bridge
 
-# Remote Flame (bridge on another machine)
-python -m forge_bridge --bridge-host 192.168.1.100
-
-# HTTP transport (multi-client)
-python -m forge_bridge --http --port 8080
+# Headless host where stdin closes immediately (deploy hosts, ssh-detached sessions):
+tail -f /dev/null | python -m forge_bridge
 ```
+
+Flame target host override (the bridge defaults to `127.0.0.1:9999`):
+
+```bash
+FORGE_BRIDGE_HOST=192.168.1.100 python -m forge_bridge
+```
+
+See `docs/INSTALL.md` for the full env-var reference and the canonical operator-workstation install path.
 
 ### Test the connection
 
-Open `http://localhost:9999/` in a browser for the interactive Python console. Type `flame` to confirm the Flame API is available.
+Five surfaces should be reachable after install:
+
+```bash
+# 1. Flame hook (requires Flame running with the hook installed)
+curl -s http://localhost:9999/status        # JSON with "flame_available": true
+
+# 2. MCP server CLI
+forge-bridge --help
+
+# 3. Artist Console Web UI
+curl -fsS http://localhost:9996/ui/ -o /dev/null -w "%{http_code}\n"   # 200
+
+# 4. Chat endpoint (requires Ollama + qwen2.5-coder:32b running)
+curl -s -X POST http://localhost:9996/api/v1/chat \
+  -H "content-type: application/json" \
+  -d '{"messages":[{"role":"user","content":"hello"}]}'
+
+# 5. Post-install diagnostic (covers JSONL log, sidecar dirs, port reachability, disk)
+forge-bridge console doctor
+```
+
+`ANTHROPIC_API_KEY` is **optional** — chat hardcodes `sensitive=True`, which routes through local Ollama. The key is only needed for `sensitive=False` cloud routing.
+
+The Flame bridge's interactive Python console is still available at `http://localhost:9999/` if you want to drive Flame's Python API directly (handy for ad-hoc debugging).
 
 ---
 
