@@ -115,6 +115,16 @@ Audit: `.planning/milestones/v1.4.x-MILESTONE-AUDIT.md`
 - [x] 20-06-PLAN.md — Track B integrator dry-run on Flame-less host (assumption-gap surfacing per D-03)
 **UI hint**: yes
 
+### Phase 20.1: Install Bootstrap Script + Systemd Daemon (v1.5 ship blocker) (INSERTED)
+
+**Goal:** [Urgent work - to be planned]
+**Requirements**: TBD
+**Depends on:** Phase 20
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 20.1 to break down)
+
 ### Phase 21: Surface Map + Concept Docs
 **Goal**: A new user can read `docs/GETTING-STARTED.md` and understand what forge-bridge's five surfaces are, what each is for, how they fit together, and how forge-bridge relates to projekt-forge — without reading source code.
 **Depends on**: Phase 20 (needs accurate ground truth from the install audit before documenting surfaces)
