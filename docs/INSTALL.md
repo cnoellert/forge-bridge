@@ -1,6 +1,6 @@
 # forge-bridge Install Guide
 
-Single-machine operator install for forge-bridge v1.4.1. Walks a fresh conda env on a workstation that already has Flame, Postgres, and Ollama running, all the way to a five-surface check (Web UI, CLI, chat endpoint, MCP server, Flame hook).
+Operator-workstation install for forge-bridge v1.4.1. Walks a fresh conda env on a workstation that runs Flame and Postgres locally and reaches an Ollama daemon over the network (typically on a separate LLM service host — Flame already saturates a workstation's GPU and RAM), all the way to a five-surface check (Web UI, CLI, chat endpoint, MCP server, Flame hook).
 
 This is the **opinionated** path — one route through. Multi-machine deployment, multi-user / authenticated setups, and the projekt-forge consumer walkthrough are out of scope (deferred to v1.6+ and Phase 21 respectively). For design rationale, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -8,27 +8,54 @@ This is the **opinionated** path — one route through. Multi-machine deployment
 
 ## Before you start
 
-### External dependencies
+### What runs where
 
-Set these up BEFORE following the steps below. Install will fail mid-flight if any are missing.
+Two roles. Most Flame operators put them on separate hosts: the workstation runs Flame + bridge + Postgres; Ollama runs on a dedicated LLM service host. Single-machine is *possible* but only with substantial GPU + RAM headroom beyond what Flame already consumes — it is the exception, not the default.
+
+**Operator host** — the Flame workstation that runs Flame + bridge + Postgres locally:
 
 | Dependency | Required for | Minimum | Reference (tested at v1.4.1) |
 |------------|-------------|---------|------------------------------|
 | conda | env isolation | latest stable | conda ~24.x |
 | Python | runtime | 3.10 | 3.11 |
 | PostgreSQL | staged ops + execution-log SQL mirror | 14 | 16.x |
-| Ollama | chat endpoint + LLM tool synthesis | latest stable | 0.21.0 |
-| `qwen2.5-coder:32b` model | chat + synthesis (locked default) | n/a | pulled via `ollama pull qwen2.5-coder:32b` |
 | Flame | Flame hook surface (skip for Track B) | 2026.x | 2026.2.1 |
-| Anthropic API key | OPTIONAL — only for `sensitive=False` cloud routing | n/a | n/a (chat hardcodes `sensitive=True`) |
+
+**Reachable network services** — must respond on the operator host's network at install time:
+
+| Service | Required for | Minimum | Reference (tested at v1.4.1) |
+|---------|-------------|---------|------------------------------|
+| Ollama daemon | chat endpoint + LLM tool synthesis | latest stable | 0.21.0 |
+| `qwen2.5-coder:32b` model (pulled on the Ollama host) | chat + synthesis (locked default) | n/a | `ollama pull qwen2.5-coder:32b` on the LLM host |
+| Anthropic API | OPTIONAL — only for `sensitive=False` cloud routing | n/a | n/a (chat hardcodes `sensitive=True`) |
 
 **Do not use `qwen3:32b`** as the default model. Cold-start LLM thinking-mode token verbosity (400-525 tok/turn) exceeds the 60s wall-clock budget. Stay on `qwen2.5-coder:32b` (locked default). Context: `.planning/seeds/SEED-DEFAULT-MODEL-BUMP-V1.4.x.md`.
+
+### Topology / network reachability
+
+Ollama runs as a network service. The realistic deployment for a Flame operator is a separate LLM service host on the same network — Flame's GPU and RAM use leaves little headroom on the workstation for a 32B-parameter model. Single-machine (Ollama on the operator host) is supported, but expect contention with Flame for GPU/RAM unless you have substantial dedicated headroom. The operator host needs to *reach* Ollama — it does not need to *run* it.
+
+The knob is `FORGE_LOCAL_LLM_URL` (Step 5). Default: `http://localhost:11434/v1`. Set it to your LLM service host's URL — e.g. `http://llm-host.local:11434/v1` or `http://10.0.0.42:11434/v1`. Leave it at the default only if you have dedicated GPU/RAM headroom for the model on the operator host.
+
+Verify reachability from the operator host BEFORE Step 1:
+
+```bash
+# If Ollama is local:
+curl -s http://localhost:11434/api/version
+
+# If Ollama is on another host (replace with your LLM host):
+curl -s http://llm-host.local:11434/api/version
+```
+
+Both should return JSON with `version`. If the remote host doesn't respond, fix that before installing — the chat endpoint will fail at runtime if it can't reach Ollama, and `forge doctor` will report `llm_router: degraded`.
+
+Postgres has the same shape: it can be local (Step 3 default) or remote — point `FORGE_DB_URL` (Step 5) at whichever Postgres you intend to use. Most operators run Postgres locally.
 
 ### If you don't have Flame (Track B / MCP-only operators)
 
 Skip Step 4 (Flame hook install) entirely. Surfaces 1-4 (Web UI, CLI, chat, MCP server) work without Flame. Surface 5 (Flame hook on `:9999`) will not be reachable, and the `flame_*` MCP tools will return errors when invoked. The `forge-bridge console doctor` output will mark `flame_bridge` as `degraded` rather than failing — this is expected behavior (see Phase 07.1 graceful-degradation contract).
 
-Without Postgres, the staged-ops endpoints (`/api/v1/staged`, `forge_*_staged` MCP tools) will fail with DB connection errors. Either run Step 3 (Postgres setup) or expect those features to be unavailable.
+Without Postgres, the staged-ops endpoints (`/api/v1/staged`, `forge_*_staged` MCP tools) will fail with DB connection errors. Either run Step 3 (Postgres setup) or expect those features to be unavailable. Track B operators commonly point `FORGE_LOCAL_LLM_URL` at a separate LLM service host (see Topology subsection above) — Track B does not require Ollama to be local.
 
 ---
 
@@ -147,6 +174,7 @@ export FORGE_DB_URL="postgresql+asyncpg://forge:forge@localhost:5432/forge_bridg
 Optional (defaults are usually fine):
 
 ```bash
+# Ollama base URL — change to your LLM service host if Ollama is not local
 # Ollama backend (default http://localhost:11434/v1)
 export FORGE_LOCAL_LLM_URL="http://localhost:11434/v1"
 
@@ -254,8 +282,8 @@ ollama list | grep qwen2.5-coder                       # confirms model is pulle
 
 | Var | Default | Purpose |
 |-----|---------|---------|
-| `FORGE_DB_URL` | `postgresql+asyncpg://forge:forge@localhost:5432/forge_bridge` | Postgres async URL |
-| `FORGE_LOCAL_LLM_URL` | `http://localhost:11434/v1` | Ollama base URL |
+| `FORGE_DB_URL` | `postgresql+asyncpg://forge:forge@localhost:5432/forge_bridge` | Postgres async URL — local default; set to remote Postgres URL if applicable |
+| `FORGE_LOCAL_LLM_URL` | `http://localhost:11434/v1` | Ollama base URL — set to remote LLM host if Ollama runs separately |
 | `FORGE_LOCAL_MODEL` | `qwen2.5-coder:32b` | Local model (do NOT use qwen3:32b) |
 | `FORGE_CLOUD_MODEL` | `claude-sonnet-4-6` | Anthropic model (only used when `sensitive=False`) |
 | `ANTHROPIC_API_KEY` | unset | Optional — cloud routing only |
@@ -275,6 +303,34 @@ ollama list | grep qwen2.5-coder                       # confirms model is pulle
 | `9996` | Web UI + `/api/v1/chat` + `/api/v1/staged` + Read API | `python -m forge_bridge` |
 | `9998` | WebSocket event server | `python -m forge_bridge` (graceful degradation if unreachable per Phase 07.1) |
 | `9999` | Flame hook HTTP server | Flame process (loads hook on launch) |
+
+---
+
+## Reference: LLM service host (separate-host Ollama)
+
+If Ollama runs on a host SEPARATE from the operator workstation, that host needs:
+
+1. The Ollama daemon installed and running on `:11434`, reachable from the operator host's network. Ollama install: <https://ollama.com/download>.
+2. The locked default model pulled on that host: `ollama pull qwen2.5-coder:32b`.
+
+That is the entire install for the LLM service host. Do NOT install bridge, Postgres, conda, or Flame on a host whose only job is to run Ollama.
+
+On the operator host (Step 5), set:
+
+```bash
+export FORGE_LOCAL_LLM_URL="http://YOUR-LLM-HOST:11434/v1"
+```
+
+Where `YOUR-LLM-HOST` is the LLM host's hostname or IP reachable from the operator workstation.
+
+To verify the LLM service host is healthy, from the operator host:
+
+```bash
+curl -s http://YOUR-LLM-HOST:11434/api/version              # daemon up
+curl -s http://YOUR-LLM-HOST:11434/api/tags | grep qwen2.5  # model pulled
+```
+
+Both must return non-empty before Step 6 (server start) on the operator host.
 
 ---
 
