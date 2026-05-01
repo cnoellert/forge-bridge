@@ -103,10 +103,10 @@ Python 3.10 is the minimum supported version (per `pyproject.toml`); the `forge`
 ./scripts/install-flame-hook.sh
 
 # Or standalone on any Flame workstation — no clone required:
-curl -fsSL https://raw.githubusercontent.com/cnoellert/forge-bridge/v1.2.1/scripts/install-flame-hook.sh | bash
+curl -fsSL https://raw.githubusercontent.com/cnoellert/forge-bridge/v1.4.1/scripts/install-flame-hook.sh | bash
 ```
 
-The installer copies `forge_bridge.py` into `/opt/Autodesk/shared/python/forge_bridge/scripts/` and sanity-checks the result. Override `FORGE_BRIDGE_VERSION` (default `v1.2.1`) or `FORGE_BRIDGE_HOOK_DIR` (default the Flame shared-python path) as needed.
+The installer copies `forge_bridge.py` into `/opt/Autodesk/shared/python/forge_bridge/scripts/` and sanity-checks the result. Override `FORGE_BRIDGE_VERSION` (default `v1.4.1`) or `FORGE_BRIDGE_HOOK_DIR` (default the Flame shared-python path) as needed.
 
 Flame will load the hook automatically on next launch. The bridge starts on `http://127.0.0.1:9999/` by default.
 
