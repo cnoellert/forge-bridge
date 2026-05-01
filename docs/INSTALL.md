@@ -106,15 +106,45 @@ forge-bridge --help
 
 forge-bridge defaults to `forge:forge@localhost:5432/forge_bridge`. Either match those defaults or set `FORGE_DB_URL` to your own.
 
-Default-credential setup:
+### 3a. Confirm Postgres is installed, initialized, and running
 
 ```bash
-# As a Postgres superuser:
-createuser -P forge          # set password 'forge' when prompted
+# Service status — the package name varies by version:
+systemctl status postgresql 2>/dev/null || systemctl status postgresql-16 2>/dev/null
+
+# Is anything listening on 5432?
+nc -z localhost 5432 && echo "Postgres: up" || echo "Postgres: DOWN"
+```
+
+If it's NOT installed (RHEL/Rocky/AlmaLinux Flame workstations — typical):
+
+```bash
+sudo dnf install -y postgresql-server postgresql-contrib
+sudo postgresql-setup --initdb
+sudo systemctl enable --now postgresql
+```
+
+If you're on macOS Homebrew: `brew install postgresql@16 && brew services start postgresql@16`. If you're on Postgres.app, launch the app — its bundled CLI tools (`createuser`, `createdb`, `psql`) live under `/Applications/Postgres.app/Contents/Versions/latest/bin/` (you may need to add that to your `PATH`).
+
+### 3b. Create the forge user and database
+
+The Postgres OS-level user `postgres` is the database superuser on a stock package install. Use `sudo -u postgres` to run admin commands as that user:
+
+```bash
+# RHEL/Rocky/AlmaLinux (the typical Flame workstation):
+sudo -u postgres createuser -P forge        # at the prompt, set password 'forge' to match the default
+sudo -u postgres createdb -O forge forge_bridge
+```
+
+```bash
+# macOS Homebrew install: your login user IS the superuser, so omit sudo:
+createuser -P forge
 createdb -O forge forge_bridge
 ```
 
-Run the three Alembic migrations:
+If `createuser` reports `role "forge" already exists`, that's fine — re-running is idempotent for the database creation only; the existing role keeps its current password.
+
+### 3c. Run the three Alembic migrations
 
 ```bash
 # From the repo root:
