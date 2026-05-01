@@ -30,6 +30,8 @@ forge-bridge is protocol-agnostic middleware for post-production pipelines — a
 - Internal codebase audit + workflow articulation — no external research phase.
 - Done state: user can sit down, follow the docs, and use forge-bridge in daily VFX workflow.
 
+**v1.5 ship blocker (post-Phase-20 truth, 2026-05-01):** Phase 20's reality audit confirmed that `docs/INSTALL.md` as prose is NOT shippable to artists — the procedure demands knowledge (Postgres `pg_hba.conf`, `password_encryption` history, two-process launch order, conda env lifecycle, env-var persistence) that the doc itself does not give. The architecture works (cross-host LLM via assist-01 Ollama validated end-to-end on flame-01 during the Phase 20 Track A walk); the install procedure does not. **Phase 20.1 (install.sh + systemd units `forge-bridge-server.service` + `forge-bridge.service` + `/etc/forge-bridge/forge-bridge.env` + INSTALL.md reshape) is the v1.5 ship gate.** No artist non-author UAT can pass against the current INSTALL.md; 20.1 is therefore the prerequisite to claiming v1.5 ships. Capture: `.planning/phases/20-reality-audit-canonical-install/20-PHASE-20.1-CANDIDATE.md`. Headline framing repeated in `20-HUMAN-UAT.md`. Phase 20 closed PASS-with-deviations under D-02.1 amendment (author-walk, no fully-non-author available); the 13 gap-log entries are 20.1's input requirements.
+
 **Carry-forward seeds (deferred to v1.6+, NOT v1.5 scope):**
 
 - **`SEED-OPUS-4-7-TEMPERATURE-V1.5`** (planted Phase 17, v1.4.1) — AnthropicAdapter unconditionally sends `temperature`, but `claude-opus-4-7` rejects it. Required before any future opus-4-7 default bump can be considered.
@@ -194,4 +196,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-30 — milestone v1.5 Legibility opened. Theme: make forge-bridge usable by its first daily user (canonical install + surface map + workflow recipes + diagnostics). Phases continue numbering from v1.4.x (last shipped phase 19).*
+*Last updated: 2026-05-01 — Phase 20 (Reality Audit + Canonical Install) closed PASS-with-deviations. Track A author-walked-with-deviation under D-02.1 amendment surfaced 13 gaps; architecture validated end-to-end (cross-host LLM via assist-01 Ollama); install procedure as prose proven not shippable to artists. Phase 20.1 (install.sh + systemd daemon + env file) captured as v1.5 ship blocker. v1.5 not shippable until 20.1 lands.*
