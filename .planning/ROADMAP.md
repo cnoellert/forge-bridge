@@ -87,7 +87,7 @@ Audit: `.planning/milestones/v1.4.x-MILESTONE-AUDIT.md`
 
 ### v1.5 Legibility (Phases 20-23)
 
-- [ ] **Phase 20: Reality Audit + Canonical Install** - Walk a fresh install end-to-end, fix gaps, ship `docs/INSTALL.md`, refresh README install section + CLAUDE.md ground-truth, pin `install-flame-hook.sh` to v1.4.1
+- [x] **Phase 20: Reality Audit + Canonical Install** - Walk a fresh install end-to-end, fix gaps, ship `docs/INSTALL.md`, refresh README install section + CLAUDE.md ground-truth, pin `install-flame-hook.sh` to v1.4.1 (completed 2026-05-01)
 - [ ] **Phase 21: Surface Map + Concept Docs** - Document the five user-facing surfaces and the projekt-forge relationship; ship `docs/GETTING-STARTED.md` and rewrite README "What This Is"
 - [ ] **Phase 22: Daily Workflow Recipes** - Step-by-step guides for first-time setup, Claude Desktop wiring, tool synthesis, Flame chat automation, staged-ops approval, and manifest inspection
 - [ ] **Phase 23: Diagnostics + Recovery** - Document Flame crash, Postgres restart, Ollama hang, qwen3 cold-start failure modes; ship `docs/TROUBLESHOOTING.md`; polish `forge doctor` if gaps surface
@@ -111,8 +111,8 @@ Audit: `.planning/milestones/v1.4.x-MILESTONE-AUDIT.md`
 - [x] 20-02-PLAN.md — Refresh CLAUDE.md to v1.4.1 ground truth (5 surfaces + subsystems + active dev context)
 - [x] 20-03-PLAN.md — Refresh README install commands + Current Status table to v1.4.1
 - [x] 20-04-PLAN.md — Create canonical docs/INSTALL.md (8-step operator-workstation path + Track B carveout)
-- [ ] 20-05-PLAN.md — Track A non-author UAT on assist-01 (milestone gate per D-02)
-- [ ] 20-06-PLAN.md — Track B integrator dry-run on Flame-less host (assumption-gap surfacing per D-03)
+- [x] 20-05-PLAN.md — Track A non-author UAT on assist-01 (milestone gate per D-02)
+- [x] 20-06-PLAN.md — Track B integrator dry-run on Flame-less host (assumption-gap surfacing per D-03)
 **UI hint**: yes
 
 ### Phase 21: Surface Map + Concept Docs
@@ -181,7 +181,7 @@ Audit: `.planning/milestones/v1.4.x-MILESTONE-AUDIT.md`
 | 17. Default model bumps | v1.4.x | 3/3 | Complete    | 2026-04-29 |
 | 18. Staged-handlers test harness rework | v1.4.x | 3/3 | Complete    | 2026-04-29 |
 | 19. Code-quality polish | v1.4.x | 4/4 | Complete    | 2026-04-30 |
-| 20. Reality Audit + Canonical Install | v1.5 | 5/7 | In Progress|  |
+| 20. Reality Audit + Canonical Install | v1.5 | 7/7 | Complete   | 2026-05-01 |
 | 21. Surface Map + Concept Docs | v1.5 | 0/? | Not started | - |
 | 22. Daily Workflow Recipes | v1.5 | 0/? | Not started | - |
 | 23. Diagnostics + Recovery | v1.5 | 0/? | Not started | - |
