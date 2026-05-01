@@ -106,7 +106,13 @@ Audit: `.planning/milestones/v1.4.x-MILESTONE-AUDIT.md`
   3. The README install section and `docs/INSTALL.md` agree on every version number and step — a reader following either reaches the same state.
   4. A user can identify all required external dependencies (Postgres version, Ollama, conda env, Python version, Anthropic API key) from the install doc before starting, without hitting them mid-install.
   5. `CLAUDE.md` reflects v1.4.1 ground truth — the "what exists and works" and "what is designed but not yet implemented" sections match shipped reality, not the v1.0 "extracted from projekt-forge" snapshot.
-**Plans**: TBD
+**Plans**: 6 plans
+- [ ] 20-01-PLAN.md — Establish v1.4.1 as canonical pinned version (pyproject + script + README curl URL + D-17 consistency guard)
+- [ ] 20-02-PLAN.md — Refresh CLAUDE.md to v1.4.1 ground truth (5 surfaces + subsystems + active dev context)
+- [ ] 20-03-PLAN.md — Refresh README install commands + Current Status table to v1.4.1
+- [ ] 20-04-PLAN.md — Create canonical docs/INSTALL.md (8-step operator-workstation path + Track B carveout)
+- [ ] 20-05-PLAN.md — Track A non-author UAT on assist-01 (milestone gate per D-02)
+- [ ] 20-06-PLAN.md — Track B integrator dry-run on Flame-less host (assumption-gap surfacing per D-03)
 **UI hint**: yes
 
 ### Phase 21: Surface Map + Concept Docs
@@ -175,7 +181,7 @@ Audit: `.planning/milestones/v1.4.x-MILESTONE-AUDIT.md`
 | 17. Default model bumps | v1.4.x | 3/3 | Complete    | 2026-04-29 |
 | 18. Staged-handlers test harness rework | v1.4.x | 3/3 | Complete    | 2026-04-29 |
 | 19. Code-quality polish | v1.4.x | 4/4 | Complete    | 2026-04-30 |
-| 20. Reality Audit + Canonical Install | v1.5 | 0/? | Not started | - |
+| 20. Reality Audit + Canonical Install | v1.5 | 0/6 | Not started | - |
 | 21. Surface Map + Concept Docs | v1.5 | 0/? | Not started | - |
 | 22. Daily Workflow Recipes | v1.5 | 0/? | Not started | - |
 | 23. Diagnostics + Recovery | v1.5 | 0/? | Not started | - |
