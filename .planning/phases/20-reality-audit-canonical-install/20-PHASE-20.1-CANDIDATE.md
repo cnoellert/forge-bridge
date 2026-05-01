@@ -8,9 +8,17 @@ captured_during: Phase 20 Track A author-walked UAT, Step 5 (env vars)
 
 # Phase 20.1 candidate — install.sh + systemd daemon + persistent env config
 
-## TL;DR (post-walk update, 2026-05-01 13:45)
+> ## ⚠ HEADLINE — Phase 20.1 is a v1.5 milestone ship blocker
+>
+> The Phase 20 Track A UAT proved that **no normal Flame artist could complete `docs/INSTALL.md`**. The walker (project author with full system knowledge and SSH triage access) hit 13 gaps to reach all 5 surfaces. An artist would have abandoned in Step 3 within minutes — the doc demands knowledge (Postgres `pg_hba.conf` editing, `password_encryption` history, `--initdb` lifecycle, two-process launch order) that the doc itself does not provide.
+>
+> The architecture works (cross-host LLM via assist-01 Ollama validated end-to-end). The install procedure does not.
+>
+> **forge-bridge is not shippable to its target user until Phase 20.1 lands.** Treat 20.1 as the v1.5 ship gate, not as polish to defer.
 
-Walked Phase 20 INSTALL.md end-to-end on flame-01. Surface 4 (chat endpoint cross-host to assist-01 Ollama) passed — the architecture works. But the walk surfaced **12+ gaps** including a substantive doc lie (Step 6 claims `python -m forge_bridge` boots all four surfaces; reality is `python -m forge_bridge.server` must run first for `:9998`, then `python -m forge_bridge` for `:9996`/MCP). Combined with broken process lifecycle (Ctrl-C orphans), fragile env persistence (conda re-init), and pg_hba/`password_encryption` mismatches on stock Rocky, the conclusion is: **operator install belongs in systemd units, not in narrative prose**. Phase 20.1's spine is the daemon model. Bootstrap script + env file are supporting infrastructure.
+## TL;DR (post-walk update, 2026-05-01 14:00)
+
+Walked Phase 20 INSTALL.md end-to-end on flame-01. Surface 4 (chat endpoint cross-host to assist-01 Ollama) passed — the architecture works. But the walk surfaced **13 gaps** including a substantive doc lie (Step 6 claims `python -m forge_bridge` boots all four surfaces; reality is `python -m forge_bridge.server` must run first for `:9998`, then `python -m forge_bridge` for `:9996`/MCP). Combined with broken process lifecycle (Ctrl-C orphans), fragile env persistence (conda re-init), and pg_hba/`password_encryption` mismatches on stock Rocky, the conclusion is: **operator install belongs in systemd units, not in narrative prose**. Phase 20.1's spine is the daemon model. Bootstrap script + env file are supporting infrastructure. The "an artist can complete this" constraint is a first-class acceptance criterion — not just "the script runs cleanly," but "a Flame artist with no Linux/Postgres knowledge can run it and reach a working forge-bridge."
 
 ## Why this exists
 
@@ -88,16 +96,26 @@ The Phase 20 thesis was reality-audit. The audit caught a structural truth: **th
 
 ## Acceptance criteria
 
-The Phase 20.1 walk goes:
+### Primary criterion (the constraint that defines "done")
+
+**A Flame artist with no Linux sysadmin background, no Postgres administration knowledge, and no familiarity with conda, systemd, or the forge-bridge architecture can complete the install end-to-end and reach all 5 surfaces.**
+
+This is non-negotiable. If the artist hits a single comprehension gap that requires Stack Overflow, asking the author, or any out-of-doc knowledge, Phase 20.1 has not closed. "The script runs without error" is necessary but not sufficient. "An artist could install this and start using it" is the bar.
+
+### Walk shape (Phase 20.1's own UAT)
 
 1. Fresh Rocky 9 box, postgresql package present but cluster uninitialized, no forge user, no forge_bridge db
-2. Operator clones the repo, runs `./scripts/install-bootstrap.sh`
-3. Script detects state, initializes cluster, aligns pg_hba, creates role+db, runs alembic, writes `/etc/forge-bridge/forge-bridge.env` from template, prompts operator to review
-4. Operator edits env file (sets `FORGE_LOCAL_LLM_URL` to their LLM host), saves
-5. Operator runs `forge-bridge` (or `systemctl start forge-bridge`)
+2. Operator clones the repo, runs `sudo ./scripts/install-bootstrap.sh`
+3. Script detects state, initializes cluster, aligns pg_hba, creates role+db, runs alembic, installs systemd units, writes `/etc/forge-bridge/forge-bridge.env` from template, prompts operator to review
+4. Operator edits env file (the template's prose makes "set `FORGE_LOCAL_LLM_URL` to your LLM host" obvious; defaults work for single-machine), saves
+5. Operator runs `sudo systemctl start forge-bridge && systemctl status forge-bridge`
 6. All 5 surfaces green; `forge doctor` reports healthy
 
-The non-author UAT for Phase 20.1 walks `docs/INSTALL.md` (the reshaped version) verbatim. If they hit zero gaps, Phase 20.1 closes. If they hit any gap, that's a `gap_closure` plan inside 20.1 (or a Phase 20.1.1 if it balloons — fractal D-05).
+### Validation requirements
+
+- Phase 20.1's UAT MUST be walked by an actual non-author — not the project author, not Claude. If no human non-author is available, Phase 20.1 stays open until one is. (Compare to Phase 20's D-02.1 amendment, where author-walk was accepted as a deviation; for 20.1 it is NOT acceptable, because the whole point of 20.1 is to make the install accessible to non-authors.)
+- The non-author MUST be a representative of the target user — a Flame artist or pipeline operator without sysadmin training. Not another developer.
+- Zero gaps. Any gap surfaced is either a doc-only patch inline (D-04), a code-fix follow-up plan, or — if substantive — Phase 20.1.1 / 20.2 per fractal D-05.
 
 ## Cross-references
 
