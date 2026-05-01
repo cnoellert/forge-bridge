@@ -184,13 +184,16 @@ def test_server_started_flag_default():
 # degradation hotfix; no API changes, no PROV-02 behavior change).
 # Phase 8 v1.3.0 minor release bumps to "1.3.0" (EXT-03 Storage Persistence
 # Protocol: STORE-01..06 + adds StoragePersistence to __all__, surface 15 → 16).
+# Phase 20 v1.4.1 correction bumps to "1.4.1" (INSTALL-02: pyproject.toml self-report
+# corrected to match the v1.4.1 git tag — v1.4.0 and v1.4.1 milestones did not bump
+# pyproject.toml; Phase 20 closes the gap).
 
 def test_package_version():
-    """pyproject.toml version is 1.3.0 after Phase 8 v1.3.0 release (STORE-01..06)."""
+    """pyproject.toml version is 1.4.1 after Phase 20 v1.4.1 correction (INSTALL-02)."""
     pyproject = Path(__file__).parent.parent / "pyproject.toml"
     content = pyproject.read_text()
-    assert 'version = "1.3.0"' in content, (
-        'pyproject.toml must declare version = "1.3.0" per Phase 8 v1.3.0 release.'
+    assert 'version = "1.4.1"' in content, (
+        'pyproject.toml must declare version = "1.4.1" per Phase 20 v1.4.1 correction.'
     )
 
 
