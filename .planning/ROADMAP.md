@@ -181,7 +181,7 @@ Audit: `.planning/milestones/v1.4.x-MILESTONE-AUDIT.md`
 | 17. Default model bumps | v1.4.x | 3/3 | Complete    | 2026-04-29 |
 | 18. Staged-handlers test harness rework | v1.4.x | 3/3 | Complete    | 2026-04-29 |
 | 19. Code-quality polish | v1.4.x | 4/4 | Complete    | 2026-04-30 |
-| 20. Reality Audit + Canonical Install | v1.5 | 4/6 | In Progress|  |
+| 20. Reality Audit + Canonical Install | v1.5 | 5/7 | In Progress|  |
 | 21. Surface Map + Concept Docs | v1.5 | 0/? | Not started | - |
 | 22. Daily Workflow Recipes | v1.5 | 0/? | Not started | - |
 | 23. Diagnostics + Recovery | v1.5 | 0/? | Not started | - |
