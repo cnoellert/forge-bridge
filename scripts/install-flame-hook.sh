@@ -7,10 +7,10 @@
 #   ./scripts/install-flame-hook.sh
 #
 #   # Standalone (no clone — downloads hook from GitHub at pinned tag):
-#   curl -fsSL https://raw.githubusercontent.com/cnoellert/forge-bridge/v1.1.0/scripts/install-flame-hook.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/cnoellert/forge-bridge/v1.4.1/scripts/install-flame-hook.sh | bash
 #
 # Environment overrides:
-#   FORGE_BRIDGE_VERSION   git tag to pull the hook from (default: v1.1.0)
+#   FORGE_BRIDGE_VERSION   git tag to pull the hook from (default: v1.4.1)
 #   FORGE_BRIDGE_HOOK_DIR  install target (default: /opt/Autodesk/shared/python/forge_bridge/scripts)
 #
 # What it does:
@@ -26,7 +26,7 @@
 
 set -euo pipefail
 
-VERSION="${FORGE_BRIDGE_VERSION:-v1.1.0}"
+VERSION="${FORGE_BRIDGE_VERSION:-v1.4.1}"
 TARGET_DIR="${FORGE_BRIDGE_HOOK_DIR:-/opt/Autodesk/shared/python/forge_bridge/scripts}"
 SOURCE_URL="https://raw.githubusercontent.com/cnoellert/forge-bridge/${VERSION}/flame_hooks/forge_bridge/scripts/forge_bridge.py"
 
