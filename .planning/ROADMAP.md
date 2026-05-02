@@ -120,7 +120,7 @@ Audit: `.planning/milestones/v1.4.x-MILESTONE-AUDIT.md`
 **Goal**: A fresh-VM Linux walk on flame-01 (Rocky/RHEL 9) AND a fresh-state macOS walk on portofino can complete the install end-to-end via `sudo ./scripts/install-bootstrap.sh`, edit `/etc/forge-bridge/forge-bridge.env`, and reach all reachable surfaces with `forge doctor` PASS or PARTIAL — closing Phase 20's 13-gap log via the daemon model (systemd units / launchd plists / wrapper scripts / env-file template / reshaped INSTALL.md / new doctor `daemon_state` sub-check).
 **Requirements**: INSTALL-01, INSTALL-02, INSTALL-03, INSTALL-04
 **Depends on:** Phase 20
-**Plans:** 6/7 plans executed
+**Plans:** 6/8 plans executed
 
 Plans:
 - [x] 20.1-01-PLAN.md — Create packaging/forge-bridge.env.example template (env-var defaults + locked seed values; tests/test_packaging.py with 7 lock tests)
