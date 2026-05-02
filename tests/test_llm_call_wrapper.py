@@ -9,6 +9,15 @@ import pytest
 from forge_bridge.llm import call_wrapper as cw
 
 
+@pytest.fixture(autouse=True)
+def _reset_breaker():
+    """PR10 — clear circuit-breaker state between tests so retryable failures
+    in earlier tests don't open the breaker and short-circuit later ones."""
+    cw._reset_breaker_for_tests()
+    yield
+    cw._reset_breaker_for_tests()
+
+
 class _Resp:
     def __init__(self, status_code=200, body=None, raises_on_json=False, text=None):
         self.status_code = status_code
@@ -102,8 +111,11 @@ def test_timeout_then_success_retries_once():
     assert result.ok is True
     assert result.attempts == 2
     assert any("timed out" in m for m in msgs)
-    assert any("Retrying (attempt 2/2)" in m for m in msgs)
-    assert sleeps == [2.0]  # backoff applied exactly once before retry
+    # PR10: reporter line now includes the sleep duration ("sleeping Xs").
+    assert any("Retrying (attempt 2/2" in m for m in msgs)
+    # PR10: backoff is exponential + jitter — base 2.0 → first retry ~2.0–2.5s.
+    assert len(sleeps) == 1
+    assert 2.0 <= sleeps[0] <= 2.5
 
 
 def test_timeout_exhausts_retries_returns_timeout_error():
@@ -369,3 +381,243 @@ def test_400_remains_invalid_response_no_retry():
     assert result.error_kind == "invalid_response"
     assert result.attempts == 1
     assert "bad input" in result.error_message
+
+
+# ── PR10: budget enforcement ─────────────────────────────────────────────
+
+
+class _ManualClock:
+    """Inject monotonic time so we can test budget logic without real waits."""
+
+    def __init__(self):
+        self.t = 1000.0
+
+    def now(self) -> float:
+        return self.t
+
+    def advance(self, seconds: float) -> None:
+        self.t += seconds
+
+
+def test_budget_caps_total_wall_clock_under_repeated_timeouts():
+    """Budget must terminate the loop even if `retries` would otherwise allow more."""
+    clock = _ManualClock()
+    sleeps: list[float] = []
+
+    # Each httpx.TimeoutException advances the clock by 4s — simulating a
+    # request that hit per-attempt timeout. Budget is 10s total.
+    def attempt_timeout(_unused):
+        clock.advance(4.0)
+        return None  # unused — exception raised below
+
+    outcomes = [
+        httpx.TimeoutException("t1"),
+        httpx.TimeoutException("t2"),
+        httpx.TimeoutException("t3"),
+        httpx.TimeoutException("t4"),
+        httpx.TimeoutException("t5"),
+    ]
+
+    # Drive httpx.Client to consume from the queue, advancing the clock each
+    # call to simulate per-attempt elapsed time.
+    queue = list(outcomes)
+
+    class _AdvancingClient:
+        def __enter__(self): return self
+        def __exit__(self, *_a): return False
+        def post(self, *_a, **_kw):
+            clock.advance(4.0)  # each attempt burns 4s
+            return queue.pop(0) if queue and not isinstance(queue[0], BaseException) else (_ for _ in ()).throw(queue.pop(0))
+
+    def _client_factory(**_kw):
+        return _AdvancingClient()
+
+    def _record_sleep(s):
+        sleeps.append(s)
+        clock.advance(s)
+
+    with patch("httpx.Client", _client_factory):
+        result = cw.call_with_retry(
+            "http://x/y", {},
+            timeout=10.0, retries=10, backoff_seconds=1.0,
+            sleep=_record_sleep, now=clock.now, jitter=lambda: 0.0,
+        )
+    assert result.ok is False
+    assert result.error_kind == "timeout"
+    # Total elapsed must not exceed the 10s budget by more than the safety
+    # floor (_MIN_ATTEMPT_BUDGET_SECONDS = 0.05).
+    assert result.elapsed_seconds <= 10.0 + 1.0  # generous slack for clock granularity
+    # We requested 10 retries but the budget should have stopped us well before.
+    assert result.attempts < 10
+
+
+def test_budget_blocks_backoff_that_would_overrun():
+    """If remaining budget can't cover the next backoff, return immediately."""
+    clock = _ManualClock()
+    sleeps: list[float] = []
+
+    queue = [httpx.TimeoutException("t1"), httpx.TimeoutException("t2"),
+             httpx.TimeoutException("t3")]
+
+    class _Client:
+        def __enter__(self): return self
+        def __exit__(self, *_a): return False
+        def post(self, *_a, **_kw):
+            clock.advance(2.0)  # each attempt burns 2s
+            raise queue.pop(0)
+
+    def _record_sleep(s):
+        sleeps.append(s)
+        clock.advance(s)
+
+    with patch("httpx.Client", lambda **_kw: _Client()):
+        result = cw.call_with_retry(
+            "http://x/y", {},
+            timeout=3.0, retries=5, backoff_seconds=4.0,  # backoff alone > budget
+            sleep=_record_sleep, now=clock.now, jitter=lambda: 0.0,
+        )
+    assert result.ok is False
+    assert result.error_kind == "timeout"
+    # First attempt only — backoff (4s) > remaining budget (1s after first attempt).
+    assert result.attempts == 1
+    assert sleeps == []  # never slept
+
+
+# ── PR10: exponential backoff ────────────────────────────────────────────
+
+
+def test_exponential_backoff_doubles_each_retry():
+    """Sleep deltas must follow base * 2^(n-2): 1s, 2s, 4s with base=1.0."""
+    sleeps: list[float] = []
+    queue = [
+        httpx.TimeoutException("t1"),
+        httpx.TimeoutException("t2"),
+        httpx.TimeoutException("t3"),
+        _Resp(200, {"response": "finally"}),
+    ]
+    with _patch_client(queue):
+        result = cw.call_with_retry(
+            "http://x/y", {},
+            timeout=600.0, retries=3, backoff_seconds=1.0,
+            sleep=sleeps.append, jitter=lambda: 0.0,
+        )
+    assert result.ok is True
+    assert result.attempts == 4
+    # Three retries → three backoffs.
+    assert sleeps == [1.0, 2.0, 4.0]
+
+
+def test_backoff_capped_under_high_retry_count():
+    """Backoff caps at _BACKOFF_CAP_SECONDS (8s) — never grows unbounded."""
+    sleeps: list[float] = []
+    # 6 timeouts → 5 retries → backoffs would be 1, 2, 4, 8, 16 uncapped;
+    # capped to 1, 2, 4, 8, 8.
+    queue = [httpx.TimeoutException(f"t{n}") for n in range(6)] + [
+        _Resp(200, {"response": "ok"}),
+    ]
+    with _patch_client(queue):
+        result = cw.call_with_retry(
+            "http://x/y", {},
+            timeout=600.0, retries=6, backoff_seconds=1.0,
+            sleep=sleeps.append, jitter=lambda: 0.0,
+        )
+    assert result.ok is True
+    assert sleeps == [1.0, 2.0, 4.0, 8.0, 8.0, 8.0]
+
+
+def test_backoff_includes_jitter_when_default_random_used():
+    """Without injected jitter, backoff must be > base (random adds 0–0.5s)."""
+    sleeps: list[float] = []
+    queue = [httpx.TimeoutException("t1"), _Resp(200, {"response": "ok"})]
+    with _patch_client(queue):
+        cw.call_with_retry(
+            "http://x/y", {},
+            timeout=600.0, retries=1, backoff_seconds=1.0,
+            sleep=sleeps.append,
+            # `jitter` defaults to random.uniform(0, 0.5).
+        )
+    assert len(sleeps) == 1
+    assert 1.0 <= sleeps[0] <= 1.5
+
+
+# ── PR10: connection fast-fail ───────────────────────────────────────────
+
+
+def test_connection_error_does_not_retry_even_with_high_retries():
+    """Connection errors must short-circuit regardless of retries setting."""
+    queue = [httpx.ConnectError("refused"), _Resp(200, {"response": "ok"})]
+    with _patch_client(queue):
+        result = cw.call_with_retry(
+            "http://x/y", {},
+            timeout=10.0, retries=5, backoff_seconds=0,
+            sleep=lambda _s: None, jitter=lambda: 0.0,
+        )
+    assert result.ok is False
+    assert result.error_kind == "connection"
+    assert result.attempts == 1
+
+
+# ── PR10: circuit breaker ────────────────────────────────────────────────
+
+
+def test_circuit_breaker_opens_after_threshold_failures():
+    """After _BREAKER_THRESHOLD retryable failures, the next call short-circuits."""
+    url = "http://breaker-test/y"
+    # Fire 5 timeouts → each call exhausts retries=0 → 5 breaker ticks.
+    for _ in range(cw._BREAKER_THRESHOLD):
+        with _patch_client([httpx.TimeoutException("t")]):
+            r = cw.call_with_retry(
+                url, {}, timeout=5.0, retries=0, backoff_seconds=0,
+                sleep=lambda _s: None, jitter=lambda: 0.0,
+            )
+            assert r.ok is False
+
+    # Next call must short-circuit with circuit_open without firing httpx.
+    sentinel = []
+    def _factory(**_kw):
+        sentinel.append("called")
+        raise AssertionError("breaker should have short-circuited")
+
+    with patch("httpx.Client", _factory):
+        result = cw.call_with_retry(
+            url, {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None, jitter=lambda: 0.0,
+        )
+    assert result.ok is False
+    assert result.error_kind == "circuit_open"
+    assert sentinel == []  # httpx.Client was never constructed
+
+
+def test_circuit_breaker_does_not_count_4xx_failures():
+    """4xx responses are caller bugs — the breaker must ignore them."""
+    url = "http://4xx-test/y"
+    for _ in range(cw._BREAKER_THRESHOLD + 2):  # well past threshold
+        with _patch_client([_Resp(400, {"error": {"message": "bad"}})]):
+            r = cw.call_with_retry(
+                url, {}, timeout=5.0, retries=0, backoff_seconds=0,
+                sleep=lambda _s: None, jitter=lambda: 0.0,
+            )
+            assert r.error_kind == "invalid_response"
+
+    # Breaker should still be closed — the next call goes through.
+    with _patch_client([_Resp(200, {"response": "ok"})]):
+        result = cw.call_with_retry(
+            url, {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None, jitter=lambda: 0.0,
+        )
+    assert result.ok is True
+
+
+def test_circuit_breaker_window_slides():
+    """Failures outside the rolling window expire — breaker re-closes."""
+    url = "http://sliding-window/y"
+    clock = _ManualClock()
+
+    # Open the breaker.
+    for _ in range(cw._BREAKER_THRESHOLD):
+        cw._record_breaker_failure(url, now=clock.now)
+    assert cw._circuit_open(url, now=clock.now) is True
+
+    # Advance the clock past the window → breaker closes.
+    clock.advance(cw._BREAKER_WINDOW_SECONDS + 1.0)
+    assert cw._circuit_open(url, now=clock.now) is False

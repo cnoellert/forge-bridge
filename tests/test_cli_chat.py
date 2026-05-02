@@ -105,7 +105,8 @@ def test_chat_timeout_then_success_shows_retry_message():
     assert result.exit_code == 0
     err = getattr(result, "stderr", "") or ""
     assert "timed out" in err
-    assert "Retrying (attempt 2/2)" in err
+    # PR10: reporter line now embeds the sleep duration ("sleeping Xs").
+    assert "Retrying (attempt 2/2" in err
     assert "Response received" in err
 
 
@@ -172,3 +173,49 @@ def test_chat_json_does_not_emit_progress_messages():
     err = getattr(result, "stderr", "") or ""
     assert "Sending request" not in err
     json.loads(result.stdout.strip())  # must parse
+
+
+# ── PR10: verbose output on both success and failure ────────────────────
+
+
+def test_chat_verbose_success_block_includes_attempts_and_tool_calls():
+    payload = {"response": "hi", "model": "qwen2.5-coder:32b",
+               "provider": "ollama", "tool_calls": [{"name": "flame_ping"}]}
+    with _patch_httpx([_Resp(200, payload)]):
+        result = runner.invoke(app, ["chat", "--verbose", "ping"])
+    assert result.exit_code == 0
+    err = getattr(result, "stderr", "") or ""
+    assert "[chat]" in err
+    assert "elapsed=" in err
+    assert "attempts=" in err
+    assert "model=qwen2.5-coder:32b" in err
+    assert "tool_calls=1" in err
+
+
+def test_chat_verbose_failure_block_emitted_on_error_path():
+    """PR10: verbose must surface the diagnostic block on failure too."""
+    outcomes = [httpx.TimeoutException("t1"), httpx.TimeoutException("t2")]
+    with _patch_httpx(outcomes):
+        result = runner.invoke(
+            app, ["chat", "--verbose", "--retries", "1", "ping"],
+        )
+    assert result.exit_code == 3  # timeout exit code
+    err = getattr(result, "stderr", "") or ""
+    assert "[chat] FAILED" in err
+    assert "kind=timeout" in err
+    assert "elapsed=" in err
+    assert "attempts=2" in err
+
+
+def test_chat_json_failure_envelope_carries_attempts_and_elapsed():
+    """PR10: JSON envelope must include attempts + elapsed_seconds on failure."""
+    outcomes = [httpx.TimeoutException("t1"), httpx.TimeoutException("t2")]
+    with _patch_httpx(outcomes):
+        result = runner.invoke(app, ["chat", "--json", "--retries", "1", "ping"])
+    assert result.exit_code == 3
+    payload = json.loads(result.stdout.strip())
+    assert payload["ok"] is False
+    assert "attempts" in payload
+    assert "elapsed_seconds" in payload
+    assert isinstance(payload["elapsed_seconds"], (int, float))
+    assert payload["attempts"] == 2

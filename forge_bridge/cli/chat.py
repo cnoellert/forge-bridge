@@ -96,6 +96,15 @@ def chat_cmd(
         )
 
     if not result.ok:
+        if verbose:
+            meta = _extract_metadata(result.data)
+            sys.stderr.write(
+                f"[chat] FAILED kind={result.error_kind}  "
+                f"elapsed={result.elapsed_seconds:.2f}s  "
+                f"attempts={result.attempts}/{retries + 1}  "
+                f"model={meta.get('model', '?')}  "
+                f"tool_calls={meta.get('tool_calls', '?')}\n"
+            )
         sys.stderr.write(
             f"forge-bridge chat: {result.error_kind}: {result.error_message}\n"
         )
@@ -112,7 +121,8 @@ def chat_cmd(
             f"[chat] elapsed={result.elapsed_seconds:.2f}s  "
             f"attempts={result.attempts}/{retries + 1}  "
             f"model={meta.get('model', '?')}  "
-            f"provider={meta.get('provider', '?')}\n"
+            f"provider={meta.get('provider', '?')}  "
+            f"tool_calls={meta.get('tool_calls', '?')}\n"
         )
     sys.stdout.write(reply + ("\n" if not reply.endswith("\n") else ""))
 
@@ -143,8 +153,19 @@ def _extract_reply(data: Optional[dict]) -> str:
 def _extract_metadata(data: Optional[dict]) -> dict:
     if not isinstance(data, dict):
         return {}
+    # PR10 verbose: surface tool_calls if the chat handler reports them.
+    # Accept either an explicit count or a list we can len() — the chat
+    # endpoint owns the exact shape; we just present what's there.
+    tc = data.get("tool_calls")
+    if isinstance(tc, list):
+        tool_calls = len(tc)
+    elif isinstance(tc, int):
+        tool_calls = tc
+    else:
+        tool_calls = data.get("iterations")
     return {
         "model": data.get("model"),
         "provider": data.get("provider") or data.get("backend"),
         "iterations": data.get("iterations"),
+        "tool_calls": tool_calls,
     }
