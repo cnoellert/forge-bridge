@@ -250,6 +250,17 @@ bootstrap_pg() {
 bootstrap_pg_macos() {
     echo "[forge-bridge] bootstrapping Postgres (macOS)"
 
+    # Flame workstations ship with Autodesk-bundled Postgres at /opt/Autodesk/pgsql-*.
+    # Detect it FIRST so we don't `brew install postgresql@16` on a host that already
+    # has a working cluster. Found at portofino UAT walk during Phase 20.1; planted as
+    # SEED-PHASE-20.1-POSTGRES-OWNERSHIP-V1.6+ for the deeper architectural fix
+    # (forge-bridge owning the cluster vs. owning the schema).
+    AUTODESK_PSQL_DIR=$(ls -d /opt/Autodesk/pgsql-*/bin 2>/dev/null | head -1)
+    if [ -n "$AUTODESK_PSQL_DIR" ] && [ -x "$AUTODESK_PSQL_DIR/psql" ]; then
+        echo "[forge-bridge] using Autodesk-bundled Postgres at $AUTODESK_PSQL_DIR"
+        export PATH="$AUTODESK_PSQL_DIR:$PATH"
+    fi
+
     if command -v psql >/dev/null 2>&1; then
         echo "[forge-bridge] psql already on PATH — skipping macOS Postgres install"
     elif brew list postgresql@16 >/dev/null 2>&1; then

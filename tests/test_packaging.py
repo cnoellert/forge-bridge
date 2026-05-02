@@ -386,6 +386,39 @@ def test_install_bootstrap_uses_modern_launchctl():
         "install-bootstrap.sh uses deprecated `launchctl unload`; use `launchctl bootout system ...`"
 
 
+def test_install_bootstrap_macos_detects_autodesk_postgres_before_brew():
+    """Phase 20.1 portofino UAT gap: bootstrap must detect Autodesk-bundled Postgres
+    at /opt/Autodesk/pgsql-*/bin BEFORE falling back to `brew install postgresql@16`.
+
+    Flame workstations ship with Postgres bundled at /opt/Autodesk/pgsql-17/.
+    Without this detection, the bootstrap would install a second Postgres on a host
+    that already has a working cluster — creating port conflicts and confusing
+    operators. Architectural concern (forge-bridge owning the cluster vs. owning the
+    schema) is captured separately in SEED-PHASE-20.1-POSTGRES-OWNERSHIP-V1.6+.
+    """
+    content = (_SCRIPTS / "install-bootstrap.sh").read_text()
+    # Find the macOS bootstrap function body
+    macos_fn_start = content.find("bootstrap_pg_macos()")
+    assert macos_fn_start >= 0, "bootstrap_pg_macos() function missing"
+    macos_fn_body = content[macos_fn_start:]
+    macos_fn_end = macos_fn_body.find("\n}\n")
+    assert macos_fn_end >= 0, "bootstrap_pg_macos() not closed with '}'"
+    fn_body = macos_fn_body[:macos_fn_end]
+
+    autodesk_check_idx = fn_body.find("/opt/Autodesk/pgsql-")
+    brew_install_idx = fn_body.find("brew install postgresql")
+
+    assert autodesk_check_idx >= 0, (
+        "bootstrap_pg_macos() must detect Autodesk-bundled Postgres at "
+        "/opt/Autodesk/pgsql-* before falling back to Homebrew"
+    )
+    if brew_install_idx >= 0:
+        assert autodesk_check_idx < brew_install_idx, (
+            "Autodesk Postgres detection must come BEFORE `brew install postgresql@16` "
+            "or the script will install a redundant cluster on Flame workstations"
+        )
+
+
 def test_install_bootstrap_chains_doctor():
     """D-12: script auto-runs `forge-bridge console doctor` at end as PASS/FAIL gate.
 
