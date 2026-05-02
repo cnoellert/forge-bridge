@@ -17,6 +17,7 @@ from typing import Annotated
 import typer
 
 from forge_bridge import config
+from forge_bridge.cli import chat as _chat
 from forge_bridge.cli import doctor as _doctor
 from forge_bridge.cli import execs as _execs
 from forge_bridge.cli import health as _health
@@ -62,6 +63,11 @@ app.command(
 app.command("actions", help="List registered tools (alias of `console tools`).")(
     _tools.tools_cmd
 )
+app.command(
+    "chat",
+    help="Send a message through the shared `/api/v1/chat` endpoint with "
+         "timeout, retry, and timing feedback.",
+)(_chat.chat_cmd)
 
 
 # ── runtime manager: forge up / down / status ────────────────────────────
@@ -82,16 +88,20 @@ def up_cmd(
         name = r["name"]
         host = r.get("host", "")
         port = r.get("port", "")
+        addr = f"{host}:{port}"
         if r.get("started"):
-            ready = "ready" if r.get("ready") else "starting"
+            state_label = "ready" if r.get("ready") else "starting"
             sys.stdout.write(
-                f"{name:<10} {ready:<8} {host}:{port}  pid={r.get('pid')}\n"
+                f"{name:<10} {state_label:<10} managed (pid {r.get('pid')})  {addr}\n"
+            )
+        elif r.get("managed"):
+            sys.stdout.write(
+                f"{name:<10} {'already up':<10} managed (pid {r.get('pid')})  {addr}\n"
             )
         else:
-            note = r.get("skipped") or r.get("note") or "no-op"
-            pid = r.get("pid")
-            pid_str = f"  pid={pid}" if pid else ""
-            sys.stdout.write(f"{name:<10} {note:<24} {host}:{port}{pid_str}\n")
+            sys.stdout.write(
+                f"{name:<10} {'already up':<10} external  {addr}\n"
+            )
 
 
 @app.command("down", help="Stop all managed forge-bridge services.")
@@ -108,13 +118,15 @@ def down_cmd(
         sys.stdout.write(json.dumps({"data": results}) + "\n")
         return
     if not results:
-        sys.stdout.write("no managed services tracked\n")
+        sys.stdout.write("no managed services to stop\n")
         return
     for r in results:
         name = r["name"]
         if r.get("stopped"):
             method = r.get("method", "SIGTERM")
-            sys.stdout.write(f"{name:<10} stopped ({method})  pid={r.get('pid')}\n")
+            sys.stdout.write(
+                f"{name:<10} stopped ({method})  managed (pid {r.get('pid')})\n"
+            )
         else:
             note = r.get("note", "not stopped")
             sys.stdout.write(f"{name:<10} {note}\n")
@@ -136,12 +148,18 @@ def status_cmd(
     for row in state["services"]:
         name = row["name"]
         running = "running" if row["running"] else "not running"
-        tracked = "tracked" if row["tracked"] else "untracked"
-        pid = row.get("pid")
-        pid_str = f"  pid={pid}" if pid else ""
+        # PR5: replace tracked/untracked with the user-facing managed/external
+        # split. Co-hosted console rows inherit the underlying mcp_http source
+        # so a forge-managed mcp_http surfaces as `managed (pid …)` here too.
+        if row.get("managed"):
+            ownership = f"managed (pid {row.get('pid')})"
+        elif row["running"]:
+            ownership = "external"
+        else:
+            ownership = "—"
         sys.stdout.write(
-            f"{name:<14} {running:<12} {tracked:<10} "
-            f"{row['host']}:{row['port']}{pid_str}\n"
+            f"{name:<14} {running:<12} {ownership:<28} "
+            f"{row['host']}:{row['port']}\n"
         )
 
 

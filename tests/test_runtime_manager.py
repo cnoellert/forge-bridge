@@ -197,12 +197,15 @@ def test_stop_all_cleans_stale_pids(runtime_home):
 # ── status ────────────────────────────────────────────────────────────────
 
 def test_status_reports_console_via_port_probe(runtime_home):
+    """Port-only running console (no managed mcp_http) → external."""
     with patch.object(manager, "_tcp_in_use", return_value=True), \
          patch.object(manager, "_pid_alive", return_value=False):
         result = manager.status()
     rows = {r["name"]: r for r in result["services"]}
     assert rows["console"]["running"] is True
     assert rows["console"]["pid"] is None  # console has no own process
+    assert rows["console"]["managed"] is False
+    assert rows["console"]["source"] == "external"
 
 
 def test_status_reports_managed_pid_when_alive(runtime_home):
@@ -214,8 +217,35 @@ def test_status_reports_managed_pid_when_alive(runtime_home):
         result = manager.status()
     mcp = next(r for r in result["services"] if r["name"] == "mcp_http")
     assert mcp["running"] is True
-    assert mcp["tracked"] is True
+    assert mcp["tracked"] is True  # back-compat field still present
+    assert mcp["managed"] is True  # PR5
+    assert mcp["source"] == "forge"  # PR5
     assert mcp["pid"] == 8888
+
+
+def test_status_console_inherits_managed_when_mcp_http_managed(runtime_home):
+    """Console row carries the same managed/source/pid as mcp_http when co-hosted."""
+    manager._write_runtime({
+        "services": {"mcp_http": {"pid": 8888, "port": config.MCP_HTTP_PORT, "host": "127.0.0.1"}},
+    })
+    with patch.object(manager, "_tcp_in_use", return_value=True), \
+         patch.object(manager, "_pid_alive", return_value=True):
+        result = manager.status()
+    rows = {r["name"]: r for r in result["services"]}
+    assert rows["console"]["managed"] is True
+    assert rows["console"]["source"] == "forge"
+    assert rows["console"]["pid"] == 8888  # inherited from mcp_http
+
+
+def test_status_external_port_owner_reports_external(runtime_home):
+    """Port open but no managed PID → managed=False, source=external."""
+    with patch.object(manager, "_tcp_in_use", return_value=True), \
+         patch.object(manager, "_pid_alive", return_value=False):
+        result = manager.status()
+    rows = {r["name"]: r for r in result["services"]}
+    assert rows["mcp_http"]["managed"] is False
+    assert rows["mcp_http"]["source"] == "external"
+    assert rows["mcp_http"]["pid"] is None
 
 
 def test_status_cleans_stale_tracked_pid_when_port_also_dead(runtime_home):
@@ -236,3 +266,48 @@ def test_status_with_no_runtime_file(runtime_home):
     names = [r["name"] for r in result["services"]]
     assert names == ["console", "mcp_http", "state_ws"]
     assert all(r["running"] is False for r in result["services"])
+    assert all(r["managed"] is False for r in result["services"])
+
+
+# ── PR5: managed/source on _start return values ──────────────────────────
+
+def test_start_fresh_returns_managed_forge(runtime_home):
+    with patch.object(manager, "_tcp_in_use") as tcp, \
+         patch.object(manager, "_pid_alive", return_value=True), \
+         patch("subprocess.Popen") as popen:
+        tcp.side_effect = [False, True]
+        popen.return_value = type("P", (), {"pid": 4242})()
+        result = manager.start_mcp_http()
+    assert result["managed"] is True
+    assert result["source"] == "forge"
+
+
+def test_start_external_port_returns_managed_false(runtime_home):
+    with patch.object(manager, "_tcp_in_use", return_value=True), \
+         patch.object(manager, "_pid_alive", return_value=False):
+        result = manager.start_mcp_http()
+    assert result["managed"] is False
+    assert result["source"] == "external"
+    assert result["skipped"] == "external (already running)"
+
+
+def test_start_already_running_managed_returns_managed_forge(runtime_home):
+    manager._write_runtime({
+        "services": {"mcp_http": {"pid": 5555, "port": config.MCP_HTTP_PORT, "host": "127.0.0.1"}},
+    })
+    with patch.object(manager, "_pid_alive", return_value=True):
+        result = manager.start_mcp_http()
+    assert result["managed"] is True
+    assert result["source"] == "forge"
+    assert result["pid"] == 5555
+
+
+def test_stop_one_external_record_marks_external(runtime_home):
+    """Stopping a record with PID=None → reported as external, not stopped."""
+    result = manager._stop_one("mcp_http", {"pid": None, "host": "127.0.0.1",
+                                            "port": config.MCP_HTTP_PORT,
+                                            "external": True})
+    assert result["stopped"] is False
+    assert result["managed"] is False
+    assert result["source"] == "external"
+    assert "external" in result["note"]

@@ -116,10 +116,14 @@ def _start(name: str) -> dict[str, Any]:
     services = state.setdefault("services", {})
 
     existing = services.get(name)
-    if existing and _pid_alive(existing.get("pid")):
+    # PR5: existing record with alive PID → forge-managed (we started it earlier).
+    # An existing record with no PID is the "external" sentinel — fall through
+    # to the port probe below.
+    if existing and existing.get("pid") and _pid_alive(existing.get("pid")):
         return {
             "name": name, "started": False, "skipped": "already running",
             "pid": existing.get("pid"), "host": host, "port": port,
+            "managed": True, "source": "forge",
         }
 
     if _tcp_in_use(host, port):
@@ -131,8 +135,9 @@ def _start(name: str) -> dict[str, Any]:
         services[name] = record
         _write_runtime(state)
         return {
-            "name": name, "started": False, "skipped": "port in use (external)",
+            "name": name, "started": False, "skipped": "external (already running)",
             "pid": None, "host": host, "port": port,
+            "managed": False, "source": "external",
         }
 
     log_dir = _log_dir()
@@ -173,31 +178,52 @@ def _start(name: str) -> dict[str, Any]:
     return {
         "name": name, "started": True, "pid": proc.pid,
         "host": host, "port": port, "ready": ready, "log": str(log_path),
+        "managed": True, "source": "forge",
     }
 
 
 def _stop_one(name: str, rec: dict[str, Any]) -> dict[str, Any]:
     pid = rec.get("pid")
+    # External record (no PID we own) — nothing to signal.
     if pid is None:
-        return {"name": name, "stopped": False, "note": "external process (untracked PID)"}
+        return {
+            "name": name, "stopped": False,
+            "note": "external (no managed PID to stop)",
+            "managed": False, "source": "external",
+        }
     if not _pid_alive(pid):
-        return {"name": name, "stopped": False, "note": "stale PID", "pid": pid}
+        return {
+            "name": name, "stopped": False, "note": "stale PID", "pid": pid,
+            "managed": False, "source": "forge",
+        }
     try:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
-        return {"name": name, "stopped": False, "note": "vanished", "pid": pid}
+        return {
+            "name": name, "stopped": False, "note": "vanished", "pid": pid,
+            "managed": False, "source": "forge",
+        }
 
     deadline = time.time() + _STOP_GRACE_SECONDS
     while time.time() < deadline:
         if not _pid_alive(pid):
-            return {"name": name, "stopped": True, "pid": pid, "method": "SIGTERM"}
+            return {
+                "name": name, "stopped": True, "pid": pid, "method": "SIGTERM",
+                "managed": True, "source": "forge",
+            }
         time.sleep(_STOP_POLL_INTERVAL)
 
     try:
         os.kill(pid, signal.SIGKILL)
     except ProcessLookupError:
-        return {"name": name, "stopped": True, "pid": pid, "method": "SIGTERM"}
-    return {"name": name, "stopped": True, "pid": pid, "method": "SIGKILL"}
+        return {
+            "name": name, "stopped": True, "pid": pid, "method": "SIGTERM",
+            "managed": True, "source": "forge",
+        }
+    return {
+        "name": name, "stopped": True, "pid": pid, "method": "SIGKILL",
+        "managed": True, "source": "forge",
+    }
 
 
 # ── Public API ────────────────────────────────────────────────────────────
@@ -244,39 +270,61 @@ def status() -> dict[str, Any]:
     state = _read_runtime()
     services = state.get("services", {})
     dirty = False
-    rows: list[dict[str, Any]] = []
+    service_rows: list[dict[str, Any]] = []
 
-    # Console — derived from mcp_http process; never has its own PID.
-    console_host = config.console_host()
-    console_port = config.console_port()
-    rows.append({
-        "name": "console",
-        "running": _tcp_in_use(console_host, console_port),
-        "tracked": False,
-        "pid": None,
-        "host": console_host,
-        "port": console_port,
-    })
-
+    # Walk the registered services first so the derived `console` row can
+    # inherit the mcp_http row's source (the console is co-hosted in that
+    # process and has no PID of its own).
     for name, spec in _services().items():
         host, port = spec["host"], spec["port"]
         rec = services.get(name) or {}
         pid = rec.get("pid")
-        alive = _pid_alive(pid)
+        alive = _pid_alive(pid) if pid else False
         port_open = _tcp_in_use(host, port)
         # Reconcile stale tracked PIDs that no longer back a port.
         if name in services and pid and not alive and not port_open:
             del services[name]
             dirty = True
-        rows.append({
+        # PR5 semantics:
+        #   managed=True  → we have an alive PID we started.
+        #   managed=False → not ours (external port owner, or not running).
+        managed = bool(alive)
+        source = "forge" if managed else "external"
+        service_rows.append({
             "name": name,
             "running": bool(alive or port_open),
-            "tracked": name in services,
+            "tracked": name in services,  # back-compat field; new code uses managed/source
+            "managed": managed,
+            "source": source,
             "pid": pid if alive else None,
             "host": host,
             "port": port,
         })
 
+    # Console row — co-hosted with mcp_http, so it inherits managed/source/pid.
+    mcp_http_row = next((r for r in service_rows if r["name"] == "mcp_http"), None)
+    console_host_v = config.console_host()
+    console_port_v = config.console_port()
+    console_running = _tcp_in_use(console_host_v, console_port_v)
+    if mcp_http_row and console_running:
+        console_managed = mcp_http_row["managed"]
+        console_source = mcp_http_row["source"]
+        console_pid = mcp_http_row["pid"]
+    else:
+        console_managed = False
+        console_source = "external"
+        console_pid = None
+    console_row = {
+        "name": "console",
+        "running": console_running,
+        "tracked": False,
+        "managed": console_managed,
+        "source": console_source,
+        "pid": console_pid,
+        "host": console_host_v,
+        "port": console_port_v,
+    }
+
     if dirty:
         _write_runtime(state)
-    return {"services": rows}
+    return {"services": [console_row, *service_rows]}
