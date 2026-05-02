@@ -338,11 +338,24 @@ async def _start_console_task(
     return task, server
 
 
-def main() -> None:
-    """Entry point: python -m forge_bridge.mcp"""
+def main(transport: str = "stdio", port: int = 9997) -> None:
+    """Entry point: python -m forge_bridge.mcp
+
+    Args:
+        transport: FastMCP transport mode — ``stdio`` (default, preserves Claude Desktop
+            compatibility), ``sse``, or ``streamable-http`` (long-running uvicorn server
+            suitable for daemon mode; does not exit on stdin EOF).
+        port: Port for FastMCP to bind under ``sse`` / ``streamable-http`` transports.
+            Default 9997. Ignored under ``stdio``. Override via ``FORGE_MCP_PORT`` env var
+            or ``--mcp-port`` CLI flag (resolved before this function is called).
+    """
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
     )
+    # Under sse / streamable-http, bind FastMCP to the requested port.
+    # Under stdio the port is ignored; guard avoids mutating settings unnecessarily.
+    if transport != "stdio":
+        mcp.settings.port = port
     # FastMCP handles the asyncio lifecycle — hook in via lifespan
-    mcp.run()
+    mcp.run(transport=transport)
