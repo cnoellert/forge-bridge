@@ -12,9 +12,11 @@ from typing import Any
 import httpx
 import typer
 
+from forge_bridge import config
+
 logger = logging.getLogger(__name__)
 
-_DEFAULT_PORT = 9996
+_DEFAULT_PORT = config.CONSOLE_PORT
 _TIMEOUT_SECONDS = 10.0
 
 
@@ -55,8 +57,8 @@ def resolve_port() -> int:
 
 
 def _build_base_url(port: int) -> str:
-    """Construct the loopback-only base URL. T-11-03: 127.0.0.1 hardcoded."""
-    return f"http://127.0.0.1:{port}"
+    """Construct the loopback-only base URL. T-11-03: loopback enforced via config."""
+    return f"http://{config.CONSOLE_HOST}:{port}"
 
 
 def fetch(path: str, params: dict[str, Any] | None = None) -> Any:

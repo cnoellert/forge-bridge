@@ -11,16 +11,17 @@ Imports of heavy modules (mcp.server, httpx) are lazy so ``--help`` is fast.
 from __future__ import annotations
 
 import json
-import os
 import sys
 from typing import Annotated
 
 import typer
 
+from forge_bridge import config
 from forge_bridge.cli import doctor as _doctor
 from forge_bridge.cli import execs as _execs
 from forge_bridge.cli import health as _health
 from forge_bridge.cli import manifest as _manifest
+from forge_bridge.cli import runtime_doctor as _runtime_doctor
 from forge_bridge.cli import tools as _tools
 
 app = typer.Typer(
@@ -50,10 +51,14 @@ console_app.command("health")(_health.health_cmd)
 console_app.command("doctor")(_doctor.doctor_cmd)
 app.add_typer(console_app, name="console")
 
-# ── top-level aliases ─────────────────────────────────────────────────────
-app.command("doctor", help="Run the bridge diagnostic (alias of `console doctor`).")(
-    _doctor.doctor_cmd
-)
+# ── top-level commands ────────────────────────────────────────────────────
+# `doctor` is the runtime topology probe (PR2). The legacy in-depth check
+# remains reachable as `console doctor`.
+app.command(
+    "doctor",
+    help="Probe forge-bridge surfaces (Console, MCP, Flame, State WS) "
+         "and report status, URLs, and next steps.",
+)(_runtime_doctor.runtime_doctor_cmd)
 app.command("actions", help="List registered tools (alias of `console tools`).")(
     _tools.tools_cmd
 )
@@ -77,8 +82,11 @@ def mcp_stdio() -> None:
 def mcp_http(
     port: Annotated[
         int,
-        typer.Option("--port", help="Port to bind (default 9997)."),
-    ] = 9997,
+        typer.Option(
+            "--port",
+            help=f"Port to bind (default {config.MCP_HTTP_PORT}).",
+        ),
+    ] = config.MCP_HTTP_PORT,
 ) -> None:
     from forge_bridge.mcp.server import main as mcp_main
     mcp_main(transport="streamable-http", port=port)
@@ -95,7 +103,10 @@ app.add_typer(flame_app, name="flame")
 _FLAME_PING_TIMEOUT_SECONDS = 2.0
 
 
-@flame_app.command("ping", help="Probe the Flame HTTP bridge on :9999.")
+@flame_app.command(
+    "ping",
+    help=f"Probe the Flame HTTP bridge on :{config.FLAME_BRIDGE_PORT}.",
+)
 def flame_ping(
     as_json: Annotated[
         bool,
@@ -104,20 +115,8 @@ def flame_ping(
 ) -> None:
     import httpx
 
-    host = os.environ.get("FORGE_BRIDGE_HOST", "127.0.0.1")
-    raw_port = os.environ.get("FORGE_BRIDGE_PORT", "9999")
-    try:
-        port = int(raw_port)
-    except ValueError:
-        message = f"FORGE_BRIDGE_PORT must be an integer, got {raw_port!r}"
-        if as_json:
-            sys.stdout.write(
-                json.dumps({"error": {"code": "bad_port", "message": message}}) + "\n"
-            )
-        else:
-            sys.stderr.write(f"forge-bridge flame: {message}\n")
-        raise typer.Exit(code=1)
-
+    host = config.flame_bridge_host()
+    port = config.flame_bridge_port()
     url = f"http://{host}:{port}/status"
     try:
         with httpx.Client(timeout=_FLAME_PING_TIMEOUT_SECONDS) as client:

@@ -162,22 +162,33 @@ def test_flame_ping_unreachable_json_envelope():
     assert payload["error"]["code"] == "flame_unreachable"
 
 
-# ── top-level aliases delegate to console_app handlers ───────────────────
+# ── command wiring ───────────────────────────────────────────────────────
 
-def test_top_level_doctor_is_alias_of_console_doctor():
-    """Both `doctor` and `console doctor` resolve to the same callback."""
+def test_top_level_doctor_is_runtime_doctor():
+    """PR2: top-level `doctor` is the new runtime topology probe."""
+    from forge_bridge.cli import runtime_doctor as rd_mod
+    from forge_bridge.cli.main import app as main_app
+
+    click_app = typer_to_click(main_app)
+    top_doctor = click_app.commands["doctor"].callback
+    assert (
+        getattr(top_doctor, "__wrapped__", None) is rd_mod.runtime_doctor_cmd
+        or top_doctor is rd_mod.runtime_doctor_cmd
+    )
+
+
+def test_console_doctor_still_uses_legacy_doctor():
+    """PR2: legacy `console doctor` must keep its existing in-depth implementation."""
     from forge_bridge.cli import doctor as doctor_mod
     from forge_bridge.cli.main import app as main_app
 
-    # Walk the Typer click app to find the registered callbacks.
     click_app = typer_to_click(main_app)
-    top_doctor = click_app.commands["doctor"].callback
     console_group = click_app.commands["console"]
     console_doctor = console_group.commands["doctor"].callback
-    # Typer wraps callbacks; compare the underlying function identity by name.
-    assert top_doctor.__wrapped__ is doctor_mod.doctor_cmd or \
-        top_doctor is doctor_mod.doctor_cmd or \
-        console_doctor is top_doctor
+    assert (
+        getattr(console_doctor, "__wrapped__", None) is doctor_mod.doctor_cmd
+        or console_doctor is doctor_mod.doctor_cmd
+    )
 
 
 def test_top_level_actions_is_alias_of_console_tools():
@@ -197,3 +208,38 @@ def typer_to_click(app):
     """Resolve a Typer.Typer to its underlying click Group."""
     from typer.main import get_command
     return get_command(app)
+
+
+# ── PR2: defaults are sourced from forge_bridge.config ───────────────────
+
+def test_mcp_http_default_port_comes_from_config():
+    """`mcp http` --port default is wired to config.MCP_HTTP_PORT, not a literal."""
+    from forge_bridge import config
+
+    click_app = typer_to_click(app)
+    mcp_http_cmd = click_app.commands["mcp"].commands["http"]
+    port_param = next(p for p in mcp_http_cmd.params if p.name == "port")
+    assert port_param.default == config.MCP_HTTP_PORT
+    assert port_param.default == 9997  # belt-and-suspenders
+
+
+def test_flame_ping_default_port_comes_from_config(monkeypatch):
+    """`flame ping` reads host/port via config.flame_bridge_*() (default 9999)."""
+    from forge_bridge import config
+
+    monkeypatch.delenv("FORGE_BRIDGE_HOST", raising=False)
+    monkeypatch.delenv("FORGE_BRIDGE_PORT", raising=False)
+    assert config.flame_bridge_host() == config.FLAME_BRIDGE_HOST == "127.0.0.1"
+    assert config.flame_bridge_port() == config.FLAME_BRIDGE_PORT == 9999
+
+    captured: dict = {}
+
+    class _Capturing(_FakeClient):
+        def get(self, url):
+            captured["url"] = url
+            return _FakeResponse(200, {"flame_available": True})
+
+    with patch("httpx.Client", lambda **kw: _Capturing(**kw)):
+        result = runner.invoke(app, ["flame", "ping", "--json"])
+    assert result.exit_code == 0
+    assert captured["url"] == "http://127.0.0.1:9999/status"
