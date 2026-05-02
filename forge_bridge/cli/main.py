@@ -22,6 +22,7 @@ from forge_bridge.cli import doctor as _doctor
 from forge_bridge.cli import execs as _execs
 from forge_bridge.cli import health as _health
 from forge_bridge.cli import manifest as _manifest
+from forge_bridge.cli import run as _run
 from forge_bridge.cli import runtime_doctor as _runtime_doctor
 from forge_bridge.cli import tools as _tools
 
@@ -95,6 +96,16 @@ Examples:
   fbridge actions --json         Stable JSON envelope.
 """
 
+_RUN_EPILOG = """\
+Examples:
+  fbridge run flame_ping         Execute a registered tool by exact name.
+  fbridge run flame_ping --json  Emit {ok, action, result} envelope.
+  fbridge run flame_ping -v      Show timing on stderr.
+
+Discovery:
+  Use `fbridge actions` to see what's registered. Names are exact-match.
+"""
+
 _CHAT_EPILOG = """\
 Examples:
   fbridge chat "explain this batch setup"
@@ -136,6 +147,16 @@ app.command(
     ),
     epilog=_CHAT_EPILOG,
 )(_chat.chat_cmd)
+
+app.command(
+    "run",
+    help=(
+        "Execute a registered tool by exact name — thin alias over the "
+        "canonical execution path. Use `fbridge actions` to discover "
+        "available names."
+    ),
+    epilog=_RUN_EPILOG,
+)(_run.run_cmd)
 
 
 # ── runtime manager: forge up / down / status ────────────────────────────
