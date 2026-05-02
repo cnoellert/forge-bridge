@@ -43,12 +43,36 @@ def _mock_transport(monkeypatch, handler):
 
 
 def _setup_writable_dirs(tmp_path, monkeypatch):
-    """Redirect ~/.forge-bridge/* to tmp_path and create writable subdirs."""
+    """Redirect ~/.forge-bridge/* to tmp_path and create writable subdirs.
+
+    Also stubs subprocess.run so _check_daemon_state() returns a consistent
+    ok result in integration tests. Without this stub the check calls the
+    real systemctl/launchctl, which returns non-zero for uninstalled daemons
+    and makes every CliRunner-level test fail on developer machines and CI.
+
+    The stub returns stdout matching the "both running" pattern for whichever
+    OS branch executes, so daemon_state → ok and existing exit-code assertions
+    are unaffected.
+    """
+    from unittest.mock import MagicMock
+    import sys as _sys
+    import forge_bridge.cli.doctor as _doctor_module
+
     forge_home = tmp_path / ".forge-bridge"
     forge_home.mkdir()
     (forge_home / "synthesized").mkdir()
     (forge_home / "probation").mkdir()
     monkeypatch.setenv("HOME", str(tmp_path))
+    # Stub subprocess.run → all daemons ok → daemon_state=ok
+    # Linux branch checks stdout == "active"; macOS branch parses "state = running".
+    if _sys.platform == "linux":
+        _daemon_stdout = "active\n"
+    else:
+        _daemon_stdout = "state = running\n"
+    monkeypatch.setattr(
+        _doctor_module.subprocess, "run",
+        lambda *a, **kw: MagicMock(stdout=_daemon_stdout, returncode=0),
+    )
 
 
 HEALTHY = {
@@ -230,6 +254,10 @@ def test_sidecar_dir_missing_warns(monkeypatch, tmp_path):
     # NOTE: no synthesized/ or probation/ subdirs
     monkeypatch.setenv("HOME", str(tmp_path))
     _mock_transport(monkeypatch, lambda r: httpx.Response(200, json=HEALTHY))
+    # Stub subprocess.run so _check_daemon_state() doesn't call real launchctl/systemctl.
+    import forge_bridge.cli.doctor as _dm
+    monkeypatch.setattr(_dm.subprocess, "run",
+                        lambda *a, **kw: MagicMock(stdout="state = running\n", returncode=0))
     # Use --json so the long "directory does not exist" string isn't truncated
     # by the Rich table's fact-column width.
     result = runner.invoke(
@@ -250,3 +278,53 @@ def test_doctor_help_examples():
     result = runner.invoke(_make_app(), ["doctor", "--help"])
     assert result.exit_code == 0
     assert "Examples:" in result.output
+
+
+# ---------------------------------------------------------------------------
+# daemon_state sub-check tests (Plan 20.1-05 / D-13)
+# ---------------------------------------------------------------------------
+
+import sys
+from unittest.mock import MagicMock  # noqa: E402 — appended block; patch already imported above
+
+
+@patch("forge_bridge.cli.doctor.subprocess.run")
+def test_daemon_state_linux_both_active(mock_run):
+    """Linux: both units active → ok."""
+    mock_run.return_value = MagicMock(stdout="active\n", returncode=0)
+    with patch.object(sys, "platform", "linux"):
+        from forge_bridge.cli.doctor import _check_daemon_state
+        result = _check_daemon_state()
+    assert result["status"] == "ok"
+    assert "forge-bridge-server=active" in result["fact"]
+    assert "forge-bridge=active" in result["fact"]
+    assert result["name"] == "daemon_state"
+
+
+@patch("forge_bridge.cli.doctor.subprocess.run")
+def test_daemon_state_darwin_partial(mock_run):
+    """macOS: bus running, console not → warn (single-row partial-state legibility)."""
+    def runner_(args, *a, **kw):
+        if "forge-bridge-server" in args[2]:
+            return MagicMock(stdout="state = running\n", returncode=0)
+        return MagicMock(stdout="state = not running\n", returncode=0)
+    mock_run.side_effect = runner_
+    with patch.object(sys, "platform", "darwin"):
+        from forge_bridge.cli.doctor import _check_daemon_state
+        result = _check_daemon_state()
+    assert result["status"] == "warn"
+    assert result["name"] == "daemon_state"
+
+
+@patch("forge_bridge.cli.doctor.subprocess.run")
+def test_daemon_state_probe_fail_surfaces_class_name(mock_run):
+    """T-11-01 / LRN-05: subprocess failure surfaces exception CLASS, never str(exc)."""
+    mock_run.side_effect = FileNotFoundError("systemctl: command not found")
+    with patch.object(sys, "platform", "linux"):
+        from forge_bridge.cli.doctor import _check_daemon_state
+        result = _check_daemon_state()
+    assert "FileNotFoundError" in result["fact"]
+    # NEVER str(exc) — the literal "command not found" must NOT appear in the fact cell.
+    assert "command not found" not in result["fact"], \
+        f"T-11-01 violation: str(exc) leaked into doctor fact cell: {result['fact']!r}"
+    assert result["status"] == "fail"

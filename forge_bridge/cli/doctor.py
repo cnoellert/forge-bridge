@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Annotated, Any
@@ -83,6 +84,7 @@ def doctor_cmd(
     disk_check = _check_disk_space()
     if disk_check is not None:
         checks.append(disk_check)
+    checks.append(_check_daemon_state())
 
     # Compute exit code from check results
     any_fail = any(c["status"] == "fail" for c in checks)
@@ -337,4 +339,72 @@ def _check_disk_space() -> "dict | None":
         "status": "ok",
         "fact": f"{free // (1024 * 1024)} MB free",
         "try": "",
+    }
+
+
+def _check_daemon_state() -> dict:
+    """D-13: Probe systemd (Linux) or launchd (macOS) for daemon liveness.
+
+    Returns ONE row in the doctor table — the fact cell carries granular detail
+    so we don't double the table footprint with one row per unit.
+    """
+    name = "daemon_state"
+    if sys.platform == "linux":
+        results: dict[str, str] = {}
+        for unit in ("forge-bridge-server", "forge-bridge"):
+            try:
+                r = subprocess.run(
+                    ["systemctl", "is-active", unit],
+                    capture_output=True, text=True, timeout=2,
+                )
+                results[unit] = (r.stdout or "").strip() or "unknown"
+            except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+                # T-11-01: surface exception class name only, never str(exc)
+                results[unit] = f"probe-failed:{type(exc).__name__}"
+
+        all_active = all(v == "active" for v in results.values())
+        any_active = any(v == "active" for v in results.values())
+        status = "ok" if all_active else ("warn" if any_active else "fail")
+        fact = ", ".join(f"{u}={s}" for u, s in results.items())
+        try_msg = "" if all_active else (
+            "sudo systemctl status forge-bridge && journalctl -u forge-bridge -n 50"
+        )
+        return {"name": name, "status": status, "fact": fact, "try": try_msg}
+
+    if sys.platform == "darwin":
+        results: dict[str, str] = {}
+        for label in ("com.cnoellert.forge-bridge-server", "com.cnoellert.forge-bridge"):
+            try:
+                r = subprocess.run(
+                    ["launchctl", "print", f"system/{label}"],
+                    capture_output=True, text=True, timeout=2,
+                )
+                if r.returncode != 0:
+                    results[label.split(".")[-1]] = "not-loaded"
+                    continue
+                # Parse `state = running` line from `launchctl print` output.
+                state = "unknown"
+                for line in (r.stdout or "").splitlines():
+                    if "state =" in line:
+                        state = line.split("=", 1)[1].strip()
+                        break
+                results[label.split(".")[-1]] = state
+            except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+                results[label.split(".")[-1]] = f"probe-failed:{type(exc).__name__}"
+
+        all_running = all(v == "running" for v in results.values())
+        any_running = any(v == "running" for v in results.values())
+        status = "ok" if all_running else ("warn" if any_running else "fail")
+        fact = ", ".join(f"{k}={v}" for k, v in results.items())
+        try_msg = "" if all_running else (
+            "sudo launchctl print system/com.cnoellert.forge-bridge && tail -50 /var/log/forge-bridge/console.log"
+        )
+        return {"name": name, "status": status, "fact": fact, "try": try_msg}
+
+    # Other platforms (Windows, BSD) — skip with informative warn.
+    return {
+        "name": name,
+        "status": "warn",
+        "fact": f"daemon_state probe not implemented for sys.platform={sys.platform!r}",
+        "try": "no-op — supported only on linux + darwin in v1.5",
     }
