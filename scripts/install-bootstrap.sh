@@ -362,10 +362,15 @@ install_macos_units() {
 
     # Pitfall 2 fix: log dir MUST exist BEFORE launchctl bootstrap
     # (otherwise daemon silent-aborts with `last exit code = 78`).
+    # Pitfall 2b (Phase 20.1 portofino UAT): the log dir MUST also be writable by the
+    # daemon user — launchd opens StandardOutPath/StandardErrorPath BEFORE forking and
+    # bails with EX_CONFIG=78 if it can't create the log file. With UserName=__SUDO_USER__
+    # in the plist, root:wheel mode 755 is read-only for the daemon → silent fail.
     sudo mkdir -p /var/log/forge-bridge
-    sudo chown root:wheel /var/log/forge-bridge
+    SUDO_USER_GROUP=$(id -gn "$SUDO_USER" 2>/dev/null || echo "$SUDO_USER")
+    sudo chown "${SUDO_USER}:${SUDO_USER_GROUP}" /var/log/forge-bridge
     sudo chmod 755 /var/log/forge-bridge
-    echo "[forge-bridge] created /var/log/forge-bridge (log directory)"
+    echo "[forge-bridge] created /var/log/forge-bridge (log directory, owned by ${SUDO_USER})"
 
     sudo cp "${REPO_ROOT}/packaging/launchd/com.cnoellert.forge-bridge-server.plist" /Library/LaunchDaemons/
     sudo cp "${REPO_ROOT}/packaging/launchd/com.cnoellert.forge-bridge.plist" /Library/LaunchDaemons/
