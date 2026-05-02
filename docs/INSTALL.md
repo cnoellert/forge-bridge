@@ -231,32 +231,63 @@ The default `FORGE_DB_URL=postgresql+asyncpg://forge:forge@localhost:5432/forge_
 
 ---
 
-## Step 6: Start the server
+## Step 6: Verify the daemons are running
 
-The single `python -m forge_bridge` process boots **all four hosted surfaces in one shot** — MCP server (stdio), Artist Console Web UI (`:9996`), chat endpoint (`:9996/api/v1/chat`), and the WebSocket event server (`:9998`).
+The bootstrap script (Step 3) registered TWO services on your machine and started them in the right order. forge-bridge is a two-process system:
 
-Daily local launch:
+- **`forge-bridge-server`** — the WebSocket bus on `:9998` (the canonical event-driven backplane; runs `python -m forge_bridge.server`)
+- **`forge-bridge`** — the MCP server + Artist Console + chat endpoint on `:9996` (runs `python -m forge_bridge`); depends on the bus
+
+Closes Phase 20 gap #11 — earlier versions of this doc claimed `python -m forge_bridge` boots all surfaces in one shot. That was incorrect; the bus is a separate process and must start first. systemd `Requires=` (Linux) and a wrapper-script `:9998` readiness gate (macOS) handle the ordering invisibly now.
+
+### 6a. Linux — `systemctl`
 
 ```bash
-python -m forge_bridge
+sudo systemctl status forge-bridge-server   # WS bus on :9998
+sudo systemctl status forge-bridge          # MCP + Console on :9996
 ```
 
-On a headless host where stdin closes immediately (deploy hosts, ssh-detached sessions), keep stdin alive so FastMCP doesn't exit:
+Live logs:
 
 ```bash
-tail -f /dev/null | python -m forge_bridge
+sudo journalctl -u forge-bridge -f          # MCP + Console
+sudo journalctl -u forge-bridge-server -f   # bus
 ```
 
-The first run auto-creates the operator-facing artifact directory `~/.forge-bridge/`:
+Stop / restart / disable:
 
-```
-~/.forge-bridge/executions.jsonl    # source-of-truth execution log
-~/.forge-bridge/synthesized/        # auto-promoted MCP tool Python files
-~/.forge-bridge/probation/          # in-probation tool state
-~/.forge-bridge/quarantined/        # quarantined tool state
+```bash
+sudo systemctl restart forge-bridge                 # restarts MCP+Console (bus stays up)
+sudo systemctl restart forge-bridge-server          # restarts bus (Console will follow due to Requires=)
+sudo systemctl stop forge-bridge forge-bridge-server   # full stop
+sudo systemctl disable forge-bridge forge-bridge-server   # do not start at next boot
 ```
 
-Leave the server running in another terminal / tmux pane and proceed to Step 7.
+### 6b. macOS — `launchctl`
+
+```bash
+sudo launchctl print system/com.cnoellert.forge-bridge-server
+sudo launchctl print system/com.cnoellert.forge-bridge
+```
+
+Live logs (macOS plists write to file, not stdout — `tail -f` directly):
+
+```bash
+tail -f /var/log/forge-bridge/console.log
+tail -f /var/log/forge-bridge/server.log
+```
+
+Stop / restart:
+
+```bash
+sudo launchctl kickstart -k system/com.cnoellert.forge-bridge   # restart MCP+Console
+sudo launchctl bootout system /Library/LaunchDaemons/com.cnoellert.forge-bridge.plist           # stop one daemon
+sudo launchctl bootout system /Library/LaunchDaemons/com.cnoellert.forge-bridge-server.plist    # stop bus too
+```
+
+### 6c. About the lifespan model
+
+Both daemons are managed by the OS init system — systemd on Linux, launchd on macOS. Process supervision (start at boot, restart on crash, journal logging) comes for free. The stdin-keepalive workaround from earlier versions is no longer needed — daemons run as supervised services with `StandardInput=null` (Linux) or detached stdin (macOS), so the FastMCP stdio handshake-exit issue is solved at the unit level.
 
 ---
 
