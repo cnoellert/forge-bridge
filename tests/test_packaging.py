@@ -9,6 +9,7 @@ no fixtures, no asyncio.
 """
 from __future__ import annotations
 
+import configparser
 import re
 from pathlib import Path
 
@@ -78,3 +79,82 @@ def test_env_template_parses_with_set_a():
             continue
         assert re.match(r"^[A-Z_][A-Z0-9_]*=.*$", stripped), \
             f"env template has non-KEY=VALUE line: {line!r}"
+
+
+def test_systemd_units_parse_as_ini():
+    """Systemd unit files MUST parse as INI — `systemctl daemon-reload` would fail otherwise."""
+    units = list((_PACKAGING / "systemd").glob("*.service"))
+    assert len(units) == 2, f"expected 2 systemd units, got {len(units)}: {[u.name for u in units]}"
+    for unit in units:
+        cfg = configparser.RawConfigParser()
+        cfg.read(unit)
+        assert "Unit" in cfg.sections(), f"{unit.name}: missing [Unit] section"
+        assert "Service" in cfg.sections(), f"{unit.name}: missing [Service] section"
+        assert "Install" in cfg.sections(), f"{unit.name}: missing [Install] section"
+        service_type = cfg.get("Service", "Type", fallback="simple")
+        assert service_type in ("simple", "exec", "forking"), \
+            f"{unit.name}: unsupported Type={service_type}"
+
+
+def test_systemd_console_unit_requires_bus_unit():
+    """Phase 20 gap #11 regression guard: forge-bridge.service MUST Requires=+After= the bus unit."""
+    cfg = configparser.RawConfigParser()
+    cfg.read(_PACKAGING / "systemd" / "forge-bridge.service")
+    requires = cfg.get("Unit", "Requires", fallback="")
+    after = cfg.get("Unit", "After", fallback="")
+    assert "forge-bridge-server.service" in requires, \
+        f"forge-bridge.service must Requires=forge-bridge-server.service (Phase 20 gap #11); got Requires={requires!r}"
+    assert "forge-bridge-server.service" in after, \
+        f"forge-bridge.service must After=forge-bridge-server.service (boot ordering); got After={after!r}"
+
+
+def test_systemd_units_environment_file_path():
+    """Both units must read /etc/forge-bridge/forge-bridge.env (matches P4 install target)."""
+    for name in ("forge-bridge-server.service", "forge-bridge.service"):
+        cfg = configparser.RawConfigParser()
+        cfg.read(_PACKAGING / "systemd" / name)
+        env_file = cfg.get("Service", "EnvironmentFile", fallback="")
+        assert env_file == "/etc/forge-bridge/forge-bridge.env", \
+            f"{name}: EnvironmentFile must point at /etc/forge-bridge/forge-bridge.env; got {env_file!r}"
+
+
+def test_systemd_units_use_user_placeholder():
+    """Both units MUST use __SUDO_USER__ placeholder, not a literal username."""
+    for name in ("forge-bridge-server.service", "forge-bridge.service"):
+        cfg = configparser.RawConfigParser()
+        cfg.read(_PACKAGING / "systemd" / name)
+        user = cfg.get("Service", "User", fallback="")
+        group = cfg.get("Service", "Group", fallback="")
+        assert user == "__SUDO_USER__", f"{name}: User must be __SUDO_USER__ placeholder; got {user!r}"
+        assert group == "__SUDO_USER__", f"{name}: Group must be __SUDO_USER__ placeholder; got {group!r}"
+
+
+def test_systemd_units_no_orphan_server_file():
+    """Neither unit may reference forge_bridge/server.py — use the `forge_bridge.server` submodule."""
+    for name in ("forge-bridge-server.service", "forge-bridge.service"):
+        content = (_PACKAGING / "systemd" / name).read_text()
+        assert "forge_bridge/server.py" not in content, \
+            f"{name}: references the pre-Phase-5 orphan top-level file (CLAUDE.md anti-pattern)"
+
+
+def test_systemd_units_standardinput_null():
+    """Phase 20 gap #10 regression guard: StandardInput=null prevents stdio-handshake-exit on systemd."""
+    for name in ("forge-bridge-server.service", "forge-bridge.service"):
+        cfg = configparser.RawConfigParser()
+        cfg.read(_PACKAGING / "systemd" / name)
+        stdin = cfg.get("Service", "StandardInput", fallback="")
+        assert stdin == "null", \
+            f"{name}: StandardInput must be 'null' (Phase 20 gap #10); got {stdin!r}"
+
+
+def test_systemd_postgres_is_soft_dep():
+    """Phase 8 STORE-06: Postgres dep is Wants= (soft), NOT Requires= (would cascade-fail on DB maintenance)."""
+    for name in ("forge-bridge-server.service", "forge-bridge.service"):
+        cfg = configparser.RawConfigParser()
+        cfg.read(_PACKAGING / "systemd" / name)
+        requires = cfg.get("Unit", "Requires", fallback="")
+        wants = cfg.get("Unit", "Wants", fallback="")
+        assert "postgresql.service" not in requires, \
+            f"{name}: postgresql.service in Requires= would cascade-fail on DB restart (Phase 8 STORE-06)"
+        assert "postgresql.service" in wants, \
+            f"{name}: postgresql.service must be in Wants= for ordering hint without cascade"
