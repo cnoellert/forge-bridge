@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# /usr/local/bin/forge-bridge-server-daemon
+# macOS wrapper: sources /etc/forge-bridge/forge-bridge.env (parity with systemd EnvironmentFile=)
+# then exec's the WS bus on :9998. Phase 20.1 P3 / RESEARCH.md Pattern 2.
+set -euo pipefail
+
+# Source the system env file the same way systemd's EnvironmentFile= would.
+# `set -a` exports all subsequent assignments; `set +a` reverts.
+if [ -f /etc/forge-bridge/forge-bridge.env ]; then
+    set -a
+    . /etc/forge-bridge/forge-bridge.env
+    set +a
+fi
+
+exec "${FORGE_PYTHON:-/Users/__SUDO_USER__/miniconda3/envs/forge/bin/python}" \
+     -m forge_bridge.server

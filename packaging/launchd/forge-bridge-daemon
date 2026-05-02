@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# /usr/local/bin/forge-bridge-daemon
+# macOS wrapper for MCP+Console with bus-readiness gate.
+# launchd has no Requires= analog — the loop below replicates the systemd cascade ordering
+# forge-bridge.service gets via Requires=forge-bridge-server.service on Linux.
+set -euo pipefail
+
+if [ -f /etc/forge-bridge/forge-bridge.env ]; then
+    set -a
+    . /etc/forge-bridge/forge-bridge.env
+    set +a
+fi
+
+# Order gate — wait up to 30s for the bus to be reachable on :9998 before exec'ing.
+PORT="${FORGE_BRIDGE_PORT:-9998}"
+for i in $(seq 1 30); do
+    if nc -z localhost "$PORT" 2>/dev/null; then break; fi
+    sleep 1
+done
+
+exec "${FORGE_PYTHON:-/Users/__SUDO_USER__/miniconda3/envs/forge/bin/python}" \
+     -m forge_bridge
