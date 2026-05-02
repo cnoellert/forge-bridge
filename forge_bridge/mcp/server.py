@@ -353,9 +353,44 @@ def main(transport: str = "stdio", port: int = 9997) -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
     )
-    # Under sse / streamable-http, bind FastMCP to the requested port.
-    # Under stdio the port is ignored; guard avoids mutating settings unnecessarily.
-    if transport != "stdio":
-        mcp.settings.port = port
-    # FastMCP handles the asyncio lifecycle — hook in via lifespan
-    mcp.run(transport=transport)
+    if transport == "stdio":
+        # FastMCP's stdio loop runs `_mcp_server.run()` which honors the user-registered
+        # lifespan via lifespan_context — Console + chat co-host on :9996 starts up
+        # alongside each Claude Desktop session. Existing behavior; unchanged.
+        mcp.run(transport=transport)
+        return
+
+    # sse / streamable-http: FastMCP's *_app() builders hardcode the Starlette
+    # `lifespan=lambda app: self.session_manager.run()` and do NOT chain the
+    # user-registered lifespan into the ASGI app's lifecycle. Without this wiring,
+    # `_lifespan` (which co-hosts the Console + chat on :9996) never runs at server
+    # start — it only runs per-MCP-request and is torn down between requests, so
+    # `:9996` is never persistently bound under daemon mode (Phase 20.1 walk gap).
+    # We compose the two lifespans here so both run for the full server lifetime.
+    import contextlib
+    import uvicorn
+
+    mcp.settings.port = port
+    if transport == "streamable-http":
+        starlette_app = mcp.streamable_http_app()
+    else:
+        starlette_app = mcp.sse_app()
+
+    fastmcp_lifespan = starlette_app.router.lifespan_context
+
+    @contextlib.asynccontextmanager
+    async def _composed_lifespan(app):
+        # User lifespan first (startup_bridge → ManifestService → watcher → Console
+        # uvicorn on :9996). Then FastMCP's session_manager. Teardown reverses.
+        async with _lifespan(mcp), fastmcp_lifespan(app):
+            yield
+
+    starlette_app.router.lifespan_context = _composed_lifespan
+
+    config = uvicorn.Config(
+        starlette_app,
+        host=mcp.settings.host,
+        port=mcp.settings.port,
+        log_level=mcp.settings.log_level.lower(),
+    )
+    asyncio.run(uvicorn.Server(config).serve())

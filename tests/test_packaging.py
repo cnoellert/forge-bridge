@@ -432,34 +432,77 @@ def _free_port() -> int:
     return port
 
 
+def _is_port_bound(port: int) -> bool:
+    """Return True iff `127.0.0.1:port` accepts a TCP connection right now."""
+    s = socket.socket()
+    s.settimeout(1.0)
+    try:
+        s.connect(("127.0.0.1", port))
+        return True
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
 @pytest.mark.integration
 def test_daemon_persistence():
-    """forge-bridge daemon must NOT exit cleanly within 3s of start.
+    """forge-bridge daemon must stay alive AND bind both ports under streamable-http.
 
-    Regression guard for Phase 20.1 flame-01 Linux walk Gap 4:
-    FastMCP stdio transport + StandardInput=null caused the service to read
-    /dev/null → EOF → exit cleanly (code 0) within ~1s. Restart=on-failure
-    never triggered. This test spawns forge_bridge in streamable-http mode
-    with stdin closed (DEVNULL) and asserts the process is still alive after
-    3 seconds — catching any future regression where the daemon exits prematurely.
+    Regression guard for Phase 20.1 flame-01 Linux walk gaps:
+
+      Gap 4 (root cause): FastMCP stdio transport + StandardInput=null caused the
+      service to read /dev/null → EOF → exit cleanly (code 0) within ~1s.
+      Restart=on-failure never triggered.
+
+      Gap 4b (lifespan composition, surfaced on flame-01 after the 20.1-08 fix
+      landed): FastMCP's streamable_http_app() hardcodes the Starlette lifespan
+      to `lambda app: self.session_manager.run()` and does NOT chain the
+      user-registered FastMCP lifespan into the ASGI app's lifecycle. Without
+      explicit composition (forge_bridge/mcp/server.py:main), `_lifespan` only
+      runs per-MCP-request, so the Console + chat co-host on :9996 never
+      persistently binds — leaving Web UI + chat + Read API unreachable in
+      daemon mode.
+
+    This test spawns forge_bridge in streamable-http mode with stdin closed
+    and asserts BOTH the MCP port (under test) and the Console port (9996)
+    are bound 5 seconds after launch. Catches stdio-EOF regression AND
+    lifespan-composition regression.
     """
-    port = _free_port()
+    mcp_port = _free_port()
     proc = subprocess.Popen(
         [
             sys.executable, "-m", "forge_bridge",
             "--transport", "streamable-http",
-            "--mcp-port", str(port),
+            "--mcp-port", str(mcp_port),
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         stdin=subprocess.DEVNULL,
     )
     try:
-        time.sleep(3)
+        time.sleep(5)
         assert proc.poll() is None, (
-            "forge-bridge daemon exited within 3s — stdio-EOF regression "
+            "forge-bridge daemon exited within 5s — stdio-EOF regression "
             "(Phase 20.1 flame-01 walk Gap 4, plan 20.1-08). "
             f"Exit code: {proc.poll()}"
+        )
+        assert _is_port_bound(mcp_port), (
+            f"FastMCP did not bind --mcp-port {mcp_port} within 5s of start"
+        )
+        # Console port is hardcoded to 9996 unless FORGE_CONSOLE_PORT is set.
+        # If 9996 is taken by an unrelated process the lifespan degrades per
+        # D-29 — that's not a regression of THIS test, so skip the Console
+        # assertion in that case.
+        console_port = int(os.environ.get("FORGE_CONSOLE_PORT", "9996"))
+        if not _is_port_bound(console_port):
+            # One retry — Console uvicorn may take an extra second under load.
+            time.sleep(2)
+        assert _is_port_bound(console_port), (
+            f"Console + chat co-host did not bind :{console_port} under "
+            f"streamable-http transport — FastMCP lifespan composition is "
+            f"NOT wiring the user `_lifespan` into the Starlette ASGI app "
+            f"(Phase 20.1 walk Gap 4b)."
         )
     finally:
         proc.terminate()
