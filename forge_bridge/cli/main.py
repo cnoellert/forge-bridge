@@ -63,6 +63,88 @@ app.command("actions", help="List registered tools (alias of `console tools`).")
     _tools.tools_cmd
 )
 
+
+# ── runtime manager: forge up / down / status ────────────────────────────
+@app.command("up", help="Start managed forge-bridge services (mcp_http + state_ws).")
+def up_cmd(
+    as_json: Annotated[
+        bool,
+        typer.Option("--json", help="Emit JSON envelope to stdout."),
+    ] = False,
+) -> None:
+    from forge_bridge.runtime import manager
+
+    results = [manager.start_mcp_http(), manager.start_state_ws()]
+    if as_json:
+        sys.stdout.write(json.dumps({"data": results}) + "\n")
+        return
+    for r in results:
+        name = r["name"]
+        host = r.get("host", "")
+        port = r.get("port", "")
+        if r.get("started"):
+            ready = "ready" if r.get("ready") else "starting"
+            sys.stdout.write(
+                f"{name:<10} {ready:<8} {host}:{port}  pid={r.get('pid')}\n"
+            )
+        else:
+            note = r.get("skipped") or r.get("note") or "no-op"
+            pid = r.get("pid")
+            pid_str = f"  pid={pid}" if pid else ""
+            sys.stdout.write(f"{name:<10} {note:<24} {host}:{port}{pid_str}\n")
+
+
+@app.command("down", help="Stop all managed forge-bridge services.")
+def down_cmd(
+    as_json: Annotated[
+        bool,
+        typer.Option("--json", help="Emit JSON envelope to stdout."),
+    ] = False,
+) -> None:
+    from forge_bridge.runtime import manager
+
+    results = manager.stop_all()
+    if as_json:
+        sys.stdout.write(json.dumps({"data": results}) + "\n")
+        return
+    if not results:
+        sys.stdout.write("no managed services tracked\n")
+        return
+    for r in results:
+        name = r["name"]
+        if r.get("stopped"):
+            method = r.get("method", "SIGTERM")
+            sys.stdout.write(f"{name:<10} stopped ({method})  pid={r.get('pid')}\n")
+        else:
+            note = r.get("note", "not stopped")
+            sys.stdout.write(f"{name:<10} {note}\n")
+
+
+@app.command("status", help="Report which managed forge-bridge services are running.")
+def status_cmd(
+    as_json: Annotated[
+        bool,
+        typer.Option("--json", help="Emit JSON envelope to stdout."),
+    ] = False,
+) -> None:
+    from forge_bridge.runtime import manager
+
+    state = manager.status()
+    if as_json:
+        sys.stdout.write(json.dumps({"data": state}) + "\n")
+        return
+    for row in state["services"]:
+        name = row["name"]
+        running = "running" if row["running"] else "not running"
+        tracked = "tracked" if row["tracked"] else "untracked"
+        pid = row.get("pid")
+        pid_str = f"  pid={pid}" if pid else ""
+        sys.stdout.write(
+            f"{name:<14} {running:<12} {tracked:<10} "
+            f"{row['host']}:{row['port']}{pid_str}\n"
+        )
+
+
 # ── mcp group: explicit start ─────────────────────────────────────────────
 mcp_app = typer.Typer(
     name="mcp",
