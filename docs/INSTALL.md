@@ -102,64 +102,65 @@ forge-bridge --help
 
 ---
 
-## Step 3: Set up Postgres
+## Step 3: Run the bootstrap script
 
-forge-bridge defaults to `forge:forge@localhost:5432/forge_bridge`. Either match those defaults or set `FORGE_DB_URL` to your own.
+The bootstrap script handles Postgres setup, env-file install, systemd unit registration (Linux) or launchd plist registration (macOS), and the post-install `forge doctor` verification — all in one shot. Closes the Phase 20 install gaps that demanded sysadmin-level Postgres + pg_hba + service-management knowledge from operators who shouldn't need it.
 
-### 3a. Confirm Postgres is installed, initialized, and running
+**Skip this step if you are running Track B / MCP-only AND have an existing remote Postgres** — instead use the `--no-postgres` flag below.
 
-```bash
-# Service status — the package name varies by version:
-systemctl status postgresql 2>/dev/null || systemctl status postgresql-16 2>/dev/null
-
-# Is anything listening on 5432?
-nc -z localhost 5432 && echo "Postgres: up" || echo "Postgres: DOWN"
-```
-
-If it's NOT installed (RHEL/Rocky/AlmaLinux Flame workstations — typical):
+### 3a. Run the script
 
 ```bash
-sudo dnf install -y postgresql-server postgresql-contrib
-sudo postgresql-setup --initdb
-sudo systemctl enable --now postgresql
+sudo ./scripts/install-bootstrap.sh
 ```
 
-If you're on macOS Homebrew: `brew install postgresql@16 && brew services start postgresql@16`. If you're on Postgres.app, launch the app — its bundled CLI tools (`createuser`, `createdb`, `psql`) live under `/Applications/Postgres.app/Contents/Versions/latest/bin/` (you may need to add that to your `PATH`).
+The script auto-detects your OS (Rocky/RHEL Linux or macOS Darwin) and runs the right install path. It is **idempotent** — running it twice in a row is a no-op on the second run (operator env-file edits are preserved).
 
-### 3b. Create the forge user and database
+### 3b. Optional flags
 
-The Postgres OS-level user `postgres` is the database superuser on a stock package install. Use `sudo -u postgres` to run admin commands as that user:
+Pass any combination of these flags for partial-install scenarios:
+
+| Flag | Effect |
+|---|---|
+| `--track-b` | Skip Flame hook install (Track B / MCP-only deploy) |
+| `--no-postgres` | Skip Postgres bootstrap entirely (use existing remote DB) |
+| `--mcp-only` | `--track-b` + `--no-postgres` + skip Console daemon (BUS+MCP only) |
+| `--with-flame-mac` | macOS only — opt INTO Flame hook install (default skips on macOS) |
+| `--non-interactive` | Skip the FORGE_LOCAL_LLM_URL prompt; use defaults |
+
+Run `sudo ./scripts/install-bootstrap.sh --help` for the live flag matrix.
+
+### 3c. What the script does
+
+On a fresh Rocky/RHEL machine:
+- Installs `postgresql-server` + `postgresql-contrib` if missing
+- Initializes the cluster via `postgresql-setup --initdb` if needed
+- Probes the cluster's `password_encryption` (md5 vs scram-sha-256) and aligns `/var/lib/pgsql/data/pg_hba.conf` to match
+- Creates the `forge` Postgres role + `forge_bridge` database (idempotent; default password `'forge'` — local-only, see Step 5 for hardening)
+- Runs `alembic upgrade head` against the new database
+- Installs `/etc/forge-bridge/forge-bridge.env` from the in-tree template (mode `0640 root:$YOUR_USER`)
+- Copies `packaging/systemd/*.service` → `/etc/systemd/system/`, runs `systemctl daemon-reload`, enables and starts both units
+- Auto-runs `forge-bridge console doctor` as the install-success gate
+
+On macOS:
+- Detects existing Postgres (`psql` on PATH, or Homebrew `postgresql@16`); installs Homebrew variant if neither present
+- Skips `pg_hba` alignment (Homebrew Postgres ships `trust` for localhost)
+- Same `forge` role + `forge_bridge` database creation + alembic
+- Auto-applies `--track-b` (skips Flame hook); pass `--with-flame-mac` to override
+- Creates `/var/log/forge-bridge/` (mode `755 root:wheel`) for daemon log files
+- Copies `packaging/launchd/*.plist` → `/Library/LaunchDaemons/`, copies wrappers → `/usr/local/bin/`
+- Runs `launchctl bootstrap system /Library/LaunchDaemons/com.cnoellert.forge-bridge*.plist` (modern syntax; replaces deprecated `launchctl load`)
+- Same auto-doctor verification
+
+### 3d. Custom Postgres credentials
+
+If your Postgres role/DB is NOT the default `forge:forge@localhost:5432/forge_bridge` — for example on a shared development cluster — pass `--no-postgres` to skip the Postgres bootstrap and edit `/etc/forge-bridge/forge-bridge.env` to point `FORGE_DB_URL` at your cluster. Then run alembic manually:
 
 ```bash
-# RHEL/Rocky/AlmaLinux (the typical Flame workstation):
-sudo -u postgres createuser -P forge        # at the prompt, set password 'forge' to match the default
-sudo -u postgres createdb -O forge forge_bridge
+alembic -x url=postgresql+psycopg2://USER:PASS@HOST:PORT/DB upgrade head
 ```
 
-```bash
-# macOS Homebrew install: your login user IS the superuser, so omit sudo:
-createuser -P forge
-createdb -O forge forge_bridge
-```
-
-If `createuser` reports `role "forge" already exists`, that's fine — re-running is idempotent for the database creation only; the existing role keeps its current password.
-
-### 3c. Run the three Alembic migrations
-
-```bash
-# From the repo root:
-alembic upgrade head
-```
-
-**Note on Alembic + custom credentials:** `alembic.ini` hardcodes the sync URL `postgresql+psycopg2://forge:forge@localhost:5432/forge_bridge` and does NOT auto-read `FORGE_DB_URL`. If you set `FORGE_DB_URL` to non-default credentials in Step 5, you must also either:
-- edit `sqlalchemy.url` in `alembic.ini`, OR
-- pass the URL explicitly: `alembic -x url=postgresql+psycopg2://USER:PASS@HOST:PORT/DB upgrade head`
-
-Verify migrations applied:
-
-```bash
-alembic current   # shows 0003_staged_operation as the head revision
-```
+(The `+psycopg2` driver is required because Alembic's sync engine doesn't support `+asyncpg`. forge-bridge runtime uses `+asyncpg` per `FORGE_DB_URL` in the env file.)
 
 ---
 
