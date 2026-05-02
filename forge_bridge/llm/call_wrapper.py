@@ -57,10 +57,14 @@ _BACKOFF_CAP_SECONDS = 8.0
 _BACKOFF_JITTER_MAX = 0.5
 _BREAKER_THRESHOLD = 5
 _BREAKER_WINDOW_SECONDS = 60.0
-# Smallest meaningful per-attempt window. If less budget remains we don't
-# bother starting another attempt — better to surface "budget exhausted"
-# than to fire a request guaranteed to time out immediately.
-_MIN_ATTEMPT_BUDGET_SECONDS = 0.05
+# PR10.1: smallest meaningful per-attempt window. If less budget remains we
+# don't fire another request — a near-zero httpx timeout would just produce a
+# misleading "timeout (0.1s)" event. 1.0s gives the request a real chance.
+MIN_REQUEST_TIMEOUT = 1.0
+# PR10.1: failures faster than this are not real timeouts — almost always a
+# connection reset or fast server error. Reclassify so the user sees the
+# truth and we don't spend retries on a bug masquerading as capacity.
+_FAST_FAIL_DURATION_SECONDS = 0.5
 
 _FIX_HINTS = {
     "timeout": (
@@ -92,6 +96,20 @@ class CallResult:
     attempts: int
     elapsed_seconds: float
     timeline: list[dict[str, Any]] = field(default_factory=list)
+    # PR11: structured execution trace, deterministic + machine-readable.
+    # Shape:
+    #   {"events": [
+    #       {"kind": "attempt", "attempt": int, "duration": float,
+    #        "result": "success|timeout|error",
+    #        "status_code": int|None, "tool_calls": int|list[str]|None},
+    #       {"kind": "backoff", "duration": float},
+    #       {"kind": "summary", "attempts": int, "total_elapsed": float,
+    #        "final_status": "success|failed", "error_kind": str|None},
+    #    ],
+    #    "total_elapsed": float, "attempts": int}
+    # Built during execution — not derived from timeline. `timeline` is the
+    # legacy human-debug view; `trace` is the system-observability view.
+    trace: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -167,6 +185,7 @@ def call_with_retry(
     """
     start = now()
     timeline: list[dict[str, Any]] = []
+    events: list[dict[str, Any]] = []
 
     # Circuit breaker — short-circuit before doing any work.
     if _circuit_open(url, now=now):
@@ -174,7 +193,7 @@ def call_with_retry(
             "circuit_open",
             f"circuit open for {url} "
             f"({_BREAKER_THRESHOLD} failures in {_BREAKER_WINDOW_SECONDS:.0f}s)",
-            attempts=0, start=start, timeline=timeline, now=now,
+            attempts=0, start=start, timeline=timeline, events=events, now=now,
         )
 
     _report(reporter, "Sending request...")
@@ -191,8 +210,8 @@ def call_with_retry(
         if attempt > 1:
             delay = _compute_backoff(attempt, backoff_seconds, jitter=jitter)
             # Bail if backoff alone would blow the budget — leave at least
-            # _MIN_ATTEMPT_BUDGET_SECONDS for the actual request after sleep.
-            if remaining() <= delay + _MIN_ATTEMPT_BUDGET_SECONDS:
+            # MIN_REQUEST_TIMEOUT for the actual request after sleep.
+            if remaining() <= delay + MIN_REQUEST_TIMEOUT:
                 last_kind = "timeout"
                 last_message = (
                     f"budget exhausted after {now() - start:.1f}s "
@@ -206,10 +225,11 @@ def call_with_retry(
                 f"sleeping {delay:.1f}s)...",
             )
             if delay > 0:
+                events.append({"kind": "backoff", "duration": delay})
                 sleep(delay)
 
         per_attempt_budget = remaining()
-        if per_attempt_budget < _MIN_ATTEMPT_BUDGET_SECONDS:
+        if per_attempt_budget < MIN_REQUEST_TIMEOUT:
             last_kind = "timeout"
             last_message = (
                 f"budget exhausted after {now() - start:.1f}s "
@@ -225,9 +245,30 @@ def call_with_retry(
                 response = client.post(url, json=payload)
         except httpx.TimeoutException:
             elapsed = now() - attempt_start
+            # PR10.1: a "timeout" that fires faster than the fast-fail
+            # threshold is not a real timeout — usually a connect failure or
+            # remote reset. Reclassify so the user sees the truth.
+            if elapsed < _FAST_FAIL_DURATION_SECONDS:
+                timeline.append({
+                    "attempt": attempt, "elapsed": elapsed, "outcome": "connection",
+                })
+                events.append({
+                    "kind": "attempt", "attempt": attempt, "duration": elapsed,
+                    "result": "error", "status_code": None, "tool_calls": None,
+                })
+                return _emit_failure(
+                    url, "connection",
+                    f"connection failed in {elapsed:.2f}s (no real timeout)",
+                    attempts=attempt, start=start, timeline=timeline,
+                    events=events, now=now, count_toward_breaker=True,
+                )
             timeline.append(
                 {"attempt": attempt, "elapsed": elapsed, "outcome": "timeout"}
             )
+            events.append({
+                "kind": "attempt", "attempt": attempt, "duration": elapsed,
+                "result": "timeout", "status_code": None, "tool_calls": None,
+            })
             last_kind = "timeout"
             last_message = f"LLM request timed out after {elapsed:.1f}s"
             _report(reporter, last_message)
@@ -238,11 +279,15 @@ def call_with_retry(
             timeline.append(
                 {"attempt": attempt, "elapsed": elapsed, "outcome": "connection"}
             )
+            events.append({
+                "kind": "attempt", "attempt": attempt, "duration": elapsed,
+                "result": "error", "status_code": None, "tool_calls": None,
+            })
             return _emit_failure(
                 url, "connection",
                 f"could not connect to {url} ({type(exc).__name__})",
-                attempts=attempt, start=start, timeline=timeline, now=now,
-                count_toward_breaker=True,
+                attempts=attempt, start=start, timeline=timeline, events=events,
+                now=now, count_toward_breaker=True,
             )
 
         elapsed = now() - attempt_start
@@ -250,10 +295,41 @@ def call_with_retry(
             body = _extract_body(response)
             server_msg = _extract_server_message(body)
             if response.status_code in RETRYABLE_STATUS_CODES:
+                # PR10.1: a 5xx (or 429) that returns faster than the fast-fail
+                # threshold is a server-side error, not capacity exhaustion.
+                # Don't retry — the next attempt will hit the same bug.
+                if elapsed < _FAST_FAIL_DURATION_SECONDS:
+                    timeline.append({
+                        "attempt": attempt, "elapsed": elapsed,
+                        "outcome": "http_error",
+                        "status": response.status_code, "body": body,
+                    })
+                    events.append({
+                        "kind": "attempt", "attempt": attempt, "duration": elapsed,
+                        "result": "error",
+                        "status_code": response.status_code, "tool_calls": None,
+                    })
+                    error_message = (
+                        f"HTTP {response.status_code} from {url} "
+                        f"(fast-fail in {elapsed:.2f}s): {server_msg}"
+                        if server_msg
+                        else f"HTTP {response.status_code} from {url} "
+                             f"(fast-fail in {elapsed:.2f}s)"
+                    )
+                    return _emit_failure(
+                        url, "invalid_response", error_message,
+                        attempts=attempt, start=start, timeline=timeline,
+                        events=events, now=now, count_toward_breaker=False,
+                    )
                 timeline.append({
                     "attempt": attempt, "elapsed": elapsed,
                     "outcome": "timeout",
                     "status": response.status_code, "body": body,
+                })
+                events.append({
+                    "kind": "attempt", "attempt": attempt, "duration": elapsed,
+                    "result": "timeout",
+                    "status_code": response.status_code, "tool_calls": None,
                 })
                 last_kind = "timeout"
                 last_message = (
@@ -270,6 +346,11 @@ def call_with_retry(
                 "outcome": "http_error", "status": response.status_code,
                 "body": body,
             })
+            events.append({
+                "kind": "attempt", "attempt": attempt, "duration": elapsed,
+                "result": "error",
+                "status_code": response.status_code, "tool_calls": None,
+            })
             error_message = (
                 f"HTTP {response.status_code} from {url}: {server_msg}"
                 if server_msg
@@ -277,8 +358,8 @@ def call_with_retry(
             )
             return _emit_failure(
                 url, "invalid_response", error_message,
-                attempts=attempt, start=start, timeline=timeline, now=now,
-                count_toward_breaker=False,
+                attempts=attempt, start=start, timeline=timeline, events=events,
+                now=now, count_toward_breaker=False,
             )
 
         try:
@@ -289,19 +370,32 @@ def call_with_retry(
                 "attempt": attempt, "elapsed": elapsed,
                 "outcome": "invalid_json", "body": body,
             })
+            events.append({
+                "kind": "attempt", "attempt": attempt, "duration": elapsed,
+                "result": "error",
+                "status_code": response.status_code, "tool_calls": None,
+            })
             return _emit_failure(
                 url, "invalid_response", f"non-JSON body from {url}",
-                attempts=attempt, start=start, timeline=timeline, now=now,
-                count_toward_breaker=False,
+                attempts=attempt, start=start, timeline=timeline, events=events,
+                now=now, count_toward_breaker=False,
             )
 
         timeline.append({"attempt": attempt, "elapsed": elapsed, "outcome": "ok"})
+        events.append({
+            "kind": "attempt", "attempt": attempt, "duration": elapsed,
+            "result": "success",
+            "status_code": response.status_code,
+            "tool_calls": _extract_tool_calls(data),
+        })
         total_elapsed = now() - start
         _report(reporter, f"Response received ({total_elapsed:.1f}s)")
+        trace = _build_trace(events, total_elapsed, attempt, "success", None)
         return CallResult(
             ok=True, data=data,
             error_kind=None, error_message=None, fix=None,
             attempts=attempt, elapsed_seconds=total_elapsed, timeline=timeline,
+            trace=trace,
         )
 
     # Exhausted retries / budget on retryable errors (timeouts, 5xx, 429).
@@ -310,8 +404,8 @@ def call_with_retry(
     return _emit_failure(
         url, last_kind or "timeout",
         last_message or f"LLM request timed out after {timeout:.1f}s",
-        attempts=max(attempts_made, 1), start=start, timeline=timeline, now=now,
-        count_toward_breaker=True,
+        attempts=max(attempts_made, 1), start=start, timeline=timeline,
+        events=events, now=now, count_toward_breaker=True,
     )
 
 
@@ -328,15 +422,19 @@ def _fail(
     attempts: int,
     start: float,
     timeline: list[dict[str, Any]],
+    events: list[dict[str, Any]],
     now: Callable[[], float] = time.monotonic,
 ) -> CallResult:
+    total_elapsed = now() - start
+    trace = _build_trace(events, total_elapsed, attempts, "failed", kind)
     return CallResult(
         ok=False, data=None,
         error_kind=kind, error_message=message,
         fix=_FIX_HINTS.get(kind),
         attempts=attempts,
-        elapsed_seconds=now() - start,
+        elapsed_seconds=total_elapsed,
         timeline=timeline,
+        trace=trace,
     )
 
 
@@ -348,6 +446,7 @@ def _emit_failure(
     attempts: int,
     start: float,
     timeline: list[dict[str, Any]],
+    events: list[dict[str, Any]],
     now: Callable[[], float] = time.monotonic,
     count_toward_breaker: bool,
 ) -> CallResult:
@@ -355,7 +454,51 @@ def _emit_failure(
     if count_toward_breaker:
         _record_breaker_failure(url, now=now)
     return _fail(kind, message, attempts=attempts, start=start,
-                 timeline=timeline, now=now)
+                 timeline=timeline, events=events, now=now)
+
+
+def _build_trace(
+    events: list[dict[str, Any]],
+    total_elapsed: float,
+    attempts: int,
+    final_status: str,
+    error_kind: str | None,
+) -> dict[str, Any]:
+    """Append the summary event and wrap the events list in the trace envelope."""
+    finalized = [
+        *events,
+        {
+            "kind": "summary",
+            "attempts": attempts,
+            "total_elapsed": total_elapsed,
+            "final_status": final_status,
+            "error_kind": error_kind,
+        },
+    ]
+    return {
+        "events": finalized,
+        "total_elapsed": total_elapsed,
+        "attempts": attempts,
+    }
+
+
+def _extract_tool_calls(data: Any) -> int | list[str] | None:
+    """Pull tool-call info off a successful chat response, if reported."""
+    if not isinstance(data, dict):
+        return None
+    tc = data.get("tool_calls")
+    if isinstance(tc, int):
+        return tc
+    if isinstance(tc, list):
+        # Surface a list of names when entries carry one; otherwise the count.
+        names = [
+            entry.get("name") for entry in tc
+            if isinstance(entry, dict) and isinstance(entry.get("name"), str)
+        ]
+        if names and len(names) == len(tc):
+            return names
+        return len(tc)
+    return None
 
 
 _MAX_TEXT_BODY_BYTES = 1024

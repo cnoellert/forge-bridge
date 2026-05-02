@@ -60,6 +60,23 @@ def _no_sleep(monkeypatch):
     monkeypatch.setattr(cw.time, "sleep", lambda *_a, **_k: None)
 
 
+@pytest.fixture(autouse=True)
+def _reset_breaker():
+    """Clear circuit-breaker state between tests so failures from earlier
+    tests don't open the breaker and short-circuit later ones."""
+    cw._reset_breaker_for_tests()
+    yield
+    cw._reset_breaker_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _disable_fast_fail_default(monkeypatch):
+    """PR10.1: zero-elapsed mocks in legacy CLI tests would otherwise be
+    reclassified as 'connection' by the production 0.5s fast-fail threshold.
+    Disable by default; the wrapper-level PR10.1 tests cover the real path."""
+    monkeypatch.setattr(cw, "_FAST_FAIL_DURATION_SECONDS", 0.0)
+
+
 # ── happy path ────────────────────────────────────────────────────────────
 
 def test_chat_success_prints_reply_to_stdout():
@@ -219,3 +236,73 @@ def test_chat_json_failure_envelope_carries_attempts_and_elapsed():
     assert "elapsed_seconds" in payload
     assert isinstance(payload["elapsed_seconds"], (int, float))
     assert payload["attempts"] == 2
+
+
+# ── PR11: structured trace in CLI ─────────────────────────────────────────
+
+
+def test_chat_verbose_prints_trace_block_on_success():
+    """--verbose must emit the [trace] block, derived from result.trace."""
+    outcomes = [httpx.TimeoutException("t1"), _Resp(200, {"response": "ok"})]
+    with _patch_httpx(outcomes):
+        result = runner.invoke(
+            app, ["chat", "--verbose", "--retries", "1", "ping"],
+        )
+    assert result.exit_code == 0
+    err = getattr(result, "stderr", "") or ""
+    assert "[trace]" in err
+    assert "attempt 1 → timeout" in err
+    assert "backoff →" in err
+    assert "attempt 2 → success" in err
+    assert "total →" in err
+
+
+def test_chat_verbose_trace_does_not_dump_timeline_json():
+    """The [trace] block is human-readable lines — no raw JSON in human mode."""
+    with _patch_httpx([_Resp(200, {"response": "ok"})]):
+        result = runner.invoke(app, ["chat", "--verbose", "ping"])
+    err = getattr(result, "stderr", "") or ""
+    assert "[trace]" in err
+    # If we ever dump the trace dict, this would slip in.
+    assert '"events"' not in err
+    assert '"kind"' not in err
+
+
+def test_chat_verbose_failure_emits_trace_before_diagnostic():
+    """On failure, --verbose still shows the [trace] block."""
+    outcomes = [httpx.TimeoutException("t1"), httpx.TimeoutException("t2")]
+    with _patch_httpx(outcomes):
+        result = runner.invoke(
+            app, ["chat", "--verbose", "--retries", "1", "ping"],
+        )
+    assert result.exit_code == 3
+    err = getattr(result, "stderr", "") or ""
+    assert "[trace]" in err
+    assert "attempt 1 → timeout" in err
+    assert "attempt 2 → timeout" in err
+    assert "[chat] FAILED" in err
+
+
+def test_chat_non_verbose_does_not_emit_trace_block():
+    """Default mode stays quiet — trace is opt-in via --verbose."""
+    with _patch_httpx([_Resp(200, {"response": "ok"})]):
+        result = runner.invoke(app, ["chat", "ping"])
+    err = getattr(result, "stderr", "") or ""
+    assert "[trace]" not in err
+
+
+def test_chat_json_envelope_includes_trace():
+    """JSON envelope must carry the structured trace alongside legacy fields."""
+    with _patch_httpx([_Resp(200, {"response": "ok", "model": "m"})]):
+        result = runner.invoke(app, ["chat", "--json", "ping"])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout.strip())
+    assert "trace" in payload
+    trace = payload["trace"]
+    assert set(trace) == {"events", "total_elapsed", "attempts"}
+    kinds = [e["kind"] for e in trace["events"]]
+    assert kinds == ["attempt", "summary"]
+    # Legacy keys remain — no renames, no nesting.
+    assert "timeline" in payload
+    assert payload["attempts"] == 1
+    assert "elapsed_seconds" in payload
