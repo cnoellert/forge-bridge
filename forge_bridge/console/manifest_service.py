@@ -58,6 +58,12 @@ class ToolRecord:
     observation_count: int = 0
     tags: tuple[str, ...] = field(default_factory=tuple)
     meta: tuple[tuple[str, str], ...] = field(default_factory=tuple)
+    # Bug C — Backend reachability annotation (computed at read time, never
+    # persisted). None means "not yet annotated" (e.g. fresh from the watcher);
+    # True/False are set by ConsoleReadAPI.get_tools() via the existing
+    # _tool_filter probe. ManifestService writers leave this at None and
+    # callers compute the value from live backend state.
+    available: Optional[bool] = None
 
     def __post_init__(self) -> None:
         # Fail fast on list/dict -- frozen dataclass silently accepts them

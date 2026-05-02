@@ -16,6 +16,7 @@ Related: CONTEXT.md D-40, PATTERNS.md "No Analog Gap Flag".
 from __future__ import annotations
 
 from dataclasses import fields
+from types import SimpleNamespace
 
 import pytest
 
@@ -29,9 +30,25 @@ def ms() -> ManifestService:
 
 
 @pytest.fixture
-def api(ms: ManifestService) -> ConsoleReadAPI:
+def api(ms: ManifestService, monkeypatch) -> ConsoleReadAPI:
     # A bare ExecutionLog stand-in — get_tools() never touches it.
     from forge_bridge.learning.execution_log import ExecutionLog
+    import forge_bridge.mcp.server as real_server
+    from forge_bridge.console import _tool_filter
+
+    # Bug C — get_tools() now sources from the live MCP registry. Bind the
+    # MCP stub to the manifest so the test's ms.remove() (which simulates
+    # the watcher's removal-mirror path) also drops the tool from the
+    # registry — production quarantine removes from BOTH stores.
+    async def _list_tools():
+        return [SimpleNamespace(name=r.name) for r in ms.get_all()]
+
+    async def _reach():
+        return {"flame_bridge": True}
+
+    monkeypatch.setattr(real_server, "mcp",
+                        SimpleNamespace(list_tools=_list_tools))
+    monkeypatch.setattr(_tool_filter, "_get_backend_reachability", _reach)
 
     return ConsoleReadAPI(
         execution_log=ExecutionLog(),

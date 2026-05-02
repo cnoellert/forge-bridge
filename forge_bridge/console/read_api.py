@@ -114,12 +114,105 @@ class ConsoleReadAPI:
     # -- Tools --------------------------------------------------------------
 
     async def get_tools(self) -> list["ToolRecord"]:
-        """Return every registered ToolRecord in insertion order."""
-        return self._manifest_service.get_all()
+        """Return every registered tool, enriched with provenance + availability.
+
+        Sources (Bug C fix):
+          1. ``mcp.list_tools()`` — the canonical registry of every flame_*,
+             forge_*, and synth_* tool actually wired into the FastMCP
+             singleton. Builtin tools live ONLY here (the synthesized-tool
+             watcher is the sole writer for ManifestService, so the manifest
+             never sees builtins on its own).
+          2. ManifestService — provenance enrichment (origin, code_hash,
+             observation_count, tags, …) overlaid on top when present.
+             Tools without a manifest record default to origin="builtin"
+             and a namespace inferred from the name prefix.
+          3. ``_tool_filter._get_backend_reachability()`` + ``_is_in_process_tool``
+             — sets ``ToolRecord.available``. Tools whose runtime is
+             in-process (synth_*, the seven _IN_PROCESS_FORGE_TOOLS) are
+             always available; flame_* / forge_* tools that depend on the
+             Flame HTTP bridge inherit the cached probe result.
+
+        This method does NOT drop tools — chat's
+        ``filter_tools_by_reachable_backends`` (handlers.py) is independent
+        and keeps its drop-on-unreachable semantics for LLM safety.
+        """
+        # Lazy imports keep the read-API module decoupled from MCP/server
+        # imports at module load time (avoids triggering register_builtins()
+        # during pure unit-test imports).
+        import dataclasses
+
+        from forge_bridge.console._tool_filter import (
+            _get_backend_reachability,
+            _is_in_process_tool,
+        )
+        from forge_bridge.console.manifest_service import ToolRecord
+        from forge_bridge.mcp import server as _mcp_server
+
+        live = await _mcp_server.mcp.list_tools()
+        reachability = await _get_backend_reachability()
+        flame_ok = bool(reachability.get("flame_bridge", False))
+
+        out: list[ToolRecord] = []
+        for tool in live:
+            name = tool.name
+            record = self._manifest_service.get(name)
+            if record is None:
+                ns_prefix = name.split("_", 1)[0] if "_" in name else "other"
+                record = ToolRecord(
+                    name=name,
+                    origin="builtin",
+                    namespace=ns_prefix,
+                )
+
+            if _is_in_process_tool(name):
+                available = True
+            elif name.startswith(("flame_", "forge_")):
+                available = flame_ok
+            else:
+                # Defense-in-depth: registry _validate_name only allows the
+                # three known prefixes, so this branch should be unreachable.
+                available = True
+
+            out.append(dataclasses.replace(record, available=available))
+
+        return out
 
     async def get_tool(self, name: str) -> Optional["ToolRecord"]:
-        """Return a single ToolRecord by name, or None."""
-        return self._manifest_service.get(name)
+        """Return a single ToolRecord by name, or None.
+
+        Mirrors get_tools() so a single-tool drilldown sees both builtin and
+        synthesized tools, with the same availability annotation applied.
+        """
+        import dataclasses
+
+        from forge_bridge.console._tool_filter import (
+            _get_backend_reachability,
+            _is_in_process_tool,
+        )
+        from forge_bridge.console.manifest_service import ToolRecord
+        from forge_bridge.mcp import server as _mcp_server
+
+        live = await _mcp_server.mcp.list_tools()
+        live_match = next((t for t in live if t.name == name), None)
+        if live_match is None:
+            # Tool not registered — manifest cannot rescue this.
+            return None
+
+        record = self._manifest_service.get(name)
+        if record is None:
+            ns_prefix = name.split("_", 1)[0] if "_" in name else "other"
+            record = ToolRecord(name=name, origin="builtin", namespace=ns_prefix)
+
+        reachability = await _get_backend_reachability()
+        flame_ok = bool(reachability.get("flame_bridge", False))
+        if _is_in_process_tool(name):
+            available = True
+        elif name.startswith(("flame_", "forge_")):
+            available = flame_ok
+        else:
+            available = True
+
+        return dataclasses.replace(record, available=available)
 
     # -- Executions ---------------------------------------------------------
 

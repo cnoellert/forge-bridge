@@ -289,3 +289,80 @@ class TestToolsGroupingPR9:
         for t in parsed["data"]:
             assert "group" not in t
             assert "readable" not in t
+
+
+class TestToolsAvailabilityBugC:
+    """Bug C — `available` annotation is surfaced; tools never silently drop."""
+
+    def _sample(self):
+        return [
+            {"name": "flame_ping", "origin": "builtin", "namespace": "flame",
+             "synthesized_at": None, "code_hash": None, "version": None,
+             "observation_count": 0, "tags": [], "meta": {},
+             "available": False},   # backend unreachable but still listed
+            {"name": "forge_list_staged", "origin": "builtin", "namespace": "forge",
+             "synthesized_at": None, "code_hash": None, "version": None,
+             "observation_count": 0, "tags": [], "meta": {},
+             "available": True},    # in-process, always available
+            {"name": "synth_rename_segment", "origin": "synthesized",
+             "namespace": "synth", "synthesized_at": "2026-04-22T10:00:00+00:00",
+             "code_hash": "a" * 64, "version": "1.0.0", "observation_count": 5,
+             "tags": [], "meta": {}, "available": True},
+        ]
+
+    def test_unreachable_tools_still_listed(self, monkeypatch):
+        sample = self._sample()
+
+        def handler(request):
+            return httpx.Response(200, json={"data": sample, "meta": {"total": 3}})
+
+        _mock_transport(monkeypatch, handler)
+        result = runner.invoke(_make_app(), ["tools"], env={"FORGE_CONSOLE_PORT": "9996"})
+        assert result.exit_code == 0
+        out = result.output
+
+        # Every tool appears, including the unreachable flame_ping.
+        for t in sample:
+            assert t["name"] in out
+
+    def test_availability_column_renders(self, monkeypatch):
+        sample = self._sample()
+
+        def handler(request):
+            return httpx.Response(200, json={"data": sample, "meta": {"total": 3}})
+
+        _mock_transport(monkeypatch, handler)
+        result = runner.invoke(_make_app(), ["tools"], env={"FORGE_CONSOLE_PORT": "9996"})
+        assert result.exit_code == 0
+        out = result.output
+
+        # Both labels visible at least once each.
+        assert "available" in out
+        assert "unavailable" in out
+
+    def test_json_envelope_includes_available_field(self, monkeypatch):
+        sample = self._sample()
+
+        def handler(request):
+            return httpx.Response(200, json={"data": sample, "meta": {"total": 3}})
+
+        _mock_transport(monkeypatch, handler)
+        result = runner.invoke(
+            _make_app(), ["tools", "--json"],
+            env={"FORGE_CONSOLE_PORT": "9996"},
+        )
+        assert result.exit_code == 0
+        parsed = json.loads(result.output.strip())
+
+        # Existing envelope shape preserved.
+        assert "data" in parsed
+        assert {t["name"] for t in parsed["data"]} == {
+            "flame_ping", "forge_list_staged", "synth_rename_segment",
+        }
+        # New field carried verbatim from the API payload.
+        availability = {t["name"]: t["available"] for t in parsed["data"]}
+        assert availability == {
+            "flame_ping": False,
+            "forge_list_staged": True,
+            "synth_rename_segment": True,
+        }

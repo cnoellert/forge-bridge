@@ -221,7 +221,8 @@ def _render_list(console, tools: list[dict], quiet: bool = False) -> None:
         for t in tools:
             console.print(
                 f"{t['name']}\t{_derive_status(t)}\t"
-                f"{t.get('origin', '')}\t{format_timestamp(t.get('synthesized_at'))}"
+                f"{t.get('origin', '')}\t{_availability_label(t)}\t"
+                f"{format_timestamp(t.get('synthesized_at'))}"
             )
         return
 
@@ -245,9 +246,34 @@ def _render_list(console, tools: list[dict], quiet: bool = False) -> None:
         table = Table(box=TOOLS_BOX, show_header=False, padding=(0, 1))
         table.add_column("Name", overflow="fold")
         table.add_column("Description", overflow="fold")
+        table.add_column("Status", overflow="fold")
         for t in sorted(grouped[ns], key=lambda x: x.get("name", "")):
-            table.add_row(t["name"], _humanize(t["name"]))
+            table.add_row(
+                t["name"],
+                _humanize(t["name"]),
+                _availability_chip(t),
+            )
         console.print(table)
+
+
+def _availability_label(tool: dict) -> str:
+    """Plain-text availability for --quiet output and JSON-equivalent rendering."""
+    av = tool.get("available")
+    if av is True:
+        return "available"
+    if av is False:
+        return "unavailable"
+    return "unknown"
+
+
+def _availability_chip(tool: dict) -> Text:
+    """Styled availability chip for the Rich table column."""
+    av = tool.get("available")
+    if av is True:
+        return Text("available", style="green")
+    if av is False:
+        return Text("unavailable", style="red")
+    return Text("unknown", style="dim")
 
 
 def _render_drilldown(console, tool: dict) -> None:

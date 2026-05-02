@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -18,6 +19,33 @@ def _make_record(name: str) -> ToolRecord:
         name=name, origin="synthesized", namespace="synth",
         tags=("synthesized",),
     )
+
+
+def _patch_mcp_and_reachability(
+    monkeypatch,
+    tool_names: list[str],
+    flame_ok: bool = True,
+) -> None:
+    """Bug C — stub the live MCP registry + reachability probe used by get_tools.
+
+    Without this stub get_tools() would hit the real FastMCP singleton (which
+    holds the actual ~49 builtins) and the real flame_bridge probe.
+    """
+    import forge_bridge.mcp.server as real_server
+    from forge_bridge.console import _tool_filter
+
+    async def _list_tools():
+        return [SimpleNamespace(name=n) for n in tool_names]
+
+    monkeypatch.setattr(
+        real_server, "mcp",
+        SimpleNamespace(list_tools=_list_tools),
+    )
+
+    async def _fake_reach():
+        return {"flame_bridge": flame_ok}
+
+    monkeypatch.setattr(_tool_filter, "_get_backend_reachability", _fake_reach)
 
 
 # -- Instance-identity / construction ---------------------------------------
@@ -35,21 +63,106 @@ def test_console_read_api_init_requires_execution_log_and_manifest_service():
 # -- Tools delegation -------------------------------------------------------
 
 
-async def test_get_tools_delegates_to_manifest_service():
+async def test_get_tools_sources_from_mcp_with_manifest_enrichment(monkeypatch):
+    """Bug C — get_tools() pulls from the live MCP registry; manifest enriches.
+
+    The manifest carries provenance only for synthesized tools. Builtins live
+    only in the MCP registry; get_tools() must surface them with origin="builtin".
+    """
     ms = ManifestService()
-    await ms.register(_make_record("a_tool"))
-    await ms.register(_make_record("b_tool"))
+    await ms.register(_make_record("synth_a"))
+    _patch_mcp_and_reachability(
+        monkeypatch,
+        tool_names=["flame_ping", "forge_list_shots", "synth_a"],
+        flame_ok=True,
+    )
     api = ConsoleReadAPI(execution_log=MagicMock(), manifest_service=ms)
+
     got = await api.get_tools()
-    assert [t.name for t in got] == ["a_tool", "b_tool"]
+    by_name = {t.name: t for t in got}
+
+    # All three tools surface — no silent drops.
+    assert set(by_name) == {"flame_ping", "forge_list_shots", "synth_a"}
+    # Builtins synthesized into ToolRecord on the fly.
+    assert by_name["flame_ping"].origin == "builtin"
+    assert by_name["flame_ping"].namespace == "flame"
+    assert by_name["forge_list_shots"].origin == "builtin"
+    # Manifest enrichment wins for synthesized tools.
+    assert by_name["synth_a"].origin == "synthesized"
+    assert by_name["synth_a"].tags == ("synthesized",)
 
 
-async def test_get_tool_returns_single_record_or_none():
+async def test_get_tools_marks_unreachable_but_never_drops(monkeypatch):
+    """Bug C acceptance — flame/forge tools stay listed when backend is down."""
     ms = ManifestService()
-    await ms.register(_make_record("x"))
+    _patch_mcp_and_reachability(
+        monkeypatch,
+        tool_names=["flame_ping", "forge_list_shots", "forge_list_staged",
+                    "synth_a"],
+        flame_ok=False,
+    )
+    # Pre-register one synth so we know enrichment ran.
+    await ms.register(_make_record("synth_a"))
     api = ConsoleReadAPI(execution_log=MagicMock(), manifest_service=ms)
-    assert (await api.get_tool("x")).name == "x"
-    assert await api.get_tool("nope") is None
+
+    got = await api.get_tools()
+    av = {t.name: t.available for t in got}
+
+    # Backend-dependent tools are present but marked unavailable.
+    assert av["flame_ping"] is False
+    assert av["forge_list_shots"] is False
+    # In-process tools (the seven _IN_PROCESS_FORGE_TOOLS) and synth_* always
+    # available — see _tool_filter._is_in_process_tool.
+    assert av["forge_list_staged"] is True
+    assert av["synth_a"] is True
+    # No tools dropped — count matches the registry.
+    assert len(got) == 4
+
+
+async def test_get_tool_surfaces_builtin_with_availability(monkeypatch):
+    ms = ManifestService()
+    await ms.register(_make_record("synth_a"))
+    _patch_mcp_and_reachability(
+        monkeypatch,
+        tool_names=["flame_ping", "synth_a"],
+        flame_ok=True,
+    )
+    api = ConsoleReadAPI(execution_log=MagicMock(), manifest_service=ms)
+
+    builtin = await api.get_tool("flame_ping")
+    assert builtin is not None
+    assert builtin.name == "flame_ping"
+    assert builtin.origin == "builtin"
+    assert builtin.available is True
+
+    synth = await api.get_tool("synth_a")
+    assert synth is not None
+    assert synth.origin == "synthesized"
+    assert synth.available is True
+
+    assert await api.get_tool("nope") is None  # unregistered name
+
+
+async def test_get_tool_marks_unreachable_builtin_unavailable(monkeypatch):
+    ms = ManifestService()
+    _patch_mcp_and_reachability(
+        monkeypatch,
+        tool_names=["flame_ping"],
+        flame_ok=False,
+    )
+    api = ConsoleReadAPI(execution_log=MagicMock(), manifest_service=ms)
+
+    rec = await api.get_tool("flame_ping")
+    assert rec is not None
+    assert rec.available is False  # still surfaced, just flagged
+
+
+async def test_to_dict_carries_available_field():
+    """Bug C — to_dict must serialize the new field for the JSON envelope."""
+    rec = ToolRecord(name="x", origin="builtin", namespace="flame", available=False)
+    d = rec.to_dict()
+    assert "available" in d
+    assert d["available"] is False
 
 
 # -- Executions forwarding --------------------------------------------------

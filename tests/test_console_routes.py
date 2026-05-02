@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,7 +21,7 @@ def _record(name: str) -> ToolRecord:
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
     ms = ManifestService()
     import asyncio
     loop = asyncio.new_event_loop()
@@ -29,6 +30,23 @@ def client():
         loop.run_until_complete(ms.register(_record("b_tool")))
     finally:
         loop.close()
+
+    # Bug C — get_tools() now sources from the live MCP registry. Stub it
+    # so this fixture's manifest names ARE the registry, otherwise the
+    # 49 real builtins would leak into these focused route assertions.
+    import forge_bridge.mcp.server as real_server
+    from forge_bridge.console import _tool_filter
+
+    async def _list_tools():
+        return [SimpleNamespace(name="a_tool"), SimpleNamespace(name="b_tool")]
+
+    async def _reach():
+        return {"flame_bridge": True}
+
+    monkeypatch.setattr(real_server, "mcp",
+                        SimpleNamespace(list_tools=_list_tools))
+    monkeypatch.setattr(_tool_filter, "_get_backend_reachability", _reach)
+
     mock_log = MagicMock()
     mock_log.snapshot.return_value = ([], 0)
     api = ConsoleReadAPI(execution_log=mock_log, manifest_service=ms)

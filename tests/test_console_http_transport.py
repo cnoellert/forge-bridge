@@ -51,6 +51,24 @@ async def console_server(tmp_path, monkeypatch):
     ms = ManifestService()
     await ms.register(_record("a_tool"))
     register_canonical_singletons(log, ms)
+
+    # Bug C — get_tools() now sources from the live MCP registry. Stub it to
+    # mirror the manifest fixture so the transport test asserts the bytes
+    # uvicorn emits, not the contents of the real ~49-tool builtin registry.
+    from types import SimpleNamespace
+    import forge_bridge.mcp.server as real_server
+    from forge_bridge.console import _tool_filter
+
+    async def _list_tools():
+        return [SimpleNamespace(name="a_tool")]
+
+    async def _reach():
+        return {"flame_bridge": True}
+
+    monkeypatch.setattr(real_server, "mcp",
+                        SimpleNamespace(list_tools=_list_tools))
+    monkeypatch.setattr(_tool_filter, "_get_backend_reachability", _reach)
+
     api = ConsoleReadAPI(execution_log=log, manifest_service=ms)
 
     app = build_console_app(api)

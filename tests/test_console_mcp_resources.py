@@ -208,7 +208,26 @@ async def test_manifest_tool_shim_matches_manifest_resource_bytes(api):
     )
 
 
-async def test_tools_shim_with_name_returns_single_tool(api):
+def _patch_mcp_to_match_manifest(monkeypatch, names: list[str]) -> None:
+    """Bug C — get_tools/get_tool now consult the live MCP registry. Stub it
+    to mirror the manifest fixture so the byte-identity assertions stay
+    focused on shim behavior rather than the real ~49-tool registry."""
+    import forge_bridge.mcp.server as real_server
+    from types import SimpleNamespace as _SN
+    from forge_bridge.console import _tool_filter
+
+    async def _list_tools():
+        return [_SN(name=n) for n in names]
+
+    async def _reach():
+        return {"flame_bridge": True}
+
+    monkeypatch.setattr(real_server, "mcp", _SN(list_tools=_list_tools))
+    monkeypatch.setattr(_tool_filter, "_get_backend_reachability", _reach)
+
+
+async def test_tools_shim_with_name_returns_single_tool(api, monkeypatch):
+    _patch_mcp_to_match_manifest(monkeypatch, ["a_tool", "b_tool"])
     spy = _ResourceSpy()
     register_console_resources(spy, api._manifest_service, api)
     body = await spy.tools["forge_tools_read"]("a_tool")
@@ -221,7 +240,8 @@ async def test_tools_shim_with_name_returns_single_tool(api):
     assert decoded_missing["error"]["code"] == "tool_not_found"
 
 
-async def test_tools_shim_without_name_returns_list(api):
+async def test_tools_shim_without_name_returns_list(api, monkeypatch):
+    _patch_mcp_to_match_manifest(monkeypatch, ["a_tool", "b_tool"])
     spy = _ResourceSpy()
     register_console_resources(spy, api._manifest_service, api)
     body = await spy.tools["forge_tools_read"](None)
