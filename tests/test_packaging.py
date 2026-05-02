@@ -273,3 +273,71 @@ def test_launchd_wrappers_bash_syntax_clean():
         r = subprocess.run([bash, "-n", str(_LAUNCHD / name)], capture_output=True, text=True)
         assert r.returncode == 0, \
             f"{name}: bash syntax check failed: {r.stderr!r}"
+
+
+# ---------------------------------------------------------------------------
+# Phase 20.1 P4 — install-bootstrap.sh regression tests
+# ---------------------------------------------------------------------------
+
+_SCRIPTS = _REPO_ROOT / "scripts"
+
+
+def test_install_bootstrap_exists_and_executable():
+    """scripts/install-bootstrap.sh must exist and be executable."""
+    path = _SCRIPTS / "install-bootstrap.sh"
+    assert path.is_file(), "scripts/install-bootstrap.sh missing — Phase 20.1 P4 deliverable"
+    assert os.access(path, os.X_OK), \
+        f"install-bootstrap.sh not executable (mode {oct(path.stat().st_mode)[-3:]})"
+
+
+def test_install_bootstrap_bash_syntax_clean():
+    """`bash -n scripts/install-bootstrap.sh` must exit 0 — catches syntax errors at test time."""
+    bash = shutil.which("bash")
+    if not bash:
+        import pytest
+        pytest.skip("bash not on PATH")
+    r = subprocess.run([bash, "-n", str(_SCRIPTS / "install-bootstrap.sh")],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, f"install-bootstrap.sh syntax error: {r.stderr!r}"
+
+
+def test_install_bootstrap_has_all_flags():
+    """D-07: ALL 5 flags must be present (no planted-but-unimplemented lazy paths)."""
+    content = (_SCRIPTS / "install-bootstrap.sh").read_text()
+    for flag in ("--track-b", "--no-postgres", "--mcp-only", "--with-flame-mac", "--non-interactive"):
+        assert flag in content, f"install-bootstrap.sh missing flag: {flag}"
+
+
+def test_install_bootstrap_no_orphan_server_reference():
+    """CLAUDE.md anti-pattern guard — orphan forge_bridge/server.py never referenced."""
+    content = (_SCRIPTS / "install-bootstrap.sh").read_text()
+    assert "forge_bridge/server.py" not in content, \
+        "install-bootstrap.sh references the pre-Phase-5 orphan top-level file"
+
+
+def test_install_bootstrap_uses_modern_launchctl():
+    """RESEARCH.md TL;DR item 10: bootstrap/bootout, NOT load/unload (deprecated since macOS 11)."""
+    content = (_SCRIPTS / "install-bootstrap.sh").read_text()
+    # Allow `launchctl bootout` but not `launchctl unload`. Check word-boundary forms.
+    import re
+    assert not re.search(r"\blaunchctl\s+load\b", content), \
+        "install-bootstrap.sh uses deprecated `launchctl load`; use `launchctl bootstrap system ...`"
+    assert not re.search(r"\blaunchctl\s+unload\b", content), \
+        "install-bootstrap.sh uses deprecated `launchctl unload`; use `launchctl bootout system ...`"
+
+
+def test_install_bootstrap_chains_doctor():
+    """D-12: script auto-runs `forge-bridge console doctor` at end as PASS/FAIL gate."""
+    content = (_SCRIPTS / "install-bootstrap.sh").read_text()
+    assert "forge-bridge console doctor" in content or "forge_bridge.cli console doctor" in content, \
+        "install-bootstrap.sh must auto-run the doctor (D-12 verification gate)"
+
+
+def test_install_bootstrap_log_prefix_discipline():
+    """Cross-cutting Pattern C: every operator-facing log line uses [forge-bridge] prefix."""
+    content = (_SCRIPTS / "install-bootstrap.sh").read_text()
+    # Heuristic: at least 10 [forge-bridge] mentions across echo lines (script has ~250 lines).
+    occurrences = content.count("[forge-bridge]")
+    assert occurrences >= 10, \
+        f"install-bootstrap.sh log-prefix discipline weak — found {occurrences} '[forge-bridge]' " \
+        f"mentions, expected >=10 (Cross-cutting Pattern C)"
