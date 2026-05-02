@@ -140,6 +140,7 @@ On a fresh Rocky/RHEL machine:
 - Runs `alembic upgrade head` against the new database
 - Installs `/etc/forge-bridge/forge-bridge.env` from the in-tree template (mode `0640 root:$YOUR_USER`)
 - Copies `packaging/systemd/*.service` → `/etc/systemd/system/`, runs `systemctl daemon-reload`, enables and starts both units
+- The `forge-bridge` facade unit runs FastMCP in **streamable-http** transport mode on `:9997` (MCP HTTP) and co-hosts the Artist Console on `:9996` via FastMCP lifespan — it does NOT use stdio, so it survives as a long-running daemon without stdin input
 - Auto-runs `forge-bridge console doctor` as the install-success gate
 
 On macOS:
@@ -236,7 +237,7 @@ The default `FORGE_DB_URL=postgresql+asyncpg://forge:forge@localhost:5432/forge_
 The bootstrap script (Step 3) registered TWO services on your machine and started them in the right order. forge-bridge is a two-process system:
 
 - **`forge-bridge-server`** — the WebSocket bus on `:9998` (the canonical event-driven backplane; runs `python -m forge_bridge.server`)
-- **`forge-bridge`** — the MCP server + Artist Console + chat endpoint on `:9996` (runs `python -m forge_bridge`); depends on the bus
+- **`forge-bridge`** — the MCP HTTP server on `:9997` + Artist Console + chat endpoint on `:9996` (runs `python -m forge_bridge --transport streamable-http --mcp-port 9997`); depends on the bus
 
 Closes Phase 20 gap #11 — earlier versions of this doc claimed `python -m forge_bridge` boots all surfaces in one shot. That was incorrect; the bus is a separate process and must start first. systemd `Requires=` (Linux) and a wrapper-script `:9998` readiness gate (macOS) handle the ordering invisibly now.
 
@@ -244,7 +245,17 @@ Closes Phase 20 gap #11 — earlier versions of this doc claimed `python -m forg
 
 ```bash
 sudo systemctl status forge-bridge-server   # WS bus on :9998
-sudo systemctl status forge-bridge          # MCP + Console on :9996
+sudo systemctl status forge-bridge          # MCP HTTP on :9997 + Console on :9996
+```
+
+Verify both ports are bound after startup:
+
+```bash
+sudo ss -tlnp | grep -E '9996|9997|9998'
+# expect three rows:
+#   0.0.0.0:9998  — WebSocket bus (forge-bridge-server)
+#   127.0.0.1:9997 — MCP HTTP / streamable-http (forge-bridge)
+#   127.0.0.1:9996 — Artist Console + chat + Read API (forge-bridge, co-hosted via lifespan)
 ```
 
 Live logs:
@@ -270,6 +281,13 @@ sudo launchctl print system/com.cnoellert.forge-bridge-server
 sudo launchctl print system/com.cnoellert.forge-bridge
 ```
 
+Verify both ports are bound after startup:
+
+```bash
+sudo lsof -iTCP -sTCP:LISTEN | grep -E '9996|9997|9998'
+# expect three rows: bus on :9998, MCP HTTP on :9997, Console on :9996
+```
+
 Live logs (macOS plists write to file, not stdout — `tail -f` directly):
 
 ```bash
@@ -287,7 +305,11 @@ sudo launchctl bootout system /Library/LaunchDaemons/com.cnoellert.forge-bridge-
 
 ### 6c. About the lifespan model
 
-Both daemons are managed by the OS init system — systemd on Linux, launchd on macOS. Process supervision (start at boot, restart on crash, journal logging) comes for free. The stdin-keepalive workaround from earlier versions is no longer needed — daemons run as supervised services with `StandardInput=null` (Linux) or detached stdin (macOS), so the FastMCP stdio handshake-exit issue is solved at the unit level.
+Both daemons are managed by the OS init system — systemd on Linux, launchd on macOS. Process supervision (start at boot, restart on crash, journal logging) comes for free.
+
+The `forge-bridge` facade daemon runs FastMCP in **streamable-http** transport mode, which launches a long-running uvicorn server on `:9997`. This transport does NOT read stdin, so the daemon survives indefinitely as a supervised service — no stdin-keepalive workaround needed. The Artist Console + chat endpoint on `:9996` are co-hosted via FastMCP's lifespan mechanism and stay bound for as long as the uvicorn server is running.
+
+**Claude Desktop / Anthropic Connect users:** the daemon path exposes an MCP HTTP endpoint at `http://localhost:9997/mcp` (streamable-http protocol). MCP clients that support HTTP transport can point directly at that URL instead of the legacy `python -m forge_bridge` stdio launch-process config. The stdio invocation (`python -m forge_bridge` with no flags) still works for Claude Desktop's launch-process config — `stdio` remains the default transport.
 
 ---
 
@@ -351,6 +373,7 @@ ollama list | grep qwen2.5-coder                       # confirms model is pulle
 | `FORGE_CLOUD_MODEL` | `claude-sonnet-4-6` | Anthropic model (only used when `sensitive=False`) |
 | `ANTHROPIC_API_KEY` | unset | Optional — cloud routing only |
 | `FORGE_CONSOLE_PORT` | `9996` | Web UI / chat endpoint port |
+| `FORGE_MCP_PORT` | `9997` | FastMCP bind port under `streamable-http` / `sse` daemon transports (ignored under `stdio`) |
 | `FORGE_BRIDGE_HOST` | `127.0.0.1` | Flame bridge target host |
 | `FORGE_BRIDGE_PORT` | `9999` | Flame bridge port |
 | `FORGE_BRIDGE_ENABLED` | `1` | Set `0` to disable the Flame hook without uninstalling |
@@ -363,8 +386,9 @@ ollama list | grep qwen2.5-coder                       # confirms model is pulle
 
 | Port | Surface | Process |
 |------|---------|---------|
-| `9996` | Web UI + `/api/v1/chat` + `/api/v1/staged` + Read API | `python -m forge_bridge` |
-| `9998` | WebSocket event server | `python -m forge_bridge` (graceful degradation if unreachable per Phase 07.1) |
+| `9996` | Web UI + `/api/v1/chat` + `/api/v1/staged` + Read API | `python -m forge_bridge` (co-hosted via FastMCP lifespan) |
+| `9997` | MCP HTTP server (streamable-http transport) — daemon path only | `python -m forge_bridge --transport streamable-http --mcp-port 9997` |
+| `9998` | WebSocket event bus | `python -m forge_bridge.server` (graceful degradation if unreachable per Phase 07.1) |
 | `9999` | Flame hook HTTP server | Flame process (loads hook on launch) |
 
 ---
