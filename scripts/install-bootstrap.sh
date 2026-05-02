@@ -329,7 +329,11 @@ install_env_file() {
     else
         echo "[forge-bridge] /etc/forge-bridge/forge-bridge.env already exists — preserving operator edits"
     fi
-    sudo chown "root:${SUDO_USER}" /etc/forge-bridge/forge-bridge.env
+    # Use $SUDO_USER's actual primary group, not the username. Linux's user-private-group
+    # convention (each user has a same-named group) does NOT hold on macOS, where the
+    # primary group is typically `staff` (gid 20). `id -gn` works on both platforms.
+    SUDO_USER_GROUP=$(id -gn "$SUDO_USER" 2>/dev/null || echo "$SUDO_USER")
+    sudo chown "root:${SUDO_USER_GROUP}" /etc/forge-bridge/forge-bridge.env
     sudo chmod 0640 /etc/forge-bridge/forge-bridge.env
     prompt_for_llm_url
 }
