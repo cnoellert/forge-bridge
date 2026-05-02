@@ -186,6 +186,10 @@ def call_with_retry(
     start = now()
     timeline: list[dict[str, Any]] = []
     events: list[dict[str, Any]] = []
+    # PR12: retry telemetry surfaced in the trace summary. retry_skipped flips
+    # to True iff classification declined a retry that ``retries`` would have
+    # otherwise allowed.
+    retry_skipped = False
 
     # Circuit breaker — short-circuit before doing any work.
     if _circuit_open(url, now=now):
@@ -194,6 +198,7 @@ def call_with_retry(
             f"circuit open for {url} "
             f"({_BREAKER_THRESHOLD} failures in {_BREAKER_WINDOW_SECONDS:.0f}s)",
             attempts=0, start=start, timeline=timeline, events=events, now=now,
+            retry_skipped=False,
         )
 
     _report(reporter, "Sending request...")
@@ -256,11 +261,14 @@ def call_with_retry(
                     "kind": "attempt", "attempt": attempt, "duration": elapsed,
                     "result": "error", "status_code": None, "tool_calls": None,
                 })
+                if retries > 0:
+                    retry_skipped = True
                 return _emit_failure(
                     url, "connection",
                     f"connection failed in {elapsed:.2f}s (no real timeout)",
                     attempts=attempt, start=start, timeline=timeline,
                     events=events, now=now, count_toward_breaker=True,
+                    retry_skipped=retry_skipped,
                 )
             timeline.append(
                 {"attempt": attempt, "elapsed": elapsed, "outcome": "timeout"}
@@ -274,7 +282,6 @@ def call_with_retry(
             _report(reporter, last_message)
             continue
         except (httpx.ConnectError, httpx.RemoteProtocolError) as exc:
-            # Fast-fail per spec — connection errors do NOT retry.
             elapsed = now() - attempt_start
             timeline.append(
                 {"attempt": attempt, "elapsed": elapsed, "outcome": "connection"}
@@ -283,12 +290,28 @@ def call_with_retry(
                 "kind": "attempt", "attempt": attempt, "duration": elapsed,
                 "result": "error", "status_code": None, "tool_calls": None,
             })
-            return _emit_failure(
-                url, "connection",
-                f"could not connect to {url} ({type(exc).__name__})",
-                attempts=attempt, start=start, timeline=timeline, events=events,
-                now=now, count_toward_breaker=True,
+            # PR12: a connection error faster than the fast-fail threshold is
+            # almost always deterministic (refused / DNS / firewall) — retrying
+            # won't help. Slow connection failures (>=0.5s) may be transient
+            # (mid-stream resets, slow handshakes); fall through to the retry
+            # path so the existing budget + backoff loop applies.
+            if elapsed < _FAST_FAIL_DURATION_SECONDS:
+                if retries > 0:
+                    retry_skipped = True
+                return _emit_failure(
+                    url, "connection",
+                    f"could not connect to {url} ({type(exc).__name__})",
+                    attempts=attempt, start=start, timeline=timeline,
+                    events=events, now=now, count_toward_breaker=True,
+                    retry_skipped=retry_skipped,
+                )
+            last_kind = "connection"
+            last_message = (
+                f"connection to {url} dropped after {elapsed:.1f}s "
+                f"({type(exc).__name__})"
             )
+            _report(reporter, last_message)
+            continue
 
         elapsed = now() - attempt_start
         if response.status_code != 200:
@@ -316,10 +339,13 @@ def call_with_retry(
                         else f"HTTP {response.status_code} from {url} "
                              f"(fast-fail in {elapsed:.2f}s)"
                     )
+                    if retries > 0:
+                        retry_skipped = True
                     return _emit_failure(
                         url, "invalid_response", error_message,
                         attempts=attempt, start=start, timeline=timeline,
                         events=events, now=now, count_toward_breaker=False,
+                        retry_skipped=retry_skipped,
                     )
                 timeline.append({
                     "attempt": attempt, "elapsed": elapsed,
@@ -356,10 +382,13 @@ def call_with_retry(
                 if server_msg
                 else f"HTTP {response.status_code} from {url}"
             )
+            if retries > 0:
+                retry_skipped = True
             return _emit_failure(
                 url, "invalid_response", error_message,
                 attempts=attempt, start=start, timeline=timeline, events=events,
                 now=now, count_toward_breaker=False,
+                retry_skipped=retry_skipped,
             )
 
         try:
@@ -375,10 +404,13 @@ def call_with_retry(
                 "result": "error",
                 "status_code": response.status_code, "tool_calls": None,
             })
+            if retries > 0:
+                retry_skipped = True
             return _emit_failure(
                 url, "invalid_response", f"non-JSON body from {url}",
                 attempts=attempt, start=start, timeline=timeline, events=events,
                 now=now, count_toward_breaker=False,
+                retry_skipped=retry_skipped,
             )
 
         timeline.append({"attempt": attempt, "elapsed": elapsed, "outcome": "ok"})
@@ -390,7 +422,10 @@ def call_with_retry(
         })
         total_elapsed = now() - start
         _report(reporter, f"Response received ({total_elapsed:.1f}s)")
-        trace = _build_trace(events, total_elapsed, attempt, "success", None)
+        trace = _build_trace(
+            events, total_elapsed, attempt, "success", None,
+            retry_count=max(0, attempt - 1), retry_skipped=False,
+        )
         return CallResult(
             ok=True, data=data,
             error_kind=None, error_message=None, fix=None,
@@ -398,14 +433,15 @@ def call_with_retry(
             trace=trace,
         )
 
-    # Exhausted retries / budget on retryable errors (timeouts, 5xx, 429).
-    # Report actual attempts fired, not the configured total — important when
-    # the budget cap stops us before we use all the retry slots.
+    # Exhausted retries / budget on retryable errors (timeouts, 5xx, 429,
+    # slow connection drops). Report actual attempts fired, not the configured
+    # total — important when the budget cap stops us before we use all retries.
     return _emit_failure(
         url, last_kind or "timeout",
         last_message or f"LLM request timed out after {timeout:.1f}s",
         attempts=max(attempts_made, 1), start=start, timeline=timeline,
         events=events, now=now, count_toward_breaker=True,
+        retry_skipped=retry_skipped,
     )
 
 
@@ -423,10 +459,14 @@ def _fail(
     start: float,
     timeline: list[dict[str, Any]],
     events: list[dict[str, Any]],
+    retry_skipped: bool,
     now: Callable[[], float] = time.monotonic,
 ) -> CallResult:
     total_elapsed = now() - start
-    trace = _build_trace(events, total_elapsed, attempts, "failed", kind)
+    trace = _build_trace(
+        events, total_elapsed, attempts, "failed", kind,
+        retry_count=max(0, attempts - 1), retry_skipped=retry_skipped,
+    )
     return CallResult(
         ok=False, data=None,
         error_kind=kind, error_message=message,
@@ -447,6 +487,7 @@ def _emit_failure(
     start: float,
     timeline: list[dict[str, Any]],
     events: list[dict[str, Any]],
+    retry_skipped: bool,
     now: Callable[[], float] = time.monotonic,
     count_toward_breaker: bool,
 ) -> CallResult:
@@ -454,7 +495,8 @@ def _emit_failure(
     if count_toward_breaker:
         _record_breaker_failure(url, now=now)
     return _fail(kind, message, attempts=attempts, start=start,
-                 timeline=timeline, events=events, now=now)
+                 timeline=timeline, events=events,
+                 retry_skipped=retry_skipped, now=now)
 
 
 def _build_trace(
@@ -463,8 +505,15 @@ def _build_trace(
     attempts: int,
     final_status: str,
     error_kind: str | None,
+    *,
+    retry_count: int,
+    retry_skipped: bool,
 ) -> dict[str, Any]:
-    """Append the summary event and wrap the events list in the trace envelope."""
+    """Append the summary event and wrap the events list in the trace envelope.
+
+    PR12: summary carries ``retry_count`` (retries actually performed) and
+    ``retry_skipped`` (True iff classification declined a retry the
+    ``retries`` setting would have allowed)."""
     finalized = [
         *events,
         {
@@ -473,6 +522,8 @@ def _build_trace(
             "total_elapsed": total_elapsed,
             "final_status": final_status,
             "error_kind": error_kind,
+            "retry_count": retry_count,
+            "retry_skipped": retry_skipped,
         },
     ]
     return {

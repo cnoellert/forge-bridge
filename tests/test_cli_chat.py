@@ -77,6 +77,13 @@ def _disable_fast_fail_default(monkeypatch):
     monkeypatch.setattr(cw, "_FAST_FAIL_DURATION_SECONDS", 0.0)
 
 
+@pytest.fixture
+def fast_fail_enabled(monkeypatch):
+    """PR12 opt-in: re-arm the production 0.5s fast-fail threshold."""
+    monkeypatch.setattr(cw, "_FAST_FAIL_DURATION_SECONDS", 0.5)
+    return 0.5
+
+
 # ── happy path ────────────────────────────────────────────────────────────
 
 def test_chat_success_prints_reply_to_stdout():
@@ -137,7 +144,8 @@ def test_chat_timeout_exhausted_returns_actionable_fix():
     assert "increase --timeout" in err
 
 
-def test_chat_connection_error_returns_unreachable_fix():
+def test_chat_connection_error_returns_unreachable_fix(fast_fail_enabled):
+    """PR12: fast (<0.5s) ConnectError → fast-fail with unreachable hint."""
     with _patch_httpx([httpx.ConnectError("no route")]):
         result = runner.invoke(app, ["chat", "ping"])
     assert result.exit_code == 2  # _EXIT_UNREACHABLE

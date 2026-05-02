@@ -89,6 +89,7 @@ def chat_cmd(
                 "attempts": result.attempts,
                 "elapsed_seconds": round(result.elapsed_seconds, 3),
                 "timeline": result.timeline,
+                "trace": result.trace,
             }) + "\n"
         )
         raise typer.Exit(
@@ -97,6 +98,7 @@ def chat_cmd(
 
     if not result.ok:
         if verbose:
+            _write_trace_block(result.trace)
             meta = _extract_metadata(result.data)
             sys.stderr.write(
                 f"[chat] FAILED kind={result.error_kind}  "
@@ -116,6 +118,7 @@ def chat_cmd(
     # response shape is owned by chat_handler; we don't enshrine it here.
     reply = _extract_reply(result.data)
     if verbose:
+        _write_trace_block(result.trace)
         meta = _extract_metadata(result.data)
         sys.stderr.write(
             f"[chat] elapsed={result.elapsed_seconds:.2f}s  "
@@ -130,6 +133,42 @@ def chat_cmd(
 def _stderr_reporter(message: str) -> None:
     sys.stderr.write(message + "\n")
     sys.stderr.flush()
+
+
+def _write_trace_block(trace: dict) -> None:
+    """Render the structured trace as a short, ordered narrative on stderr.
+
+    Reads only the trace shape produced by ``call_wrapper`` (PR11). No
+    derivation from ``timeline``.
+    """
+    if not isinstance(trace, dict):
+        return
+    events = trace.get("events")
+    if not isinstance(events, list) or not events:
+        return
+    lines = ["[trace]"]
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        kind = ev.get("kind")
+        if kind == "attempt":
+            n = ev.get("attempt", "?")
+            res = ev.get("result", "?")
+            dur = ev.get("duration", 0.0)
+            lines.append(f"attempt {n} → {res} ({_fmt_seconds(dur)})")
+        elif kind == "backoff":
+            lines.append(f"backoff → {_fmt_seconds(ev.get('duration', 0.0))}")
+        # summary is rendered as the closing total line below.
+    total = trace.get("total_elapsed", 0.0)
+    lines.append(f"total → {_fmt_seconds(total)}")
+    sys.stderr.write("\n".join(lines) + "\n")
+
+
+def _fmt_seconds(value: object) -> str:
+    try:
+        return f"{float(value):.1f}s"
+    except (TypeError, ValueError):
+        return "?s"
 
 
 def _extract_reply(data: Optional[dict]) -> str:

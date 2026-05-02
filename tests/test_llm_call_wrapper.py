@@ -163,7 +163,8 @@ def test_zero_retries_still_emits_timeout_error():
 
 # ── connection / invalid response (no retry) ──────────────────────────────
 
-def test_connection_error_not_retried():
+def test_connection_error_not_retried(fast_fail_enabled):
+    """PR12: a fast (<0.5s) ConnectError still fast-fails — no retry."""
     outcomes = [httpx.ConnectError("refused"), _Resp(200)]
     with _patch_client(outcomes):
         result = cw.call_with_retry(
@@ -560,8 +561,8 @@ def test_backoff_includes_jitter_when_default_random_used():
 # ── PR10: connection fast-fail ───────────────────────────────────────────
 
 
-def test_connection_error_does_not_retry_even_with_high_retries():
-    """Connection errors must short-circuit regardless of retries setting."""
+def test_connection_error_does_not_retry_even_with_high_retries(fast_fail_enabled):
+    """PR12: fast connection errors must short-circuit regardless of retries."""
     queue = [httpx.ConnectError("refused"), _Resp(200, {"response": "ok"})]
     with _patch_client(queue):
         result = cw.call_with_retry(
@@ -704,6 +705,8 @@ def test_trace_summary_event_always_present_on_success_and_failure():
         "total_elapsed": ok.trace["total_elapsed"],
         "final_status": "success",
         "error_kind": None,
+        "retry_count": 0,
+        "retry_skipped": False,
     }
 
     # failure
@@ -717,6 +720,8 @@ def test_trace_summary_event_always_present_on_success_and_failure():
     assert summary["final_status"] == "failed"
     assert summary["error_kind"] == "timeout"
     assert summary["attempts"] == 2
+    assert summary["retry_count"] == 1
+    assert summary["retry_skipped"] is False
 
 
 def test_trace_503_attempt_records_status_code_in_event():
@@ -991,3 +996,150 @@ def test_pr10_1_fast_timeout_counts_toward_breaker(fast_fail_enabled):
         )
     assert result.error_kind == "circuit_open"
     assert sentinel == []
+
+
+# ── PR12: retry filtering + summary telemetry ─────────────────────────────
+
+
+def _summary(result):
+    return result.trace["events"][-1]
+
+
+def test_pr12_invalid_response_is_not_retried(fast_fail_enabled):
+    """4xx classified as invalid_response must not consume a retry slot."""
+    queue = [_Resp(400, {"error": {"message": "bad"}}),
+             _Resp(200, {"response": "would-have-worked"})]
+    with _patch_client(queue):
+        result = cw.call_with_retry(
+            "http://x/y", {},
+            timeout=10.0, retries=2, backoff_seconds=1.0,
+            sleep=lambda _s: None, jitter=lambda: 0.0,
+        )
+    assert result.ok is False
+    assert result.error_kind == "invalid_response"
+    assert result.attempts == 1
+    summary = _summary(result)
+    assert summary["retry_count"] == 0
+    assert summary["retry_skipped"] is True
+
+
+def test_pr12_fast_connection_error_is_not_retried(fast_fail_enabled):
+    """Fast (<0.5s) connection errors must short-circuit; no retry."""
+    queue = [httpx.ConnectError("refused"),
+             _Resp(200, {"response": "would-have-worked"})]
+    with _patch_client(queue):
+        result = cw.call_with_retry(
+            "http://x/y", {},
+            timeout=10.0, retries=3, backoff_seconds=1.0,
+            sleep=lambda _s: None, jitter=lambda: 0.0,
+        )
+    assert result.ok is False
+    assert result.error_kind == "connection"
+    assert result.attempts == 1
+    summary = _summary(result)
+    assert summary["retry_count"] == 0
+    assert summary["retry_skipped"] is True
+
+
+def test_pr12_slow_connection_error_is_retried(fast_fail_enabled):
+    """A connection drop slower than the fast-fail threshold should retry."""
+    clock = _ManualClock()
+    queue = [httpx.RemoteProtocolError("mid-stream reset"),
+             _Resp(200, {"response": "ok now"})]
+    with _advance_clock_client(queue, clock, advance_per_post=1.0):
+        result = cw.call_with_retry(
+            "http://x/y", {},
+            timeout=20.0, retries=2, backoff_seconds=0.0,
+            sleep=lambda _s: None, now=clock.now, jitter=lambda: 0.0,
+        )
+    assert result.ok is True
+    assert result.attempts == 2
+    summary = _summary(result)
+    assert summary["retry_count"] == 1
+    assert summary["retry_skipped"] is False
+
+
+def test_pr12_slow_timeout_still_retries_under_pr12(fast_fail_enabled):
+    """No regression on timeout retry semantics from PR10."""
+    clock = _ManualClock()
+    queue = [httpx.TimeoutException("real"), _Resp(200, {"response": "ok"})]
+    with _advance_clock_client(queue, clock, advance_per_post=2.0):
+        result = cw.call_with_retry(
+            "http://x/y", {},
+            timeout=30.0, retries=1, backoff_seconds=0.0,
+            sleep=lambda _s: None, now=clock.now, jitter=lambda: 0.0,
+        )
+    assert result.ok is True
+    assert result.attempts == 2
+    summary = _summary(result)
+    assert summary["retry_count"] == 1
+    assert summary["retry_skipped"] is False
+
+
+def test_pr12_fast_5xx_emits_no_backoff_event(fast_fail_enabled):
+    """Retry skipped → no backoff event in trace."""
+    queue = [_Resp(503, {"error": {"message": "fast"}})]
+    with _patch_client(queue):
+        result = cw.call_with_retry(
+            "http://x/y", {},
+            timeout=10.0, retries=3, backoff_seconds=1.0,
+            sleep=lambda _s: None, jitter=lambda: 0.0,
+        )
+    kinds = [e["kind"] for e in result.trace["events"]]
+    assert "backoff" not in kinds
+    assert kinds == ["attempt", "summary"]
+    summary = _summary(result)
+    assert summary["retry_skipped"] is True
+
+
+def test_pr12_summary_carries_retry_count_and_retry_skipped_keys():
+    """Every summary event has both keys, regardless of outcome."""
+    # Success with no retry
+    with _patch_client([_Resp(200, {"response": "ok"})]):
+        ok = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    s = _summary(ok)
+    assert "retry_count" in s and "retry_skipped" in s
+    assert s["retry_count"] == 0 and s["retry_skipped"] is False
+
+    # Exhausted retries (legacy mock — _disable_fast_fail_default keeps timeouts as timeouts)
+    with _patch_client([httpx.TimeoutException("t"), httpx.TimeoutException("t")]):
+        fail = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=1, backoff_seconds=0,
+            sleep=lambda _s: None, jitter=lambda: 0.0,
+        )
+    s = _summary(fail)
+    assert s["retry_count"] == 1 and s["retry_skipped"] is False
+
+
+def test_pr12_circuit_open_summary_has_retry_skipped_false():
+    """Circuit open is not 'classification declined retry' — retry_skipped stays False."""
+    url = "http://pr12-circuit/y"
+    for _ in range(cw._BREAKER_THRESHOLD):
+        cw._record_breaker_failure(url)
+
+    result = cw.call_with_retry(
+        url, {}, timeout=5.0, retries=2, backoff_seconds=0.0,
+        sleep=lambda _s: None,
+    )
+    assert result.error_kind == "circuit_open"
+    summary = _summary(result)
+    assert summary["retry_count"] == 0
+    assert summary["retry_skipped"] is False
+
+
+def test_pr12_retries_zero_does_not_set_retry_skipped_for_fast_fail(
+    fast_fail_enabled,
+):
+    """retries=0 → no retry was possible, so retry_skipped must be False."""
+    with _patch_client([_Resp(503, {"error": {"message": "fast"}})]):
+        result = cw.call_with_retry(
+            "http://x/y", {},
+            timeout=10.0, retries=0, backoff_seconds=0.0,
+            sleep=lambda _s: None, jitter=lambda: 0.0,
+        )
+    summary = _summary(result)
+    assert summary["retry_skipped"] is False
+    assert summary["retry_count"] == 0
