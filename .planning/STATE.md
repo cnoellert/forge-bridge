@@ -4,8 +4,8 @@ milestone: v1.5
 milestone_name: Legibility
 status: executing
 stopped_at: Phase 20.1 context gathered
-last_updated: "2026-05-01T22:15:14.405Z"
-last_activity: 2026-05-01
+last_updated: "2026-05-02T02:38:45.215Z"
+last_activity: 2026-05-02 -- Phase 20.1 execution started
 progress:
   total_phases: 1
   completed_phases: 1
@@ -21,15 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-30 at v1.5 milestone open)
 
 **Project core value:** forge-bridge is the single canonical pip-installable middleware (`pip install forge-bridge`) — protocol-agnostic communication bus with a canonical vocabulary that any endpoint (Flame, Maya, editorial, LLM agents) connects to.
-**Current focus:** Phase 20 — reality-audit-canonical-install
+**Current focus:** Phase 20.1 — install-bootstrap-script-systemd-daemon-v1-5-ship-blocker
 
 ## Current Position
 
-Phase: 21
-Plan: Not started
-Status: Executing Phase 20
+Phase: 20.1 (install-bootstrap-script-systemd-daemon-v1-5-ship-blocker) — EXECUTING
+Plan: 1 of 7
+Status: Executing Phase 20.1
 Milestone: v1.5 Legibility (opened 2026-04-30)
-Last activity: 2026-05-01
+Last activity: 2026-05-02 -- Phase 20.1 execution started
 
 **v1.4.x closed 2026-04-30** — patch milestone shipped at tag `v1.4.1`. 9/9 requirements (MODEL-01..02, HARNESS-01..03, POLISH-01..04) closed across 3 phases (17, 18, 19); audit `passed`; 7/7 cross-phase integration wires verified; public `__all__` byte-identical to v1.4 close (19 symbols).
 
