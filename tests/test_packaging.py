@@ -10,11 +10,16 @@ no fixtures, no asyncio.
 from __future__ import annotations
 
 import configparser
+import os
+import plistlib
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).parent.parent
 _PACKAGING = _REPO_ROOT / "packaging"
+_LAUNCHD = _PACKAGING / "launchd"
 
 
 def _read(rel: str) -> str:
@@ -158,3 +163,113 @@ def test_systemd_postgres_is_soft_dep():
             f"{name}: postgresql.service in Requires= would cascade-fail on DB restart (Phase 8 STORE-06)"
         assert "postgresql.service" in wants, \
             f"{name}: postgresql.service must be in Wants= for ordering hint without cascade"
+
+
+# ---------------------------------------------------------------------------
+# Phase 20.1 P3 — launchd plist + wrapper-script regression tests
+# ---------------------------------------------------------------------------
+
+def test_launchd_plists_parse_as_xml():
+    """Plists MUST parse as XML plist — `launchctl bootstrap` would fail otherwise."""
+    plists = list(_LAUNCHD.glob("*.plist"))
+    assert len(plists) == 2, f"expected 2 plists, got {len(plists)}: {[p.name for p in plists]}"
+    for p in plists:
+        with p.open("rb") as f:
+            data = plistlib.load(f)
+        assert data.get("Label", "").startswith("com.cnoellert.forge-bridge"), \
+            f"{p.name}: missing or wrong Label (got {data.get('Label')!r})"
+        assert data.get("ProgramArguments"), f"{p.name}: missing ProgramArguments"
+        assert data.get("RunAtLoad") is True, f"{p.name}: RunAtLoad must be True (boolean), got {data.get('RunAtLoad')!r}"
+
+
+def test_launchd_plists_keepalive_successful_exit_false():
+    """KeepAlive must be {SuccessfulExit: False} — bare KeepAlive=True respawns on clean exits (--help loop)."""
+    for name in ("com.cnoellert.forge-bridge-server.plist", "com.cnoellert.forge-bridge.plist"):
+        with (_LAUNCHD / name).open("rb") as f:
+            data = plistlib.load(f)
+        ka = data.get("KeepAlive")
+        assert isinstance(ka, dict), f"{name}: KeepAlive must be dict, got {type(ka).__name__}: {ka!r}"
+        assert ka.get("SuccessfulExit") is False, \
+            f"{name}: KeepAlive.SuccessfulExit must be False (respawn on crash only), got {ka.get('SuccessfulExit')!r}"
+
+
+def test_launchd_plists_use_user_placeholder():
+    """UserName and WorkingDirectory MUST use __SUDO_USER__ placeholder (no literal username in tree)."""
+    for name in ("com.cnoellert.forge-bridge-server.plist", "com.cnoellert.forge-bridge.plist"):
+        with (_LAUNCHD / name).open("rb") as f:
+            data = plistlib.load(f)
+        assert data.get("UserName") == "__SUDO_USER__", \
+            f"{name}: UserName must be '__SUDO_USER__'; got {data.get('UserName')!r}"
+        wd = data.get("WorkingDirectory", "")
+        assert wd == "/Users/__SUDO_USER__", \
+            f"{name}: WorkingDirectory must be '/Users/__SUDO_USER__'; got {wd!r}"
+
+
+def test_launchd_plists_no_orphan_server_file():
+    """Neither plist may reference forge_bridge/server.py (CLAUDE.md anti-pattern guard)."""
+    for name in ("com.cnoellert.forge-bridge-server.plist", "com.cnoellert.forge-bridge.plist"):
+        content = (_LAUNCHD / name).read_text()
+        assert "forge_bridge/server.py" not in content, \
+            f"{name}: references the pre-Phase-5 orphan top-level file"
+
+
+def test_launchd_wrappers_exist_and_executable():
+    """Both wrapper bash scripts must exist as files with execute mode bit set."""
+    for name in ("forge-bridge-server-daemon", "forge-bridge-daemon"):
+        path = _LAUNCHD / name
+        assert path.is_file(), f"{name}: wrapper script missing"
+        assert os.access(path, os.X_OK), f"{name}: wrapper not executable (mode {oct(path.stat().st_mode)[-3:]})"
+
+
+def test_launchd_wrappers_shebang_and_strict_mode():
+    """Both wrappers must start with `#!/usr/bin/env bash` and contain `set -euo pipefail`."""
+    for name in ("forge-bridge-server-daemon", "forge-bridge-daemon"):
+        content = (_LAUNCHD / name).read_text()
+        first_line = content.splitlines()[0] if content else ""
+        assert first_line == "#!/usr/bin/env bash", \
+            f"{name}: shebang must be '#!/usr/bin/env bash'; got {first_line!r}"
+        assert "set -euo pipefail" in content, \
+            f"{name}: missing 'set -euo pipefail' (bash hygiene baseline)"
+
+
+def test_launchd_console_wrapper_has_readiness_gate():
+    """forge-bridge-daemon MUST wait for :9998 before exec — replicates Linux Requires= cascade on macOS."""
+    content = (_LAUNCHD / "forge-bridge-daemon").read_text()
+    assert 'nc -z localhost "$PORT"' in content, \
+        "forge-bridge-daemon: missing `nc -z localhost \"$PORT\"` readiness gate (Phase 20 gap #11 macOS parity)"
+    assert "for i in $(seq 1 30)" in content, \
+        "forge-bridge-daemon: readiness gate missing `for i in $(seq 1 30)` 30-second loop"
+
+
+def test_launchd_wrappers_source_env_file():
+    """Both wrappers must use the canonical `set -a; . FILE; set +a` env-source pattern."""
+    for name in ("forge-bridge-server-daemon", "forge-bridge-daemon"):
+        content = (_LAUNCHD / name).read_text()
+        assert "set -a" in content, f"{name}: missing `set -a` env-export wrapper"
+        assert ". /etc/forge-bridge/forge-bridge.env" in content, \
+            f"{name}: missing `. /etc/forge-bridge/forge-bridge.env` source line"
+        assert "set +a" in content, f"{name}: missing `set +a` env-export revert"
+
+
+def test_launchd_wrappers_exec_correct_module():
+    """Bus wrapper exec's forge_bridge.server; Console wrapper exec's forge_bridge (NOT forge_bridge.server)."""
+    bus = (_LAUNCHD / "forge-bridge-server-daemon").read_text()
+    console = (_LAUNCHD / "forge-bridge-daemon").read_text()
+    assert "-m forge_bridge.server" in bus, \
+        "forge-bridge-server-daemon: must exec `python -m forge_bridge.server` (the WS bus submodule)"
+    # Console wrapper must invoke `forge_bridge` parent module — assert via line-level grep
+    console_lines = [ln for ln in console.splitlines() if "-m forge_bridge" in ln]
+    assert any(ln.strip().endswith("-m forge_bridge") for ln in console_lines), \
+        "forge-bridge-daemon: must exec `python -m forge_bridge` (parent module → MCP+Console)"
+
+
+def test_launchd_wrappers_bash_syntax_clean():
+    """`bash -n FILE` exits 0 — syntax errors caught at test time, not at install time."""
+    bash = shutil.which("bash")
+    if not bash:
+        import pytest
+        pytest.skip("bash not on PATH")
+    for name in ("forge-bridge-server-daemon", "forge-bridge-daemon"):
+        r = subprocess.run([bash, "-n", str(_LAUNCHD / name)], capture_output=True, text=True)
+        assert r.returncode == 0, \
+            f"{name}: bash syntax check failed: {r.stderr!r}"
