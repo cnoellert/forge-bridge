@@ -382,7 +382,7 @@ install_macos_units() {
 verify_doctor() {
     echo "[forge-bridge] running post-install verification (forge-bridge console doctor)"
     # Run as the operator user — doctor is operator-account state, not root.
-    if sudo -u "$SUDO_USER" "$CONDA_PYTHON" -m forge_bridge.cli console doctor; then
+    if sudo -u "$SUDO_USER" "$CONDA_PYTHON" -m forge_bridge console doctor; then
         echo "[forge-bridge] doctor PASS or PARTIAL — install OK"
         return 0
     else

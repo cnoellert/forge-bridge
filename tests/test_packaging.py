@@ -327,10 +327,24 @@ def test_install_bootstrap_uses_modern_launchctl():
 
 
 def test_install_bootstrap_chains_doctor():
-    """D-12: script auto-runs `forge-bridge console doctor` at end as PASS/FAIL gate."""
+    """D-12: script auto-runs `forge-bridge console doctor` at end as PASS/FAIL gate.
+
+    Must invoke either the installed console-script (`forge-bridge console doctor`) or
+    the package's `__main__` entry-point (`python -m forge_bridge console doctor`).
+    Must NOT invoke `python -m forge_bridge.cli ...` — that sub-package has no
+    `__main__.py` and the call fails at runtime (Phase 20.1 in-flight gap).
+    """
     content = (_SCRIPTS / "install-bootstrap.sh").read_text()
-    assert "forge-bridge console doctor" in content or "forge_bridge.cli console doctor" in content, \
-        "install-bootstrap.sh must auto-run the doctor (D-12 verification gate)"
+    has_console_script = "forge-bridge console doctor" in content
+    has_module_invocation = re.search(
+        r"-m\s+forge_bridge\s+console\s+doctor", content
+    ) is not None
+    assert has_console_script or has_module_invocation, \
+        "install-bootstrap.sh must auto-run the doctor (D-12 verification gate) via " \
+        "`forge-bridge console doctor` or `python -m forge_bridge console doctor`"
+    assert not re.search(r"-m\s+forge_bridge\.cli\b", content), \
+        "install-bootstrap.sh must NOT invoke `python -m forge_bridge.cli` — " \
+        "that package has no __main__.py; use `python -m forge_bridge ...` instead"
 
 
 def test_install_bootstrap_log_prefix_discipline():
