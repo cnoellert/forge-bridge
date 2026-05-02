@@ -137,8 +137,11 @@ def test_console_port_flag_sets_env(monkeypatch):
 
     captured: dict[str, str] = {}
 
-    def _stub_mcp_main():
-        # Capture the env at the moment mcp_main would have started
+    def _stub_mcp_main(*args, **kwargs):
+        # Capture the env at the moment mcp_main would have started.
+        # Accept *args/**kwargs so this stub stays compatible with future
+        # forge_bridge.mcp.server.main signature additions (e.g. Plan 20.1-08
+        # added transport= and port= parameters).
         captured["FORGE_CONSOLE_PORT"] = os.environ.get("FORGE_CONSOLE_PORT", "")
 
     # Invoke Typer app via the CliRunner so the callback runs end-to-end
