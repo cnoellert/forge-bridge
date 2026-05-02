@@ -19,4 +19,4 @@ for i in $(seq 1 30); do
 done
 
 exec "${FORGE_PYTHON:-/Users/__SUDO_USER__/miniconda3/envs/forge/bin/python}" \
-     -m forge_bridge
+     -m forge_bridge --transport streamable-http --mcp-port 9997

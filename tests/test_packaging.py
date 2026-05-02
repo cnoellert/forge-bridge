@@ -14,8 +14,13 @@ import os
 import plistlib
 import re
 import shutil
+import socket
 import subprocess
+import sys
+import time
 from pathlib import Path
+
+import pytest
 
 _REPO_ROOT = Path(__file__).parent.parent
 _PACKAGING = _REPO_ROOT / "packaging"
@@ -32,11 +37,11 @@ def test_env_template_exists():
 
 
 def test_env_template_has_all_required_keys():
-    """Every key the daemons read MUST appear in the template."""
+    """Every key the daemons read MUST appear in the template (8 keys after Plan 20.1-08)."""
     required = {
         "FORGE_DB_URL", "FORGE_LOCAL_LLM_URL", "FORGE_LOCAL_MODEL",
         "FORGE_CLOUD_MODEL", "FORGE_CONSOLE_PORT", "FORGE_BRIDGE_PORT",
-        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_API_KEY", "FORGE_MCP_PORT",
     }
     content = _read("packaging/forge-bridge.env.example")
     for key in required:
@@ -142,14 +147,66 @@ def test_systemd_units_no_orphan_server_file():
             f"{name}: references the pre-Phase-5 orphan top-level file (CLAUDE.md anti-pattern)"
 
 
-def test_systemd_units_standardinput_null():
-    """Phase 20 gap #10 regression guard: StandardInput=null prevents stdio-handshake-exit on systemd."""
-    for name in ("forge-bridge-server.service", "forge-bridge.service"):
-        cfg = configparser.RawConfigParser()
-        cfg.read(_PACKAGING / "systemd" / name)
-        stdin = cfg.get("Service", "StandardInput", fallback="")
-        assert stdin == "null", \
-            f"{name}: StandardInput must be 'null' (Phase 20 gap #10); got {stdin!r}"
+def test_systemd_facade_uses_daemon_transport():
+    """Plan 20.1-08: forge-bridge.service ExecStart MUST include --transport streamable-http.
+
+    Without an explicit transport flag, FastMCP defaults to stdio, reads /dev/null (due to
+    StandardInput=null), hits EOF, exits cleanly, and takes :9996 Console+chat+Read API down
+    with it.  streamable-http runs a long-lived uvicorn server that ignores stdin.
+    """
+    cfg = configparser.RawConfigParser()
+    cfg.read(_PACKAGING / "systemd" / "forge-bridge.service")
+    exec_start = cfg.get("Service", "ExecStart", fallback="")
+    assert "--transport streamable-http" in exec_start, (
+        f"forge-bridge.service ExecStart must include '--transport streamable-http' "
+        f"(Plan 20.1-08 gap closure); got: {exec_start!r}"
+    )
+    assert "--mcp-port 9997" in exec_start, (
+        f"forge-bridge.service ExecStart must include '--mcp-port 9997'; got: {exec_start!r}"
+    )
+
+
+def test_systemd_facade_restart_always():
+    """Plan 20.1-08: forge-bridge.service Restart= must be 'always' (not 'on-failure').
+
+    A clean FastMCP exit during lifespan teardown has exit code 0; Restart=on-failure
+    does NOT respawn on a clean exit, leaving :9996 unbound.
+    """
+    cfg = configparser.RawConfigParser()
+    cfg.read(_PACKAGING / "systemd" / "forge-bridge.service")
+    restart = cfg.get("Service", "Restart", fallback="")
+    assert restart == "always", (
+        f"forge-bridge.service Restart must be 'always' (Plan 20.1-08); got {restart!r}"
+    )
+
+
+def test_systemd_bus_unit_standardinput_null():
+    """forge-bridge-server.service (WS bus) MUST keep StandardInput=null.
+
+    The bus uses `python -m forge_bridge.server` which has a stdio dependency;
+    StandardInput=null prevents stdin-handshake-exit on systemd for that unit.
+    """
+    cfg = configparser.RawConfigParser()
+    cfg.read(_PACKAGING / "systemd" / "forge-bridge-server.service")
+    stdin = cfg.get("Service", "StandardInput", fallback="")
+    assert stdin == "null", \
+        "forge-bridge-server.service: StandardInput must be 'null' (bus unit keeps stdio suppression)"
+
+
+def test_systemd_facade_no_stdio_input_null():
+    """forge-bridge.service (MCP facade) MUST NOT have StandardInput=null.
+
+    Plan 20.1-08 gap closure: daemon now uses streamable-http transport (long-running
+    uvicorn), which does NOT depend on stdin. StandardInput=null was the root cause of
+    the flame-01 Linux walk failure (Gap 4 — FastMCP stdio+null exits on EOF).
+    """
+    cfg = configparser.RawConfigParser()
+    cfg.read(_PACKAGING / "systemd" / "forge-bridge.service")
+    stdin = cfg.get("Service", "StandardInput", fallback="")
+    assert stdin != "null", (
+        "forge-bridge.service: StandardInput=null MUST be removed for daemon mode "
+        "(Plan 20.1-08 gap closure — streamable-http transport does not use stdin)"
+    )
 
 
 def test_systemd_postgres_is_soft_dep():
@@ -257,17 +314,21 @@ def test_launchd_wrappers_exec_correct_module():
     console = (_LAUNCHD / "forge-bridge-daemon").read_text()
     assert "-m forge_bridge.server" in bus, \
         "forge-bridge-server-daemon: must exec `python -m forge_bridge.server` (the WS bus submodule)"
-    # Console wrapper must invoke `forge_bridge` parent module — assert via line-level grep
-    console_lines = [ln for ln in console.splitlines() if "-m forge_bridge" in ln]
-    assert any(ln.strip().endswith("-m forge_bridge") for ln in console_lines), \
+    # Console wrapper must invoke `forge_bridge` parent module with daemon-mode transport flags
+    assert "-m forge_bridge" in console, \
         "forge-bridge-daemon: must exec `python -m forge_bridge` (parent module → MCP+Console)"
+    assert "--transport streamable-http" in console, (
+        "forge-bridge-daemon: must pass '--transport streamable-http' "
+        "(Plan 20.1-08 gap closure — daemon must not use stdio transport)"
+    )
+    assert "--mcp-port 9997" in console, \
+        "forge-bridge-daemon: must pass '--mcp-port 9997' (Plan 20.1-08)"
 
 
 def test_launchd_wrappers_bash_syntax_clean():
     """`bash -n FILE` exits 0 — syntax errors caught at test time, not at install time."""
     bash = shutil.which("bash")
     if not bash:
-        import pytest
         pytest.skip("bash not on PATH")
     for name in ("forge-bridge-server-daemon", "forge-bridge-daemon"):
         r = subprocess.run([bash, "-n", str(_LAUNCHD / name)], capture_output=True, text=True)
@@ -294,7 +355,6 @@ def test_install_bootstrap_bash_syntax_clean():
     """`bash -n scripts/install-bootstrap.sh` must exit 0 — catches syntax errors at test time."""
     bash = shutil.which("bash")
     if not bash:
-        import pytest
         pytest.skip("bash not on PATH")
     r = subprocess.run([bash, "-n", str(_SCRIPTS / "install-bootstrap.sh")],
                        capture_output=True, text=True)
@@ -355,3 +415,56 @@ def test_install_bootstrap_log_prefix_discipline():
     assert occurrences >= 10, \
         f"install-bootstrap.sh log-prefix discipline weak — found {occurrences} '[forge-bridge]' " \
         f"mentions, expected >=10 (Cross-cutting Pattern C)"
+
+
+# ---------------------------------------------------------------------------
+# Plan 20.1-08 — daemon-persistence regression test
+# ---------------------------------------------------------------------------
+
+
+def _free_port() -> int:
+    """Return an available local TCP port (bind 0 → OS assigns → close → return)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+@pytest.mark.integration
+def test_daemon_persistence():
+    """forge-bridge daemon must NOT exit cleanly within 3s of start.
+
+    Regression guard for Phase 20.1 flame-01 Linux walk Gap 4:
+    FastMCP stdio transport + StandardInput=null caused the service to read
+    /dev/null → EOF → exit cleanly (code 0) within ~1s. Restart=on-failure
+    never triggered. This test spawns forge_bridge in streamable-http mode
+    with stdin closed (DEVNULL) and asserts the process is still alive after
+    3 seconds — catching any future regression where the daemon exits prematurely.
+    """
+    port = _free_port()
+    proc = subprocess.Popen(
+        [
+            sys.executable, "-m", "forge_bridge",
+            "--transport", "streamable-http",
+            "--mcp-port", str(port),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        stdin=subprocess.DEVNULL,
+    )
+    try:
+        time.sleep(3)
+        assert proc.poll() is None, (
+            "forge-bridge daemon exited within 3s — stdio-EOF regression "
+            "(Phase 20.1 flame-01 walk Gap 4, plan 20.1-08). "
+            f"Exit code: {proc.poll()}"
+        )
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()

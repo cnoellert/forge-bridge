@@ -75,3 +75,6 @@ asyncio_mode = "auto"
 # site-packages shadow (e.g., a stale `pip install forge-bridge` pulling in an
 # older release). Replaces a sys.path.insert() hack previously in tests/conftest.py.
 pythonpath = ["."]
+markers = [
+    "integration: marks tests that spawn subprocesses or require live network services (deselect with -m 'not integration')",
+]
