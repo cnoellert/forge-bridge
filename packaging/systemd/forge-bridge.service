@@ -1,0 +1,22 @@
+[Unit]
+Description=forge-bridge MCP server + Artist Console (port 9996)
+Documentation=https://github.com/cnoellert/forge-bridge/blob/main/docs/INSTALL.md
+Requires=forge-bridge-server.service
+After=forge-bridge-server.service network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=__SUDO_USER__
+Group=__SUDO_USER__
+EnvironmentFile=/etc/forge-bridge/forge-bridge.env
+ExecStart=/home/__SUDO_USER__/miniconda3/envs/forge/bin/python -m forge_bridge
+Restart=on-failure
+RestartSec=5
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+WorkingDirectory=/home/__SUDO_USER__
+
+[Install]
+WantedBy=multi-user.target
