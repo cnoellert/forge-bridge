@@ -191,42 +191,43 @@ Launch (or relaunch) Flame. The hook auto-starts a Python HTTP server on `http:/
 
 ---
 
-## Step 5: Configure environment variables
+## Step 5: Configure environment
 
-All forge-bridge configuration is via environment variables — there is no config file. Set these in your shell or `.env` profile (do **not** commit secrets to a version-controlled file).
+The bootstrap script (Step 3) installed `/etc/forge-bridge/forge-bridge.env` (mode `0640 root:$YOUR_USER`) — both daemons read it on start (systemd via `EnvironmentFile=`; macOS via the wrapper-script `set -a; . FILE; set +a` pattern). It is the single source of truth for forge-bridge configuration.
 
-Required for the daily operator workflow:
+Closes Phase 20 gaps #7 (env persistence — the env file IS the persistence path) and #8 (conda re-init — daemons run with absolute python paths, no shell sourcing).
 
-```bash
-# Postgres connection (override the default if your credentials differ)
-export FORGE_DB_URL="postgresql+asyncpg://forge:forge@localhost:5432/forge_bridge"
-```
+### 5a. Edit the env file (optional)
 
-Optional (defaults are usually fine):
+All defaults work for single-machine local-Ollama setups. Edit only if you need to change them — most operators set `FORGE_LOCAL_LLM_URL` once during the bootstrap script's interactive prompt and never touch the file again.
 
 ```bash
-# Ollama base URL — change to your LLM service host if Ollama is not local
-# Ollama backend (default http://localhost:11434/v1)
-export FORGE_LOCAL_LLM_URL="http://localhost:11434/v1"
-
-# Local model (default qwen2.5-coder:32b — DO NOT use qwen3:32b, see warning above)
-export FORGE_LOCAL_MODEL="qwen2.5-coder:32b"
-
-# Flame target host (default 127.0.0.1)
-export FORGE_BRIDGE_HOST="127.0.0.1"
-
-# Web UI / chat endpoint port (default 9996)
-export FORGE_CONSOLE_PORT="9996"
+sudo $EDITOR /etc/forge-bridge/forge-bridge.env
 ```
 
-Optional — cloud LLM routing (NOT required for the daily operator workflow; chat hardcodes `sensitive=True` which routes through local Ollama):
+Common changes:
+- `FORGE_LOCAL_LLM_URL` — point at your separate Ollama host (e.g. `http://192.168.86.15:11434/v1`)
+- `ANTHROPIC_API_KEY` — paste your Anthropic key if you need cloud-LLM routing (OPTIONAL — chat hardcodes `sensitive=True` and routes through local Ollama; cloud is NOT the daily operator workflow)
 
+### 5b. Reload after editing
+
+After edits, restart the daemons so they pick up the new values:
+
+**Linux:**
 ```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-export FORGE_CLOUD_MODEL="claude-sonnet-4-6"
+sudo systemctl restart forge-bridge
 ```
 
-**Anthropic key handling:** put it in your shell profile (`~/.zshrc` / `~/.bashrc`) or a sourced `.env` file outside version control. Never paste it on the command line directly (shell history will capture it). Never commit it to git.
+**macOS:**
+```bash
+sudo launchctl kickstart -k system/com.cnoellert.forge-bridge
+```
+
+Both commands are idempotent — restart is safe even if no edits were made.
+
+### 5c. About the `forge:forge` Postgres password
+
+The default `FORGE_DB_URL=postgresql+asyncpg://forge:forge@localhost:5432/forge_bridge` ships with the literal password `'forge'` because the cluster is local-only on a single-operator workstation and forge-bridge has no auth surface at v1.4.x (caller-identity migration is `SEED-AUTH-V1.5`, deferred to v1.6+). If you later expose the cluster beyond localhost, rotate the role password via `psql -c "ALTER USER forge WITH PASSWORD '...';"` and update `FORGE_DB_URL` accordingly.
 
 ---
 
