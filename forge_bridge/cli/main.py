@@ -25,9 +25,28 @@ from forge_bridge.cli import manifest as _manifest
 from forge_bridge.cli import runtime_doctor as _runtime_doctor
 from forge_bridge.cli import tools as _tools
 
+_ROOT_EPILOG = """\
+Common workflows:
+
+  fbridge doctor                 Check what's running and where (URLs + status).
+  fbridge up                     Start the bridge runtime (mcp_http + state_ws).
+  fbridge chat "say hi"          Ask a question through the shared chat endpoint.
+  fbridge actions                Browse the tools currently registered.
+
+First time? Try: fbridge doctor → fbridge up → fbridge chat "hello"
+
+Run any subcommand with --help for examples and details.
+"""
+
 app = typer.Typer(
     name="forge-bridge",
-    help="forge-bridge — unified CLI for MCP server, Flame, and Artist Console.",
+    help=(
+        "forge-bridge — unified CLI for the post-production pipeline bus.\n\n"
+        "Front door for the MCP server, Flame HTTP bridge, Artist Console, "
+        "and the chat endpoint. Use it to start the runtime, verify health, "
+        "and explore registered tools without reading the docs."
+    ),
+    epilog=_ROOT_EPILOG,
     no_args_is_help=False,  # bare invocation prints help + exits 0 (handled in callback)
 )
 
@@ -42,7 +61,11 @@ def _root(ctx: typer.Context) -> None:
 # ── console group: legacy aliases preserved verbatim ──────────────────────
 console_app = typer.Typer(
     name="console",
-    help="Artist Console subcommands (legacy aliases preserved).",
+    help=(
+        "Inspect the Artist Console — list registered tools, browse exec "
+        "history, read the synthesis manifest, check health, or run the "
+        "in-depth diagnostic. Mirrors the `/api/v1/*` Read API."
+    ),
     no_args_is_help=True,
 )
 console_app.command("tools")(_tools.tools_cmd)
@@ -55,23 +78,106 @@ app.add_typer(console_app, name="console")
 # ── top-level commands ────────────────────────────────────────────────────
 # `doctor` is the runtime topology probe (PR2). The legacy in-depth check
 # remains reachable as `console doctor`.
+_DOCTOR_EPILOG = """\
+Examples:
+  fbridge doctor                 Human-readable status table.
+  fbridge doctor --json          Stable JSON envelope for scripts/CI.
+
+Next:
+  Any FAIL row prints a one-line fix. If everything is OK, try
+  `fbridge actions` or open the Artist Console at the printed URL.
+"""
+
+_ACTIONS_EPILOG = """\
+Examples:
+  fbridge actions                List all registered tools.
+  fbridge actions --origin synthesized   Show only LLM-synthesized tools.
+  fbridge actions --json         Stable JSON envelope.
+"""
+
+_CHAT_EPILOG = """\
+Examples:
+  fbridge chat "explain this batch setup"
+  fbridge chat "hi" --verbose            Show model + provider + timing.
+  fbridge chat "hi" --timeout 30         Short timeout, fail fast.
+  fbridge chat "hi" --retries 0          Single attempt, no auto-retry.
+  fbridge chat "hi" --json               JSON envelope (parseable).
+  fbridge chat "hi" --quiet              Suppress progress messages.
+
+Tip: `fbridge doctor` first if the call hangs or errors — chat needs
+mcp_http running on :9996.
+"""
+
 app.command(
     "doctor",
-    help="Probe forge-bridge surfaces (Console, MCP, Flame, State WS) "
-         "and report status, URLs, and next steps.",
+    help=(
+        "Verify what's running across forge-bridge surfaces (Console, MCP, "
+        "Flame, State WS) — answers 'is this box ready to work?' with URLs "
+        "and a single suggested next action."
+    ),
+    epilog=_DOCTOR_EPILOG,
 )(_runtime_doctor.runtime_doctor_cmd)
-app.command("actions", help="List registered tools (alias of `console tools`).")(
-    _tools.tools_cmd
-)
+
+app.command(
+    "actions",
+    help=(
+        "Browse the tools currently registered with the bridge (built-in + "
+        "synthesized) — useful for discovering what can be automated."
+    ),
+    epilog=_ACTIONS_EPILOG,
+)(_tools.tools_cmd)
+
 app.command(
     "chat",
-    help="Send a message through the shared `/api/v1/chat` endpoint with "
-         "timeout, retry, and timing feedback.",
+    help=(
+        "Send a question through the shared chat endpoint to exercise the "
+        "LLM end-to-end. Wraps the call with timeout, retry, and timing "
+        "feedback so you can tell what failed and why."
+    ),
+    epilog=_CHAT_EPILOG,
 )(_chat.chat_cmd)
 
 
 # ── runtime manager: forge up / down / status ────────────────────────────
-@app.command("up", help="Start managed forge-bridge services (mcp_http + state_ws).")
+_UP_EPILOG = """\
+Examples:
+  fbridge up                     Start mcp_http (with co-hosted Console)
+                                 and state_ws as background services.
+  fbridge up --json              JSON envelope (managed/source per service).
+
+Next:
+  Verify with `fbridge status`, do a full surface check via `fbridge doctor`,
+  or exercise the chat endpoint with `fbridge chat "hello"`.
+"""
+
+_DOWN_EPILOG = """\
+Examples:
+  fbridge down                   Stop everything fbridge started.
+  fbridge down --json            JSON envelope.
+
+Note: only services we started (managed=true) are stopped. External
+processes — e.g. systemd / launchd daemons — are left alone.
+"""
+
+_STATUS_EPILOG = """\
+Examples:
+  fbridge status                 Human-readable table.
+  fbridge status --json          Stable JSON envelope.
+
+Each row shows running state and ownership: `managed (pid …)` if fbridge
+started it, `external` if something else is bound to the port.
+"""
+
+
+@app.command(
+    "up",
+    help=(
+        "Bring up the bridge runtime — start mcp_http (with co-hosted "
+        "Console) and state_ws as detached background processes. Idempotent: "
+        "skips ports already bound, marks them external."
+    ),
+    epilog=_UP_EPILOG,
+)
 def up_cmd(
     as_json: Annotated[
         bool,
@@ -104,7 +210,14 @@ def up_cmd(
             )
 
 
-@app.command("down", help="Stop all managed forge-bridge services.")
+@app.command(
+    "down",
+    help=(
+        "Stop the background services that `fbridge up` started. External "
+        "processes (e.g. systemd / launchd daemons) are not touched."
+    ),
+    epilog=_DOWN_EPILOG,
+)
 def down_cmd(
     as_json: Annotated[
         bool,
@@ -132,7 +245,15 @@ def down_cmd(
             sys.stdout.write(f"{name:<10} {note}\n")
 
 
-@app.command("status", help="Report which managed forge-bridge services are running.")
+@app.command(
+    "status",
+    help=(
+        "Show what's running and who started it — a quick view of the "
+        "bridge runtime without the full surface health check that "
+        "`fbridge doctor` does."
+    ),
+    epilog=_STATUS_EPILOG,
+)
 def status_cmd(
     as_json: Annotated[
         bool,
@@ -166,19 +287,35 @@ def status_cmd(
 # ── mcp group: explicit start ─────────────────────────────────────────────
 mcp_app = typer.Typer(
     name="mcp",
-    help="Start the MCP server on a chosen transport.",
+    help=(
+        "Run the MCP server directly — `stdio` for Claude Desktop / Code "
+        "configs, `http` for the always-on daemon mode used by `fbridge up`."
+    ),
     no_args_is_help=True,
 )
 app.add_typer(mcp_app, name="mcp")
 
 
-@mcp_app.command("stdio", help="Start the MCP server on stdio (Claude Desktop default).")
+@mcp_app.command(
+    "stdio",
+    help=(
+        "Start the MCP server on stdio. Use this from Claude Desktop / Claude "
+        "Code config; the process exits when the parent client disconnects."
+    ),
+)
 def mcp_stdio() -> None:
     from forge_bridge.mcp.server import main as mcp_main
     mcp_main(transport="stdio")
 
 
-@mcp_app.command("http", help="Start the MCP server on streamable-http (daemon mode).")
+@mcp_app.command(
+    "http",
+    help=(
+        "Start the MCP server on streamable-http for daemon mode. Long-running "
+        "uvicorn server that does not exit on stdin EOF — what `fbridge up` "
+        "uses behind the scenes."
+    ),
+)
 def mcp_http(
     port: Annotated[
         int,
@@ -195,7 +332,10 @@ def mcp_http(
 # ── flame group: thin ping ────────────────────────────────────────────────
 flame_app = typer.Typer(
     name="flame",
-    help="Flame HTTP bridge endpoint commands.",
+    help=(
+        "Talk to the Flame HTTP bridge running inside Flame on "
+        f":{config.FLAME_BRIDGE_PORT} — currently just a liveness `ping`."
+    ),
     no_args_is_help=True,
 )
 app.add_typer(flame_app, name="flame")
@@ -203,9 +343,25 @@ app.add_typer(flame_app, name="flame")
 _FLAME_PING_TIMEOUT_SECONDS = 2.0
 
 
+_FLAME_PING_EPILOG = """\
+Examples:
+  fbridge flame ping             Confirm Flame is up and the hook is loaded.
+  fbridge flame ping --json      JSON envelope (status + flame_available).
+
+Exit codes:
+  0  reachable, Flame attached     1  reachable, status != 200
+  2  unreachable                   (start Flame with the bridge hook loaded)
+"""
+
+
 @flame_app.command(
     "ping",
-    help=f"Probe the Flame HTTP bridge on :{config.FLAME_BRIDGE_PORT}.",
+    help=(
+        f"Confirm the Flame HTTP bridge on :{config.FLAME_BRIDGE_PORT} is "
+        "reachable and that the `flame` module is attached — fastest way to "
+        "tell whether Flame is alive and the hook is loaded."
+    ),
+    epilog=_FLAME_PING_EPILOG,
 )
 def flame_ping(
     as_json: Annotated[

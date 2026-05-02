@@ -47,6 +47,87 @@ def test_top_level_help_lists_expected_commands():
         assert token in out, f"top-level help missing {token!r}"
 
 
+# ── PR6: discoverability & help UX ───────────────────────────────────────
+
+def test_root_help_contains_common_workflows_section():
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    out = result.output
+    assert "Common workflows" in out
+    # The example commands listed in the spec must appear in the help.
+    assert "fbridge doctor" in out
+    assert "fbridge up" in out
+    assert "fbridge chat" in out
+    assert "fbridge actions" in out
+
+
+def test_root_help_includes_first_time_starter_path():
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    # The recommended onboarding path: doctor → up → chat.
+    assert "doctor" in result.output and "up" in result.output and "chat" in result.output
+
+
+def test_chat_help_contains_examples():
+    result = runner.invoke(app, ["chat", "--help"])
+    assert result.exit_code == 0
+    out = result.output
+    assert "Examples" in out
+    assert "--verbose" in out
+    assert "--timeout" in out
+    assert "--json" in out
+
+
+def test_up_help_contains_examples_and_next():
+    result = runner.invoke(app, ["up", "--help"])
+    assert result.exit_code == 0
+    out = result.output
+    assert "Examples" in out
+    assert "Next" in out
+
+
+def test_doctor_help_contains_examples_and_next():
+    result = runner.invoke(app, ["doctor", "--help"])
+    assert result.exit_code == 0
+    out = result.output
+    assert "Examples" in out
+    assert "Next" in out
+
+
+def test_status_help_contains_examples():
+    result = runner.invoke(app, ["status", "--help"])
+    assert result.exit_code == 0
+    assert "Examples" in result.output
+
+
+def test_actions_help_contains_examples():
+    result = runner.invoke(app, ["actions", "--help"])
+    assert result.exit_code == 0
+    assert "Examples" in result.output
+
+
+def test_flame_ping_help_contains_examples():
+    result = runner.invoke(app, ["flame", "ping", "--help"])
+    assert result.exit_code == 0
+    assert "Examples" in result.output
+
+
+def test_command_descriptions_state_purpose_not_just_action():
+    """PR6: descriptions explain WHAT THE COMMAND IS FOR, not just what it does.
+
+    Heuristic: check for the verbs/phrases that signal intent ("Verify",
+    "Browse", "Send a question", "Bring up", "Show what's", "Stop the …").
+    """
+    result = runner.invoke(app, ["--help"])
+    out = result.output.lower()
+    # purpose-oriented phrases per top-level command
+    assert "verify" in out          # doctor
+    assert "browse" in out          # actions
+    assert "exercise the" in out    # chat
+    assert "bring up" in out        # up
+    assert "show what" in out       # status
+
+
 # ── mcp group: explicit start only ───────────────────────────────────────
 
 def test_mcp_stdio_invokes_server_with_stdio_transport():
