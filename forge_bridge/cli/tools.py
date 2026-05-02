@@ -15,6 +15,7 @@ import typer
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
+from rich.text import Text
 
 from forge_bridge.cli.client import (
     ServerError,
@@ -25,10 +26,8 @@ from forge_bridge.cli.client import (
 from forge_bridge.cli.render import (
     HEADER_STYLE,
     TOOLS_BOX,
-    created_column_header,
     format_timestamp,
     make_console,
-    status_chip,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,6 +50,53 @@ def _derive_status(tool: dict) -> str:
     if tool.get("origin") == "synthesized":
         return "active"
     return "loaded"
+
+
+# PR9: presentation-only namespace → group title map. Tools whose namespace is
+# missing fall back to the prefix on the name (defense-in-depth for older
+# ToolRecord shapes). The order here drives the section order in `--help`-style
+# rendering: pipeline state first, then live Flame, then synthesized.
+_GROUP_TITLES: list[tuple[str, str]] = [
+    ("forge", "Forge — pipeline state"),
+    ("flame", "Flame — live API"),
+    ("synth", "Synthesized — LLM-generated"),
+]
+_NAME_PREFIX_TO_NAMESPACE: dict[str, str] = {
+    "forge_": "forge",
+    "flame_": "flame",
+    "synth_": "synth",
+}
+
+
+def _namespace_of(tool: dict) -> str:
+    ns = (tool.get("namespace") or "").strip()
+    if ns:
+        return ns
+    name = tool.get("name", "")
+    for prefix, mapped in _NAME_PREFIX_TO_NAMESPACE.items():
+        if name.startswith(prefix):
+            return mapped
+    return "other"
+
+
+def _humanize(name: str) -> str:
+    """`flame_get_sequence_segments` → `Get sequence segments`.
+
+    Drops the leading `<namespace>_` prefix and converts the remaining
+    snake_case to sentence case. Empty / single-token names pass through
+    capitalized.
+    """
+    stripped = name
+    for prefix in _NAME_PREFIX_TO_NAMESPACE:
+        if name.startswith(prefix):
+            stripped = name[len(prefix):]
+            break
+    if not stripped:
+        return name
+    words = stripped.replace("_", " ").split()
+    if not words:
+        return name
+    return " ".join([words[0].capitalize(), *words[1:]])
 
 
 def _filter_tools(
@@ -165,6 +211,12 @@ def tools_cmd(
 
 
 def _render_list(console, tools: list[dict], quiet: bool = False) -> None:
+    """Render the tool inventory grouped by namespace (PR9).
+
+    Each section shows the raw tool name (still required for `fbridge run
+    <name>`) alongside a humanized form derived from the snake_case name.
+    `quiet=True` keeps the legacy tab-separated output for scripting.
+    """
     if quiet:
         for t in tools:
             console.print(
@@ -172,21 +224,30 @@ def _render_list(console, tools: list[dict], quiet: bool = False) -> None:
                 f"{t.get('origin', '')}\t{format_timestamp(t.get('synthesized_at'))}"
             )
         return
-    table = Table(box=TOOLS_BOX, header_style=HEADER_STYLE)
-    table.add_column("Name")
-    table.add_column("Status")
-    table.add_column("Type")
-    table.add_column(created_column_header())
+
+    grouped: dict[str, list[dict]] = {}
     for t in tools:
-        origin = t.get("origin", "")
-        type_label = "Synthesized" if origin == "synthesized" else "Built-in"
-        table.add_row(
-            t["name"],
-            status_chip(_derive_status(t)),
-            type_label,
-            format_timestamp(t.get("synthesized_at")),
-        )
-    console.print(table)
+        grouped.setdefault(_namespace_of(t), []).append(t)
+
+    # Section order is fixed (_GROUP_TITLES) so the output is predictable
+    # across runs. Unknown namespaces (defensive — registry rejects them at
+    # write time, but render anyway) get a generic "Other" footer.
+    section_order = [(ns, title) for ns, title in _GROUP_TITLES if ns in grouped]
+    other_keys = sorted(set(grouped) - {ns for ns, _ in _GROUP_TITLES})
+    section_order.extend((ns, ns.capitalize()) for ns in other_keys)
+
+    first = True
+    for ns, title in section_order:
+        if not first:
+            console.print()
+        first = False
+        console.print(Text(title, style=HEADER_STYLE))
+        table = Table(box=TOOLS_BOX, show_header=False, padding=(0, 1))
+        table.add_column("Name", overflow="fold")
+        table.add_column("Description", overflow="fold")
+        for t in sorted(grouped[ns], key=lambda x: x.get("name", "")):
+            table.add_row(t["name"], _humanize(t["name"]))
+        console.print(table)
 
 
 def _render_drilldown(console, tool: dict) -> None:

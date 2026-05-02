@@ -93,9 +93,12 @@ class TestToolsList:
         _mock_transport(monkeypatch, _ok_handler)
         result = runner.invoke(_make_app(), ["tools"], env={"FORGE_CONSOLE_PORT": "9996"})
         assert result.exit_code == 0
+        # Raw names stay visible — users need them for `fbridge run <name>`.
         assert "synth_foo" in result.output
         assert "flame_bar" in result.output
-        assert "Created" in result.output  # default-sort affordance
+        # PR9: grouped sections instead of the old `Created ▼` column.
+        assert "Flame" in result.output
+        assert "Synthesized" in result.output
 
     def test_filter_origin_synthesized(self, monkeypatch):
         _mock_transport(monkeypatch, _ok_handler)
@@ -208,3 +211,81 @@ class TestToolsHelp:
         result = runner.invoke(_make_app(), ["tools", "--help"])
         assert result.exit_code == 0
         assert "Examples:" in result.output
+
+
+class TestToolsGroupingPR9:
+    """PR9 — improve action discovery UX (grouping + readable names)."""
+
+    def test_actions_are_grouped_by_namespace(self, monkeypatch):
+        # Mix one tool of each namespace so all three group headers must appear.
+        sample = [
+            {"name": "forge_list_shots", "origin": "builtin", "namespace": "forge",
+             "synthesized_at": None, "code_hash": None, "version": None,
+             "observation_count": 0, "tags": [], "meta": {}},
+            {"name": "flame_get_sequence_segments", "origin": "builtin", "namespace": "flame",
+             "synthesized_at": None, "code_hash": None, "version": None,
+             "observation_count": 0, "tags": [], "meta": {}},
+            {"name": "synth_rename_segment", "origin": "synthesized", "namespace": "synth",
+             "synthesized_at": "2026-04-22T10:00:00+00:00", "code_hash": "a" * 64,
+             "version": "1.0.0", "observation_count": 5, "tags": [], "meta": {}},
+        ]
+
+        def handler(request):
+            return httpx.Response(200, json={"data": sample, "meta": {"total": 3}})
+
+        _mock_transport(monkeypatch, handler)
+        result = runner.invoke(_make_app(), ["tools"], env={"FORGE_CONSOLE_PORT": "9996"})
+        assert result.exit_code == 0
+        out = result.output
+
+        # All three group titles render.
+        assert "Forge" in out
+        assert "Flame" in out
+        assert "Synthesized" in out
+
+        # Each tool appears in the section ordered by _GROUP_TITLES (forge → flame → synth).
+        forge_pos = out.index("Forge")
+        flame_pos = out.index("Flame")
+        synth_pos = out.index("Synthesized")
+        assert forge_pos < flame_pos < synth_pos
+
+    def test_readable_names_appear(self, monkeypatch):
+        sample = [
+            {"name": "flame_get_sequence_segments", "origin": "builtin", "namespace": "flame",
+             "synthesized_at": None, "code_hash": None, "version": None,
+             "observation_count": 0, "tags": [], "meta": {}},
+            {"name": "synth_rename_segment", "origin": "synthesized", "namespace": "synth",
+             "synthesized_at": None, "code_hash": "a" * 64, "version": None,
+             "observation_count": 0, "tags": [], "meta": {}},
+        ]
+
+        def handler(request):
+            return httpx.Response(200, json={"data": sample, "meta": {"total": 2}})
+
+        _mock_transport(monkeypatch, handler)
+        result = runner.invoke(_make_app(), ["tools"], env={"FORGE_CONSOLE_PORT": "9996"})
+        assert result.exit_code == 0
+        out = result.output
+
+        # snake_case → sentence case, prefix dropped.
+        assert "Get sequence segments" in out
+        assert "Rename segment" in out
+        # Raw name still shown so `fbridge run <name>` is one copy/paste away.
+        assert "flame_get_sequence_segments" in out
+        assert "synth_rename_segment" in out
+
+    def test_json_envelope_unchanged(self, monkeypatch):
+        # Per spec: --json output must not change shape.
+        _mock_transport(monkeypatch, _ok_handler)
+        result = runner.invoke(
+            _make_app(), ["tools", "--json"],
+            env={"FORGE_CONSOLE_PORT": "9996"},
+        )
+        assert result.exit_code == 0
+        parsed = json.loads(result.output.strip())
+        assert "data" in parsed
+        assert {t["name"] for t in parsed["data"]} == {"synth_foo", "flame_bar"}
+        # No grouped/humanized fields injected into the wire payload.
+        for t in parsed["data"]:
+            assert "group" not in t
+            assert "readable" not in t
