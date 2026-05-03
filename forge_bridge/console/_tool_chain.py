@@ -41,11 +41,20 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional, Union
 
 from forge_bridge.console._memory import _MEMORY
 
 logger = logging.getLogger(__name__)
+
+
+# PR27 — sentinel key for the disambiguation payload returned by
+# ``resolve_required_params`` when the resolver finds multiple
+# candidates. Centralized here so handler code (and any future
+# trace/log consumers) can import the canonical name instead of
+# coupling to a string literal across modules. The string value is
+# part of the wire contract internally; do NOT rename it casually.
+DISAMBIGUATION_KEY = "__disambiguation__"
 
 
 # ── Structured-payload extraction ─────────────────────────────────────────
@@ -108,15 +117,50 @@ def _extract_structured(raw: Any) -> Optional[dict]:
 # ── Resolvers ────────────────────────────────────────────────────────────
 
 
-async def _resolve_project_id(mcp: Any) -> Optional[str]:
-    """Return the lone project's id, or ``None`` if the rule does not
-    deterministically fire.
+async def _resolve_project_id(
+    mcp: Any,
+) -> Optional[Union[str, list[dict]]]:
+    """Three-valued return: pin the system state to one of three buckets
+    so callers can route deterministically without ever guessing.
 
-    Single upstream call: ``forge_list_projects({})``. The result must
-    be a structured dict with a ``projects`` list of length exactly 1
-    whose lone element carries a non-empty string ``id``. Anything else
-    — zero projects, two-or-more, transport error, malformed payload —
-    returns ``None``.
+      - ``str``       — exactly one project; the lone id is returned.
+                        Caller path: inject + memory write (PR26).
+      - ``list[dict]`` — two-or-more projects; a sanitized candidates
+                        list of ``{"id", "name"}`` entries is returned
+                        in upstream order. Caller path: PR27
+                        disambiguation (no inject, no memory write,
+                        handler short-circuits with MULTIPLE_PROJECTS).
+      - ``None``      — zero projects, transport error, or any
+                        malformed entry. Caller path: existing PR22
+                        graceful contract (MISSING_PROJECT_ID surfaces
+                        downstream).
+
+    Strict fail-closed on the multi-candidate path: a single malformed
+    project entry collapses the entire result to ``None``. Better to
+    surface a missing-context error than expose half-validated
+    candidates to a caller selecting from them.
+
+    Validation rules:
+
+      - ``id`` is REQUIRED and strictly validated: it must be a
+        non-empty string. Any malformed entry collapses the entire
+        result to ``None`` (fail-closed). Rationale: the caller will
+        use ``id`` as the canonical project handle in a subsequent
+        tool call — a missing/empty/non-string id has no recovery
+        path downstream, so surface the failure early.
+
+      - ``name`` is OPTIONAL and best-effort: if missing or
+        non-string, it is normalized to ``""``. ``name`` is included
+        only for display purposes (e.g. the chat UI rendering a
+        disambiguation prompt). It is NEVER consumed as a
+        disambiguator or fallback identifier, so a missing/blank
+        ``name`` must NOT degrade the determinism of selection.
+
+    DO NOT "fix" ``name`` validation by tightening it to require a
+    non-empty string. That change would silently start failing
+    legitimate multi-project deployments where projects exist with
+    blank or non-string names — a regression that would surface only
+    in production and only on the disambiguation path.
     """
     try:
         raw = await mcp.call_tool("forge_list_projects", {})
@@ -127,22 +171,49 @@ async def _resolve_project_id(mcp: Any) -> Optional[str]:
     if not isinstance(data, dict):
         return None
     projects = data.get("projects")
-    if not isinstance(projects, list) or len(projects) != 1:
+    if not isinstance(projects, list) or not projects:
+        # Zero projects, or non-list payload — fall through to fail
+        # closed. The downstream tool's PR22 contract surfaces
+        # MISSING_PROJECT_ID.
         return None
-    only = projects[0]
-    if not isinstance(only, dict):
-        return None
-    pid = only.get("id")
-    if not isinstance(pid, str) or not pid:
-        return None
-    return pid
+
+    # Single — the PR25/PR26 single-id path.
+    if len(projects) == 1:
+        only = projects[0]
+        if not isinstance(only, dict):
+            return None
+        pid = only.get("id")
+        if not isinstance(pid, str) or not pid:
+            return None
+        return pid
+
+    # Multi — build a sanitized candidates list. Strict: any malformed
+    # entry collapses the whole result to None (per PR27 constraint #4).
+    candidates: list[dict] = []
+    for p in projects:
+        if not isinstance(p, dict):
+            return None
+        pid = p.get("id")
+        if not isinstance(pid, str) or not pid:
+            return None
+        name = p.get("name")
+        # ``name`` may be missing/non-string in legitimate data; normalize
+        # to an empty string rather than failing the whole list, since
+        # ``id`` is the only field a caller actually needs to pick.
+        if not isinstance(name, str):
+            name = ""
+        candidates.append({"id": pid, "name": name})
+    return candidates
 
 
 # Resolver dispatch table — keys match ``_PR25_CHAINS[*]["resolver"]``.
 # Decoupling the chain entry from the function reference keeps the
 # registry data-shaped (easier to extend/inspect) and avoids forward
 # references to async functions that the registry has to know about.
-_RESOLVERS: dict[str, Callable[[Any], Awaitable[Optional[str]]]] = {
+_RESOLVERS: dict[
+    str,
+    Callable[[Any], Awaitable[Optional[Union[str, list[dict]]]]],
+] = {
     "_resolve_project_id": _resolve_project_id,
 }
 
@@ -178,25 +249,62 @@ async def resolve_required_params(
 ) -> dict:
     """Resolve any missing required params for ``tool_name``.
 
-    Resolution order (per PR26):
-      1. **Registry guard.** Tool not in ``_PR25_CHAINS`` → return
-         ``params`` unchanged. No memory read, no upstream call.
+    Resolution order:
+      1. **Registry guard (PR25).** Tool not in ``_PR25_CHAINS`` →
+         return ``params`` unchanged. No memory read, no upstream call.
       2. **Memory hydration (PR26).** For each required key absent from
-         ``params``, consult ``_MEMORY``. Hits merge into a new dict;
-         the input ``params`` is not mutated. Memory is read-only here
-         — never written without a fresh deterministic resolution.
-      3. **Satisfied-via-memory short-circuit.** If memory satisfied
-         every required key, return immediately — NO upstream tool call.
-         This is the PR26 UX win: a follow-up request reuses an earlier
-         resolution without a probe.
-      4. **Resolver (PR25).** Otherwise dispatch to the chain's resolver.
-         A successful return writes to memory AND merges into params.
-         A ``None`` return leaves ``params`` untouched and lets the PR22
-         graceful contract surface ``MISSING_*`` to the caller.
+         ``params``, consult ``_MEMORY``. Hits merge into a working
+         copy; the input ``params`` is not mutated. Memory is read-only
+         here — never written without a fresh deterministic resolution.
+      3. **Satisfied-via-memory short-circuit (PR26).** If memory
+         satisfied every required key, return immediately — NO upstream
+         tool call. This is the PR26 UX win: a follow-up request reuses
+         an earlier resolution without a probe.
+      4. **Resolver dispatch.** Otherwise dispatch to the chain's
+         resolver. The resolver's return type is three-valued:
+
+           - ``str``        — single deterministic match (PR25). Write
+                              to memory, merge into params, return.
+           - ``list[dict]`` — multiple candidates (PR27). Return the
+                              ``__disambiguation__`` sentinel; no
+                              memory write, no caller params merged
+                              (caller path: handler short-circuits to
+                              MULTIPLE_PROJECTS).
+           - ``None``       — zero candidates or any error. Leave
+                              ``params`` untouched; downstream PR22
+                              graceful contract surfaces ``MISSING_*``.
 
     The returned dict is the canonical post-resolution params and MUST
     be the value the caller passes to ``mcp.call_tool`` AND the value
     serialized into ``tool_calls[].function.arguments`` in the trace.
+    The disambiguation sentinel is the ONE exception — handler code
+    must inspect for ``__disambiguation__`` BEFORE forwarding to the
+    tool, since the sentinel is not valid Pydantic input.
+
+    PR27 disambiguation behavior:
+
+      When a resolver returns multiple candidates, this function
+      returns a sentinel dict whose only key is ``DISAMBIGUATION_KEY``:
+
+          {DISAMBIGUATION_KEY: {"type": "...", "candidates": [...]}}
+
+      This REPLACES the resolved params entirely. Concretely:
+
+        - Caller-provided params are NOT merged into the sentinel.
+          A caller passing ``{"shot_id": "X"}`` will see ``shot_id``
+          dropped from the return — the handler short-circuits before
+          a tool call would consume it, so preservation buys nothing.
+        - Memory values are NOT included. Any keys hydrated from
+          ``_MEMORY`` earlier in this function are also dropped.
+        - Downstream execution (``mcp.call_tool``) MUST NOT proceed.
+          The sentinel is not valid Pydantic input for any tool, and
+          forwarding it would surface as an opaque validation error
+          instead of the intended structured disambiguation response.
+
+      The handler is responsible for detecting the sentinel via
+      ``DISAMBIGUATION_KEY in params`` and short-circuiting to a
+      structured error response (today: 400 + ``MULTIPLE_PROJECTS``
+      envelope with the candidates list under ``error.details``).
     """
     chain = _PR25_CHAINS.get(tool_name)
     if not chain:
@@ -238,18 +346,35 @@ async def resolve_required_params(
         return resolved
 
     if resolver_name == "_resolve_project_id":
-        project_id = await resolver(mcp)
-        if project_id is not None:
-            # PR26 — cache the deterministically-resolved value before
-            # returning. Subsequent requests in this process skip the
-            # probe via the memory-hydration step above. ``set`` is the
-            # ONLY production write site for memory; user input never
-            # writes here (no path exists for that today).
-            _MEMORY.set("project_id", project_id)
+        result = await resolver(mcp)
+
+        # PR27 — multiple candidates. Return the disambiguation sentinel;
+        # no memory write (ambiguous resolution must NOT poison cache),
+        # caller-provided non-required params are NOT merged (the brief
+        # specifies a sentinel-only return; the handler short-circuits to
+        # MULTIPLE_PROJECTS before any tool would be called anyway).
+        if isinstance(result, list):
+            return {
+                DISAMBIGUATION_KEY: {
+                    "type": "project",
+                    "candidates": result,
+                }
+            }
+
+        # PR25/PR26 — single deterministic id. Write to memory, merge
+        # into the working copy, return.
+        if isinstance(result, str):
+            # ``set`` is the ONLY production write site for memory; user
+            # input never writes here (no path exists for that today).
+            _MEMORY.set("project_id", result)
             # Debug-only — operators see WHEN memory was populated, but
             # never WHAT was stored. Pair with the hit log above to
             # confirm cache behavior under load.
             logger.debug("tool_memory set key=project_id")
-            return {**resolved, "project_id": project_id}
+            return {**resolved, "project_id": result}
+
+        # ``None`` — zero candidates or error. Fall through to return
+        # the un-injected working copy; PR22 contract surfaces
+        # MISSING_PROJECT_ID downstream.
 
     return resolved

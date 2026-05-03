@@ -457,7 +457,10 @@ async def _execute_forced_tool(
 ) -> JSONResponse:
     """PR20 short-circuit: invoke the sole filtered tool and shape the chat
     reply. The LLM router is not called on this path."""
-    from forge_bridge.console._tool_chain import resolve_required_params
+    from forge_bridge.console._tool_chain import (
+        DISAMBIGUATION_KEY,
+        resolve_required_params,
+    )
     from forge_bridge.mcp import server as _mcp_server
 
     tool_call_id = f"forced_{uuid.uuid4().hex[:12]}"
@@ -472,6 +475,41 @@ async def _execute_forced_tool(
     params: dict = await resolve_required_params(
         tool_name, {}, _mcp_server.mcp,
     )
+
+    # PR27: ambiguity short-circuit. When the resolver finds multiple
+    # valid candidates (today: 2+ projects), it returns a sentinel dict
+    # in place of a usable params payload. We surface a structured 400
+    # WITHOUT calling the tool and WITHOUT invoking the LLM — the
+    # caller (chat client) is expected to either resend with an explicit
+    # ``project_id`` or render a disambiguation prompt to the user.
+    # Tool was never called, so no tool_forced/stop_reason envelope.
+    if DISAMBIGUATION_KEY in params:
+        disambiguation = params[DISAMBIGUATION_KEY]
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        candidate_count = len(disambiguation.get("candidates", []))
+        # ``key=project_id`` is the triggering parameter — hardcoded
+        # today because ``project_id`` is the only disambiguatable
+        # required key in the chain registry. When multi-key chains
+        # ship, derive this from the disambiguation payload (e.g.
+        # via a ``key`` field on the sentinel) instead of the
+        # ``type`` field. Logs only the LABEL of the missing key —
+        # never any candidate id or name.
+        logger.info(
+            "chat tool_forced_disambiguation key=project_id "
+            "request_id=%s client_ip=%s tool=%s "
+            "tools_available=%d tools_filtered=%d wall_clock_ms=%d "
+            "candidates=%d",
+            request_id, client_ip, tool_name,
+            tools_available_count, tools_filtered_count, elapsed_ms,
+            candidate_count,
+        )
+        return _chat_error(
+            code="MULTIPLE_PROJECTS",
+            message="Multiple projects found. Please specify one.",
+            status=400,
+            request_id=request_id,
+            details=disambiguation,
+        )
 
     try:
         raw = await _mcp_server.mcp.call_tool(tool_name, params)
@@ -540,6 +578,7 @@ def _chat_error(
     status: int,
     request_id: str,
     extra_headers: Optional[dict] = None,
+    details: Optional[dict] = None,
 ) -> JSONResponse:
     """Chat-endpoint error helper (D-17 NESTED envelope + X-Request-ID always).
 
@@ -547,12 +586,24 @@ def _chat_error(
     but does not accept a headers kwarg; the chat endpoint needs every reply
     to carry X-Request-ID per D-17 / D-21, so this thin wrapper is the single
     error-path emitter throughout chat_handler.
+
+    PR27 — optional ``details`` field. When present, it's nested under
+    the ``error`` object so structured-error consumers (e.g. the chat
+    UI rendering a disambiguation prompt) can pull machine-readable
+    context from one canonical location:
+
+        {"error": {"code": "...", "message": "...", "details": {...}}}
+
+    Existing callers that don't pass ``details`` see no shape change.
     """
     headers = {"X-Request-ID": request_id}
     if extra_headers:
         headers.update(extra_headers)
+    body: dict = {"error": {"code": code, "message": message}}
+    if details is not None:
+        body["error"]["details"] = details
     return JSONResponse(
-        {"error": {"code": code, "message": message}},
+        body,
         status_code=status,
         headers=headers,
     )
