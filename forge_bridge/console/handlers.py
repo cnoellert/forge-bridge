@@ -444,63 +444,6 @@ def _serialize_forced_tool_result(raw: Any) -> str:
     return repr(raw)
 
 
-# PR24 — Deterministic argument injection for single-project context.
-#
-# When a forced tool needs a `project_id` and the system has *exactly one*
-# project, inject it. No heuristics, no ranking, no fallback selection —
-# the rule fires solely on `forge_list_projects` returning count==1.
-# Otherwise leave params untouched and let the PR22 graceful contract
-# (MISSING_PROJECT_ID) surface to the caller.
-#
-# Allow-list rather than schema-driven by design: the only tools whose
-# Pydantic models accept `params=None` and emit a structured
-# MISSING_PROJECT_ID are the two below. Tools like `forge_create_shot`
-# require additional fields (`sequence_id`, `name`) that an empty-args
-# probe cannot fill, so injecting `project_id` there changes nothing —
-# the call would still fail Pydantic validation. Keep the surface
-# tight; extend deliberately when a new PR22-graceful tool ships.
-_PR24_PROJECT_ID_INJECT_TOOLS: frozenset[str] = frozenset({
-    "forge_list_shots",
-    "forge_list_versions",
-})
-
-
-async def _resolve_single_project_id() -> Optional[str]:
-    """PR24 — return the lone project's id, or ``None`` when the rule
-    does not deterministically fire.
-
-    Returns ``None`` (no injection) on:
-      - zero projects        → caller must surface MISSING_PROJECT_ID
-      - two or more projects → ambiguous, caller surfaces MISSING_PROJECT_ID
-      - any error reading the project list (transport, JSON, shape)
-        → fail closed; callers must NOT pick a default
-
-    The single-call probe goes through the same FastMCP path as the
-    forced tool, so it observes the same backend reachability filter.
-    """
-    from forge_bridge.mcp import server as _mcp_server
-
-    try:
-        raw = await _mcp_server.mcp.call_tool("forge_list_projects", {})
-        payload_str = _serialize_forced_tool_result(raw)
-        payload = json.loads(payload_str)
-    except Exception:  # noqa: BLE001 — any failure → no injection
-        return None
-
-    if not isinstance(payload, dict):
-        return None
-    projects = payload.get("projects")
-    if not isinstance(projects, list) or len(projects) != 1:
-        return None
-    only = projects[0]
-    if not isinstance(only, dict):
-        return None
-    project_id = only.get("id")
-    if not isinstance(project_id, str) or not project_id:
-        return None
-    return project_id
-
-
 async def _execute_forced_tool(
     *,
     tool: Any,
@@ -514,22 +457,21 @@ async def _execute_forced_tool(
 ) -> JSONResponse:
     """PR20 short-circuit: invoke the sole filtered tool and shape the chat
     reply. The LLM router is not called on this path."""
+    from forge_bridge.console._tool_chain import resolve_required_params
     from forge_bridge.mcp import server as _mcp_server
 
     tool_call_id = f"forced_{uuid.uuid4().hex[:12]}"
     tool_name = tool.name
 
-    # PR24: deterministic project_id injection when the context is
-    # unambiguous. Conditions ALL must hold; otherwise leave params alone
-    # and let the PR22 contract error fire downstream.
-    params: dict = {}
-    if (
-        tool_name in _PR24_PROJECT_ID_INJECT_TOOLS
-        and "project_id" not in params
-    ):
-        injected = await _resolve_single_project_id()
-        if injected is not None:
-            params["project_id"] = injected
+    # PR25: deterministic required-parameter resolution. For tools listed
+    # in the chain registry, this issues a single upstream tool call (e.g.
+    # `forge_list_projects`) and merges the resolved value into params
+    # when — and only when — the system state is unambiguous. Returns
+    # `params` unchanged otherwise; the downstream PR22 graceful contract
+    # then surfaces a structured `MISSING_*` error.
+    params: dict = await resolve_required_params(
+        tool_name, {}, _mcp_server.mcp,
+    )
 
     try:
         raw = await _mcp_server.mcp.call_tool(tool_name, params)
