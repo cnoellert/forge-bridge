@@ -1175,9 +1175,25 @@ def test_pr24_zero_projects_does_not_inject_and_surfaces_missing_project_id():
     assert payload.get("code") == "MISSING_PROJECT_ID"
 
 
-def test_pr24_multiple_projects_does_not_inject_and_surfaces_missing_project_id():
-    """AC #3: two-or-more projects → no injection (ambiguous). The
-    forced tool runs with `{}` and the PR22 contract error surfaces."""
+def test_pr24_multiple_projects_returns_pr27_disambiguation_envelope():
+    """Multi-project case — PR27 supersedes the original PR24 behavior.
+
+    PR24's original contract here was 200 + tool message with
+    MISSING_PROJECT_ID (the same shape as zero projects). PR27 changes
+    that to a structured 400 + MULTIPLE_PROJECTS envelope so the
+    chat client can render a disambiguation prompt instead of treating
+    it as a generic missing-arg failure.
+
+    What's preserved from PR24:
+      - The forced tool itself is NEVER called (no `forge_list_versions`).
+      - The LLM is NEVER invoked.
+      - `forge_list_projects` IS called once (the resolver probe).
+    What's new under PR27:
+      - HTTP 400 instead of 200.
+      - Error envelope shape (`error.code`, `error.message`,
+        `error.details`) instead of forced-tool message.
+      - No `tool_forced`/`stop_reason` keys (no tool was called).
+    """
     tools = [_pr20_make_tool(n) for n in _PR20_VERSIONS_TOOLS]
     fake = _pr24_make_call_tool(project_count=3)
     list_p, back_p, call_p, app, mock_router = _pr20_build_app(
@@ -1191,19 +1207,24 @@ def test_pr24_multiple_projects_does_not_inject_and_surfaces_missing_project_id(
                 {"role": "user", "content": "forge fetch versions"},
             ]},
         )
-    assert r.status_code == 200, r.text
+
+    # PR27 — structured 400 envelope, NOT 200 + tool message.
+    assert r.status_code == 400, r.text
     body = r.json()
-    assert body["tool_forced"] is True
-    assert body["stop_reason"] == "tool_forced"
-    assert body["tools_filtered"] == 1
+    assert body["error"]["code"] == "MULTIPLE_PROJECTS"
+    assert "Multiple projects" in body["error"]["message"]
+    details = body["error"]["details"]
+    assert details["type"] == "project"
+    candidates = details["candidates"]
+    assert len(candidates) == 3
+    for c in candidates:
+        assert "id" in c and "name" in c
+    # Request-id header still present even on the 400 path (D-21).
+    assert "X-Request-ID" in r.headers
+
+    # Hard contract: NO LLM, NO downstream tool call.
     mock_router.complete_with_tools.assert_not_called()
-    # No injection — empty args sent through.
-    call_mock.assert_any_call("forge_list_projects", {})
-    call_mock.assert_any_call("forge_list_versions", {})
-    assert call_mock.call_count == 2
-    tool_msg = body["messages"][-1]
-    payload = json.loads(tool_msg["content"])
-    assert payload.get("code") == "MISSING_PROJECT_ID"
+    call_mock.assert_called_once_with("forge_list_projects", {})
 
 
 def test_pr24_does_not_fire_for_tools_outside_allow_list():

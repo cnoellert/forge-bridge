@@ -114,12 +114,18 @@ async def test_pr26_memory_miss_with_zero_projects_does_not_cache():
 
 @pytest.mark.asyncio
 async def test_pr26_memory_miss_with_multi_projects_does_not_cache():
-    """Resolver returns None on >1 projects → no memory write.
-    Ambiguity must never poison the cache."""
+    """>1 projects → ambiguous → no memory write. Ambiguity must never
+    poison the cache.
+
+    PR27 changed the *return shape* on this path (sentinel instead of
+    empty dict), but the PR26 invariant under test here is unchanged:
+    no ``project_id`` written to ``_MEMORY``."""
     mcp = _make_mcp(project_count=3)
     out = await resolve_required_params("forge_list_versions", {}, mcp)
 
-    assert out == {}
+    # PR27 — sentinel return; project_id was NOT cached either way.
+    assert "project_id" not in out
+    assert "__disambiguation__" in out
     assert _MEMORY.get("project_id") is None
 
 

@@ -109,13 +109,26 @@ async def test_pr25_zero_projects_does_not_inject():
 
 @pytest.mark.asyncio
 async def test_pr25_multiple_projects_does_not_inject():
-    """Two-or-more projects → ambiguous → resolver returns None →
-    params unchanged. PR25 never picks arbitrarily."""
+    """Two-or-more projects → ambiguous → resolver does NOT pick
+    arbitrarily.
+
+    PR25 originally returned ``params`` unchanged on this path (the
+    same fail-closed shape as zero-projects). PR27 supersedes that:
+    the multi-candidate case now returns a structured
+    ``__disambiguation__`` sentinel so the handler can short-circuit
+    to MULTIPLE_PROJECTS instead of letting the empty-args call hit
+    the PR22 graceful contract. The PR25 invariant under test here is
+    still valid — no ``project_id`` is injected — just the surrounding
+    sentinel is new.
+    """
     mcp = _make_mcp(project_count=3)
 
     out = await resolve_required_params("forge_list_shots", {}, mcp)
 
-    assert out == {}
+    # PR27 — sentinel, NOT empty dict. project_id was never injected.
+    assert "project_id" not in out
+    assert "__disambiguation__" in out
+    assert out["__disambiguation__"]["type"] == "project"
     mcp.call_tool.assert_called_once_with("forge_list_projects", {})
 
 
