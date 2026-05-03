@@ -565,6 +565,15 @@ def _pr20_build_app(tools_list, fake_call_tool=None):
 
     if fake_call_tool is None:
         async def fake_call_tool(name, arguments):
+            # PR24 — when a forced tool is on the project_id-injection
+            # allow-list, the handler probes `forge_list_projects` first.
+            # Default fixture: zero projects → no injection fires, so the
+            # downstream tool gets called with `{}` exactly as before.
+            if name == "forge_list_projects":
+                return [TextContent(
+                    type="text",
+                    text=json.dumps({"count": 0, "projects": []}),
+                )]
             return [TextContent(type="text", text=f"{name}-result:{arguments!r}")]
 
     list_patch = patch(
@@ -629,8 +638,12 @@ def test_pr20_fetch_versions_forces_forge_list_versions():
     assert body["tools_available"] > 1
     # Hard contract — LLM was NEVER called on the forced path.
     mock_router.complete_with_tools.assert_not_called()
-    # Tool called with empty args, exactly once.
-    call_mock.assert_called_once_with("forge_list_versions", {})
+    # PR24 — `forge_list_versions` is on the project_id-injection allow-list,
+    # so the handler probes `forge_list_projects` first. Default fixture
+    # returns zero projects → no injection → tool still called with `{}`.
+    call_mock.assert_any_call("forge_list_projects", {})
+    call_mock.assert_any_call("forge_list_versions", {})
+    assert call_mock.call_count == 2
     # Reply tail carries assistant tool_call + tool result message.
     msgs = body["messages"]
     assert msgs[-2]["role"] == "assistant"
@@ -658,7 +671,10 @@ def test_pr20_get_versions_forces_forge_list_versions():
     assert body["tool_forced"] is True
     assert body["stop_reason"] == "tool_forced"
     mock_router.complete_with_tools.assert_not_called()
-    call_mock.assert_called_once_with("forge_list_versions", {})
+    # PR24 — probe call to forge_list_projects + actual tool call.
+    call_mock.assert_any_call("forge_list_projects", {})
+    call_mock.assert_any_call("forge_list_versions", {})
+    assert call_mock.call_count == 2
 
 
 def test_pr20_list_version_singular_forces_forge_list_versions():
@@ -678,7 +694,10 @@ def test_pr20_list_version_singular_forces_forge_list_versions():
     body = r.json()
     assert body["tool_forced"] is True
     mock_router.complete_with_tools.assert_not_called()
-    call_mock.assert_called_once_with("forge_list_versions", {})
+    # PR24 — probe call to forge_list_projects + actual tool call.
+    call_mock.assert_any_call("forge_list_projects", {})
+    call_mock.assert_any_call("forge_list_versions", {})
+    assert call_mock.call_count == 2
 
 
 def test_pr20_multi_tool_match_does_not_force():
@@ -918,7 +937,10 @@ def test_pr21_list_project_versions_forces_forge_list_versions():
     assert body["tools_filtered"] == 1
     assert body["tools_available"] > 1
     mock_router.complete_with_tools.assert_not_called()
-    call_mock.assert_called_once_with("forge_list_versions", {})
+    # PR24 — probe call to forge_list_projects + actual tool call.
+    call_mock.assert_any_call("forge_list_projects", {})
+    call_mock.assert_any_call("forge_list_versions", {})
+    assert call_mock.call_count == 2
 
 
 def test_pr21_list_projects_forces_forge_list_projects():
@@ -961,7 +983,10 @@ def test_pr21_list_versions_forces_forge_list_versions():
     body = r.json()
     assert body["tool_forced"] is True
     mock_router.complete_with_tools.assert_not_called()
-    call_mock.assert_called_once_with("forge_list_versions", {})
+    # PR24 — probe call to forge_list_projects + actual tool call.
+    call_mock.assert_any_call("forge_list_projects", {})
+    call_mock.assert_any_call("forge_list_versions", {})
+    assert call_mock.call_count == 2
 
 
 def test_pr21_unbreakable_tie_falls_back_to_llm():
@@ -1010,7 +1035,205 @@ def test_pr21_no_regression_pr20_single_match_still_forces():
     assert body["tool_forced"] is True
     assert body["stop_reason"] == "tool_forced"
     mock_router.complete_with_tools.assert_not_called()
-    call_mock.assert_called_once_with("forge_list_versions", {})
+    # PR24 — probe call to forge_list_projects + actual tool call.
+    call_mock.assert_any_call("forge_list_projects", {})
+    call_mock.assert_any_call("forge_list_versions", {})
+    assert call_mock.call_count == 2
+
+
+# ── PR24: deterministic project_id injection for single-project context ────
+
+
+def _pr24_make_call_tool(*, project_count: int, project_id: str = "proj-uuid-1"):
+    """Build a fake `mcp.call_tool` that simulates a deployment with N
+    projects AND the PR22 graceful contract on `forge_list_versions`.
+
+    - `forge_list_projects` returns `{count, projects}` matching N.
+    - `forge_list_versions` with no `project_id` returns the
+      MISSING_PROJECT_ID payload (PR22 contract); with one, returns a
+      success payload tagged with the injected id so the test can assert
+      what the tool actually saw.
+    """
+    from mcp.types import TextContent
+
+    if project_count == 0:
+        projects: list[dict] = []
+    elif project_count == 1:
+        projects = [{"id": project_id, "name": "Solo", "code": "SOL"}]
+    else:
+        projects = [
+            {"id": f"proj-{i}", "name": f"P{i}", "code": f"P{i}"}
+            for i in range(project_count)
+        ]
+
+    async def fake(name, arguments):
+        if name == "forge_list_projects":
+            return [TextContent(
+                type="text",
+                text=json.dumps({"count": len(projects), "projects": projects}),
+            )]
+        if name == "forge_list_versions":
+            if "project_id" not in arguments:
+                return [TextContent(
+                    type="text",
+                    text=json.dumps({
+                        "error": "project_id is required.",
+                        "code": "MISSING_PROJECT_ID",
+                    }),
+                )]
+            return [TextContent(
+                type="text",
+                text=json.dumps({
+                    "project_id": arguments["project_id"],
+                    "count": 0,
+                    "versions": [],
+                }),
+            )]
+        # Other tools — repr passthrough (matches default fixture style).
+        return [TextContent(
+            type="text", text=f"{name}-result:{arguments!r}",
+        )]
+
+    return fake
+
+
+def test_pr24_single_project_injects_project_id():
+    """AC #1: with exactly one project in the system, the handler probes
+    `forge_list_projects`, sees count==1, and injects `project_id` into
+    the forced tool call. Tool sees the id; success payload returns."""
+    tools = [_pr20_make_tool(n) for n in _PR20_VERSIONS_TOOLS]
+    fake = _pr24_make_call_tool(project_count=1, project_id="solo-uuid-001")
+    list_p, back_p, call_p, app, mock_router = _pr20_build_app(
+        tools, fake_call_tool=fake,
+    )
+    with list_p, back_p, call_p as call_mock:
+        client = TestClient(app)
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [
+                {"role": "user", "content": "forge fetch versions"},
+            ]},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # PR24 invariants: forced path still owns the call, LLM untouched.
+    assert body["tool_forced"] is True
+    assert body["stop_reason"] == "tool_forced"
+    assert body["tools_filtered"] == 1
+    mock_router.complete_with_tools.assert_not_called()
+    # The probe ran, AND the forced tool was called with the injected id.
+    call_mock.assert_any_call("forge_list_projects", {})
+    call_mock.assert_any_call(
+        "forge_list_versions", {"project_id": "solo-uuid-001"},
+    )
+    assert call_mock.call_count == 2
+    # Tool result reflects the injected id (success payload, no error).
+    tool_msg = body["messages"][-1]
+    assert tool_msg["role"] == "tool"
+    assert tool_msg["name"] == "forge_list_versions"
+    payload = json.loads(tool_msg["content"])
+    assert payload["project_id"] == "solo-uuid-001"
+    assert "error" not in payload
+    # Assistant tool_calls argument string also reflects the injection —
+    # consumers parsing the trace see the actual params, not a lie.
+    assistant = body["messages"][-2]
+    assert assistant["role"] == "assistant"
+    args_str = assistant["tool_calls"][0]["function"]["arguments"]
+    assert json.loads(args_str) == {"project_id": "solo-uuid-001"}
+
+
+def test_pr24_zero_projects_does_not_inject_and_surfaces_missing_project_id():
+    """AC #2: zero projects → no injection. The forced tool gets called
+    with `{}` and the PR22 graceful contract surfaces MISSING_PROJECT_ID
+    in the tool result message."""
+    tools = [_pr20_make_tool(n) for n in _PR20_VERSIONS_TOOLS]
+    fake = _pr24_make_call_tool(project_count=0)
+    list_p, back_p, call_p, app, mock_router = _pr20_build_app(
+        tools, fake_call_tool=fake,
+    )
+    with list_p, back_p, call_p as call_mock:
+        client = TestClient(app)
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [
+                {"role": "user", "content": "forge fetch versions"},
+            ]},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["tool_forced"] is True
+    assert body["stop_reason"] == "tool_forced"
+    assert body["tools_filtered"] == 1
+    mock_router.complete_with_tools.assert_not_called()
+    # Forced tool called with EMPTY args — no injection took place.
+    call_mock.assert_any_call("forge_list_projects", {})
+    call_mock.assert_any_call("forge_list_versions", {})
+    assert call_mock.call_count == 2
+    # PR22 contract error surfaces in the tool message, not a 5xx.
+    tool_msg = body["messages"][-1]
+    payload = json.loads(tool_msg["content"])
+    assert payload.get("code") == "MISSING_PROJECT_ID"
+
+
+def test_pr24_multiple_projects_does_not_inject_and_surfaces_missing_project_id():
+    """AC #3: two-or-more projects → no injection (ambiguous). The
+    forced tool runs with `{}` and the PR22 contract error surfaces."""
+    tools = [_pr20_make_tool(n) for n in _PR20_VERSIONS_TOOLS]
+    fake = _pr24_make_call_tool(project_count=3)
+    list_p, back_p, call_p, app, mock_router = _pr20_build_app(
+        tools, fake_call_tool=fake,
+    )
+    with list_p, back_p, call_p as call_mock:
+        client = TestClient(app)
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [
+                {"role": "user", "content": "forge fetch versions"},
+            ]},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["tool_forced"] is True
+    assert body["stop_reason"] == "tool_forced"
+    assert body["tools_filtered"] == 1
+    mock_router.complete_with_tools.assert_not_called()
+    # No injection — empty args sent through.
+    call_mock.assert_any_call("forge_list_projects", {})
+    call_mock.assert_any_call("forge_list_versions", {})
+    assert call_mock.call_count == 2
+    tool_msg = body["messages"][-1]
+    payload = json.loads(tool_msg["content"])
+    assert payload.get("code") == "MISSING_PROJECT_ID"
+
+
+def test_pr24_does_not_fire_for_tools_outside_allow_list():
+    """A forced tool that is NOT on the PR24 allow-list (e.g. a flame
+    tool) must NOT trigger the projects probe. PR24 is a tight
+    allow-list, not a schema-driven heuristic."""
+    # Single non-allow-listed tool — narrows to 1 → forced execution.
+    tools = [
+        _pr20_make_tool("flame_ping"),    # target — not on allow-list
+        _pr20_make_tool("forge_alpha"),   # disjoint
+        _pr20_make_tool("synth_beta"),    # disjoint
+    ]
+    fake = _pr24_make_call_tool(project_count=1)
+    list_p, back_p, call_p, app, mock_router = _pr20_build_app(
+        tools, fake_call_tool=fake,
+    )
+    with list_p, back_p, call_p as call_mock:
+        client = TestClient(app)
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [
+                {"role": "user", "content": "flame ping"},
+            ]},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["tool_forced"] is True
+    mock_router.complete_with_tools.assert_not_called()
+    # Crucial: NO probe call to forge_list_projects, only the target.
+    call_mock.assert_called_once_with("flame_ping", {})
 
 
 # ── PR20/PR21 state-consistency invariant — runtime guard ──────────────────
