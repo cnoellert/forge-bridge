@@ -16,10 +16,32 @@ from unittest.mock import MagicMock
 import httpx
 from httpx import ASGITransport
 
+from forge_bridge.console._memory import _MEMORY
 from forge_bridge.console.app import build_console_app
 from forge_bridge.console.manifest_service import ManifestService
 from forge_bridge.console.read_api import ConsoleReadAPI
 from forge_bridge.store.staged_operations import StagedOpRepo
+
+
+@pytest.fixture(autouse=True)
+def _reset_tool_memory():
+    """PR26 — clear the process-global tool-argument memory before AND
+    after every test in tests/console/.
+
+    The chain resolver (`forge_bridge.console._tool_chain`) writes
+    deterministically-resolved values (today: ``project_id``) into a
+    module-level ``_MEMORY`` instance that survives across HTTP
+    requests within a single server process. In production that's the
+    UX win; in tests it's cross-test pollution — a single-project test
+    seeds memory that a subsequent zero-projects test would silently
+    inherit, masking regressions.
+
+    Autouse + before/after clear keeps every console test running
+    against a known-empty memory regardless of order or selection.
+    """
+    _MEMORY.clear()
+    yield
+    _MEMORY.clear()
 
 
 @pytest_asyncio.fixture

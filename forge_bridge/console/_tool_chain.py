@@ -42,6 +42,8 @@ from __future__ import annotations
 import json
 from typing import Any, Awaitable, Callable, Optional
 
+from forge_bridge.console._memory import _MEMORY
+
 
 # ── Structured-payload extraction ─────────────────────────────────────────
 
@@ -173,14 +175,21 @@ async def resolve_required_params(
 ) -> dict:
     """Resolve any missing required params for ``tool_name``.
 
-    Behavior:
-      - Tool not in ``_PR25_CHAINS`` → return ``params`` unchanged.
-      - All required keys already in ``params`` → return ``params``
-        unchanged (no upstream call).
-      - Resolver returns a value → return a NEW dict with the resolved
-        key merged in. ``params`` is not mutated.
-      - Resolver returns ``None`` (zero/many matches, error) → return
-        ``params`` unchanged. Caller must surface the contract error.
+    Resolution order (per PR26):
+      1. **Registry guard.** Tool not in ``_PR25_CHAINS`` → return
+         ``params`` unchanged. No memory read, no upstream call.
+      2. **Memory hydration (PR26).** For each required key absent from
+         ``params``, consult ``_MEMORY``. Hits merge into a new dict;
+         the input ``params`` is not mutated. Memory is read-only here
+         — never written without a fresh deterministic resolution.
+      3. **Satisfied-via-memory short-circuit.** If memory satisfied
+         every required key, return immediately — NO upstream tool call.
+         This is the PR26 UX win: a follow-up request reuses an earlier
+         resolution without a probe.
+      4. **Resolver (PR25).** Otherwise dispatch to the chain's resolver.
+         A successful return writes to memory AND merges into params.
+         A ``None`` return leaves ``params`` untouched and lets the PR22
+         graceful contract surface ``MISSING_*`` to the caller.
 
     The returned dict is the canonical post-resolution params and MUST
     be the value the caller passes to ``mcp.call_tool`` AND the value
@@ -191,7 +200,18 @@ async def resolve_required_params(
         return params
 
     required: frozenset = chain["requires"]
+
+    # PR26 — hydrate from memory. Only fill keys that aren't already
+    # caller-provided; never overwrite params with a stale memory value.
+    for key in required:
+        if key not in params:
+            mem_val = _MEMORY.get(key)
+            if mem_val:
+                params = {**params, key: mem_val}
+
     if all(k in params for k in required):
+        # Either the caller supplied everything, or memory did. Either
+        # way: no upstream call, deterministic short-circuit.
         return params
 
     resolver_name = chain["resolver"]
@@ -202,6 +222,12 @@ async def resolve_required_params(
     if resolver_name == "_resolve_project_id":
         project_id = await resolver(mcp)
         if project_id is not None:
+            # PR26 — cache the deterministically-resolved value before
+            # returning. Subsequent requests in this process skip the
+            # probe via the memory-hydration step above. ``set`` is the
+            # ONLY production write site for memory; user input never
+            # writes here (no path exists for that today).
+            _MEMORY.set("project_id", project_id)
             return {**params, "project_id": project_id}
 
     return params

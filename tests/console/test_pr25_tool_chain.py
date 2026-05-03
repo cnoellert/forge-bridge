@@ -127,7 +127,14 @@ async def test_pr25_resolution_is_single_step_no_recursion():
     """Resolution must not recurse. ``resolve_required_params`` calls
     the resolver once; the resolver calls ``forge_list_projects`` once.
     No matter the project count, total upstream calls == 1."""
+    # PR26 — memory persists across calls within a process; clear it
+    # between iterations so each one exercises the resolver path from a
+    # known-empty state (the no-recursion property under test here is
+    # PR25's resolver behavior, not PR26's memory behavior).
+    from forge_bridge.console._memory import _MEMORY
+
     for project_count in (0, 1, 2, 5):
+        _MEMORY.clear()
         mcp = _make_mcp(project_count=project_count)
 
         await resolve_required_params("forge_list_versions", {}, mcp)
