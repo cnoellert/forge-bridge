@@ -101,12 +101,18 @@ class CallResult:
     #   {"events": [
     #       {"kind": "attempt", "attempt": int, "duration": float,
     #        "result": "success|timeout|error",
-    #        "status_code": int|None, "tool_calls": int|list[str]|None},
+    #        "status_code": int|None,
+    #        "tool_calls": int|list[str]|None,    # PR13-B: 0 when skipped
+    #        "tool_duration": float|None},        # PR13: aggregate tool-execution time
     #       {"kind": "backoff", "duration": float},
     #       {"kind": "summary", "attempts": int, "total_elapsed": float,
     #        "final_status": "success|failed", "error_kind": str|None},
     #    ],
     #    "total_elapsed": float, "attempts": int}
+    # PR13-B: attempt events from short-circuit paths (invalid_response, fast
+    # connection failures) report tool_calls=0 to make "no tools executed"
+    # explicit. Slow-failure events that may retry stay tool_calls=None
+    # (unknown — the request started, but we never saw a usable body).
     # Built during execution — not derived from timeline. `timeline` is the
     # legacy human-debug view; `trace` is the system-observability view.
     trace: dict[str, Any] = field(default_factory=dict)
@@ -257,9 +263,12 @@ def call_with_retry(
                 timeline.append({
                     "attempt": attempt, "elapsed": elapsed, "outcome": "connection",
                 })
+                # PR13-B: fast TimeoutException → connection short-circuit.
+                # Skip path → tool_calls=0 (no tools executed).
                 events.append({
                     "kind": "attempt", "attempt": attempt, "duration": elapsed,
-                    "result": "error", "status_code": None, "tool_calls": None,
+                    "result": "error", "status_code": None,
+                    "tool_calls": 0, "tool_duration": None,
                 })
                 if retries > 0:
                     retry_skipped = True
@@ -275,7 +284,8 @@ def call_with_retry(
             )
             events.append({
                 "kind": "attempt", "attempt": attempt, "duration": elapsed,
-                "result": "timeout", "status_code": None, "tool_calls": None,
+                "result": "timeout", "status_code": None,
+                "tool_calls": None, "tool_duration": None,
             })
             last_kind = "timeout"
             last_message = f"LLM request timed out after {elapsed:.1f}s"
@@ -286,16 +296,19 @@ def call_with_retry(
             timeline.append(
                 {"attempt": attempt, "elapsed": elapsed, "outcome": "connection"}
             )
-            events.append({
-                "kind": "attempt", "attempt": attempt, "duration": elapsed,
-                "result": "error", "status_code": None, "tool_calls": None,
-            })
             # PR12: a connection error faster than the fast-fail threshold is
             # almost always deterministic (refused / DNS / firewall) — retrying
             # won't help. Slow connection failures (>=0.5s) may be transient
             # (mid-stream resets, slow handshakes); fall through to the retry
             # path so the existing budget + backoff loop applies.
+            # PR13-B: fast path is a skip → tool_calls=0; slow path may retry
+            # → tool_calls=None (unknown).
             if elapsed < _FAST_FAIL_DURATION_SECONDS:
+                events.append({
+                    "kind": "attempt", "attempt": attempt, "duration": elapsed,
+                    "result": "error", "status_code": None,
+                    "tool_calls": 0, "tool_duration": None,
+                })
                 if retries > 0:
                     retry_skipped = True
                 return _emit_failure(
@@ -305,6 +318,11 @@ def call_with_retry(
                     events=events, now=now, count_toward_breaker=True,
                     retry_skipped=retry_skipped,
                 )
+            events.append({
+                "kind": "attempt", "attempt": attempt, "duration": elapsed,
+                "result": "error", "status_code": None,
+                "tool_calls": None, "tool_duration": None,
+            })
             last_kind = "connection"
             last_message = (
                 f"connection to {url} dropped after {elapsed:.1f}s "
@@ -327,10 +345,12 @@ def call_with_retry(
                         "outcome": "http_error",
                         "status": response.status_code, "body": body,
                     })
+                    # PR13-B: fast 5xx → invalid_response skip path.
                     events.append({
                         "kind": "attempt", "attempt": attempt, "duration": elapsed,
                         "result": "error",
-                        "status_code": response.status_code, "tool_calls": None,
+                        "status_code": response.status_code,
+                        "tool_calls": 0, "tool_duration": None,
                     })
                     error_message = (
                         f"HTTP {response.status_code} from {url} "
@@ -355,7 +375,8 @@ def call_with_retry(
                 events.append({
                     "kind": "attempt", "attempt": attempt, "duration": elapsed,
                     "result": "timeout",
-                    "status_code": response.status_code, "tool_calls": None,
+                    "status_code": response.status_code,
+                    "tool_calls": None, "tool_duration": None,
                 })
                 last_kind = "timeout"
                 last_message = (
@@ -372,10 +393,12 @@ def call_with_retry(
                 "outcome": "http_error", "status": response.status_code,
                 "body": body,
             })
+            # PR13-B: 4xx → invalid_response skip path.
             events.append({
                 "kind": "attempt", "attempt": attempt, "duration": elapsed,
                 "result": "error",
-                "status_code": response.status_code, "tool_calls": None,
+                "status_code": response.status_code,
+                "tool_calls": 0, "tool_duration": None,
             })
             error_message = (
                 f"HTTP {response.status_code} from {url}: {server_msg}"
@@ -399,10 +422,12 @@ def call_with_retry(
                 "attempt": attempt, "elapsed": elapsed,
                 "outcome": "invalid_json", "body": body,
             })
+            # PR13-B: invalid JSON → invalid_response skip path.
             events.append({
                 "kind": "attempt", "attempt": attempt, "duration": elapsed,
                 "result": "error",
-                "status_code": response.status_code, "tool_calls": None,
+                "status_code": response.status_code,
+                "tool_calls": 0, "tool_duration": None,
             })
             if retries > 0:
                 retry_skipped = True
@@ -419,6 +444,7 @@ def call_with_retry(
             "result": "success",
             "status_code": response.status_code,
             "tool_calls": _extract_tool_calls(data),
+            "tool_duration": _extract_tool_duration(data),
         })
         total_elapsed = now() - start
         _report(reporter, f"Response received ({total_elapsed:.1f}s)")
@@ -549,6 +575,24 @@ def _extract_tool_calls(data: Any) -> int | list[str] | None:
         if names and len(names) == len(tc):
             return names
         return len(tc)
+    return None
+
+
+def _extract_tool_duration(data: Any) -> float | None:
+    """PR13: pull aggregate server-side tool-execution time off a chat response.
+
+    Returns a non-negative float when the chat endpoint reports
+    ``tool_duration`` (seconds, aggregate across all tool calls in the
+    response), otherwise ``None``. Negative or non-numeric values are
+    rejected so the trace stays clean.
+    """
+    if not isinstance(data, dict):
+        return None
+    td = data.get("tool_duration")
+    if isinstance(td, bool):  # bool is a subclass of int — never meaningful here
+        return None
+    if isinstance(td, (int, float)) and td >= 0:
+        return float(td)
     return None
 
 

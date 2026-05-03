@@ -1143,3 +1143,450 @@ def test_pr12_retries_zero_does_not_set_retry_skipped_for_fast_fail(
     summary = _summary(result)
     assert summary["retry_skipped"] is False
     assert summary["retry_count"] == 0
+
+
+# ── PR13: tool_calls + tool_duration in trace ─────────────────────────────
+
+
+def _attempts(trace):
+    return [e for e in trace["events"] if e["kind"] == "attempt"]
+
+
+def test_pr13_attempt_event_includes_tool_duration_field_on_success():
+    """Every successful attempt event MUST carry the new ``tool_duration`` key,
+    even when the response does not report it (None in that case)."""
+    with _patch_client([_Resp(200, {"response": "hi"})]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    attempt = _attempts(result.trace)[0]
+    assert "tool_duration" in attempt
+    assert attempt["tool_duration"] is None  # response carried no tool_duration
+
+
+def test_pr13_tool_duration_extracted_when_reported_in_response():
+    """A numeric tool_duration in the chat response must surface as a float
+    in the attempt event."""
+    body = {"response": "hi", "tool_calls": 2, "tool_duration": 1.75}
+    with _patch_client([_Resp(200, body)]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    attempt = _attempts(result.trace)[0]
+    assert attempt["tool_calls"] == 2
+    assert attempt["tool_duration"] == 1.75
+    assert isinstance(attempt["tool_duration"], float)
+
+
+def test_pr13_tool_duration_accepts_integer_seconds():
+    """An int (e.g. tool_duration=3) must coerce to float, not be rejected."""
+    body = {"response": "hi", "tool_duration": 3}
+    with _patch_client([_Resp(200, body)]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    attempt = _attempts(result.trace)[0]
+    assert attempt["tool_duration"] == 3.0
+    assert isinstance(attempt["tool_duration"], float)
+
+
+def test_pr13_tool_duration_zero_is_preserved():
+    """A response that reports zero tool time must record 0.0, not None.
+    A tool-free terminal response that explicitly reports tool_duration=0
+    is meaningful: the loop didn't invoke any tools."""
+    body = {"response": "hi", "tool_calls": 0, "tool_duration": 0}
+    with _patch_client([_Resp(200, body)]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    attempt = _attempts(result.trace)[0]
+    assert attempt["tool_duration"] == 0.0
+
+
+def test_pr13_tool_duration_rejects_non_numeric_payloads():
+    """A malformed tool_duration (string, list, negative, bool) must not
+    poison the trace — fall back to None instead of propagating garbage."""
+    for bad in ("oops", [1.0, 2.0], -1.5, True, False, None):
+        body = {"response": "hi", "tool_duration": bad}
+        with _patch_client([_Resp(200, body)]):
+            result = cw.call_with_retry(
+                "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+                sleep=lambda _s: None,
+            )
+        attempt = _attempts(result.trace)[0]
+        assert attempt["tool_duration"] is None, f"expected None for {bad!r}"
+
+
+def test_pr13_tool_duration_helper_returns_none_for_non_dict_data():
+    """The helper must defend against non-dict response bodies (e.g. lists)."""
+    assert cw._extract_tool_duration(None) is None
+    assert cw._extract_tool_duration([]) is None
+    assert cw._extract_tool_duration("text") is None
+    assert cw._extract_tool_duration(42) is None
+
+
+def test_pr13_attempt_event_includes_tool_duration_on_failure_paths():
+    """Every failure-path attempt event MUST also expose tool_duration=None.
+    The trace consumer should never have to special-case missing keys."""
+    # Slow timeout (legacy fast-fail disabled by autouse fixture).
+    with _patch_client([httpx.TimeoutException("t1")]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    for attempt in _attempts(result.trace):
+        assert "tool_duration" in attempt
+        assert attempt["tool_duration"] is None
+
+    # 4xx invalid_response.
+    with _patch_client([_Resp(400, {"error": {"message": "bad"}})]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    for attempt in _attempts(result.trace):
+        assert "tool_duration" in attempt
+        assert attempt["tool_duration"] is None
+
+    # Invalid JSON body.
+    with _patch_client([_Resp(200, raises_on_json=True, text="not json")]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    for attempt in _attempts(result.trace):
+        assert "tool_duration" in attempt
+        assert attempt["tool_duration"] is None
+
+
+def test_pr13_attempt_event_includes_tool_duration_on_fast_fail_paths(
+    fast_fail_enabled,
+):
+    """PR10.1 fast-fail attempt events also carry tool_duration=None."""
+    # Fast 5xx → invalid_response (PR10.1 reclassification).
+    with _patch_client([_Resp(503, {"error": {"message": "fast bug"}})]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=10.0, retries=2, backoff_seconds=0.0,
+            sleep=lambda _s: None, jitter=lambda: 0.0,
+        )
+    for attempt in _attempts(result.trace):
+        assert attempt["tool_duration"] is None
+
+    # Fast TimeoutException → connection (PR10.1 reclassification).
+    with _patch_client([httpx.TimeoutException("instant")]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=10.0, retries=2, backoff_seconds=0.0,
+            sleep=lambda _s: None, jitter=lambda: 0.0,
+        )
+    for attempt in _attempts(result.trace):
+        assert attempt["tool_duration"] is None
+
+
+def test_pr13_no_tool_execution_attempted_after_fast_fail(fast_fail_enabled):
+    """Acceptance: a fast 4xx/invalid_response must short-circuit — no second
+    HTTP call, hence no second tool-bearing round-trip server-side."""
+    calls = []
+
+    class _Counter:
+        def __enter__(self): return self
+        def __exit__(self, *_a): return False
+        def post(self, *_a, **_k):
+            calls.append("post")
+            # Fast 400 — caller bug, not retryable.
+            return _Resp(400, {"error": {"message": "bad"}})
+
+    with patch("httpx.Client", lambda **_kw: _Counter()):
+        result = cw.call_with_retry(
+            "http://x/y", {},
+            timeout=10.0, retries=5, backoff_seconds=1.0,
+            sleep=lambda _s: None, jitter=lambda: 0.0,
+        )
+    assert result.ok is False
+    assert result.error_kind == "invalid_response"
+    assert len(calls) == 1, "PR13: must NOT retry tools on invalid_response"
+    # Trace agrees: exactly one attempt, retry_skipped=True.
+    summary = _summary(result)
+    assert summary["retry_skipped"] is True
+    assert summary["retry_count"] == 0
+
+
+def test_pr13_no_tool_execution_attempted_when_budget_low():
+    """Acceptance: when remaining budget < MIN_REQUEST_TIMEOUT, the wrapper
+    must NOT fire another attempt that would invoke tools server-side."""
+    clock = _ManualClock()
+    calls = []
+
+    queue = [httpx.TimeoutException("t1")]
+
+    class _Spy:
+        def __enter__(self): return self
+        def __exit__(self, *_a): return False
+        def post(self, *_a, **_k):
+            calls.append("post")
+            clock.advance(2.5)  # eat most of the budget on first call
+            raise queue.pop(0)
+
+    with patch("httpx.Client", lambda **_kw: _Spy()):
+        result = cw.call_with_retry(
+            "http://x/y", {},
+            timeout=3.0, retries=10, backoff_seconds=0.0,
+            sleep=lambda _s: None, now=clock.now, jitter=lambda: 0.0,
+        )
+    # Only ONE post — the second attempt's remaining budget would be
+    # 0.5s < MIN_REQUEST_TIMEOUT (1.0s), so we don't fire the tool round-trip.
+    assert calls == ["post"]
+    assert result.ok is False
+
+
+def test_pr13_tool_calls_and_tool_duration_serialize_round_trip():
+    """The full trace including tool_duration must JSON round-trip cleanly."""
+    import json as _json
+    body = {"response": "hi", "tool_calls": [{"name": "flame_ping"}],
+            "tool_duration": 0.42}
+    with _patch_client([_Resp(200, body)]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    payload = _json.dumps(result.to_dict())
+    parsed = _json.loads(payload)
+    attempt = next(
+        e for e in parsed["trace"]["events"] if e["kind"] == "attempt"
+    )
+    assert attempt["tool_calls"] == ["flame_ping"]
+    assert attempt["tool_duration"] == 0.42
+
+
+def test_pr13_no_regression_pr11_attempt_keys_preserved():
+    """PR11 contract still holds: every attempt event has the original keys
+    plus the new tool_duration field — no renames, no removals."""
+    expected_keys = {
+        "kind", "attempt", "duration", "result",
+        "status_code", "tool_calls", "tool_duration",
+    }
+    with _patch_client([_Resp(200, {"response": "ok"})]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    attempt = _attempts(result.trace)[0]
+    assert set(attempt.keys()) == expected_keys
+
+
+def test_pr13_no_regression_pr12_summary_keys_preserved():
+    """PR12 summary fields untouched by PR13."""
+    with _patch_client([_Resp(200, {"response": "ok"})]):
+        ok = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    summary = _summary(ok)
+    assert "retry_count" in summary
+    assert "retry_skipped" in summary
+    assert summary["final_status"] == "success"
+
+
+# ── PR13-B: tool-execution skip guard ─────────────────────────────────────
+#
+# Skipped paths (fast-fail / invalid_response) report tool_calls=0 to make
+# "no tools executed" explicit. Slow failure paths that may retry stay at
+# tool_calls=None (unknown — request started, body never observed).
+
+
+def test_pr13b_invalid_response_skips_tool_execution():
+    """4xx → invalid_response: attempt event records tool_calls=0, no retry."""
+    with _patch_client([_Resp(400, {"error": {"message": "bad input"}})]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=10.0, retries=3, backoff_seconds=1.0,
+            sleep=lambda _s: None, jitter=lambda: 0.0,
+        )
+    assert result.ok is False
+    assert result.error_kind == "invalid_response"
+    assert result.attempts == 1
+    attempt = _attempts(result.trace)[0]
+    assert attempt["tool_calls"] == 0
+    assert attempt["tool_duration"] is None
+
+
+def test_pr13b_fast_5xx_invalid_response_skips_tool_execution(fast_fail_enabled):
+    """Fast 5xx (PR10.1 reclassification) → invalid_response, tool_calls=0."""
+    with _patch_client([_Resp(503, {"error": {"message": "fast bug"}})]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=10.0, retries=3, backoff_seconds=0.0,
+            sleep=lambda _s: None, jitter=lambda: 0.0,
+        )
+    assert result.ok is False
+    assert result.error_kind == "invalid_response"
+    attempt = _attempts(result.trace)[0]
+    assert attempt["tool_calls"] == 0
+    assert attempt["tool_duration"] is None
+
+
+def test_pr13b_invalid_json_skips_tool_execution():
+    """A 200 with non-JSON body is invalid_response → tool_calls=0."""
+    with _patch_client([_Resp(200, raises_on_json=True, text="not json")]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=10.0, retries=2, backoff_seconds=1.0,
+            sleep=lambda _s: None, jitter=lambda: 0.0,
+        )
+    assert result.ok is False
+    assert result.error_kind == "invalid_response"
+    attempt = _attempts(result.trace)[0]
+    assert attempt["tool_calls"] == 0
+    assert attempt["tool_duration"] is None
+
+
+def test_pr13b_fast_connection_error_skips_tool_execution(fast_fail_enabled):
+    """Fast (<0.5s) connection error → tool_calls=0, no retry."""
+    with _patch_client([httpx.ConnectError("refused")]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=10.0, retries=5, backoff_seconds=1.0,
+            sleep=lambda _s: None, jitter=lambda: 0.0,
+        )
+    assert result.ok is False
+    assert result.error_kind == "connection"
+    assert result.attempts == 1
+    attempt = _attempts(result.trace)[0]
+    assert attempt["tool_calls"] == 0
+    assert attempt["tool_duration"] is None
+
+
+def test_pr13b_fast_timeout_reclassified_connection_skips_tool_execution(
+    fast_fail_enabled,
+):
+    """Fast TimeoutException (PR10.1 → connection) → tool_calls=0."""
+    with _patch_client([httpx.TimeoutException("instant")]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=10.0, retries=5, backoff_seconds=0.0,
+            sleep=lambda _s: None, jitter=lambda: 0.0,
+        )
+    assert result.ok is False
+    assert result.error_kind == "connection"
+    attempt = _attempts(result.trace)[0]
+    assert attempt["tool_calls"] == 0
+    assert attempt["tool_duration"] is None
+
+
+def test_pr13b_low_budget_does_not_fire_tool_bearing_attempt():
+    """When remaining budget < MIN_REQUEST_TIMEOUT we skip the next attempt
+    entirely — no extra event, no tool round-trip server-side."""
+    clock = _ManualClock()
+    calls = []
+
+    queue = [httpx.TimeoutException("t1")]
+
+    class _Spy:
+        def __enter__(self): return self
+        def __exit__(self, *_a): return False
+        def post(self, *_a, **_k):
+            calls.append("post")
+            clock.advance(2.5)  # eat most of the 3s budget
+            raise queue.pop(0)
+
+    with patch("httpx.Client", lambda **_kw: _Spy()):
+        result = cw.call_with_retry(
+            "http://x/y", {},
+            timeout=3.0, retries=10, backoff_seconds=0.0,
+            sleep=lambda _s: None, now=clock.now, jitter=lambda: 0.0,
+        )
+    # Only one HTTP call fired; the budget guard skipped the second.
+    assert calls == ["post"]
+    assert result.ok is False
+    # Exactly one attempt event was recorded — the skipped one was never run.
+    attempts = _attempts(result.trace)
+    assert len(attempts) == 1
+
+
+def test_pr13b_success_path_without_tools_unchanged():
+    """A normal 200 with no tool_calls in the body still works — tool_calls
+    reflects what the server reported (None when not present, not 0)."""
+    with _patch_client([_Resp(200, {"response": "hi"})]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    assert result.ok is True
+    attempt = _attempts(result.trace)[0]
+    assert attempt["result"] == "success"
+    assert attempt["status_code"] == 200
+    # Server didn't report tool_calls → preserved as None (not coerced to 0).
+    assert attempt["tool_calls"] is None
+    assert attempt["tool_duration"] is None
+
+
+def test_pr13b_success_path_with_tools_preserves_count():
+    """Reported tool_calls on a successful response must not be clobbered."""
+    body = {"response": "hi", "tool_calls": 3, "tool_duration": 0.9}
+    with _patch_client([_Resp(200, body)]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    attempt = _attempts(result.trace)[0]
+    assert attempt["tool_calls"] == 3
+    assert attempt["tool_duration"] == 0.9
+
+
+def test_pr13b_slow_timeout_keeps_tool_calls_none():
+    """No regression: a real (>=0.5s) timeout still records tool_calls=None
+    on its attempt event — those failures may retry, so 'unknown' is right."""
+    clock = _ManualClock()
+    queue = [httpx.TimeoutException("real"), httpx.TimeoutException("real")]
+    with _advance_clock_client(queue, clock, advance_per_post=2.0):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=20.0, retries=1, backoff_seconds=0.0,
+            sleep=lambda _s: None, now=clock.now, jitter=lambda: 0.0,
+        )
+    assert result.ok is False
+    assert result.error_kind == "timeout"
+    for attempt in _attempts(result.trace):
+        assert attempt["tool_calls"] is None
+        assert attempt["tool_duration"] is None
+
+
+def test_pr13b_slow_connection_drop_keeps_tool_calls_none(fast_fail_enabled):
+    """Slow (>=0.5s) connection drops fall through to retry — tool_calls=None."""
+    clock = _ManualClock()
+    queue = [
+        httpx.RemoteProtocolError("mid-stream reset"),
+        _Resp(200, {"response": "ok now"}),
+    ]
+    with _advance_clock_client(queue, clock, advance_per_post=1.0):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=20.0, retries=2, backoff_seconds=0.0,
+            sleep=lambda _s: None, now=clock.now, jitter=lambda: 0.0,
+        )
+    assert result.ok is True
+    first = _attempts(result.trace)[0]
+    assert first["tool_calls"] is None
+    assert first["tool_duration"] is None
+
+
+def test_pr13b_retry_behavior_unchanged_after_guard():
+    """Retry semantics from PR12 must survive PR13-B: slow timeout → retry,
+    fast invalid_response → no retry."""
+    # Slow timeout retries normally (legacy fast-fail disabled by autouse).
+    queue = [httpx.TimeoutException("slow"), _Resp(200, {"response": "ok"})]
+    with _patch_client(queue):
+        ok = cw.call_with_retry(
+            "http://x/y", {}, timeout=10.0, retries=1, backoff_seconds=0.0,
+            sleep=lambda _s: None, jitter=lambda: 0.0,
+        )
+    assert ok.ok is True
+    assert ok.attempts == 2
+
+    # Invalid response still skips retries.
+    queue = [_Resp(400, {"error": {"message": "bad"}}),
+             _Resp(200, {"response": "would-have"})]
+    with _patch_client(queue):
+        bad = cw.call_with_retry(
+            "http://x/y", {}, timeout=10.0, retries=3, backoff_seconds=0.0,
+            sleep=lambda _s: None, jitter=lambda: 0.0,
+        )
+    assert bad.ok is False
+    assert bad.attempts == 1
+    assert _summary(bad)["retry_skipped"] is True
