@@ -196,14 +196,20 @@ def filter_tools_by_message(
     """PR14 — narrow the tool list passed to the LLM by simple keyword match.
 
     Pre-filter only. No embeddings, no ranking, no scoring. A tool survives if:
-      * its lowercase name occurs as a substring of the message, OR
+      * its lowercase name occurs as a substring of the message (EXACT match), OR
       * any of its name's word-tokens (split on non-alphanumerics) appear in
         the message tokens — this picks up category matches like ``flame``
         or ``forge`` and verb matches like ``ping``.
 
     If nothing matches, the full ``tools`` list is returned unchanged so we
-    never lose capability. When more than ``max_tools`` survive, the first N
-    in input order are kept (no sort, no rank).
+    never lose capability.
+
+    PR17: exact-name matches are NEVER dropped by the cap. They go to the
+    front of the result (in original input order) and other token matches
+    fill remaining slots. If exact matches alone exceed ``max_tools``, the
+    return is exact matches only (truncated to the cap, still input order).
+    Otherwise the cap behaves as before — first N in input order, no sort,
+    no rank.
     """
     if not isinstance(message, str) or not message:
         return list(tools)
@@ -212,18 +218,25 @@ def filter_tools_by_message(
     if not msg_tokens:
         return list(tools)
 
-    selected: list[Any] = []
+    # PR17: split into two buckets so exact matches survive the cap regardless
+    # of where they sit in input order.
+    exact_matches: list[Any] = []
+    other_matches: list[Any] = []
     for t in tools:
         name = (getattr(t, "name", "") or "").lower()
         if not name:
             continue
         if name in msg_lower:
-            selected.append(t)
+            exact_matches.append(t)
             continue
         if _pr14_tokens(name) & msg_tokens:
-            selected.append(t)
-            continue
+            other_matches.append(t)
 
-    if not selected:
+    if not exact_matches and not other_matches:
         return list(tools)
-    return selected[:max_tools]
+
+    # Exact matches always survive — even if they alone exceed the cap.
+    if len(exact_matches) >= max_tools:
+        return exact_matches[:max_tools]
+    remaining = max_tools - len(exact_matches)
+    return exact_matches + other_matches[:remaining]

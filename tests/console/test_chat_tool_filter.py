@@ -388,3 +388,158 @@ def test_pr14_overrides_max_tools_via_kwarg_for_tests():
     out = filter_tools_by_message(tools, "flame", max_tools=3)
     assert len(out) == 3
     assert _names(out) == [t.name for t in tools[:3]]
+
+
+# ── PR17: exact-match preservation past the cap ──────────────────────────
+
+
+def test_pr17_exact_match_survives_cap_when_pushed_past_input_position():
+    """The motivating UAT case: many forge_* token-matches sit before
+    flame_list_libraries in input order. Pre-PR17 the cap would drop the
+    flame tool. PR17 must rescue it."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    # 9 forge_* tools that match the "list" token, then flame_list_libraries.
+    tools = [_make_tool(f"forge_list_{i}") for i in range(9)] + [
+        _make_tool("flame_list_libraries"),
+    ]
+    out = filter_tools_by_message(
+        tools, "use flame_list_libraries", max_tools=8,
+    )
+    names = _names(out)
+    assert "flame_list_libraries" in names, (
+        f"PR17: exact-match tool was dropped by the cap: {names}"
+    )
+
+
+def test_pr17_exact_match_is_first_in_result():
+    """Exact matches go to the head, in original input order, regardless of
+    where they sit in the input list."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [
+        _make_tool("forge_list_projects"),
+        _make_tool("forge_list_shots"),
+        _make_tool("flame_list_libraries"),
+    ]
+    out = filter_tools_by_message(tools, "please call flame_list_libraries")
+    assert _names(out)[0] == "flame_list_libraries"
+
+
+def test_pr17_multiple_exact_matches_preserved_in_input_order():
+    """Two tools both named in the message both survive, in input order."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [
+        _make_tool("flame_ping"),
+        _make_tool("forge_list_shots"),     # token-match via 'list'
+        _make_tool("forge_list_projects"),  # token-match via 'list'
+        _make_tool("forge_get_project"),
+    ]
+    out = filter_tools_by_message(
+        tools,
+        "first call forge_get_project then call flame_ping to list",
+        max_tools=8,
+    )
+    names = _names(out)
+    # Both exact matches present, in their input order:
+    assert names[0] == "flame_ping"           # input position 0
+    assert names[1] == "forge_get_project"    # input position 3
+    # Token matches still included at the tail:
+    assert "forge_list_shots" in names
+    assert "forge_list_projects" in names
+
+
+def test_pr17_no_exact_match_falls_back_to_pr14_behavior():
+    """If nothing in the message names a tool, the cap behaves exactly as
+    PR14 did — first N token matches in input order, no rescue, no rank."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [_make_tool(f"flame_op_{i}") for i in range(15)]
+    out = filter_tools_by_message(tools, "do something with flame", max_tools=8)
+    assert len(out) == 8
+    assert _names(out) == [t.name for t in tools[:8]]
+
+
+def test_pr17_no_match_at_all_still_falls_back_to_full_list():
+    """The PR14 capability-loss safety net must remain — empty match set
+    still returns the full list."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [_make_tool("forge_get_project"), _make_tool("flame_ping")]
+    out = filter_tools_by_message(tools, "tell me a joke about elephants")
+    assert _names(out) == _names(tools)
+
+
+def test_pr17_exact_matches_alone_exceed_cap_truncated_in_input_order():
+    """If exact matches alone are more than ``max_tools``, return only
+    the first N exact matches in input order — don't add token matches."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    # All 5 tool names appear in the message as substrings.
+    tools = [
+        _make_tool("forge_alpha"),
+        _make_tool("forge_beta"),
+        _make_tool("forge_gamma"),
+        _make_tool("flame_ping"),
+        _make_tool("synth_widget"),
+    ]
+    msg = "use forge_alpha forge_beta forge_gamma flame_ping synth_widget"
+    out = filter_tools_by_message(tools, msg, max_tools=3)
+    assert _names(out) == ["forge_alpha", "forge_beta", "forge_gamma"]
+
+
+def test_pr17_other_matches_only_fill_remaining_slots():
+    """When exact_matches=k and max_tools=N, exactly N-k other matches
+    are appended (k+other ≤ N)."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [
+        _make_tool("forge_list_projects"),  # token match (list)
+        _make_tool("forge_list_shots"),     # token match (list)
+        _make_tool("forge_list_media"),     # token match (list)
+        _make_tool("flame_list_libraries"), # EXACT match
+    ]
+    out = filter_tools_by_message(
+        tools, "list flame_list_libraries please", max_tools=2,
+    )
+    names = _names(out)
+    assert len(names) == 2
+    assert names[0] == "flame_list_libraries"  # exact, at head
+    # Then exactly ONE other match (max_tools=2, exact=1, remaining=1).
+    assert names[1] == "forge_list_projects"   # first in input order
+
+
+def test_pr17_exact_match_that_also_token_matches_counts_as_exact_only():
+    """A tool whose name matches both substring + token shouldn't appear
+    twice — exact-match takes precedence and there is no duplication."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [
+        _make_tool("forge_list_projects"),
+        _make_tool("flame_list_libraries"),
+    ]
+    out = filter_tools_by_message(tools, "use flame_list_libraries")
+    names = _names(out)
+    assert names.count("flame_list_libraries") == 1
+
+
+def test_pr17_input_order_preserved_within_each_bucket():
+    """Stability: order within exact_matches and within other_matches is
+    the same as input order — no sorting."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [
+        _make_tool("z_token_match"),  # token match (z)
+        _make_tool("a_exact"),        # exact match
+        _make_tool("y_token_match"),  # token match (y)
+        _make_tool("b_exact"),        # exact match
+    ]
+    msg = "call a_exact and b_exact, with z and y around"
+    out = filter_tools_by_message(tools, msg, max_tools=8)
+    names = _names(out)
+    # Exact matches: a_exact (input #1), b_exact (input #3) — head, in input order.
+    assert names[0] == "a_exact"
+    assert names[1] == "b_exact"
+    # Token matches: z_token_match (input #0), y_token_match (input #2).
+    assert names[2:4] == ["z_token_match", "y_token_match"]
