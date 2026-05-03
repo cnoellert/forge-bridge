@@ -354,7 +354,10 @@ def test_pr14_category_keyword_picks_up_full_prefix_family():
         _make_tool("forge_list_shots"),
         _make_tool("synth_tools_list"),
     ]
-    out = filter_tools_by_message(tools, "show me what forge knows")
+    # 'tell' is intentionally NOT in NORMALIZATION_MAP — keeps this test
+    # focused on the prefix-keyword behavior (post-PR19, 'show'/'get' would
+    # collapse to 'list' and pull in synth_tools_list as a token-overlap).
+    out = filter_tools_by_message(tools, "tell me what forge knows")
     assert _names(out) == ["forge_get_project", "forge_list_shots"]
 
 
@@ -430,21 +433,25 @@ def test_pr17_multiple_exact_matches_preserved_in_input_order():
     """Two tools both named in the message both survive, in input order."""
     from forge_bridge.console._tool_filter import filter_tools_by_message
 
+    # Use 'forge_widget' (no shared tokens with the other forge_* tools) as
+    # the second exact-match anchor. Post-PR19, 'forge_get_project' would
+    # cause `get`→`list` to make `forge_list_projects` token-complete, which
+    # would scramble the bucket assignment this test is verifying.
     tools = [
         _make_tool("flame_ping"),
         _make_tool("forge_list_shots"),     # token-match via 'list'
         _make_tool("forge_list_projects"),  # token-match via 'list'
-        _make_tool("forge_get_project"),
+        _make_tool("forge_widget"),
     ]
     out = filter_tools_by_message(
         tools,
-        "first call forge_get_project then call flame_ping to list",
+        "first call forge_widget then call flame_ping to list",
         max_tools=8,
     )
     names = _names(out)
     # Both exact matches present, in their input order:
     assert names[0] == "flame_ping"           # input position 0
-    assert names[1] == "forge_get_project"    # input position 3
+    assert names[1] == "forge_widget"         # input position 3
     # Token matches still included at the tail:
     assert "forge_list_shots" in names
     assert "forge_list_projects" in names
@@ -699,3 +706,431 @@ def test_pr18_acceptance_list_projects_does_not_promote_flame_list_libraries():
     assert names.index("forge_list_projects") < names.index(
         "flame_list_libraries"
     )
+
+
+# ── PR19: deterministic lexical normalization ─────────────────────────────
+
+
+def test_pr19_normalize_token_is_dict_lookup_only():
+    """``normalize_token`` is a strict dict lookup — unmapped tokens pass
+    through unchanged. No stemming, no fuzzy fallback."""
+    from forge_bridge.console._tool_filter import (
+        NORMALIZATION_MAP,
+        normalize_token,
+    )
+
+    # Mapped tokens collapse.
+    assert normalize_token("libraries") == "library"
+    assert normalize_token("show") == "list"
+    assert normalize_token("listing") == "list"
+    assert normalize_token("get") == "list"
+    assert normalize_token("fetch") == "list"
+    # Unmapped tokens are identity.
+    assert normalize_token("flame") == "flame"
+    assert normalize_token("ping") == "ping"
+    # The map is the source of truth — no surprise entries.
+    assert "show" in NORMALIZATION_MAP and NORMALIZATION_MAP["show"] == "list"
+
+
+def test_pr19_show_flame_libraries_promotes_flame_list_libraries():
+    """AC #1: ``"show flame libraries"`` → flame_list_libraries at the head.
+
+    Pre-PR19: 'show' ≠ 'list' and 'libraries' ≠ 'library', so the PR18
+    token-complete subset check fails. Post-PR19: both tokens normalize so
+    the subset check fires and the tool lands in the exact-match bucket.
+    """
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    # Many forge_list_* tools share the normalized 'list' token but not
+    # 'flame' or 'library' — they must NOT outrank the genuine match.
+    tools = [_make_tool(f"forge_list_{i}") for i in range(9)] + [
+        _make_tool("flame_list_libraries"),
+    ]
+    out = filter_tools_by_message(tools, "show flame libraries", max_tools=8)
+    names = _names(out)
+    assert names[0] == "flame_list_libraries", (
+        f"PR19: 'show flame libraries' must promote flame_list_libraries: {names}"
+    )
+
+
+def test_pr19_get_flame_libraries_promotes_flame_list_libraries():
+    """AC #2 (variant): ``"get flame libraries"`` → flame_list_libraries."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [_make_tool(f"forge_list_{i}") for i in range(9)] + [
+        _make_tool("flame_list_libraries"),
+    ]
+    out = filter_tools_by_message(tools, "get flame libraries", max_tools=8)
+    assert _names(out)[0] == "flame_list_libraries"
+
+
+def test_pr19_listing_flame_libraries_promotes_flame_list_libraries():
+    """AC #3: ``"listing flame libraries"`` → flame_list_libraries."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [_make_tool(f"forge_list_{i}") for i in range(9)] + [
+        _make_tool("flame_list_libraries"),
+    ]
+    out = filter_tools_by_message(
+        tools, "listing flame libraries", max_tools=8,
+    )
+    assert _names(out)[0] == "flame_list_libraries"
+
+
+def test_pr19_fetch_flame_libraries_promotes_flame_list_libraries():
+    """``fetch`` is in the map and collapses to ``list``."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [_make_tool(f"forge_list_{i}") for i in range(9)] + [
+        _make_tool("flame_list_libraries"),
+    ]
+    out = filter_tools_by_message(
+        tools, "fetch flame libraries", max_tools=8,
+    )
+    assert _names(out)[0] == "flame_list_libraries"
+
+
+def test_pr19_plural_normalization_works_across_entity_words():
+    """Plural→singular collapse fires for shots, projects, versions, roles."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [
+        _make_tool("forge_list_shots"),
+        _make_tool("forge_list_projects"),
+        _make_tool("forge_list_versions"),
+        _make_tool("forge_list_roles"),
+    ]
+    # 'list shots' (plural in msg) maps to {list, shot}; tool tokens map to
+    # {forge, list, shot}. Subset check: name ⊄ msg (forge missing). It is
+    # however a token overlap, so it survives — and it remains the only tool
+    # in input-order whose normalized tokens contain 'shot'. The other three
+    # share only 'list' after normalization.
+    out = filter_tools_by_message(tools, "list shots")
+    names = _names(out)
+    assert names[0] == "forge_list_shots", (
+        f"PR19 plural collapse must put forge_list_shots first: {names}"
+    )
+
+
+def test_pr19_get_shots_normalizes_both_verb_and_plural():
+    """``forge get shots`` exercises BOTH verb normalization (get→list) AND
+    plural normalization (shots→shot) in a single message — and ensures
+    the token-complete subset check (PR18) actually fires post-normalization,
+    promoting forge_list_shots to the exact bucket."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [
+        _make_tool("forge_list_projects"),
+        _make_tool("forge_list_shots"),
+        _make_tool("flame_list_libraries"),
+    ]
+    # Message tokens normalize to {forge, list, shot}; forge_list_shots
+    # normalizes to {forge, list, shot} (strict subset → exact bucket head).
+    out = filter_tools_by_message(tools, "forge get shots")
+    names = _names(out)
+    assert names[0] == "forge_list_shots"
+
+
+def test_pr19_get_projects_acceptance_resolves_forge_list_projects():
+    """AC #2 (literal text): ``"get projects"`` → forge_list_projects.
+
+    'get' → 'list', 'projects' → 'project'. Tool 'forge_list_projects'
+    normalizes to {forge, list, project}; intersection with {list, project}
+    is two tokens — top of the other_matches bucket in input order."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [
+        _make_tool("forge_list_projects"),
+        _make_tool("forge_list_shots"),
+        _make_tool("flame_list_libraries"),
+    ]
+    out = filter_tools_by_message(tools, "get projects")
+    names = _names(out)
+    assert names[0] == "forge_list_projects"
+
+
+def test_pr19_unrelated_synonyms_do_not_match():
+    """Strict dict lookup: words NOT in NORMALIZATION_MAP do not collapse.
+
+    'archives', 'fetch_all', 'enumerate', 'directories' are NOT in the map
+    — they remain themselves. 'archives' does NOT become 'library', so
+    flame_list_libraries should NOT be promoted to exact."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [
+        _make_tool("flame_list_libraries"),
+        _make_tool("forge_list_projects"),
+    ]
+    # 'enumerate flame archives' shares only 'flame' with the tool tokens
+    # after normalization — flame_list_libraries normalized is
+    # {flame, list, library}; msg normalized is {enumerate, flame, archives}.
+    # Subset: False. Overlap: {flame}. Token-overlap bucket only.
+    out = filter_tools_by_message(tools, "enumerate flame archives")
+    names = _names(out)
+    # Must not be promoted to exact (no head-of-list claim from nothing).
+    # Both tools share 'flame' or nothing — flame_list_libraries first by
+    # input order in the other-matches bucket; forge_list_projects has no
+    # token overlap so it would NOT appear unless fallback fires.
+    assert "flame_list_libraries" in names  # token overlap on 'flame'
+    # The PR18 token-complete bucket should NOT have promoted it — verify
+    # the result length matches a plain token-overlap pass (just the 'flame'
+    # match), confirming no spurious normalization happened.
+    assert names == ["flame_list_libraries"]
+
+
+def test_pr19_no_regression_pr17_substring_exact_match():
+    """PR17 substring path is independent of normalization — an underscored
+    tool name in the message still routes to exact bucket."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [
+        _make_tool("forge_list_projects"),
+        _make_tool("flame_list_libraries"),
+    ]
+    out = filter_tools_by_message(tools, "use flame_list_libraries")
+    assert _names(out)[0] == "flame_list_libraries"
+
+
+def test_pr19_no_regression_pr18_underscored_token_complete_match():
+    """PR18 token-complete match still works on already-canonical tokens."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [_make_tool(f"forge_list_{i}") for i in range(9)] + [
+        _make_tool("flame_list_libraries"),
+    ]
+    out = filter_tools_by_message(
+        tools, "list flame libraries", max_tools=8,
+    )
+    assert _names(out)[0] == "flame_list_libraries"
+
+
+def test_pr19_no_regression_pr15_unrelated_message_falls_back_to_full_list():
+    """Capability-loss safety net intact: an unrelated message that shares
+    no normalized tokens with any tool returns the full input list."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [
+        _make_tool("forge_list_projects"),
+        _make_tool("flame_list_libraries"),
+    ]
+    out = filter_tools_by_message(tools, "tell me a joke about elephants")
+    assert _names(out) == _names(tools)
+
+
+# ── PR19.1: closed canonical vocabulary + symmetric application ──────────
+
+
+def test_pr19_1_canonical_identity_entries_are_closed_vocabulary():
+    """Each canonical form must be a key that maps to itself.
+
+    Identity rows (``"library": "library"``) make the closed canonical
+    vocabulary explicit and act as a regression guard: if a future edit
+    accidentally re-targets ``libraries`` to something other than
+    ``library``, the missing identity row would surface immediately.
+    """
+    from forge_bridge.console._tool_filter import (
+        NORMALIZATION_MAP,
+        normalize_token,
+    )
+
+    canonical_forms = {"library", "project", "shot", "version", "role", "list"}
+    for canonical in canonical_forms:
+        assert NORMALIZATION_MAP.get(canonical) == canonical, (
+            f"Canonical identity broken for {canonical!r}: "
+            f"NORMALIZATION_MAP[{canonical!r}] = "
+            f"{NORMALIZATION_MAP.get(canonical)!r}"
+        )
+        assert normalize_token(canonical) == canonical
+
+
+def test_pr19_1_normalize_token_targets_are_all_canonical():
+    """Every value in NORMALIZATION_MAP must itself be a canonical form
+    (a key that maps to itself). This is the closure check — it prevents
+    a future edit from introducing a target that isn't covered by an
+    identity row, which would silently break symmetry."""
+    from forge_bridge.console._tool_filter import NORMALIZATION_MAP
+
+    for src, dst in NORMALIZATION_MAP.items():
+        assert NORMALIZATION_MAP.get(dst) == dst, (
+            f"Asymmetry: {src!r} → {dst!r} but {dst!r} is not a fixed "
+            f"point (got {NORMALIZATION_MAP.get(dst)!r}). Add "
+            f"{dst!r}: {dst!r} to NORMALIZATION_MAP."
+        )
+
+
+def test_pr19_1_symmetric_application_message_and_tool_share_chokepoint():
+    """The same tokenization+normalization function is used for BOTH
+    message text and tool names, so identical inputs produce identical
+    canonical token-sets regardless of source."""
+    from forge_bridge.console._tool_filter import _pr14_tokens
+
+    # Singular tool token + plural message: both land on canonical 'version'.
+    assert _pr14_tokens("forge_list_version") == _pr14_tokens(
+        "forge list version"
+    )
+    # Singular message + plural tool: both land on canonical 'version'.
+    assert "version" in _pr14_tokens("forge_list_versions")
+    assert "version" in _pr14_tokens("show versions")
+    assert "version" in _pr14_tokens("show version")
+
+    # Verb collapse is symmetric too — 'list' is a fixed point.
+    for verb in ("listing", "show", "get", "fetch", "list"):
+        assert "list" in _pr14_tokens(f"please {verb} something")
+
+
+def test_pr19_1_singular_tool_token_matches_plural_message_token():
+    """Direct symmetry assertion (test #4 in the brief): a tool whose name
+    contains the singular ``version`` must token-overlap with a message
+    that contains the plural ``versions`` after normalization."""
+    from forge_bridge.console._tool_filter import _pr14_tokens
+
+    # Hypothetical singular-named tool.
+    tool_tokens = _pr14_tokens("forge_get_version")
+    # Plural-form message.
+    msg_tokens = _pr14_tokens("show me the versions")
+    overlap = tool_tokens & msg_tokens
+    assert "version" in overlap, (
+        f"singular tool 'version' must match plural message 'versions' "
+        f"after normalization: {tool_tokens=} {msg_tokens=}"
+    )
+    # And the reverse direction.
+    tool_tokens = _pr14_tokens("forge_list_versions")
+    msg_tokens = _pr14_tokens("show me the version")
+    assert "version" in tool_tokens & msg_tokens
+
+
+def test_pr19_1_fetch_versions_resolves_forge_list_versions():
+    """AC #1 (REQUIRED): ``"fetch versions"`` keeps forge_list_versions
+    in the filter result.
+
+    'fetch' → 'list' (verb collapse); 'versions' → 'version' (plural
+    collapse). After normalization the tool's token-set
+    {forge, list, version} shares {list, version} with the message —
+    the tool survives the filter as a token-overlap match.
+    """
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [
+        _make_tool("forge_list_versions"),
+        _make_tool("flame_ping"),  # no shared canonical tokens
+    ]
+    out = filter_tools_by_message(tools, "fetch versions")
+    names = _names(out)
+    assert "forge_list_versions" in names, (
+        f"PR19.1 AC #1: 'fetch versions' must keep forge_list_versions "
+        f"in the result: {names}"
+    )
+    # And it's the only tool that overlaps — flame_ping has no shared
+    # tokens with {list, version}, so the result is exactly one tool.
+    assert names == ["forge_list_versions"]
+
+
+def test_pr19_1_get_versions_resolves_forge_list_versions():
+    """AC #2: ``"get versions"`` resolves forge_list_versions for the same
+    reason as 'fetch versions' — both verbs collapse to 'list'."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [
+        _make_tool("forge_list_versions"),
+        _make_tool("flame_ping"),
+    ]
+    out = filter_tools_by_message(tools, "get versions")
+    assert _names(out) == ["forge_list_versions"]
+
+
+def test_pr19_1_list_version_singular_resolves_forge_list_versions():
+    """AC #3: singular ``"list version"`` resolves forge_list_versions —
+    proves singular-message ↔ plural-tool symmetry."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [
+        _make_tool("forge_list_versions"),  # plural in tool name
+        _make_tool("flame_ping"),
+    ]
+    out = filter_tools_by_message(tools, "list version")  # singular in msg
+    assert _names(out) == ["forge_list_versions"]
+
+
+def test_pr19_1_fetch_versions_promotes_to_exact_when_forge_present():
+    """When the message includes the prefix token ``forge`` plus the verb
+    and noun, the token-complete (PR18) subset check must fire — proving
+    the symmetric normalization elevates forge_list_versions to the exact
+    bucket without any change to the match logic."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    # Many forge_list_* tools share the canonical 'list' token but not
+    # 'version' — they must NOT outrank the genuine match.
+    tools = [_make_tool(f"forge_list_{i}") for i in range(9)] + [
+        _make_tool("forge_list_versions"),
+    ]
+    out = filter_tools_by_message(
+        tools, "forge fetch versions", max_tools=8,
+    )
+    names = _names(out)
+    assert names[0] == "forge_list_versions", (
+        f"PR19.1: token-complete match must promote forge_list_versions "
+        f"to the head when the message includes the prefix: {names}"
+    )
+
+
+def test_pr19_1_no_regression_show_flame_libraries():
+    """AC #3 (existing): ``"show flame libraries"`` still resolves
+    flame_list_libraries — PR19.1 must not regress PR19's wins."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [_make_tool(f"forge_list_{i}") for i in range(9)] + [
+        _make_tool("flame_list_libraries"),
+    ]
+    out = filter_tools_by_message(tools, "show flame libraries", max_tools=8)
+    assert _names(out)[0] == "flame_list_libraries"
+
+
+def test_pr19_1_no_regression_pr18_token_complete_underscored():
+    """PR18 token-complete match path on canonical tokens unchanged."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [_make_tool(f"forge_list_{i}") for i in range(9)] + [
+        _make_tool("flame_list_libraries"),
+    ]
+    out = filter_tools_by_message(
+        tools, "list flame libraries", max_tools=8,
+    )
+    assert _names(out)[0] == "flame_list_libraries"
+
+
+def test_pr19_1_no_regression_pr17_substring_exact_match():
+    """PR17 substring path independent of normalization."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [
+        _make_tool("forge_list_projects"),
+        _make_tool("flame_list_libraries"),
+    ]
+    out = filter_tools_by_message(tools, "use flame_list_libraries")
+    assert _names(out)[0] == "flame_list_libraries"
+
+
+def test_pr19_1_no_regression_pr14_unrelated_message_falls_back():
+    """Unrelated message with no normalized-token overlap returns full list."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [
+        _make_tool("forge_list_projects"),
+        _make_tool("flame_list_libraries"),
+    ]
+    out = filter_tools_by_message(tools, "tell me a joke about elephants")
+    assert _names(out) == _names(tools)
+
+
+def test_pr19_1_no_regression_pr14_cap_unchanged():
+    """The PR14 cap behavior on a category-wide match is unchanged: at
+    most ``max_tools`` survive, in input order, no rank/sort."""
+    from forge_bridge.console._tool_filter import (
+        PR14_MAX_TOOLS,
+        filter_tools_by_message,
+    )
+
+    tools = [_make_tool(f"flame_op_{i}") for i in range(15)]
+    out = filter_tools_by_message(tools, "do something with flame")
+    assert len(out) == PR14_MAX_TOOLS
+    assert _names(out) == [t.name for t in tools[:PR14_MAX_TOOLS]]

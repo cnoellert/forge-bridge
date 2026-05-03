@@ -183,8 +183,67 @@ def _reset_for_tests() -> None:
 # ---------------------------------------------------------------------------
 
 
+# PR19 / PR19.1 — deterministic lexical normalization map.
+#
+# Purpose: collapse equivalent surface forms (plurals, verb synonyms) to a
+# single canonical token so the PR18 token-complete subset check fires on
+# natural-language phrasings ("show flame libraries" → flame_list_libraries).
+#
+# CONTRACT — read before editing:
+#   1. Dictionary lookup ONLY. No stemming, fuzzy matching, edit distance,
+#      partial matching, embeddings, or similarity scoring.
+#   2. SYMMETRIC APPLICATION. Every place that produces a token-set for
+#      matching MUST funnel through `normalize_token`. The single chokepoint
+#      is `_pr14_tokens` below — both message text and tool names go
+#      through it, so canonicalization is guaranteed identical on both
+#      sides of the subset check.
+#   3. CANONICAL IDENTITY ENTRIES. Each canonical form is also a key
+#      mapping to itself (e.g. "library" → "library"). Functionally these
+#      are no-ops (`dict.get(k, k)` already does identity for unmapped
+#      keys), but they document the closed canonical vocabulary
+#      explicitly and act as a regression guard: if a future edit accidentally
+#      changes the canonical target for, say, "libraries", the corresponding
+#      identity row makes the asymmetry visible at a glance.
+NORMALIZATION_MAP: dict[str, str] = {
+    # Canonical identity (closed vocabulary — prevents asymmetry drift).
+    "library": "library",
+    "project": "project",
+    "shot": "shot",
+    "version": "version",
+    "role": "role",
+    "list": "list",
+    # Plurals → singular.
+    "libraries": "library",
+    "projects": "project",
+    "shots": "shot",
+    "versions": "version",
+    "roles": "role",
+    # Verb normalization → canonical "list".
+    "listing": "list",
+    "show": "list",
+    "get": "list",
+    "fetch": "list",
+}
+
+
+def normalize_token(token: str) -> str:
+    """Map a single lowercase token to its canonical form.
+
+    Deterministic dict lookup; tokens not in the map pass through unchanged
+    (so the closed canonical vocabulary above does not affect the long tail
+    of tool-specific words like ``flame``, ``ping``, ``forge``, etc.).
+    """
+    return NORMALIZATION_MAP.get(token, token)
+
+
 def _pr14_tokens(text: str) -> set[str]:
-    return set(_PR14_TOKEN_RE.findall(text.lower()))
+    """Tokenize ``text`` and apply ``normalize_token`` to every token.
+
+    Single chokepoint — both message text and tool names are tokenized
+    through this function so the canonicalization rules apply symmetrically
+    on both sides of the PR18 subset check (PR19.1 invariant).
+    """
+    return {normalize_token(t) for t in _PR14_TOKEN_RE.findall(text.lower())}
 
 
 def filter_tools_by_message(
@@ -203,6 +262,12 @@ def filter_tools_by_message(
       * any of its name's word-tokens (split on non-alphanumerics) appear in
         the message tokens (other match — picks up category matches like
         ``flame`` / ``forge`` and verb matches like ``ping``).
+
+    PR19: tokens (both message and tool name) are passed through
+    ``NORMALIZATION_MAP`` before any comparison. Plurals collapse to their
+    singular form and a small fixed set of "list"-equivalent verbs
+    (``show``/``get``/``fetch``/``listing``) collapse to ``list``. Strict dict
+    lookup — no fuzzy/partial/stemming.
 
     If nothing matches, the full ``tools`` list is returned unchanged so we
     never lose capability.
