@@ -543,3 +543,159 @@ def test_pr17_input_order_preserved_within_each_bucket():
     assert names[1] == "b_exact"
     # Token matches: z_token_match (input #0), y_token_match (input #2).
     assert names[2:4] == ["z_token_match", "y_token_match"]
+
+
+# ── PR18: token-complete exact match for natural-language phrases ────────
+
+
+def test_pr18_natural_language_matches_underscored_tool_name():
+    """The motivating UAT case: 'list flame libraries' (spaces) must
+    elevate flame_list_libraries to the exact-match bucket because every
+    token of the tool name is in the message."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    # Many forge_* tools appear before flame_list_libraries in input order
+    # AND share token "list" — pre-PR18 the cap would still drop the flame
+    # tool because substring match doesn't fire (spaces vs. underscores).
+    tools = [_make_tool(f"forge_list_{i}") for i in range(9)] + [
+        _make_tool("flame_list_libraries"),
+    ]
+    out = filter_tools_by_message(
+        tools, "list flame libraries", max_tools=8,
+    )
+    names = _names(out)
+    assert "flame_list_libraries" in names, (
+        f"PR18: token-complete match dropped by cap: {names}"
+    )
+    # Exact bucket (token-complete) → head of result.
+    assert names[0] == "flame_list_libraries"
+
+
+def test_pr18_token_order_in_message_does_not_matter():
+    """Tokens are a set membership check — order in the message is
+    irrelevant. ``"flame libraries list"`` still matches."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [_make_tool("flame_list_libraries"),
+             _make_tool("forge_list_projects")]
+    out = filter_tools_by_message(tools, "flame libraries list")
+    names = _names(out)
+    assert names[0] == "flame_list_libraries"
+
+
+def test_pr18_partial_token_match_does_NOT_promote_to_exact():
+    """If only some tool tokens are in the message, the tool stays in the
+    other (token-overlap) bucket — strict subset is required for exact."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    # Many earlier-in-input tools also match "flame" so the cap kicks in.
+    tools = [_make_tool(f"flame_op_{i}") for i in range(9)] + [
+        _make_tool("flame_list_libraries"),
+    ]
+    # 'list' is missing — flame_list_libraries should NOT be in the
+    # exact bucket and therefore CAN be dropped by the cap (8 flame_op_*
+    # tools come first in input order).
+    out = filter_tools_by_message(tools, "flame libraries", max_tools=8)
+    names = _names(out)
+    # The first 9 flame_op_* tools all token-match; the 10th
+    # (flame_list_libraries) also token-matches but has no exact rescue,
+    # so the cap drops it.
+    assert "flame_list_libraries" not in names, (
+        "PR18 must not promote partial-token matches to exact"
+    )
+    assert len(names) == 8
+
+
+def test_pr18_substring_and_token_complete_both_route_to_exact_bucket():
+    """The two exact-match conditions are an OR — both produce the same
+    bucket placement. Verify this on a single message that triggers both."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [
+        _make_tool("flame_ping"),             # substring exact
+        _make_tool("flame_list_libraries"),   # token-complete exact
+        _make_tool("forge_list_projects"),    # token overlap only
+    ]
+    out = filter_tools_by_message(
+        tools, "please call flame_ping then list flame libraries",
+    )
+    names = _names(out)
+    # Both exact matches must appear at the head, in input order.
+    assert names[:2] == ["flame_ping", "flame_list_libraries"]
+    assert "forge_list_projects" in names
+
+
+def test_pr18_token_complete_match_survives_when_cap_exceeded():
+    """Token-complete exact matches enjoy the same cap-survival guarantee
+    as substring matches (PR17 contract extended)."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    # 9 tools that token-overlap "list", + the token-complete winner last.
+    tools = [_make_tool(f"forge_list_{i}") for i in range(9)] + [
+        _make_tool("flame_list_libraries"),
+    ]
+    out = filter_tools_by_message(
+        tools, "list flame libraries", max_tools=2,
+    )
+    names = _names(out)
+    assert names[0] == "flame_list_libraries"   # exact (token-complete) at head
+    assert len(names) == 2                       # one other match fills remainder
+
+
+def test_pr18_no_regression_pr17_substring_path():
+    """PR17 substring exact-match path remains unaffected: an underscored
+    tool name in the message goes to head as before."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [_make_tool("forge_list_projects"),
+             _make_tool("flame_list_libraries")]
+    out = filter_tools_by_message(tools, "use flame_list_libraries")
+    assert _names(out)[0] == "flame_list_libraries"
+
+
+def test_pr18_no_regression_pr14_unrelated_message_falls_back_to_full_list():
+    """No exact OR token match → still returns the full input list
+    (capability-loss safety net intact)."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [_make_tool("forge_list_projects"),
+             _make_tool("flame_list_libraries")]
+    out = filter_tools_by_message(tools, "tell me a joke about elephants")
+    assert _names(out) == _names(tools)
+
+
+def test_pr18_does_not_duplicate_when_tool_qualifies_for_both_exact_paths():
+    """A tool whose name is BOTH a substring AND token-complete must
+    appear in the result exactly once."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [_make_tool("flame_list_libraries"),
+             _make_tool("forge_list_projects")]
+    # Message mentions both the underscored form and the natural form.
+    msg = "please flame_list_libraries: list the flame libraries"
+    out = filter_tools_by_message(tools, msg)
+    names = _names(out)
+    assert names.count("flame_list_libraries") == 1
+
+
+def test_pr18_acceptance_list_projects_does_not_promote_flame_list_libraries():
+    """Direct PR18 AC: the message ``"list projects"`` must NOT promote
+    flame_list_libraries to the exact-match bucket — only ``list`` overlaps
+    (``flame``, ``libraries`` are missing). It may still appear as a
+    token-overlap match (PR14 baseline), but not at the head."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [_make_tool("forge_list_projects"),
+             _make_tool("flame_list_libraries")]
+    out = filter_tools_by_message(tools, "list projects")
+    names = _names(out)
+    # forge_list_projects shares 'list' and 'projects' (token overlap, two
+    # of three tokens). flame_list_libraries shares only 'list'. Neither
+    # is token-complete; both end up as token-overlap matches in input
+    # order. The PR18 promise is that flame_list_libraries was NOT
+    # elevated to the exact-match bucket — verify by checking the head.
+    assert names[0] == "forge_list_projects"
+    # And specifically: flame_list_libraries did not jump the queue.
+    assert names.index("forge_list_projects") < names.index(
+        "flame_list_libraries"
+    )

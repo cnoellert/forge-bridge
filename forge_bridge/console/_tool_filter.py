@@ -196,10 +196,13 @@ def filter_tools_by_message(
     """PR14 — narrow the tool list passed to the LLM by simple keyword match.
 
     Pre-filter only. No embeddings, no ranking, no scoring. A tool survives if:
-      * its lowercase name occurs as a substring of the message (EXACT match), OR
+      * its lowercase name occurs as a substring of the message (EXACT, PR17), OR
+      * every token of its name appears in the message tokens (EXACT,
+        token-complete, PR18 — covers ``"list flame libraries"`` →
+        ``flame_list_libraries``), OR
       * any of its name's word-tokens (split on non-alphanumerics) appear in
-        the message tokens — this picks up category matches like ``flame``
-        or ``forge`` and verb matches like ``ping``.
+        the message tokens (other match — picks up category matches like
+        ``flame`` / ``forge`` and verb matches like ``ping``).
 
     If nothing matches, the full ``tools`` list is returned unchanged so we
     never lose capability.
@@ -220,6 +223,10 @@ def filter_tools_by_message(
 
     # PR17: split into two buckets so exact matches survive the cap regardless
     # of where they sit in input order.
+    # PR18: a tool is also "exact" if every token of its name appears in the
+    # message tokens — bridges the natural-language ↔ underscore-form gap
+    # ("list flame libraries" → flame_list_libraries) without changing rank
+    # or score. Strict subset only — partial overlap stays in the other bucket.
     exact_matches: list[Any] = []
     other_matches: list[Any] = []
     for t in tools:
@@ -229,7 +236,11 @@ def filter_tools_by_message(
         if name in msg_lower:
             exact_matches.append(t)
             continue
-        if _pr14_tokens(name) & msg_tokens:
+        name_tokens = _pr14_tokens(name)
+        if name_tokens and name_tokens.issubset(msg_tokens):
+            exact_matches.append(t)
+            continue
+        if name_tokens & msg_tokens:
             other_matches.append(t)
 
     if not exact_matches and not other_matches:
