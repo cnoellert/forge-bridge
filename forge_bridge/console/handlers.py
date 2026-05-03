@@ -393,6 +393,17 @@ _CHAT_VALID_ROLES = frozenset({"user", "assistant", "tool"})
 #     no fallback to text — see brief STOP CONDITIONS.
 
 
+# PR30 — chain hard cap. The brief specifies 3 as the maximum number of
+# steps a single message may contain. Above this we 400 with
+# ``CHAIN_TOO_LONG`` rather than letting an unbounded chain consume
+# server time. Hardcoded constant — operator-tunable via env var is
+# explicitly out of scope until a real use case demands it (the brief
+# is uncompromising about determinism, and a configurable cap would
+# turn this into a runtime knob that's hard to reason about across
+# deployments).
+_CHAIN_MAX_STEPS = 3
+
+
 def _serialize_forced_tool_result(raw: Any) -> str:
     """Serialize a FastMCP `call_tool` return into a string suitable for the
     `tool` message body.
@@ -641,6 +652,243 @@ async def _execute_forced_tool(
     )
 
 
+# -- PR30 — multi-step tool chaining ---------------------------------------
+
+
+async def _execute_chain_step(
+    *,
+    step_text: str,
+    tools: list,
+    mcp: Any,
+    inherited_context: dict,
+) -> dict:
+    """Run a single chain step end-to-end.
+
+    Returns a dict in one of two shapes:
+
+      Success: ``{"result": <parsed-or-raw>, "extracted_context": dict,
+                  "tool": <tool_name>, "params": dict}``
+      Failure: ``{"error": {"type": ..., "message": ..., ...}}``
+
+    Each step independently re-runs the forced-execution pipeline
+    against ``step_text``: PR14 message filter → PR21 narrow → PR28
+    user-param extraction → PR25/26/27 resolver → PR29 name-resolution
+    fallback (when disambiguation fires) → ``mcp.call_tool``. The step
+    fails if narrowing doesn't pin exactly one tool, the resolver
+    surfaces an unresolvable disambiguation, or the tool itself
+    raises.
+
+    Inherited context flows in as if it were caller-supplied params:
+    ``{**inherited_context, **user_params}`` — the step's own explicit
+    params (PR28) take precedence over context, preserving the
+    explicit > memory > resolver chain. Context never writes to
+    memory (PR26 invariant).
+    """
+    from forge_bridge.console._chain_parse import extract_chain_context
+    from forge_bridge.console._name_resolve import resolve_name_from_candidates
+    from forge_bridge.console._param_extract import extract_explicit_params
+    from forge_bridge.console._tool_chain import (
+        DISAMBIGUATION_KEY,
+        resolve_required_params,
+    )
+
+    # 1. Parse explicit params from THIS step's text. The handler-
+    # level extraction (single-step path) doesn't apply — chain steps
+    # carry their own selectors per the brief's "each step is a
+    # valid standalone command" rule.
+    user_params = extract_explicit_params(step_text)
+
+    # 2. Merge inherited context. user_params wins on collision —
+    # explicit beats inherited. ``project_name`` is consumed by the
+    # PR29 disambiguation branch below, not by the resolver, so we
+    # split it out the same way ``_execute_forced_tool`` does.
+    merged: dict = {**(inherited_context or {}), **user_params}
+    requested_name = merged.get("project_name")
+    resolver_input = {k: v for k, v in merged.items() if k != "project_name"}
+
+    # 3. Narrow tools to exactly one. PR14 keyword match → PR21
+    # deterministic narrow. A chain step that can't pin one tool is a
+    # step failure — the brief explicitly states each step must be a
+    # standalone command.
+    filtered = filter_tools_by_message(tools, step_text)
+    if len(filtered) > 1:
+        narrowed = deterministic_narrow(filtered, step_text)
+        if len(narrowed) < len(filtered):
+            filtered = narrowed
+    if len(filtered) != 1:
+        return {"error": {
+            "type": "tool_selection_ambiguous",
+            "message": (
+                f"Step matched {len(filtered)} tools; chain steps must "
+                "select exactly one. Use a more specific verb/noun "
+                "(e.g. 'list versions' instead of just 'list')."
+            ),
+            # Cap candidate list — defensive against very wide matches
+            # ballooning the error envelope.
+            "candidates": [
+                getattr(t, "name", str(t)) for t in filtered[:5]
+            ],
+        }}
+    tool_name = filtered[0].name
+
+    # 4. Resolve required params. Same path as the single-step
+    # forced-execution flow — PR25 chain registry, PR26 memory
+    # hydration, PR27 disambiguation, PR28 explicit user params.
+    params = await resolve_required_params(tool_name, resolver_input, mcp)
+
+    # 5. PR29 — name-resolution fallback when disambiguation fires.
+    # Same logic as ``_execute_forced_tool``; mirrored here so the
+    # chain path doesn't depend on that function's response-shape
+    # assumptions.
+    if DISAMBIGUATION_KEY in params:
+        candidates = (params[DISAMBIGUATION_KEY] or {}).get("candidates", []) or []
+        resolved_id = (
+            resolve_name_from_candidates(requested_name, candidates)
+            if requested_name else None
+        )
+        if not resolved_id:
+            return {"error": {
+                "type": "MULTIPLE_PROJECTS",
+                "message": (
+                    "Multiple projects found; specify project_id=<uuid> "
+                    "or project_name=<name>."
+                ),
+                "details": params[DISAMBIGUATION_KEY],
+            }}
+        params = await resolve_required_params(
+            tool_name, {"project_id": resolved_id}, mcp,
+        )
+
+    # 6. Execute the tool. Any exception classifies as a step failure.
+    try:
+        raw = await mcp.call_tool(tool_name, params)
+    except Exception as exc:  # noqa: BLE001 — classify, don't propagate
+        return {"error": {
+            "type": type(exc).__name__,
+            "message": str(exc),
+        }}
+
+    serialized = _serialize_forced_tool_result(raw)
+
+    # 7. Best-effort JSON parse for the trace + context extraction.
+    # If the tool's output isn't JSON, the step still succeeded — we
+    # just can't seed context for the next step (extract_chain_context
+    # returns ``{}`` for non-dict input).
+    parsed: Any = serialized
+    try:
+        decoded = json.loads(serialized)
+        parsed = decoded
+    except (ValueError, json.JSONDecodeError):
+        pass
+
+    return {
+        "result": parsed,
+        "extracted_context": extract_chain_context(parsed),
+        "tool": tool_name,
+        "params": params,
+    }
+
+
+async def _execute_chain(
+    *,
+    steps: list[str],
+    tools: list,
+    request_id: str,
+    client_ip: str,
+    started: float,
+) -> JSONResponse:
+    """Sequentially execute a list of chain steps. Abort on first error.
+
+    PR31 — unified envelope for success and failure (same top-level keys):
+
+        {
+          "status": "success" | "error",
+          "request_id": "<uuid>",
+          "chain": [{"step": "<text>", "result": <parsed-or-raw>}, ...],
+          "error": null | {
+              "code": "CHAIN_STEP_FAILED",
+              "message": "<human>",
+              "step_index": <int>,
+              "original_error": {<step's error dict>},
+          },
+        }
+
+    ``chain`` lists only completed steps (never the failing step). Both
+    shapes carry the X-Request-ID header. Status is 200 on full
+    success, 400 on step failure (the chain is purely deterministic —
+    a 4xx makes more sense than a 5xx for any predictable failure
+    mode like missing context or ambiguous narrowing).
+    """
+    from forge_bridge.mcp import server as _mcp_server
+
+    mcp = _mcp_server.mcp
+    chain_trace: list[dict] = []
+    context: dict = {}
+
+    for step_idx, step_text in enumerate(steps):
+        outcome = await _execute_chain_step(
+            step_text=step_text,
+            tools=tools,
+            mcp=mcp,
+            inherited_context=context,
+        )
+
+        if "error" in outcome:
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            logger.info(
+                "chat chain_step_failed request_id=%s client_ip=%s "
+                "step_index=%d steps_total=%d wall_clock_ms=%d "
+                "error_type=%s",
+                request_id, client_ip, step_idx, len(steps), elapsed_ms,
+                outcome["error"].get("type", "unknown"),
+            )
+            body = {
+                "status": "error",
+                "request_id": request_id,
+                "chain": chain_trace,
+                "error": {
+                    "code": "CHAIN_STEP_FAILED",
+                    "message": (
+                        f"Chain step {step_idx} failed; subsequent "
+                        "steps were not executed."
+                    ),
+                    "step_index": step_idx,
+                    "original_error": outcome["error"],
+                },
+            }
+            return JSONResponse(
+                body,
+                status_code=400,
+                headers={"X-Request-ID": request_id},
+            )
+
+        # Success — append to the trace and propagate context.
+        chain_trace.append({
+            "step": step_text,
+            "result": outcome["result"],
+        })
+        # Brief constraint: only propagate ``project_id`` / ``shot_id``,
+        # only when extract_chain_context returned a non-empty dict.
+        # Empty context for the next step is the safe default.
+        context = outcome.get("extracted_context", {}) or {}
+
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    logger.info(
+        "chat chain_ok request_id=%s client_ip=%s steps=%d wall_clock_ms=%d",
+        request_id, client_ip, len(chain_trace), elapsed_ms,
+    )
+    return JSONResponse(
+        {
+            "status": "success",
+            "request_id": request_id,
+            "chain": chain_trace,
+            "error": None,
+        },
+        status_code=200,
+        headers={"X-Request-ID": request_id},
+    )
+
+
 def _chat_error(
     code: str,
     message: str,
@@ -871,6 +1119,50 @@ async def chat_handler(request: Request) -> JSONResponse:
         ),
         "",
     )
+
+    # ---- PR30: deterministic multi-step tool chaining -----------------------
+    # If the user message contains the ``->`` separator, parse it into a
+    # sequence of standalone steps and execute each through the same
+    # forced-execution pipeline (filter → resolve → call). The chain
+    # path runs entirely WITHOUT the LLM and uses the PR31 unified envelope
+    # (``status``, ``request_id``, ``chain``, ``error``) — including
+    # CHAIN_TOO_LONG before execution and outcomes from ``_execute_chain``.
+    # Single-step messages (``parse_chain`` returns 1 element) fall through
+    # to the existing PR20/28/29 forced-execution path unchanged.
+    from forge_bridge.console._chain_parse import parse_chain
+    chain_steps = parse_chain(last_user_text)
+    if len(chain_steps) > _CHAIN_MAX_STEPS:
+        logger.info(
+            "chat chain_too_long request_id=%s client_ip=%s steps=%d",
+            request_id, client_ip, len(chain_steps),
+        )
+        return JSONResponse(
+            {
+                "status": "error",
+                "request_id": request_id,
+                "chain": [],
+                "error": {
+                    "code": "CHAIN_TOO_LONG",
+                    "message": (
+                        f"Chain exceeds maximum {_CHAIN_MAX_STEPS} steps "
+                        f"(received {len(chain_steps)})."
+                    ),
+                    "step_index": None,
+                    "original_error": None,
+                },
+            },
+            status_code=400,
+            headers={"X-Request-ID": request_id},
+        )
+    if len(chain_steps) > 1:
+        return await _execute_chain(
+            steps=chain_steps,
+            tools=tools,
+            request_id=request_id,
+            client_ip=client_ip,
+            started=started,
+        )
+
     tools = filter_tools_by_message(tools, last_user_text)
     tools_filtered_count = len(tools)
 
