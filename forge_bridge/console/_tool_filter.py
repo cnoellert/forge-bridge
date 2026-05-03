@@ -316,3 +316,92 @@ def filter_tools_by_message(
         return exact_matches[:max_tools]
     remaining = max_tools - len(exact_matches)
     return exact_matches + other_matches[:remaining]
+
+
+# ---------------------------------------------------------------------------
+# PR21 — deterministic disambiguation for multi-tool matches
+# ---------------------------------------------------------------------------
+#
+# After PR14/17/18 message-filtering returns the candidate set, PR21 attempts
+# a second deterministic narrowing step BEFORE the LLM sees the list. The
+# rules are intentionally narrow — no scoring, no fuzzy matching, no ML.
+#
+# Rule 1 — EXACT TOKEN COVERAGE. Keep only tools whose normalized name-tokens
+# overlap the message-tokens by the maximum count among the candidates. If
+# every candidate ties at the same overlap, all survive Rule 1.
+#
+# Rule 2 — DOMAIN PRIORITY. When the message contains BOTH tokens of a
+# priority pair, prefer tools that contain the WINNER token over tools
+# that contain only the LOSER token. The brief specifies one rule:
+# ``version > project`` (versions are more specific than projects).
+# Strict pairwise — no transitive chains, no scores.
+#
+# Stop conditions:
+#   - max overlap is 0 → no signal, leave the candidate set untouched.
+#   - input is already 0 or 1 tools → return as-is.
+#   - rules cannot reduce to a single survivor → return the surviving set;
+#     the chat handler then falls back to the LLM.
+#
+# This module is pure (no I/O, no asyncio, no MCP types beyond duck-typed
+# `.name`). The chat handler is the single caller — see PR21 wiring in
+# forge_bridge/console/handlers.py:chat_handler.
+
+# Pairwise domain priorities. WINNER outranks LOSER when BOTH tokens are
+# present in the message. Closed list — extending requires explicit spec.
+_PR21_DOMAIN_PRIORITIES: tuple[tuple[str, str], ...] = (
+    ("version", "project"),  # versions are more specific than projects
+)
+
+
+def deterministic_narrow(tools: list[Any], message: str) -> list[Any]:
+    """PR21 — narrow a multi-tool match deterministically before LLM dispatch.
+
+    Returns the (possibly reduced) candidate set. Callers should treat a
+    return value of length 1 as a signal to force-execute via the PR20
+    short-circuit; any other length means "still ambiguous, hand to LLM".
+
+    See module-level PR21 comment block above for the rule contract.
+    """
+    if len(tools) <= 1:
+        return list(tools)
+    if not isinstance(message, str) or not message:
+        return list(tools)
+
+    msg_tokens = _pr14_tokens(message)
+    if not msg_tokens:
+        return list(tools)
+
+    # Rule 1 — max token-overlap. Compute overlap counts up-front, then
+    # keep only tools that hit the maximum.
+    scored: list[tuple[Any, int]] = []
+    for t in tools:
+        name = (getattr(t, "name", "") or "").lower()
+        if not name:
+            scored.append((t, 0))
+            continue
+        name_tokens = _pr14_tokens(name)
+        scored.append((t, len(name_tokens & msg_tokens)))
+
+    max_overlap = max(c for _, c in scored)
+    if max_overlap == 0:
+        # No signal — every candidate is a fallback. Don't narrow.
+        return list(tools)
+
+    survivors = [t for t, c in scored if c == max_overlap]
+    if len(survivors) <= 1:
+        return survivors
+
+    # Rule 2 — domain priority. For each pair where BOTH tokens are in the
+    # message, drop survivors that have the LOSER token but not the WINNER.
+    for winner, loser in _PR21_DOMAIN_PRIORITIES:
+        if winner in msg_tokens and loser in msg_tokens:
+            winners = [
+                t for t in survivors
+                if winner in _pr14_tokens(getattr(t, "name", "") or "")
+            ]
+            if winners:
+                survivors = winners
+                if len(survivors) == 1:
+                    return survivors
+
+    return survivors

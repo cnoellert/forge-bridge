@@ -1134,3 +1134,192 @@ def test_pr19_1_no_regression_pr14_cap_unchanged():
     out = filter_tools_by_message(tools, "do something with flame")
     assert len(out) == PR14_MAX_TOOLS
     assert _names(out) == [t.name for t in tools[:PR14_MAX_TOOLS]]
+
+
+# ── PR21: deterministic disambiguation for multi-tool matches ────────────
+
+
+def test_pr21_short_circuits_on_single_tool_input():
+    """Length 0 / 1 inputs are returned unchanged — no work to do."""
+    from forge_bridge.console._tool_filter import deterministic_narrow
+
+    assert deterministic_narrow([], "anything") == []
+    one = [_make_tool("forge_list_versions")]
+    assert deterministic_narrow(one, "anything") == one
+
+
+def test_pr21_short_circuits_on_empty_message():
+    """Empty / non-string message → return tools unchanged."""
+    from forge_bridge.console._tool_filter import deterministic_narrow
+
+    tools = [
+        _make_tool("forge_list_projects"),
+        _make_tool("forge_list_versions"),
+    ]
+    assert deterministic_narrow(tools, "") == tools
+    assert deterministic_narrow(tools, None) == tools  # type: ignore[arg-type]
+
+
+def test_pr21_rule1_max_overlap_narrows_to_single_winner():
+    """Rule 1: when one tool has strictly more matching tokens than the
+    others, it wins outright. ``"list versions"`` overlaps
+    forge_list_versions on {list, version} (2) and forge_list_projects on
+    {list} (1)."""
+    from forge_bridge.console._tool_filter import deterministic_narrow
+
+    tools = [
+        _make_tool("forge_list_projects"),
+        _make_tool("forge_list_versions"),
+    ]
+    out = deterministic_narrow(tools, "list versions")
+    assert _names(out) == ["forge_list_versions"]
+
+
+def test_pr21_rule1_max_overlap_keeps_all_when_tied():
+    """Rule 1: when every tool ties on overlap, all survive Rule 1.
+    Rule 2 then has the chance to break the tie."""
+    from forge_bridge.console._tool_filter import deterministic_narrow
+
+    tools = [
+        _make_tool("forge_list_projects"),
+        _make_tool("forge_list_versions"),
+    ]
+    # 'list project versions' overlaps both on 2 tokens:
+    # {list, project} for forge_list_projects, {list, version} for
+    # forge_list_versions. Rule 1 keeps both; Rule 2 picks the version.
+    out = deterministic_narrow(tools, "list project versions")
+    assert _names(out) == ["forge_list_versions"]
+
+
+def test_pr21_rule2_version_beats_project_when_both_present():
+    """Rule 2: ``version > project`` — when the message contains BOTH
+    canonical tokens, the version-bearing tool outranks the
+    project-bearing tool. This is the motivating UAT case."""
+    from forge_bridge.console._tool_filter import deterministic_narrow
+
+    tools = [
+        _make_tool("forge_list_projects"),
+        _make_tool("forge_list_versions"),
+    ]
+    out = deterministic_narrow(tools, "list project versions")
+    assert _names(out) == ["forge_list_versions"]
+
+
+def test_pr21_rule2_does_not_apply_when_only_one_priority_token_present():
+    """Rule 2 only fires when BOTH tokens of the priority pair are in
+    the message. If only ``project`` is present, the version-tool isn't
+    elevated against an unrelated project-tool."""
+    from forge_bridge.console._tool_filter import deterministic_narrow
+
+    tools = [
+        _make_tool("forge_list_projects"),  # overlap = {list, project} = 2
+        _make_tool("forge_list_versions"),  # overlap = {list} = 1
+    ]
+    out = deterministic_narrow(tools, "list projects")
+    # Rule 1 already picks forge_list_projects (2 > 1) — Rule 2 never runs.
+    assert _names(out) == ["forge_list_projects"]
+
+
+def test_pr21_no_signal_returns_full_set():
+    """When no candidate has any token overlap with the message (all
+    arrived via PR14 fallback), narrowing has no signal and must NOT
+    pick arbitrarily — return the candidate set unchanged."""
+    from forge_bridge.console._tool_filter import deterministic_narrow
+
+    tools = [
+        _make_tool("forge_list_projects"),
+        _make_tool("forge_list_versions"),
+    ]
+    # 'tell me a joke about elephants' shares no tokens with either tool.
+    out = deterministic_narrow(tools, "tell me a joke about elephants")
+    assert out == tools
+
+
+def test_pr21_unbreakable_tie_returns_multiple():
+    """When Rule 1 ties and Rule 2 doesn't apply, the surviving set
+    is returned with multiple tools — the caller (chat handler) then
+    falls back to the LLM."""
+    from forge_bridge.console._tool_filter import deterministic_narrow
+
+    tools = [
+        _make_tool("forge_list_projects"),
+        _make_tool("forge_list_shots"),
+    ]
+    # 'list' overlaps both on exactly 1 token. No priority-pair tokens
+    # in the message → Rule 2 doesn't fire.
+    out = deterministic_narrow(tools, "list")
+    assert sorted(_names(out)) == ["forge_list_projects", "forge_list_shots"]
+    assert len(out) == 2
+
+
+def test_pr21_rule2_does_not_promote_when_winner_has_no_tools():
+    """Edge case: if the message contains both priority tokens but NO
+    surviving tool actually carries the WINNER token, Rule 2 must not
+    eliminate every candidate — the surviving set is returned unchanged
+    so the LLM gets to decide."""
+    from forge_bridge.console._tool_filter import deterministic_narrow
+
+    tools = [
+        _make_tool("forge_list_projects"),
+        _make_tool("forge_get_project"),  # also normalizes via 'get'→'list'
+    ]
+    # Both tools are project-only. Even with 'version' in the message,
+    # the version-bearing winners list is empty — keep both candidates.
+    out = deterministic_narrow(tools, "list project versions")
+    # Rule 1: forge_list_projects overlap {list, project}=2;
+    #         forge_get_project overlap {list, project}=2. Tied.
+    # Rule 2: 'version' in msg, 'project' in msg, but no tool carries
+    # 'version' → drop logic skipped. Both survive.
+    assert sorted(_names(out)) == ["forge_get_project", "forge_list_projects"]
+
+
+def test_pr21_does_not_modify_input_list():
+    """Defensive: the input list must not be mutated by narrowing."""
+    from forge_bridge.console._tool_filter import deterministic_narrow
+
+    tools = [
+        _make_tool("forge_list_projects"),
+        _make_tool("forge_list_versions"),
+    ]
+    before = list(tools)
+    deterministic_narrow(tools, "list project versions")
+    assert tools == before
+
+
+def test_pr21_no_regression_pr19_normalization_intact():
+    """PR21 uses the SAME normalization chokepoint (`_pr14_tokens`) as
+    PR19/PR19.1 — verify by sending a verb-collapsed message
+    ('fetch' → 'list'). The narrowing still picks forge_list_versions."""
+    from forge_bridge.console._tool_filter import deterministic_narrow
+
+    tools = [
+        _make_tool("forge_list_projects"),
+        _make_tool("forge_list_versions"),
+    ]
+    out = deterministic_narrow(tools, "fetch project versions")
+    assert _names(out) == ["forge_list_versions"]
+
+
+def test_pr21_no_regression_pr18_token_complete_path():
+    """PR21 is a SECOND-stage narrower; PR18's token-complete logic in
+    `filter_tools_by_message` is upstream and unaffected. End-to-end
+    composition: PR18 may already have narrowed to one tool — PR21 then
+    short-circuits because input is length 1."""
+    from forge_bridge.console._tool_filter import (
+        deterministic_narrow,
+        filter_tools_by_message,
+    )
+
+    tools = [_make_tool(f"forge_list_{i}") for i in range(9)] + [
+        _make_tool("flame_list_libraries"),
+    ]
+    after_filter = filter_tools_by_message(
+        tools, "list flame libraries", max_tools=8,
+    )
+    # PR18 puts flame_list_libraries at the head.
+    assert _names(after_filter)[0] == "flame_list_libraries"
+    # PR21 doesn't reorder the surviving exact-bucket head; if input >1,
+    # it just narrows by overlap. Here flame_list_libraries has the
+    # highest overlap (3 tokens), so it's the lone survivor.
+    out = deterministic_narrow(after_filter, "list flame libraries")
+    assert _names(out) == ["flame_list_libraries"]

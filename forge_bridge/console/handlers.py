@@ -52,6 +52,7 @@ from forge_bridge.console._tool_enforcement import (
     is_tool_enforced,
 )
 from forge_bridge.console._tool_filter import (
+    deterministic_narrow,
     filter_tools_by_message,
     filter_tools_by_reachable_backends,
 )
@@ -724,6 +725,19 @@ async def chat_handler(request: Request) -> JSONResponse:
     )
     tools = filter_tools_by_message(tools, last_user_text)
     tools_filtered_count = len(tools)
+
+    # ---- PR21: deterministic disambiguation for multi-tool matches ----------
+    # When PR14 returns >1 candidate, attempt a second narrowing pass: max
+    # token-overlap (Rule 1) + pairwise domain priority (Rule 2). If the
+    # rules collapse the set to exactly one tool, the PR20 short-circuit
+    # below picks it up and force-executes — same path, same telemetry.
+    # If still ambiguous, the LLM decides on the (unchanged) survivor set.
+    # See deterministic_narrow() in _tool_filter.py for the rule contract.
+    if tools_filtered_count > 1:
+        narrowed = deterministic_narrow(tools, last_user_text)
+        if len(narrowed) == 1:
+            tools = narrowed
+            tools_filtered_count = 1
 
     # ---- PR15: deterministic-tool-call enforcement --------------------------
     # Stack the existing pipeline system prompt with the PR15 rule block so

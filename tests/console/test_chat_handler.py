@@ -682,17 +682,22 @@ def test_pr20_list_version_singular_forces_forge_list_versions():
 
 
 def test_pr20_multi_tool_match_does_not_force():
-    """AC #4: when the message matches multiple tools, the LLM still
-    decides — PR20 must NOT short-circuit on filtered>1."""
+    """AC #4: when the message matches multiple tools AND PR21 cannot
+    deterministically narrow them, the LLM still decides — PR20 must
+    NOT short-circuit on filtered>1.
+
+    Note: post-PR21, ``"list projects"`` would actually narrow (Rule 1
+    picks forge_list_projects on overlap=2 vs. 1 for siblings). So this
+    test uses bare ``"list"`` which ties every list-bearing tool at
+    overlap=1 with no priority-pair tokens to break the tie."""
     tools = [_pr20_make_tool(n) for n in _PR20_MULTI_MATCH_TOOLS]
     list_p, back_p, call_p, app, mock_router = _pr20_build_app(tools)
     with list_p, back_p, call_p as call_mock:
         client = TestClient(app)
-        # "list" alone matches every forge_list_* and flame_list_* tool.
         r = client.post(
             "/api/v1/chat",
             json={"messages": [
-                {"role": "user", "content": "list projects"},
+                {"role": "user", "content": "list"},
             ]},
         )
     assert r.status_code == 200, r.text
@@ -741,7 +746,8 @@ def test_pr20_validation_error_returns_structured_tool_message():
 
 def test_pr20_trace_tool_forced_absent_when_not_forced():
     """`tool_forced` MUST be absent (or falsy) on the multi-tool LLM path —
-    only present on forced executions."""
+    only present on forced executions. Use a bare ``"list"`` message so
+    PR21 ties on every list-tool at overlap=1 and cannot narrow."""
     tools = [_pr20_make_tool(n) for n in _PR20_MULTI_MATCH_TOOLS]
     list_p, back_p, call_p, app, _ = _pr20_build_app(tools)
     with list_p, back_p, call_p:
@@ -749,7 +755,7 @@ def test_pr20_trace_tool_forced_absent_when_not_forced():
         r = client.post(
             "/api/v1/chat",
             json={"messages": [
-                {"role": "user", "content": "list projects"},
+                {"role": "user", "content": "list"},
             ]},
         )
     assert r.status_code == 200
@@ -873,3 +879,135 @@ def test_pr20_does_not_force_when_message_does_not_match_any_tool():
     assert body.get("tool_forced") in (None, False)
     mock_router.complete_with_tools.assert_called_once()
     call_mock.assert_not_called()
+
+
+# ── PR21: deterministic disambiguation wired into chat handler ─────────────
+
+
+# Tools that tie under Rule 1 for "list project versions" and let Rule 2
+# (version > project) break the tie. Both tools normalize to 2 overlap
+# tokens with the message; neither PR18 token-complete fires because
+# `forge` isn't in the message.
+_PR21_PROJECT_VERSION_TOOLS = [
+    "forge_list_projects",
+    "forge_list_versions",
+    "flame_alpha",   # disjoint vocab — won't match the message
+    "flame_beta",
+]
+
+
+def test_pr21_list_project_versions_forces_forge_list_versions():
+    """AC #1: ``"list project versions"`` ties forge_list_projects and
+    forge_list_versions on overlap=2. PR21 Rule 2 (version > project)
+    breaks the tie → PR20 short-circuit force-executes
+    forge_list_versions."""
+    tools = [_pr20_make_tool(n) for n in _PR21_PROJECT_VERSION_TOOLS]
+    list_p, back_p, call_p, app, mock_router = _pr20_build_app(tools)
+    with list_p, back_p, call_p as call_mock:
+        client = TestClient(app)
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [
+                {"role": "user", "content": "list project versions"},
+            ]},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["tool_forced"] is True
+    assert body["stop_reason"] == "tool_forced"
+    assert body["tools_filtered"] == 1
+    assert body["tools_available"] > 1
+    mock_router.complete_with_tools.assert_not_called()
+    call_mock.assert_called_once_with("forge_list_versions", {})
+
+
+def test_pr21_list_projects_forces_forge_list_projects():
+    """AC #2: ``"list projects"`` — Rule 1 alone narrows to
+    forge_list_projects (2-token overlap vs. forge_list_versions's
+    1-token overlap on `list`). Rule 2 doesn't fire (`version` not in
+    msg). PR20 force-executes forge_list_projects."""
+    tools = [_pr20_make_tool(n) for n in _PR21_PROJECT_VERSION_TOOLS]
+    list_p, back_p, call_p, app, mock_router = _pr20_build_app(tools)
+    with list_p, back_p, call_p as call_mock:
+        client = TestClient(app)
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [
+                {"role": "user", "content": "list projects"},
+            ]},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["tool_forced"] is True
+    assert body["stop_reason"] == "tool_forced"
+    mock_router.complete_with_tools.assert_not_called()
+    call_mock.assert_called_once_with("forge_list_projects", {})
+
+
+def test_pr21_list_versions_forces_forge_list_versions():
+    """``"list versions"`` — Rule 1 alone narrows. Counterpart to the
+    above test: proves the symmetric path."""
+    tools = [_pr20_make_tool(n) for n in _PR21_PROJECT_VERSION_TOOLS]
+    list_p, back_p, call_p, app, mock_router = _pr20_build_app(tools)
+    with list_p, back_p, call_p as call_mock:
+        client = TestClient(app)
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [
+                {"role": "user", "content": "list versions"},
+            ]},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["tool_forced"] is True
+    mock_router.complete_with_tools.assert_not_called()
+    call_mock.assert_called_once_with("forge_list_versions", {})
+
+
+def test_pr21_unbreakable_tie_falls_back_to_llm():
+    """When PR21 cannot collapse to a single survivor, the LLM still
+    decides — the chat handler hands the surviving set unchanged."""
+    # forge_list_projects vs. forge_list_shots. Message "list" overlaps
+    # both on 1 token; no priority pair applies. Both survive → LLM.
+    tools = [
+        _pr20_make_tool("forge_list_projects"),
+        _pr20_make_tool("forge_list_shots"),
+        _pr20_make_tool("flame_alpha"),
+    ]
+    list_p, back_p, call_p, app, mock_router = _pr20_build_app(tools)
+    with list_p, back_p, call_p as call_mock:
+        client = TestClient(app)
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [
+                {"role": "user", "content": "list"},
+            ]},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body.get("tool_forced") in (None, False)
+    assert body["stop_reason"] == "end_turn"
+    mock_router.complete_with_tools.assert_called_once()
+    call_mock.assert_not_called()
+
+
+def test_pr21_no_regression_pr20_single_match_still_forces():
+    """PR20's original path (PR14 already returns 1 tool) is unaffected
+    by PR21 — narrowing's `len(tools) <= 1` short-circuit means PR21
+    is a no-op when there's nothing to narrow."""
+    tools = [_pr20_make_tool(n) for n in _PR20_VERSIONS_TOOLS]
+    list_p, back_p, call_p, app, mock_router = _pr20_build_app(tools)
+    with list_p, back_p, call_p as call_mock:
+        client = TestClient(app)
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [
+                {"role": "user", "content": "forge fetch versions"},
+            ]},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["tool_forced"] is True
+    assert body["stop_reason"] == "tool_forced"
+    mock_router.complete_with_tools.assert_not_called()
+    call_mock.assert_called_once_with("forge_list_versions", {})
