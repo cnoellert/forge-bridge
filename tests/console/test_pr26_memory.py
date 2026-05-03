@@ -127,6 +127,43 @@ async def test_pr26_memory_miss_with_multi_projects_does_not_cache():
 
 
 @pytest.mark.asyncio
+async def test_pr26_caller_params_take_precedence_over_memory():
+    """Pin the precedence contract as test infrastructure:
+
+        explicit params > memory > resolver
+
+    PR26 establishes this order implicitly — caller-provided values are
+    checked FIRST (the ``if key not in resolved`` guard), so memory
+    cannot replace them, and the satisfied-via-memory short-circuit
+    skips the resolver entirely once requirements are met. That order
+    matters for any future addition (multi-key chains, additional
+    resolvers, user-provided params via chat) — without an explicit
+    test, a refactor could quietly invert it.
+
+    Scenario: memory holds one value; caller passes a different value
+    for the same key. The caller's value MUST appear in the output;
+    memory must NOT be consulted as an upstream substitute; no probe
+    call should fire because requirements are satisfied locally.
+    """
+    _MEMORY.set("project_id", "memory-project")
+
+    mcp = _make_mcp(project_count=1)
+    result = await resolve_required_params(
+        "forge_list_versions",
+        {"project_id": "caller-project"},
+        mcp,
+    )
+
+    # explicit > memory: caller's value survives, memory's does not
+    # leak into the result.
+    assert result["project_id"] == "caller-project"
+    # explicit > resolver: requirement satisfied locally → no probe.
+    mcp.call_tool.assert_not_called()
+    # Memory state is untouched — caller-supplied values never write.
+    assert _MEMORY.get("project_id") == "memory-project"
+
+
+@pytest.mark.asyncio
 async def test_pr26_existing_memory_not_overwritten_when_caller_provides_value():
     """When the caller supplies ``project_id`` directly, the resolver
     short-circuits before memory is consulted — neither read nor write.

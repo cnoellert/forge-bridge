@@ -40,9 +40,12 @@ gracefully.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Awaitable, Callable, Optional
 
 from forge_bridge.console._memory import _MEMORY
+
+logger = logging.getLogger(__name__)
 
 
 # ── Structured-payload extraction ─────────────────────────────────────────
@@ -201,23 +204,38 @@ async def resolve_required_params(
 
     required: frozenset = chain["requires"]
 
+    # Treat the caller's `params` as immutable throughout the function.
+    # `resolved` is the single working copy that hydration, the
+    # short-circuit check, and the resolver-success path all read from
+    # and write to. This makes the no-input-mutation contract explicit
+    # and removes any dependence on reassignment order — important for
+    # future multi-key resolution where intermediate hydration steps
+    # might otherwise interleave with resolver writes.
+    resolved: dict = dict(params)
+
     # PR26 — hydrate from memory. Only fill keys that aren't already
-    # caller-provided; never overwrite params with a stale memory value.
+    # caller-provided; never overwrite a caller value with a stale
+    # memory value (caller-provided wins by virtue of the `not in`
+    # guard).
     for key in required:
-        if key not in params:
+        if key not in resolved:
             mem_val = _MEMORY.get(key)
             if mem_val:
-                params = {**params, key: mem_val}
+                resolved[key] = mem_val
+                # Debug-only — operators enabling DEBUG on this logger
+                # can confirm memory hits without leaking the resolved
+                # value into logs/traces. Never log the value itself.
+                logger.debug("tool_memory hit key=%s", key)
 
-    if all(k in params for k in required):
+    if all(k in resolved for k in required):
         # Either the caller supplied everything, or memory did. Either
         # way: no upstream call, deterministic short-circuit.
-        return params
+        return resolved
 
     resolver_name = chain["resolver"]
     resolver = _RESOLVERS.get(resolver_name)
     if resolver is None:
-        return params
+        return resolved
 
     if resolver_name == "_resolve_project_id":
         project_id = await resolver(mcp)
@@ -228,6 +246,10 @@ async def resolve_required_params(
             # ONLY production write site for memory; user input never
             # writes here (no path exists for that today).
             _MEMORY.set("project_id", project_id)
-            return {**params, "project_id": project_id}
+            # Debug-only — operators see WHEN memory was populated, but
+            # never WHAT was stored. Pair with the hit log above to
+            # confirm cache behavior under load.
+            logger.debug("tool_memory set key=project_id")
+            return {**resolved, "project_id": project_id}
 
-    return params
+    return resolved
