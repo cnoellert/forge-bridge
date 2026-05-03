@@ -58,10 +58,29 @@ def test_build_prompt_defensive_against_non_string_base():
 
 
 @pytest.mark.parametrize("count,expected", [
-    (0, True), (1, True), (2, True), (3, True), (4, False), (8, False),
+    # Strict equality (filtered == 1) is the only enforced state. The
+    # earlier ≤3 heuristic admitted (filtered>1 ∧ enforced=True), which
+    # broke the runtime invariant the chat-handler trace consumers rely on.
+    (0, False), (1, True), (2, False), (3, False), (4, False), (8, False),
 ])
 def test_is_tool_enforced_threshold(count, expected):
     assert te.is_tool_enforced(count) is expected
+
+
+def test_is_tool_enforced_invariant_holds_across_full_range():
+    """Joint invariant guard: enforced ⇔ count == 1, for every count
+    the chat handler could pass in (0..32 covers the legal max_iter range
+    plus the empty edge case)."""
+    for count in range(0, 33):
+        enforced = te.is_tool_enforced(count)
+        # Forbidden state 1: count > 1 ∧ enforced.
+        assert not (count > 1 and enforced), (
+            f"forbidden: count={count} enforced=True"
+        )
+        # Forbidden state 2: count == 1 ∧ NOT enforced.
+        assert not (count == 1 and not enforced), (
+            f"forbidden: count={count} enforced=False"
+        )
 
 
 # ── output validation ────────────────────────────────────────────────────

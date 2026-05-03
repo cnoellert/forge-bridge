@@ -15,9 +15,16 @@ from __future__ import annotations
 
 import re
 
-# A response is "tool-enforced" when the filtered tool set is small enough
-# that the model has effectively no excuse not to pick the right tool.
-PR15_TOOL_ENFORCED_THRESHOLD = 3
+# A response is "tool-enforced" when the filtered tool set has narrowed to
+# exactly one tool — the only state in which the chat handler can route the
+# request deterministically (PR20 force-execution + PR21 narrowing-then-force
+# both depend on this invariant). The previous ≤3 heuristic admitted multi-
+# tool requests as "enforced," producing the contradictory state
+# (tools_filtered>1 ∧ tool_enforced=true) that surfaced in the runtime trace.
+# Hardening the threshold to ==1 makes the wrapper's downstream consumers
+# safe to read `tool_enforced` as a synonym for "deterministic single-tool
+# request" without further qualification.
+PR15_TOOL_ENFORCED_THRESHOLD = 1
 
 # Single tool — the only valid response is a call to it.
 PR15_HARD_TOOL_MODE_THRESHOLD = 1
@@ -74,12 +81,19 @@ def build_enforcement_system_prompt(
 
 
 def is_tool_enforced(tools_filtered: int) -> bool:
-    """True iff the filtered tool set is ≤ the enforcement threshold (3).
+    """True iff the filtered tool set has narrowed to exactly one tool.
 
     Surfaces in the chat-handler response body and the wrapper trace summary
     so operators can see when PR15's guard rails were active for a request.
+
+    Invariant (enforced jointly with the chat handler's PR21 rebind):
+        tool_enforced ⇔ tools_filtered == 1
+    Two states are forbidden anywhere in the pipeline:
+        (tools_filtered > 1) ∧ (tool_enforced == True)
+        (tools_filtered == 1) ∧ (tool_enforced == False)
+    Strict equality (not ``<=``) is what closes both forbidden cases.
     """
-    return tools_filtered <= PR15_TOOL_ENFORCED_THRESHOLD
+    return tools_filtered == PR15_TOOL_ENFORCED_THRESHOLD
 
 
 # ── output validation ────────────────────────────────────────────────────

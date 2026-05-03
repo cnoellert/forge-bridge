@@ -733,11 +733,20 @@ async def chat_handler(request: Request) -> JSONResponse:
     # below picks it up and force-executes — same path, same telemetry.
     # If still ambiguous, the LLM decides on the (unchanged) survivor set.
     # See deterministic_narrow() in _tool_filter.py for the rule contract.
+    #
+    # State-consistency contract — REBIND on ANY reduction (not just to 1):
+    # if narrowing shrinks the candidate set at all, both `tools` and
+    # `tools_filtered_count` must reflect the new set. Previously this
+    # rebind only fired at narrowed==1, which let multi-tool reductions
+    # silently drop on the floor: the LLM still saw the unnarrowed list
+    # while the count diverged from the actual candidates. The invariant
+    # below depends on a single source of truth — `tools_filtered_count`
+    # equals `len(tools)` from this point onward.
     if tools_filtered_count > 1:
         narrowed = deterministic_narrow(tools, last_user_text)
-        if len(narrowed) == 1:
+        if len(narrowed) < len(tools):
             tools = narrowed
-            tools_filtered_count = 1
+            tools_filtered_count = len(narrowed)
 
     # ---- PR15: deterministic-tool-call enforcement --------------------------
     # Stack the existing pipeline system prompt with the PR15 rule block so

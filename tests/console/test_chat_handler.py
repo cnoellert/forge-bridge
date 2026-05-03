@@ -1011,3 +1011,113 @@ def test_pr21_no_regression_pr20_single_match_still_forces():
     assert body["stop_reason"] == "tool_forced"
     mock_router.complete_with_tools.assert_not_called()
     call_mock.assert_called_once_with("forge_list_versions", {})
+
+
+# ── PR20/PR21 state-consistency invariant — runtime guard ──────────────────
+
+
+def _assert_tool_state_invariant(body):
+    """Joint invariant the runtime trace consumers rely on:
+        tool_enforced ⇔ tools_filtered == 1
+    Two combinations are forbidden EVERYWHERE in the chat response:
+        (tools_filtered > 1) ∧ (tool_enforced == True)
+        (tools_filtered == 1) ∧ (tool_enforced == False)
+    """
+    filtered = body.get("tools_filtered")
+    enforced = body.get("tool_enforced")
+    assert filtered is not None and isinstance(enforced, bool), body
+    assert not (filtered > 1 and enforced), (
+        f"forbidden state: tools_filtered={filtered} tool_enforced=True "
+        f"in body={body}"
+    )
+    assert not (filtered == 1 and not enforced), (
+        f"forbidden state: tools_filtered=1 tool_enforced=False "
+        f"in body={body}"
+    )
+
+
+def test_state_invariant_fetch_versions_force_path():
+    """Forced single-tool path: filtered==1 AND enforced=True together."""
+    tools = [_pr20_make_tool(n) for n in _PR20_VERSIONS_TOOLS]
+    list_p, back_p, call_p, app, _ = _pr20_build_app(tools)
+    with list_p, back_p, call_p:
+        client = TestClient(app)
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [
+                {"role": "user", "content": "forge fetch versions"},
+            ]},
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["tools_filtered"] == 1
+    assert body["tool_enforced"] is True
+    assert body["tool_forced"] is True
+    _assert_tool_state_invariant(body)
+
+
+def test_state_invariant_pr21_narrowing_force_path():
+    """PR21 narrowing-then-force path: post-narrow filtered==1 AND
+    enforced=True. Pre-fix this would have shown filtered>1 ∧ enforced=True
+    because the count wasn't rebound after a partial PR21 reduction."""
+    tools = [_pr20_make_tool(n) for n in _PR21_PROJECT_VERSION_TOOLS]
+    list_p, back_p, call_p, app, _ = _pr20_build_app(tools)
+    with list_p, back_p, call_p:
+        client = TestClient(app)
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [
+                {"role": "user", "content": "list project versions"},
+            ]},
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["tools_filtered"] == 1
+    assert body["tool_enforced"] is True
+    assert body["tool_forced"] is True
+    _assert_tool_state_invariant(body)
+
+
+def test_state_invariant_multi_tool_llm_path():
+    """LLM path with multiple survivors: filtered>1 AND enforced=False
+    together. Pre-fix the ≤3 PR15 threshold made enforced=True for
+    filtered=2..3, breaking the invariant."""
+    tools = [_pr20_make_tool(n) for n in _PR20_MULTI_MATCH_TOOLS]
+    list_p, back_p, call_p, app, mock_router = _pr20_build_app(tools)
+    with list_p, back_p, call_p:
+        client = TestClient(app)
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [
+                {"role": "user", "content": "list"},
+            ]},
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["tools_filtered"] > 1
+    assert body["tool_enforced"] is False
+    _assert_tool_state_invariant(body)
+    mock_router.complete_with_tools.assert_called_once()
+
+
+def test_state_invariant_tools_filtered_equals_actual_tool_count():
+    """Single source of truth: `tools_filtered` in the body must equal
+    the number of tools the chat handler actually forwarded to the LLM
+    (or, on the forced path, the size of the input that produced the
+    single forced call)."""
+    tools = [_pr20_make_tool(n) for n in _PR20_MULTI_MATCH_TOOLS]
+    list_p, back_p, call_p, app, mock_router = _pr20_build_app(tools)
+    with list_p, back_p, call_p:
+        client = TestClient(app)
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [
+                {"role": "user", "content": "list"},
+            ]},
+        )
+    assert r.status_code == 200
+    body = r.json()
+    # The LLM was called — verify the count matches what was forwarded.
+    forwarded = mock_router.complete_with_tools.call_args.kwargs["tools"]
+    assert body["tools_filtered"] == len(forwarded)
+    _assert_tool_state_invariant(body)
