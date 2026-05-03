@@ -288,3 +288,103 @@ async def test_chat_filter_returns_at_least_in_process_tools_when_all_remote_unr
         "filter_tools_by_reachable_backends must never return empty when in-process "
         "tools exist in the input list"
     )
+
+
+# ── PR14: message-based tool pre-filter ─────────────────────────────────────
+
+
+def _names(tools):
+    return [t.name for t in tools]
+
+
+def test_pr14_message_match_keeps_overlapping_tools_only():
+    """A message that names tools should yield just those (in input order)."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [
+        _make_tool(n) for n in [
+            "flame_ping", "flame_list_libraries", "forge_get_project",
+            "forge_list_shots", "synth_tools_list",
+        ]
+    ]
+    out = filter_tools_by_message(tools, "please run flame_ping for me")
+    # flame_ping matches by full name; flame_list_libraries matches via 'flame'.
+    assert _names(out) == ["flame_ping", "flame_list_libraries"]
+
+
+def test_pr14_no_matches_falls_back_to_full_list():
+    """When nothing in the message overlaps any tool, return the full list."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [_make_tool("flame_ping"), _make_tool("forge_get_project")]
+    out = filter_tools_by_message(tools, "tell me a joke about elephants")
+    assert _names(out) == ["flame_ping", "forge_get_project"]
+
+
+def test_pr14_empty_message_falls_back_to_full_list():
+    """An empty / non-string message must not narrow the list."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [_make_tool("flame_ping"), _make_tool("forge_get_project")]
+    assert _names(filter_tools_by_message(tools, "")) == _names(tools)
+    assert _names(filter_tools_by_message(tools, None)) == _names(tools)  # type: ignore[arg-type]
+
+
+def test_pr14_filtered_count_capped_at_max_tools():
+    """At most PR14_MAX_TOOLS survive a category-wide match like 'flame'."""
+    from forge_bridge.console._tool_filter import (
+        PR14_MAX_TOOLS,
+        filter_tools_by_message,
+    )
+
+    tools = [_make_tool(f"flame_op_{i}") for i in range(15)]  # 15 flame_* tools
+    out = filter_tools_by_message(tools, "do something with flame")
+    assert len(out) == PR14_MAX_TOOLS
+    # Stable ordering — first N kept, no rank/sort.
+    assert _names(out) == [t.name for t in tools[:PR14_MAX_TOOLS]]
+
+
+def test_pr14_category_keyword_picks_up_full_prefix_family():
+    """Mentioning the prefix word ('forge') matches every forge_* tool."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [
+        _make_tool("flame_ping"),
+        _make_tool("forge_get_project"),
+        _make_tool("forge_list_shots"),
+        _make_tool("synth_tools_list"),
+    ]
+    out = filter_tools_by_message(tools, "show me what forge knows")
+    assert _names(out) == ["forge_get_project", "forge_list_shots"]
+
+
+def test_pr14_verb_keyword_matches_action_tools():
+    """A bare verb in the message ('ping') matches tools that share the token."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [
+        _make_tool("flame_ping"),
+        _make_tool("forge_ping"),
+        _make_tool("forge_list_shots"),
+    ]
+    out = filter_tools_by_message(tools, "ping please")
+    assert _names(out) == ["flame_ping", "forge_ping"]
+
+
+def test_pr14_pure_punctuation_message_falls_back_to_full_list():
+    """No alphanumeric tokens in the message → no match → fallback."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [_make_tool("flame_ping"), _make_tool("forge_get_project")]
+    out = filter_tools_by_message(tools, "?!.")
+    assert _names(out) == _names(tools)
+
+
+def test_pr14_overrides_max_tools_via_kwarg_for_tests():
+    """``max_tools`` is wired through so future callers can tune it."""
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [_make_tool(f"flame_op_{i}") for i in range(10)]
+    out = filter_tools_by_message(tools, "flame", max_tools=3)
+    assert len(out) == 3
+    assert _names(out) == [t.name for t in tools[:3]]

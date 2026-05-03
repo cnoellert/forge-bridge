@@ -46,7 +46,15 @@ from forge_bridge.console._rate_limit import (
     RateLimitDecision,
     check_rate_limit,
 )
-from forge_bridge.console._tool_filter import filter_tools_by_reachable_backends
+from forge_bridge.console._tool_enforcement import (
+    build_enforcement_system_prompt,
+    is_response_text_malformed_tool,
+    is_tool_enforced,
+)
+from forge_bridge.console._tool_filter import (
+    filter_tools_by_message,
+    filter_tools_by_reachable_backends,
+)
 from forge_bridge.llm.router import (
     LLMLoopBudgetExceeded,
     LLMToolError,
@@ -560,6 +568,32 @@ async def chat_handler(request: Request) -> JSONResponse:
         )
     tools = filtered_tools  # rebind so downstream uses filtered list
 
+    # ---- PR14: message-based pre-filter to narrow tool selection ------------
+    # Reduce LLM mis-selection + latency by trimming tools to those whose
+    # name/keywords overlap the most recent user message. Falls back to the
+    # full reachable-backend list when nothing matches (no capability loss).
+    tools_available_count = len(tools)
+    last_user_text = next(
+        (
+            m["content"] for m in reversed(messages)
+            if isinstance(m, dict)
+            and m.get("role") == "user"
+            and isinstance(m.get("content"), str)
+        ),
+        "",
+    )
+    tools = filter_tools_by_message(tools, last_user_text)
+    tools_filtered_count = len(tools)
+
+    # ---- PR15: deterministic-tool-call enforcement --------------------------
+    # Stack the existing pipeline system prompt with the PR15 rule block so
+    # the model treats tools as the primary response modality. When exactly
+    # one tool survives the filter, append the HARD-TOOL instruction.
+    enforced_system = build_enforcement_system_prompt(
+        router.system_prompt, tools_filtered_count,
+    )
+    tool_enforced_flag = is_tool_enforced(tools_filtered_count)
+
     # ---- D-14 / CHAT-02: outer 125s wraps FB-C's 120s inner cap --------------
     # D-14a translation matrix applied below — every cap-fire becomes 504, every
     # structural error becomes 500. Sensitivity is hardcoded D-05 (sensitive=True).
@@ -572,6 +606,7 @@ async def chat_handler(request: Request) -> JSONResponse:
                 messages=messages,            # D-02a (plan 16-01)
                 tools=tools,
                 sensitive=True,               # D-05 hardcoded
+                system=enforced_system,       # PR15 deterministic enforcement
                 max_iterations=max_iterations,
                 max_seconds=120.0,            # FB-C inner cap
                 tool_result_max_bytes=tool_result_max_bytes,
@@ -638,6 +673,24 @@ async def chat_handler(request: Request) -> JSONResponse:
             request_id,
         )
 
+    # ---- PR15: output validation -------------------------------------------
+    # The model sometimes emits a hallucinated tool-call as free text instead
+    # of actually invoking a tool (qwen2.5-coder leaks chat-template tokens
+    # like ``<|im_start|>{"name": ..., "arguments": ...}``). Detect that
+    # pattern and return 500 → wrapper classifies as invalid_response so the
+    # operator sees a deterministic failure instead of a nonsense reply.
+    if is_response_text_malformed_tool(result_text):
+        logger.warning(
+            "chat malformed_tool_text request_id=%s tools_offered_count=%d",
+            request_id, len(tools),
+        )
+        return _chat_error(
+            "internal_error",
+            "Model produced a hallucinated tool-call as text — see logs.",
+            500,
+            request_id,
+        )
+
     # ---- Success path -------------------------------------------------------
 
     elapsed_ms = int((time.monotonic() - started) * 1000)
@@ -654,6 +707,13 @@ async def chat_handler(request: Request) -> JSONResponse:
             "messages": out_messages,
             "stop_reason": "end_turn",
             "request_id": request_id,
+            # PR14 — narrow-tool-selection telemetry surfaced for the wrapper
+            # trace summary (forge_bridge/llm/call_wrapper.py).
+            "tools_available": tools_available_count,
+            "tools_filtered": tools_filtered_count,
+            # PR15 — true when the filtered set was small enough that we
+            # forced the deterministic-call rules (≤3 tools).
+            "tool_enforced": tool_enforced_flag,
         },
         status_code=200,
         headers={"X-Request-ID": request_id},

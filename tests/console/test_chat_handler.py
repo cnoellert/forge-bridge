@@ -395,3 +395,135 @@ def test_chat_logs_tools_offered_count_on_success(chat_client, caplog):
     assert "tools_offered_count=2" in success_logs[0], (
         f"Expected tools_offered_count=2 in log line, got: {success_logs[0]}"
     )
+
+
+# ── PR15: deterministic-tool-call enforcement ─────────────────────────────
+
+
+def test_pr15_chat_handler_passes_enforcement_system_prompt(chat_client):
+    """The chat handler MUST override system= with the PR15 enforcement
+    prompt — preserving the router's base prompt at the top of the stack."""
+    client, mock_router = chat_client
+    mock_router.system_prompt = "You are a VFX pipeline assistant."
+
+    r = client.post(
+        "/api/v1/chat",
+        json={"messages": [{"role": "user", "content": "use forge_test_probe"}]},
+    )
+    assert r.status_code == 200, r.text
+    kwargs = mock_router.complete_with_tools.call_args.kwargs
+    sys_msg = kwargs.get("system")
+    assert isinstance(sys_msg, str)
+    assert sys_msg.startswith("You are a VFX pipeline assistant.")
+    assert "tool-using agent" in sys_msg
+    assert "YOU MUST CALL IT" in sys_msg
+
+
+def test_pr15_chat_handler_injects_hard_tool_mode_when_one_tool(chat_client):
+    """Single tool surviving the filter triggers HARD-TOOL injection."""
+    client, mock_router = chat_client
+    mock_router.system_prompt = "base"
+    # The mock fixture installs exactly one tool (forge_test_probe), and the
+    # passthrough filter keeps all of them. The PR14 message filter will keep
+    # it (no tokens overlap → fallback to full list = 1 tool).
+    r = client.post(
+        "/api/v1/chat",
+        json={"messages": [{"role": "user", "content": "anything goes"}]},
+    )
+    assert r.status_code == 200, r.text
+    sys_msg = mock_router.complete_with_tools.call_args.kwargs["system"]
+    assert "exactly ONE tool" in sys_msg
+    assert "MUST call this tool" in sys_msg
+
+
+def test_pr15_chat_handler_omits_hard_tool_mode_when_multiple_tools(chat_client):
+    """No HARD-TOOL line when more than one tool is offered to the model."""
+    from mcp.types import Tool
+
+    client, mock_router = chat_client
+    mock_router.system_prompt = "base"
+
+    fake_tools = [
+        Tool(name="forge_a", description="x",
+             inputSchema={"type": "object", "properties": {}}),
+        Tool(name="forge_b", description="x",
+             inputSchema={"type": "object", "properties": {}}),
+    ]
+
+    async def fake_passthrough(tools):
+        return tools
+
+    with patch(
+        "forge_bridge.mcp.server.mcp.list_tools",
+        new=AsyncMock(return_value=fake_tools),
+    ), patch(
+        "forge_bridge.console.handlers.filter_tools_by_reachable_backends",
+        side_effect=fake_passthrough,
+    ):
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [{"role": "user", "content": "hi"}]},
+        )
+    assert r.status_code == 200
+    sys_msg = mock_router.complete_with_tools.call_args.kwargs["system"]
+    assert "tool-using agent" in sys_msg
+    assert "MUST call this tool" not in sys_msg
+
+
+def test_pr15_chat_handler_response_body_carries_tool_enforced(chat_client):
+    """Success body must include ``tool_enforced`` for the wrapper trace."""
+    client, mock_router = chat_client
+    mock_router.system_prompt = "base"
+    r = client.post(
+        "/api/v1/chat",
+        json={"messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # The fixture installs 1 tool → tools_filtered=1 → tool_enforced=True.
+    assert body["tool_enforced"] is True
+
+
+def test_pr15_chat_handler_returns_500_on_malformed_tool_text(chat_client):
+    """Hallucinated tool-call text in the assistant response → 500."""
+    client, mock_router = chat_client
+    mock_router.system_prompt = "base"
+    mock_router.complete_with_tools = AsyncMock(
+        return_value='<|im_start|>{"name": "forge_test_probe", "arguments": {}}'
+    )
+    r = client.post(
+        "/api/v1/chat",
+        json={"messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert r.status_code == 500
+    assert r.json()["error"]["code"] == "internal_error"
+
+
+def test_pr15_chat_handler_legitimate_response_not_flagged(chat_client):
+    """A normal assistant response must still 200 — no false-positive 500s."""
+    client, mock_router = chat_client
+    mock_router.system_prompt = "base"
+    mock_router.complete_with_tools = AsyncMock(
+        return_value="There are 4 libraries: Default, WIP, Postings, Delivery."
+    )
+    r = client.post(
+        "/api/v1/chat",
+        json={"messages": [{"role": "user", "content": "list libraries"}]},
+    )
+    assert r.status_code == 200, r.text
+
+
+def test_pr15_no_regression_pr14_counts_still_present(chat_client):
+    """tools_available / tools_filtered (PR14) must still ship alongside
+    the new tool_enforced field — no key churn for downstream consumers."""
+    client, mock_router = chat_client
+    mock_router.system_prompt = "base"
+    r = client.post(
+        "/api/v1/chat",
+        json={"messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    for key in ("tools_available", "tools_filtered", "tool_enforced",
+                "messages", "stop_reason", "request_id"):
+        assert key in body, f"missing {key} in response body"

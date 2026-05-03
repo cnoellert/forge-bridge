@@ -105,7 +105,7 @@ def chat_cmd(
                 f"elapsed={result.elapsed_seconds:.2f}s  "
                 f"attempts={result.attempts}/{retries + 1}  "
                 f"model={meta.get('model', '?')}  "
-                f"tool_calls={meta.get('tool_calls', '?')}\n"
+                f"tools={_format_tools(meta, result)}\n"
             )
         sys.stderr.write(
             f"forge-bridge chat: {result.error_kind}: {result.error_message}\n"
@@ -125,7 +125,7 @@ def chat_cmd(
             f"attempts={result.attempts}/{retries + 1}  "
             f"model={meta.get('model', '?')}  "
             f"provider={meta.get('provider', '?')}  "
-            f"tool_calls={meta.get('tool_calls', '?')}\n"
+            f"tools={_format_tools(meta, result)}\n"
         )
     sys.stdout.write(reply + ("\n" if not reply.endswith("\n") else ""))
 
@@ -171,6 +171,41 @@ def _fmt_seconds(value: object) -> str:
         return "?s"
 
 
+def _format_tools(meta: dict, result) -> str:
+    """Render the verbose ``tools=N`` / ``tools=N (X.Ys)`` field.
+
+    Prefer values reported by the chat endpoint (in ``meta``). For failure
+    paths the response body is usually absent — fall back to the last attempt
+    event's ``tool_calls`` / ``tool_duration``, which PR13-B sets to 0/None
+    on skipped attempts so the operator sees ``tools=0`` instead of
+    ``tools=?``. Elide the parenthesized duration when no measurement exists.
+    """
+    tool_calls = meta.get("tool_calls")
+    tool_duration = meta.get("tool_duration")
+
+    if tool_calls is None or tool_duration is None:
+        events = (getattr(result, "trace", None) or {}).get("events") or []
+        last_attempt = next(
+            (e for e in reversed(events)
+             if isinstance(e, dict) and e.get("kind") == "attempt"),
+            None,
+        )
+        if isinstance(last_attempt, dict):
+            if tool_calls is None:
+                tc = last_attempt.get("tool_calls")
+                if isinstance(tc, list):
+                    tool_calls = len(tc)
+                elif isinstance(tc, int):
+                    tool_calls = tc
+            if tool_duration is None:
+                tool_duration = last_attempt.get("tool_duration")
+
+    count = tool_calls if isinstance(tool_calls, int) else "?"
+    if isinstance(tool_duration, (int, float)) and not isinstance(tool_duration, bool):
+        return f"{count} ({float(tool_duration):.1f}s)"
+    return f"{count}"
+
+
 def _extract_reply(data: Optional[dict]) -> str:
     """Pull a renderable text reply out of the chat response."""
     if not isinstance(data, dict):
@@ -193,18 +228,19 @@ def _extract_metadata(data: Optional[dict]) -> dict:
     if not isinstance(data, dict):
         return {}
     # PR10 verbose: surface tool_calls if the chat handler reports them.
-    # Accept either an explicit count or a list we can len() — the chat
-    # endpoint owns the exact shape; we just present what's there.
-    tc = data.get("tool_calls")
-    if isinstance(tc, list):
-        tool_calls = len(tc)
-    elif isinstance(tc, int):
-        tool_calls = tc
-    else:
-        tool_calls = data.get("iterations")
+    # PR13-B: also surface tool_duration; coerce tool_calls to a count or None.
+    tool_calls = data.get("tool_calls")
+    tool_duration = data.get("tool_duration")
+
+    if isinstance(tool_calls, list):
+        tool_calls = len(tool_calls)
+    elif not isinstance(tool_calls, int):
+        tool_calls = None
+
     return {
         "model": data.get("model"),
         "provider": data.get("provider") or data.get("backend"),
         "iterations": data.get("iterations"),
         "tool_calls": tool_calls,
+        "tool_duration": tool_duration,
     }

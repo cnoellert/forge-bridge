@@ -45,10 +45,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# PR14 — message-based tool pre-filter: cap and tokenizer.
+# Pre-filter only. No embeddings, no ranking, no scoring.
+PR14_MAX_TOOLS = 8
+_PR14_TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 # ---------------------------------------------------------------------------
 # Per-tool routing classification (the planner audit — see plan 16.1-01)
@@ -170,3 +176,54 @@ async def filter_tools_by_reachable_backends(tools: list[Any]) -> list[Any]:
 def _reset_for_tests() -> None:
     """Test affordance — clear the cache. Mirrors `_rate_limit._reset_for_tests`."""
     _cache.clear()
+
+
+# ---------------------------------------------------------------------------
+# PR14 — message-based tool pre-filter
+# ---------------------------------------------------------------------------
+
+
+def _pr14_tokens(text: str) -> set[str]:
+    return set(_PR14_TOKEN_RE.findall(text.lower()))
+
+
+def filter_tools_by_message(
+    tools: list[Any],
+    message: str,
+    *,
+    max_tools: int = PR14_MAX_TOOLS,
+) -> list[Any]:
+    """PR14 — narrow the tool list passed to the LLM by simple keyword match.
+
+    Pre-filter only. No embeddings, no ranking, no scoring. A tool survives if:
+      * its lowercase name occurs as a substring of the message, OR
+      * any of its name's word-tokens (split on non-alphanumerics) appear in
+        the message tokens — this picks up category matches like ``flame``
+        or ``forge`` and verb matches like ``ping``.
+
+    If nothing matches, the full ``tools`` list is returned unchanged so we
+    never lose capability. When more than ``max_tools`` survive, the first N
+    in input order are kept (no sort, no rank).
+    """
+    if not isinstance(message, str) or not message:
+        return list(tools)
+    msg_lower = message.lower()
+    msg_tokens = _pr14_tokens(message)
+    if not msg_tokens:
+        return list(tools)
+
+    selected: list[Any] = []
+    for t in tools:
+        name = (getattr(t, "name", "") or "").lower()
+        if not name:
+            continue
+        if name in msg_lower:
+            selected.append(t)
+            continue
+        if _pr14_tokens(name) & msg_tokens:
+            selected.append(t)
+            continue
+
+    if not selected:
+        return list(tools)
+    return selected[:max_tools]

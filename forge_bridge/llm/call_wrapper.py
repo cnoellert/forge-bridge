@@ -448,9 +448,13 @@ def call_with_retry(
         })
         total_elapsed = now() - start
         _report(reporter, f"Response received ({total_elapsed:.1f}s)")
+        tools_available, tools_filtered = _extract_tool_counts(data)
+        tool_enforced = _extract_tool_enforced(data)
         trace = _build_trace(
             events, total_elapsed, attempt, "success", None,
             retry_count=max(0, attempt - 1), retry_skipped=False,
+            tools_available=tools_available, tools_filtered=tools_filtered,
+            tool_enforced=tool_enforced,
         )
         return CallResult(
             ok=True, data=data,
@@ -534,24 +538,40 @@ def _build_trace(
     *,
     retry_count: int,
     retry_skipped: bool,
+    tools_available: int | None = None,
+    tools_filtered: int | None = None,
+    tool_enforced: bool | None = None,
 ) -> dict[str, Any]:
     """Append the summary event and wrap the events list in the trace envelope.
 
     PR12: summary carries ``retry_count`` (retries actually performed) and
     ``retry_skipped`` (True iff classification declined a retry the
-    ``retries`` setting would have allowed)."""
-    finalized = [
-        *events,
-        {
-            "kind": "summary",
-            "attempts": attempts,
-            "total_elapsed": total_elapsed,
-            "final_status": final_status,
-            "error_kind": error_kind,
-            "retry_count": retry_count,
-            "retry_skipped": retry_skipped,
-        },
-    ]
+    ``retries`` setting would have allowed).
+    PR14: when the chat endpoint reports them, the summary also carries
+    ``tools_available`` (count before message-based filtering) and
+    ``tools_filtered`` (count actually passed to the LLM).
+    PR15: ``tool_enforced`` (True iff the deterministic-tool-call rules
+    were active for the request — chat handler reports it on the success
+    body when ``tools_filtered <= 3``).
+    Optional keys are omitted when not reported, so non-chat callers see
+    no shape change.
+    """
+    summary: dict[str, Any] = {
+        "kind": "summary",
+        "attempts": attempts,
+        "total_elapsed": total_elapsed,
+        "final_status": final_status,
+        "error_kind": error_kind,
+        "retry_count": retry_count,
+        "retry_skipped": retry_skipped,
+    }
+    if tools_available is not None:
+        summary["tools_available"] = tools_available
+    if tools_filtered is not None:
+        summary["tools_filtered"] = tools_filtered
+    if tool_enforced is not None:
+        summary["tool_enforced"] = tool_enforced
+    finalized = [*events, summary]
     return {
         "events": finalized,
         "total_elapsed": total_elapsed,
@@ -575,6 +595,39 @@ def _extract_tool_calls(data: Any) -> int | list[str] | None:
         if names and len(names) == len(tc):
             return names
         return len(tc)
+    return None
+
+
+def _extract_tool_counts(data: Any) -> tuple[int | None, int | None]:
+    """PR14: pull ``tools_available`` / ``tools_filtered`` off a chat response.
+
+    Returns a (available, filtered) tuple of ints (or None when absent /
+    malformed). Bools are rejected (bool is a subclass of int).
+    """
+    if not isinstance(data, dict):
+        return None, None
+
+    def _coerce(value: Any) -> int | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int) and value >= 0:
+            return value
+        return None
+
+    return _coerce(data.get("tools_available")), _coerce(data.get("tools_filtered"))
+
+
+def _extract_tool_enforced(data: Any) -> bool | None:
+    """PR15: pull ``tool_enforced`` off a chat response.
+
+    Strict bool only — non-bool values (including coercible 0/1) return None
+    so the trace doesn't silently mis-attribute enforcement state.
+    """
+    if not isinstance(data, dict):
+        return None
+    value = data.get("tool_enforced")
+    if isinstance(value, bool):
+        return value
     return None
 
 

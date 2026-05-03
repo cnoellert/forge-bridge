@@ -205,7 +205,8 @@ def test_chat_json_does_not_emit_progress_messages():
 
 def test_chat_verbose_success_block_includes_attempts_and_tool_calls():
     payload = {"response": "hi", "model": "qwen2.5-coder:32b",
-               "provider": "ollama", "tool_calls": [{"name": "flame_ping"}]}
+               "provider": "ollama", "tool_calls": [{"name": "flame_ping"}],
+               "tool_duration": 0.42}
     with _patch_httpx([_Resp(200, payload)]):
         result = runner.invoke(app, ["chat", "--verbose", "ping"])
     assert result.exit_code == 0
@@ -214,7 +215,8 @@ def test_chat_verbose_success_block_includes_attempts_and_tool_calls():
     assert "elapsed=" in err
     assert "attempts=" in err
     assert "model=qwen2.5-coder:32b" in err
-    assert "tool_calls=1" in err
+    # PR13-B: verbose tools field renders as ``tools=N (Xs)``.
+    assert "tools=1 (0.4s)" in err
 
 
 def test_chat_verbose_failure_block_emitted_on_error_path():
@@ -230,6 +232,21 @@ def test_chat_verbose_failure_block_emitted_on_error_path():
     assert "kind=timeout" in err
     assert "elapsed=" in err
     assert "attempts=2" in err
+
+
+def test_pr13b_verbose_failure_shows_tools_zero_when_skipped():
+    """PR13-B: a fast-fail short-circuit (e.g. 4xx invalid_response) must
+    render ``tools=0`` in the verbose failure block — derived from the
+    last attempt event, not the missing response body."""
+    with _patch_httpx([_Resp(400, {"error": {"message": "bad"}})]):
+        result = runner.invoke(
+            app, ["chat", "--verbose", "--retries", "2", "ping"],
+        )
+    err = getattr(result, "stderr", "") or ""
+    assert "[chat] FAILED" in err
+    assert "kind=invalid_response" in err
+    assert "tools=0" in err
+    assert "tools=?" not in err
 
 
 def test_chat_json_failure_envelope_carries_attempts_and_elapsed():

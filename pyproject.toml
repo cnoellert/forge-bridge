@@ -23,7 +23,16 @@ dependencies = [
 ]
 
 [project.scripts]
-forge-bridge = "forge_bridge.__main__:app"
+# Both names dispatch to the unified Typer app in forge_bridge.cli.main.
+# `fbridge` is the short name for the unified CLI; `forge-bridge` is kept
+# for backwards compatibility with existing docs and install scripts.
+# We do NOT register a `forge` entrypoint — that name is owned by the
+# sister `projekt-forge` package and we must not collide with it.
+# The legacy forge_bridge.__main__:app entrypoint is intentionally removed;
+# `python -m forge_bridge` still works because __main__ re-exports `app`
+# from cli.main, but installed scripts no longer route through __main__.
+fbridge = "forge_bridge.cli.main:app"
+forge-bridge = "forge_bridge.cli.main:app"
 
 [project.optional-dependencies]
 llm = [

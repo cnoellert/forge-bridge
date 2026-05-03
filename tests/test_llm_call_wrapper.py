@@ -1590,3 +1590,171 @@ def test_pr13b_retry_behavior_unchanged_after_guard():
     assert bad.ok is False
     assert bad.attempts == 1
     assert _summary(bad)["retry_skipped"] is True
+
+
+# ── PR14: tools_available / tools_filtered surface in summary ─────────────
+
+
+def test_pr14_summary_carries_tool_counts_when_response_reports_them():
+    """A successful chat response with PR14 telemetry must surface in summary."""
+    body = {"response": "hi", "tools_available": 49, "tools_filtered": 6}
+    with _patch_client([_Resp(200, body)]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    summary = _summary(result)
+    assert summary["tools_available"] == 49
+    assert summary["tools_filtered"] == 6
+
+
+def test_pr14_summary_omits_tool_counts_when_response_does_not_report():
+    """A response without PR14 fields must not introduce stray keys —
+    keeps the existing exact-equality summary contract for non-chat callers."""
+    with _patch_client([_Resp(200, {"response": "hi"})]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    summary = _summary(result)
+    assert "tools_available" not in summary
+    assert "tools_filtered" not in summary
+
+
+def test_pr14_summary_rejects_malformed_tool_counts():
+    """Non-int / negative / bool ``tools_available`` must be dropped, not surfaced."""
+    body = {
+        "response": "hi",
+        "tools_available": "lots",
+        "tools_filtered": -3,
+    }
+    with _patch_client([_Resp(200, body)]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    summary = _summary(result)
+    assert "tools_available" not in summary
+    assert "tools_filtered" not in summary
+
+
+def test_pr14_summary_rejects_bool_tool_counts_specifically():
+    """Bool is a subclass of int — must not silently coerce to 0/1 counts."""
+    body = {"response": "hi", "tools_available": True, "tools_filtered": False}
+    with _patch_client([_Resp(200, body)]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    summary = _summary(result)
+    assert "tools_available" not in summary
+    assert "tools_filtered" not in summary
+
+
+def test_pr14_failure_summary_does_not_introduce_tool_count_keys():
+    """Failure paths produce no response data → the new keys must be absent."""
+    with _patch_client([_Resp(400, {"error": {"message": "bad"}})]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    summary = _summary(result)
+    assert summary["final_status"] == "failed"
+    assert "tools_available" not in summary
+    assert "tools_filtered" not in summary
+
+
+def test_pr14_no_regression_pr12_summary_keys_still_present():
+    """PR12 summary fields must still be there alongside any PR14 additions."""
+    body = {"response": "hi", "tools_available": 5, "tools_filtered": 5}
+    with _patch_client([_Resp(200, body)]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    summary = _summary(result)
+    for key in ("retry_count", "retry_skipped", "final_status", "attempts"):
+        assert key in summary
+
+
+# ── PR15: tool_enforced surfaces in summary ───────────────────────────────
+
+
+def test_pr15_summary_carries_tool_enforced_true_when_reported():
+    body = {"response": "hi", "tools_filtered": 1,
+            "tools_available": 8, "tool_enforced": True}
+    with _patch_client([_Resp(200, body)]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    summary = _summary(result)
+    assert summary["tool_enforced"] is True
+    assert summary["tools_filtered"] == 1
+
+
+def test_pr15_summary_carries_tool_enforced_false_when_reported():
+    body = {"response": "hi", "tools_filtered": 8,
+            "tools_available": 8, "tool_enforced": False}
+    with _patch_client([_Resp(200, body)]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    summary = _summary(result)
+    assert summary["tool_enforced"] is False
+
+
+def test_pr15_summary_omits_tool_enforced_when_not_reported():
+    """Non-chat callers (no tool_enforced field) see no shape change."""
+    with _patch_client([_Resp(200, {"response": "hi"})]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    summary = _summary(result)
+    assert "tool_enforced" not in summary
+
+
+def test_pr15_summary_rejects_non_bool_tool_enforced():
+    """Strict bool only — strings / ints / None must not surface."""
+    for bad in (1, 0, "yes", "no", "true", None, {}, [True]):
+        body = {"response": "hi", "tool_enforced": bad}
+        with _patch_client([_Resp(200, body)]):
+            result = cw.call_with_retry(
+                "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+                sleep=lambda _s: None,
+            )
+        summary = _summary(result)
+        assert "tool_enforced" not in summary, (
+            f"non-bool {bad!r} leaked into summary"
+        )
+
+
+def test_pr15_failure_path_does_not_introduce_tool_enforced_key():
+    with _patch_client([_Resp(400, {"error": {"message": "bad"}})]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    summary = _summary(result)
+    assert summary["final_status"] == "failed"
+    assert "tool_enforced" not in summary
+
+
+def test_pr15_no_regression_pr14_keys_present_alongside_tool_enforced():
+    body = {
+        "response": "hi",
+        "tools_available": 8,
+        "tools_filtered": 2,
+        "tool_enforced": True,
+    }
+    with _patch_client([_Resp(200, body)]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    summary = _summary(result)
+    for key in ("retry_count", "retry_skipped", "final_status", "attempts",
+                "tools_available", "tools_filtered", "tool_enforced"):
+        assert key in summary
