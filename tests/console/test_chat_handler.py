@@ -1121,3 +1121,100 @@ def test_state_invariant_tools_filtered_equals_actual_tool_count():
     forwarded = mock_router.complete_with_tools.call_args.kwargs["tools"]
     assert body["tools_filtered"] == len(forwarded)
     _assert_tool_state_invariant(body)
+
+
+# ── Defensive: empty-tools guard + safe error envelope ────────────────────
+
+
+def test_chat_returns_503_when_filter_pipeline_yields_empty_tool_set():
+    """Defensive guard: if a future filter edit ever returns an empty
+    `tools` list at the LLM-dispatch boundary, the handler must short-
+    circuit with a 503 service_unavailable envelope (matching the
+    upstream reachable-backends empty-list shape) — NOT call the LLM
+    with no tools (which would loop or hang) and NOT raise."""
+    from mcp.types import Tool
+
+    # Patch filter_tools_by_message itself to simulate the bug condition:
+    # a future filter that drops every tool. The reachable-backends filter
+    # is patched separately to keep an upstream non-empty list so we
+    # specifically exercise the post-PR21 guard.
+    fake_tools = [
+        Tool(name="forge_alpha", description="x", inputSchema={"type": "object"}),
+        Tool(name="forge_beta",  description="x", inputSchema={"type": "object"}),
+    ]
+
+    mock_router = MagicMock()
+    mock_router.complete_with_tools = AsyncMock(return_value="UNREACHED")
+    mock_router.system_prompt = "base"
+    ms = ManifestService()
+    mock_log = MagicMock()
+    mock_log.snapshot.return_value = ([], 0)
+    api = ConsoleReadAPI(
+        execution_log=mock_log,
+        manifest_service=ms,
+        llm_router=mock_router,
+    )
+    app = build_console_app(api)
+
+    def _empty_filter(tools, message, **_kw):
+        return []  # simulate broken filter — never happens in real code
+
+    with patch(
+        "forge_bridge.mcp.server.mcp.list_tools",
+        new=AsyncMock(return_value=fake_tools),
+    ), patch(
+        "forge_bridge.console.handlers.filter_tools_by_reachable_backends",
+        side_effect=_passthrough_filter,
+    ), patch(
+        "forge_bridge.console.handlers.filter_tools_by_message",
+        side_effect=_empty_filter,
+    ):
+        client = TestClient(app)
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [{"role": "user", "content": "hi"}]},
+        )
+
+    assert r.status_code == 503, r.text
+    body = r.json()
+    assert body["error"]["code"] == "service_unavailable"
+    # LLM must NOT have been called.
+    mock_router.complete_with_tools.assert_not_called()
+
+
+def test_chat_safe_error_envelope_when_router_raises_arbitrary_exception(chat_client):
+    """The catch-all `except Exception as exc:` must convert ANY router
+    failure into a structured 500 envelope — never leak the exception
+    string into the response body, never let the framework return a
+    Starlette default 500 with a traceback."""
+    client, mock_router = chat_client
+    mock_router.complete_with_tools.side_effect = RuntimeError(
+        "secret detail in exception text — must NOT leak"
+    )
+    r = client.post(
+        "/api/v1/chat",
+        json={"messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert r.status_code == 500
+    body = r.json()
+    # Nested shape (D-17) — never the framework default.
+    assert body["error"]["code"] == "internal_error"
+    assert isinstance(body["error"]["message"], str)
+    # Exception text MUST NOT appear in the response.
+    assert "secret detail" not in body["error"]["message"]
+    # X-Request-ID header is still present (D-21).
+    assert "X-Request-ID" in r.headers
+
+
+def test_chat_safe_error_envelope_when_router_raises_value_error(chat_client):
+    """Same contract under a different exception class — proves the
+    catch-all is the load-bearing guarantee, not just LLMToolError."""
+    client, mock_router = chat_client
+    mock_router.complete_with_tools.side_effect = ValueError("oops")
+    r = client.post(
+        "/api/v1/chat",
+        json={"messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert r.status_code == 500
+    assert r.json()["error"]["code"] == "internal_error"
+    assert "oops" not in r.json()["error"]["message"]

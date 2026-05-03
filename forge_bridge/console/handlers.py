@@ -397,15 +397,33 @@ def _serialize_forced_tool_result(raw: Any) -> str:
     """Serialize a FastMCP `call_tool` return into a string suitable for the
     `tool` message body.
 
-    `call_tool` returns either `Sequence[ContentBlock]` (typically a list of
-    TextContent) or a `dict[str, Any]` when the underlying Python tool
-    returned a structured value. Both are coerced to a string here so the
-    chat reply payload matches the existing `tool` message shape (`content`
-    is always a string per `_CHAT_VALID_ROLES` validation upstream)."""
+    FastMCP's `call_tool(..., convert_result=True)` actually returns a
+    2-tuple ``(content_blocks, structured_dict)`` — the type hint advertises
+    ``Sequence[ContentBlock] | dict``, but observed runtime is the tuple
+    form (the convert path produces both). We detect the tuple, prefer the
+    structured `result` payload when present (already a JSON string from
+    the tool's ``_ok``/``_err`` helpers), and fall back to extracting text
+    from the content blocks. Plain str / dict / list returns are handled
+    too for forward compatibility with future FastMCP shape changes.
+    """
     if isinstance(raw, str):
         return raw
     if isinstance(raw, dict):
+        # FastMCP convert path may also pass a bare dict — pull "result"
+        # if present (the tool's stringified payload), else dump the dict.
+        if "result" in raw and isinstance(raw["result"], str):
+            return raw["result"]
         return json.dumps(raw, default=str)
+    if isinstance(raw, tuple) and len(raw) == 2:
+        blocks, structured = raw
+        # Structured dict path — `_ok`/`_err` already produced a JSON string
+        # which FastMCP wraps as ``{"result": "<json>"}``.
+        if isinstance(structured, dict) and isinstance(
+            structured.get("result"), str
+        ):
+            return structured["result"]
+        # Otherwise fall through to block-level extraction.
+        raw = blocks
     if isinstance(raw, (list, tuple)):
         # ContentBlock sequence — pull out text payloads, fall back to repr.
         parts: list[str] = []
@@ -414,7 +432,6 @@ def _serialize_forced_tool_result(raw: Any) -> str:
             if isinstance(text, str):
                 parts.append(text)
                 continue
-            # Pydantic model — dump as JSON for stability.
             dump = getattr(block, "model_dump_json", None)
             if callable(dump):
                 try:
@@ -775,9 +792,38 @@ async def chat_handler(request: Request) -> JSONResponse:
             tool_enforced_flag=tool_enforced_flag,
         )
 
+    # ---- Defensive: empty-tools guard before LLM dispatch -------------------
+    # `filter_tools_by_message` falls back to the full list when nothing
+    # matches, and `deterministic_narrow` only ever returns a non-empty
+    # subset, so reaching this point with `tools == []` is an unexpected
+    # state — likely a bug in a future filter edit. Rather than dispatching
+    # a no-op LLM call that would loop or hang, return a safe 503 envelope
+    # and log loudly so the operator can trace it. Mirrors the upstream
+    # reachable-backends empty-list guard (Phase 16.1 D-01).
+    if not tools:
+        logger.warning(
+            "chat empty_tool_set_after_filters request_id=%s "
+            "client_ip=%s tools_available=%d — investigate filter pipeline",
+            request_id, client_ip, tools_available_count,
+        )
+        return _chat_error(
+            "service_unavailable",
+            "No tools available for this request — chat cannot proceed.",
+            503,
+            request_id,
+        )
+
     # ---- D-14 / CHAT-02: outer 125s wraps FB-C's 120s inner cap --------------
     # D-14a translation matrix applied below — every cap-fire becomes 504, every
     # structural error becomes 500. Sensitivity is hardcoded D-05 (sensitive=True).
+    #
+    # Safe-envelope contract: every code path that exits the try-block below
+    # MUST go through `_chat_error()` (status 4xx/5xx, NEVER leaks the
+    # exception string into the response body — only the request_id + a
+    # human message). The catch-all `except Exception as exc:` at the bottom
+    # of the chain is the load-bearing guarantee — any router/serialization/
+    # transport-level error becomes a deterministic 500 envelope rather than
+    # a Starlette default 500 with a traceback.
 
     tool_call_count_in = sum(1 for m in messages if m.get("role") == "tool")
 
