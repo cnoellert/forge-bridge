@@ -116,13 +116,39 @@ def test_switch_grade_exports():
 # ── Pydantic model coverage ───────────────────────────────────────────────────
 
 def test_project_models():
-    """Verify project.py Pydantic models exist for all parameterized functions."""
+    """Verify project.py Pydantic models exist for all parameterized functions.
+
+    Accepts both ``params: Model`` and ``params: Optional[Model] = None``
+    (Pydantic v2 idiom for tools that must be callable with no arguments —
+    see ``flame_list_libraries``).
+    """
+    import inspect
+    import typing
+
     from pydantic import BaseModel
 
     from forge_bridge.tools import project
 
-    # Every parameterized function defined in project.py must have a BaseModel input type
-    import inspect
+    def _is_basemodel_or_optional_basemodel(ann) -> bool:
+        try:
+            if issubclass(ann, BaseModel):
+                return True
+        except TypeError:
+            pass
+        # Optional[X] / Union[X, None] / X | None — accept iff the non-None
+        # arm is a BaseModel subclass.
+        origin = typing.get_origin(ann)
+        if origin in (typing.Union, type(None)) or str(origin) == "types.UnionType":
+            for arg in typing.get_args(ann):
+                if arg is type(None):
+                    continue
+                try:
+                    if issubclass(arg, BaseModel):
+                        return True
+                except TypeError:
+                    continue
+        return False
+
     for name, fn in inspect.getmembers(project, inspect.isfunction):
         # Skip functions imported from other modules (e.g. Field from pydantic)
         if getattr(fn, "__module__", None) != project.__name__:
@@ -134,14 +160,80 @@ def test_project_models():
         first_ann = params[0].annotation
         if first_ann is inspect.Parameter.empty:
             continue
-        try:
-            is_model = issubclass(first_ann, BaseModel)
-        except TypeError:
-            is_model = False
-        assert is_model, (
-            f"project.{name}: first param annotation is not a BaseModel subclass "
-            f"(got {first_ann!r})"
+        assert _is_basemodel_or_optional_basemodel(first_ann), (
+            f"project.{name}: first param annotation is not a BaseModel "
+            f"or Optional[BaseModel] (got {first_ann!r})"
         )
+
+
+# ── flame_list_libraries: must be callable with no arguments ──────────────
+
+
+def test_flame_list_libraries_signature_has_default_for_params():
+    """The Pydantic-v2 fix: ``params`` must have a default so the tool's
+    JSON schema doesn't mark it required, otherwise ``fbridge run
+    flame_list_libraries`` and the LLM tool-call path both fail with
+    ``params: Field required``."""
+    import inspect
+
+    from forge_bridge.tools.project import list_libraries
+
+    sig = inspect.signature(list_libraries)
+    params_arg = sig.parameters["params"]
+    assert params_arg.default is not inspect.Parameter.empty, (
+        "flame_list_libraries: `params` has no default — Pydantic v2 will "
+        "treat it as required and reject zero-arg calls."
+    )
+
+
+def test_run_flame_list_libraries_no_args(monkeypatch):
+    """Calling list_libraries() with no args must succeed end-to-end (no
+    validation error). The bridge.execute_json is mocked to return a stub
+    library list; the test only asserts the no-arg call doesn't raise."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import project as project_tools
+
+    captured: dict = {}
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        captured["code"] = code
+        return [{"name": "default_library", "opened": True}]
+
+    monkeypatch.setattr(project_tools.bridge, "execute_json", _fake_execute_json)
+
+    out = asyncio.run(project_tools.list_libraries())
+    parsed = json.loads(out)
+    assert isinstance(parsed, list)
+    assert parsed[0]["name"] == "default_library"
+    # Default include_contents=False → the conditional block must not appear.
+    assert "folder_details" not in captured["code"]
+
+
+def test_run_flame_list_libraries_explicit_args_still_work(monkeypatch):
+    """No regression: passing an explicit ListLibrariesInput still works."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import project as project_tools
+
+    captured: dict = {}
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        captured["code"] = code
+        return [{"name": "lib1", "opened": True, "folders": 2,
+                 "reels": 0, "reel_groups": 0, "clips": 4, "sequences": 1,
+                 "folder_details": []}]
+
+    monkeypatch.setattr(project_tools.bridge, "execute_json", _fake_execute_json)
+
+    args = project_tools.ListLibrariesInput(include_contents=True)
+    out = asyncio.run(project_tools.list_libraries(args))
+    parsed = json.loads(out)
+    assert parsed[0]["clips"] == 4
+    # include_contents=True path must inject the folder_details block.
+    assert "folder_details" in captured["code"]
 
 
 def test_utility_models():
@@ -173,13 +265,34 @@ def test_utility_models():
 
 
 def test_pydantic_coverage():
-    """Verify all parameterized tool functions have a Pydantic BaseModel as first argument."""
+    """Verify all parameterized tool functions have a Pydantic BaseModel as
+    first argument. Accepts ``Optional[Model]`` for tools that must remain
+    callable with no arguments (Pydantic-v2 idiom — see flame_list_libraries).
+    """
     import inspect
     import typing
 
     from pydantic import BaseModel
 
     from forge_bridge.tools import batch, project, publish, reconform, switch_grade, timeline, utility
+
+    def _is_basemodel_or_optional(ann) -> bool:
+        try:
+            if issubclass(ann, BaseModel):
+                return True
+        except TypeError:
+            pass
+        origin = typing.get_origin(ann)
+        if origin in (typing.Union,) or str(origin) == "types.UnionType":
+            for arg in typing.get_args(ann):
+                if arg is type(None):
+                    continue
+                try:
+                    if issubclass(arg, BaseModel):
+                        return True
+                except TypeError:
+                    continue
+        return False
 
     modules = [timeline, batch, publish, project, utility, reconform, switch_grade]
     failures = []
@@ -208,13 +321,10 @@ def test_pydantic_coverage():
             if first_ann is inspect.Parameter.empty:
                 failures.append(f"{mod.__name__}.{name}: missing type annotation")
                 continue
-            try:
-                ok = issubclass(first_ann, BaseModel)
-            except TypeError:
-                ok = False
-            if not ok:
+            if not _is_basemodel_or_optional(first_ann):
                 failures.append(
-                    f"{mod.__name__}.{name}: first param is {first_ann!r}, not a BaseModel"
+                    f"{mod.__name__}.{name}: first param is {first_ann!r}, "
+                    "not a BaseModel or Optional[BaseModel]"
                 )
 
     assert not failures, "Pydantic coverage failures:\n" + "\n".join(failures)

@@ -57,12 +57,19 @@ class ListLibrariesInput(BaseModel):
     )
 
 
-async def list_libraries(params: ListLibrariesInput) -> str:
+async def list_libraries(params: Optional[ListLibrariesInput] = None) -> str:
     """List all libraries in the current workspace with optional content counts.
 
     Returns library names and, if requested, counts of folders, reels,
     clips, and sequences within each.
     """
+    # Pydantic v2 treats fields as required without a default. The CLI
+    # `fbridge run flame_list_libraries` and the LLM tool-call path both
+    # call this with no args — give ``params`` a default so the schema
+    # doesn't reject the empty-arg call. ListLibrariesInput's own fields
+    # already default; the missing piece was the parameter itself.
+    if params is None:
+        params = ListLibrariesInput()
     code = """
         import flame, json
         ws = flame.projects.current_project.current_workspace
