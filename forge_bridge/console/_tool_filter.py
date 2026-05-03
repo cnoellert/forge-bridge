@@ -353,6 +353,23 @@ _PR21_DOMAIN_PRIORITIES: tuple[tuple[str, str], ...] = (
 )
 
 
+def _raw_message_tokens(message: str) -> set[str]:
+    """PR23 — raw token set for tie-breaking, NO normalization.
+
+    Splits on whitespace and lowercases. Stays deliberately literal so
+    PR23 can distinguish surface-form differences that PR19 collapsed
+    (e.g. ``get`` vs ``list``, ``project`` vs ``projects``)."""
+    return {t for t in message.lower().split() if t}
+
+
+def _raw_tool_tokens(tool_name: str) -> set[str]:
+    """PR23 — raw tool-name token set, NO normalization.
+
+    Splits the tool name on ``_`` only (matches the canonical
+    ``<prefix>_<verb>_<noun>...`` registry naming). Lowercased."""
+    return {t for t in tool_name.lower().split("_") if t}
+
+
 def deterministic_narrow(tools: list[Any], message: str) -> list[Any]:
     """PR21 — narrow a multi-tool match deterministically before LLM dispatch.
 
@@ -361,6 +378,14 @@ def deterministic_narrow(tools: list[Any], message: str) -> list[Any]:
     short-circuit; any other length means "still ambiguous, hand to LLM".
 
     See module-level PR21 comment block above for the rule contract.
+
+    PR23 adds a Rule 3 raw-token tie-breaker: when Rules 1 and 2 leave
+    multiple survivors that are indistinguishable on normalized tokens
+    (e.g., ``get_project`` and ``list_projects`` collapse to identical
+    normalized sets after PR19's ``get→list`` and ``projects→project``
+    rules), the survivor whose RAW (pre-normalization) tool tokens have
+    the most overlap with the RAW message tokens wins. Strict set
+    intersection — no scoring, no fuzzy matching, no stemming.
     """
     if len(tools) <= 1:
         return list(tools)
@@ -403,5 +428,26 @@ def deterministic_narrow(tools: list[Any], message: str) -> list[Any]:
                 survivors = winners
                 if len(survivors) == 1:
                     return survivors
+
+    # Rule 3 (PR23) — raw-token tie-breaker. When normalized rules leave
+    # multiple survivors, fall back to the literal pre-normalization
+    # tokens. The motivating case: ``"list projects"`` ties
+    # ``forge_list_projects`` and ``forge_get_project`` on normalized
+    # tokens (both = {forge, list, project}) but only the former matches
+    # the LITERAL message tokens {list, projects}. Strict set
+    # intersection on raw tokens — no normalization is applied here.
+    if len(survivors) > 1:
+        msg_raw = _raw_message_tokens(message)
+        if msg_raw:
+            raw_scored: list[tuple[Any, int]] = []
+            for t in survivors:
+                name = (getattr(t, "name", "") or "").lower()
+                raw_scored.append((t, len(_raw_tool_tokens(name) & msg_raw)))
+            max_raw = max(c for _, c in raw_scored)
+            if max_raw > 0:
+                # At least one survivor has a literal-token match — keep
+                # only the maximum scorers. If still tied, fall through
+                # (LLM decides).
+                survivors = [t for t, c in raw_scored if c == max_raw]
 
     return survivors

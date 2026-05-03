@@ -1323,3 +1323,168 @@ def test_pr21_no_regression_pr18_token_complete_path():
     # highest overlap (3 tokens), so it's the lone survivor.
     out = deterministic_narrow(after_filter, "list flame libraries")
     assert _names(out) == ["flame_list_libraries"]
+
+
+# ── PR23: raw-token tie-breaker (Rule 3) ──────────────────────────────────
+
+
+def test_pr23_raw_message_tokens_split_on_whitespace_only():
+    """Raw message tokens are split on whitespace and lowercased — NO
+    normalization applied. Punctuation stays attached (set intersection
+    only)."""
+    from forge_bridge.console._tool_filter import _raw_message_tokens
+
+    assert _raw_message_tokens("List Projects") == {"list", "projects"}
+    assert _raw_message_tokens("get  project") == {"get", "project"}
+    assert _raw_message_tokens("") == set()
+    assert _raw_message_tokens("   ") == set()
+
+
+def test_pr23_raw_tool_tokens_split_on_underscore_only():
+    """Raw tool-name tokens are split on `_` and lowercased — matches
+    the canonical ``<prefix>_<verb>_<noun>`` registry naming."""
+    from forge_bridge.console._tool_filter import _raw_tool_tokens
+
+    assert _raw_tool_tokens("forge_list_projects") == {"forge", "list", "projects"}
+    assert _raw_tool_tokens("forge_get_project") == {"forge", "get", "project"}
+    assert _raw_tool_tokens("FORGE_LIST_VERSIONS") == {"forge", "list", "versions"}
+    assert _raw_tool_tokens("") == set()
+
+
+def test_pr23_list_projects_picks_forge_list_projects_over_forge_get_project():
+    """Motivating UAT case: post-PR19 normalization, both
+    ``forge_list_projects`` and ``forge_get_project`` collapse to
+    identical normalized tokens {forge, list, project}. Rule 3 breaks
+    the tie via raw-token overlap with the literal message
+    {list, projects}."""
+    from forge_bridge.console._tool_filter import deterministic_narrow
+
+    tools = [
+        _make_tool("forge_list_projects"),
+        _make_tool("forge_get_project"),
+    ]
+    out = deterministic_narrow(tools, "list projects")
+    assert _names(out) == ["forge_list_projects"]
+
+
+def test_pr23_get_project_picks_forge_get_project_over_forge_list_projects():
+    """Symmetric case — ``"get project"`` (singular noun, get verb)
+    must pick ``forge_get_project``, not ``forge_list_projects``.
+    Both normalize identically; raw tokens disambiguate."""
+    from forge_bridge.console._tool_filter import deterministic_narrow
+
+    tools = [
+        _make_tool("forge_list_projects"),
+        _make_tool("forge_get_project"),
+    ]
+    out = deterministic_narrow(tools, "get project")
+    assert _names(out) == ["forge_get_project"]
+
+
+def test_pr23_bare_plural_noun_picks_list_tool():
+    """``"projects"`` alone (just the plural noun) must pick
+    ``forge_list_projects`` because its raw tokens contain ``projects``;
+    ``forge_get_project`` contains ``project`` (singular) — no match."""
+    from forge_bridge.console._tool_filter import deterministic_narrow
+
+    tools = [
+        _make_tool("forge_list_projects"),
+        _make_tool("forge_get_project"),
+    ]
+    out = deterministic_narrow(tools, "projects")
+    assert _names(out) == ["forge_list_projects"]
+
+
+def test_pr23_bare_singular_noun_picks_get_tool():
+    """``"project"`` (singular) must pick ``forge_get_project``.
+    Symmetric counterpart to the plural case."""
+    from forge_bridge.console._tool_filter import deterministic_narrow
+
+    tools = [
+        _make_tool("forge_list_projects"),
+        _make_tool("forge_get_project"),
+    ]
+    out = deterministic_narrow(tools, "project")
+    assert _names(out) == ["forge_get_project"]
+
+
+def test_pr23_unbreakable_raw_tie_returns_multiple():
+    """When even raw-token overlap ties, PR23 keeps all tied survivors
+    and the chat handler falls back to the LLM. ``"list"`` alone
+    matches every list-bearing tool's raw tokens at exactly 1 token —
+    no winner, no narrowing."""
+    from forge_bridge.console._tool_filter import deterministic_narrow
+
+    tools = [
+        _make_tool("forge_list_projects"),
+        _make_tool("forge_list_shots"),
+    ]
+    out = deterministic_narrow(tools, "list")
+    # Both tied on Rule 1 (overlap=1) and Rule 3 (raw overlap=1).
+    assert sorted(_names(out)) == ["forge_list_projects", "forge_list_shots"]
+
+
+def test_pr23_does_not_fire_when_no_raw_overlap():
+    """If NO survivor has any raw-token match with the message, Rule 3
+    must not arbitrarily eliminate everyone — keep the surviving set
+    so the LLM can still choose."""
+    from forge_bridge.console._tool_filter import deterministic_narrow
+
+    tools = [
+        _make_tool("forge_list_projects"),
+        _make_tool("forge_get_project"),
+    ]
+    # Message uses a verb that normalizes-to-list but isn't literally
+    # in either tool's raw name; nouns also collapse via normalization.
+    # 'fetch' normalizes to 'list' (in both tool sets after norm).
+    # forge_list_projects raw tokens contain neither 'fetch' nor anything
+    # that looks like 'projects' literally? Let's verify with raw msg
+    # = {fetch, projects}: forge_list_projects raw {forge, list, projects}
+    # → overlap = {projects} = 1. forge_get_project raw {forge, get, project}
+    # → overlap = {} = 0. Rule 3 picks forge_list_projects. So this
+    # message DOES disambiguate.
+    out = deterministic_narrow(tools, "fetch projects")
+    assert _names(out) == ["forge_list_projects"]
+
+
+def test_pr23_no_regression_pr21_rule1_still_wins_first():
+    """When Rule 1 alone narrows (one survivor by normalized overlap),
+    Rule 3 never fires. No change to the existing PR21 behavior."""
+    from forge_bridge.console._tool_filter import deterministic_narrow
+
+    tools = [
+        _make_tool("forge_list_projects"),  # overlap = {list, project} = 2
+        _make_tool("forge_list_versions"),  # overlap = {list} = 1
+    ]
+    out = deterministic_narrow(tools, "list projects")
+    assert _names(out) == ["forge_list_projects"]
+
+
+def test_pr23_no_regression_pr21_rule2_version_still_wins_over_project():
+    """Rule 2 (version > project) still fires before Rule 3. ``"list
+    project versions"`` contains both priority tokens; version-bearing
+    tools win regardless of raw-token overlap."""
+    from forge_bridge.console._tool_filter import deterministic_narrow
+
+    tools = [
+        _make_tool("forge_list_projects"),  # raw {forge, list, projects}
+        _make_tool("forge_list_versions"),  # raw {forge, list, versions}
+    ]
+    # Rule 1: both tied (normalized overlap 2 each).
+    # Rule 2: 'version' & 'project' both in msg → version-tools win →
+    # forge_list_versions alone. Rule 3 never fires (already at 1).
+    out = deterministic_narrow(tools, "list project versions")
+    assert _names(out) == ["forge_list_versions"]
+
+
+def test_pr23_no_regression_input_not_mutated():
+    """Defensive — Rule 3 must not mutate the input list."""
+    from forge_bridge.console._tool_filter import deterministic_narrow
+
+    tools = [
+        _make_tool("forge_list_projects"),
+        _make_tool("forge_get_project"),
+    ]
+    before = list(tools)
+    deterministic_narrow(tools, "list projects")
+    assert tools == before
