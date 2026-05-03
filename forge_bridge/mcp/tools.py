@@ -332,6 +332,15 @@ async def create_project(params: CreateProjectInput) -> str:
 # ─────────────────────────────────────────────────────────────
 
 class ListShotsInput(BaseModel):
+    # PR22 CONTRACT:
+    # All tools must be callable with {} so PR20 deterministic execution
+    # never raises a Pydantic validation error. The wrapping `params`
+    # argument on the tool function below has a `None` default that makes
+    # the tool's MCP `Arguments` schema accept `{}`. When the tool is
+    # invoked without a project_id, the body returns a structured
+    # ``_err()`` message instead of raising — Pydantic v2 still requires
+    # this field for normal use; the None-default just lets the tool
+    # decide how to surface the missing input gracefully.
     project_id: str = Field(..., description="Project UUID")
     status: Optional[str] = Field(
         default=None,
@@ -339,7 +348,7 @@ class ListShotsInput(BaseModel):
     )
 
 
-async def list_shots(params: ListShotsInput) -> str:
+async def list_shots(params: Optional[ListShotsInput] = None) -> str:
     """Forge: list shots in a pipeline project.
 
     Reads from the forge-bridge pipeline registry. Returns shot IDs,
@@ -360,6 +369,15 @@ async def list_shots(params: ListShotsInput) -> str:
     This tool needs a project_id; without one, ask the user or call
     forge_list_projects first.
     """
+    # PR22: callable with {} → params=None → return a graceful structured
+    # error so the chat handler renders a friendly tool message instead of
+    # surfacing a Pydantic validation error.
+    if params is None:
+        return _err(
+            "project_id is required. Call forge_list_projects to find one, "
+            "then retry with project_id=<uuid>.",
+            code="MISSING_PROJECT_ID",
+        )
     try:
         from forge_bridge.server.protocol import entity_list
         result = await _client().request(entity_list("shot", params.project_id))
@@ -534,11 +552,20 @@ async def update_shot_status(params: UpdateShotStatusInput) -> str:
 # ─────────────────────────────────────────────────────────────
 
 class ListVersionsInput(BaseModel):
+    # PR22 CONTRACT:
+    # All tools must be callable with {} so PR20 deterministic execution
+    # never raises a Pydantic validation error. The wrapping `params`
+    # argument on the tool function below has a `None` default that makes
+    # the tool's MCP `Arguments` schema accept `{}`. When the tool is
+    # invoked without a project_id, the body returns a structured
+    # ``_err()`` message instead of raising — Pydantic v2 still requires
+    # this field for normal use; the None-default just lets the tool
+    # decide how to surface the missing input gracefully.
     shot_id:    Optional[str] = Field(default=None, description="Filter by shot UUID")
     project_id: str           = Field(...,          description="Project UUID (required)")
 
 
-async def list_versions(params: ListVersionsInput) -> str:
+async def list_versions(params: Optional[ListVersionsInput] = None) -> str:
     """Forge: list versions in a pipeline project, optionally narrowed to one shot.
 
     Reads version records (numbered iterations) from the forge-bridge
@@ -559,6 +586,16 @@ async def list_versions(params: ListVersionsInput) -> str:
     This tool is for the pipeline registry's version table; Flame
     sequence versions are a different concept.
     """
+    # PR22: callable with {} → params=None → return a graceful structured
+    # error so the chat handler renders a friendly tool message instead of
+    # surfacing a Pydantic validation error.
+    if params is None:
+        return _err(
+            "project_id is required. Call forge_list_projects to find one, "
+            "then retry with project_id=<uuid> (and optionally shot_id=<uuid> "
+            "to narrow to one shot).",
+            code="MISSING_PROJECT_ID",
+        )
     try:
         from forge_bridge.server.protocol import entity_list
         result = await _client().request(entity_list("version", params.project_id))
