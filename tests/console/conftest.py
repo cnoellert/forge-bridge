@@ -17,6 +17,7 @@ import httpx
 from httpx import ASGITransport
 
 from forge_bridge.console._memory import _MEMORY
+from forge_bridge.console._rate_limit import _reset_for_tests as _reset_rate_limit
 from forge_bridge.console.app import build_console_app
 from forge_bridge.console.manifest_service import ManifestService
 from forge_bridge.console.read_api import ConsoleReadAPI
@@ -42,6 +43,26 @@ def _reset_tool_memory():
     _MEMORY.clear()
     yield
     _MEMORY.clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_chat_rate_limit():
+    """Clear the chat endpoint's IP-keyed rate-limit state before each
+    test. The limiter's token bucket (``forge_bridge.console._rate_limit``)
+    is process-global, so an integration-heavy test file (PR27 / PR28 /
+    PR29 each post several requests from ``testclient``) accumulates
+    counts across tests and the 11th request in 60s gets a 429.
+
+    Resetting between tests keeps each integration test independent of
+    earlier ones — a regression that only surfaces when running the
+    full suite is otherwise indistinguishable from a real bug. The
+    rate-limit module exposes ``_reset_for_tests`` exactly for this
+    purpose; using it here means we don't have to monkey-patch
+    ``time.monotonic`` for every chat test.
+    """
+    _reset_rate_limit()
+    yield
+    _reset_rate_limit()
 
 
 @pytest_asyncio.fixture

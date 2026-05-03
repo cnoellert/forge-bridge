@@ -454,9 +454,18 @@ async def _execute_forced_tool(
     tools_available_count: int,
     tools_filtered_count: int,
     tool_enforced_flag: bool,
+    user_params: Optional[dict] = None,
 ) -> JSONResponse:
     """PR20 short-circuit: invoke the sole filtered tool and shape the chat
-    reply. The LLM router is not called on this path."""
+    reply. The LLM router is not called on this path.
+
+    PR28 — ``user_params`` carries values the user explicitly supplied in
+    the message (today: ``project_id=<uuid>`` or a single bare UUID; see
+    ``_param_extract.extract_explicit_params``). They flow into
+    ``resolve_required_params`` as caller params, so PR26's precedence
+    chain (explicit > memory > resolver) collapses ambiguity before the
+    PR27 disambiguation envelope would fire."""
+    from forge_bridge.console._name_resolve import resolve_name_from_candidates
     from forge_bridge.console._tool_chain import (
         DISAMBIGUATION_KEY,
         resolve_required_params,
@@ -466,50 +475,110 @@ async def _execute_forced_tool(
     tool_call_id = f"forced_{uuid.uuid4().hex[:12]}"
     tool_name = tool.name
 
-    # PR25: deterministic required-parameter resolution. For tools listed
-    # in the chain registry, this issues a single upstream tool call (e.g.
-    # `forge_list_projects`) and merges the resolved value into params
-    # when — and only when — the system state is unambiguous. Returns
-    # `params` unchanged otherwise; the downstream PR22 graceful contract
-    # then surfaces a structured `MISSING_*` error.
+    # PR25/26/27/28/29: deterministic required-parameter resolution. For
+    # tools listed in the chain registry, this issues at most one upstream
+    # tool call (e.g. `forge_list_projects`) and merges the resolved value
+    # into params when — and only when — the system state is unambiguous.
+    # PR28 seeds the resolver with caller-supplied params extracted from
+    # the user message (handler scope), so an explicit ``project_id=<uuid>``
+    # short-circuits both memory hydration and the upstream probe via the
+    # PR26 precedence chain (explicit > memory > resolver). Returns the
+    # PR27 disambiguation sentinel when the resolver finds 2+ candidates
+    # AND the caller did not supply the required key explicitly.
+    #
+    # PR29 — ``project_name`` is consumed by the handler's name-resolution
+    # branch below, NOT by the resolver. Pop it BEFORE the resolver call
+    # so it doesn't leak into the tool's argument dict (forge tools
+    # don't accept a ``project_name`` kwarg, and the trace would be
+    # noisier than necessary). The popped value flows through to the
+    # disambiguation branch via ``requested_name``.
+    resolver_input = dict(user_params or {})
+    requested_name = resolver_input.pop("project_name", None)
     params: dict = await resolve_required_params(
-        tool_name, {}, _mcp_server.mcp,
+        tool_name, resolver_input, _mcp_server.mcp,
     )
 
     # PR27: ambiguity short-circuit. When the resolver finds multiple
     # valid candidates (today: 2+ projects), it returns a sentinel dict
-    # in place of a usable params payload. We surface a structured 400
-    # WITHOUT calling the tool and WITHOUT invoking the LLM — the
-    # caller (chat client) is expected to either resend with an explicit
-    # ``project_id`` or render a disambiguation prompt to the user.
-    # Tool was never called, so no tool_forced/stop_reason envelope.
+    # in place of a usable params payload. PR29 adds a deterministic
+    # second chance: if the user supplied ``project_name=<string>``
+    # in the message, attempt an exact match against the SAME candidate
+    # list before surfacing the structured 400 envelope. On a unique
+    # match, inject the resolved id, re-run the resolver (which short-
+    # circuits in memory hydration since project_id is now caller-
+    # supplied), and fall through to the tool-execution path below.
+    # Otherwise, surface ``MULTIPLE_PROJECTS`` exactly as PR27 does.
     if DISAMBIGUATION_KEY in params:
         disambiguation = params[DISAMBIGUATION_KEY]
-        elapsed_ms = int((time.monotonic() - started) * 1000)
-        candidate_count = len(disambiguation.get("candidates", []))
-        # ``key=project_id`` is the triggering parameter — hardcoded
-        # today because ``project_id`` is the only disambiguatable
-        # required key in the chain registry. When multi-key chains
-        # ship, derive this from the disambiguation payload (e.g.
-        # via a ``key`` field on the sentinel) instead of the
-        # ``type`` field. Logs only the LABEL of the missing key —
-        # never any candidate id or name.
-        logger.info(
-            "chat tool_forced_disambiguation key=project_id "
-            "request_id=%s client_ip=%s tool=%s "
-            "tools_available=%d tools_filtered=%d wall_clock_ms=%d "
-            "candidates=%d",
-            request_id, client_ip, tool_name,
-            tools_available_count, tools_filtered_count, elapsed_ms,
-            candidate_count,
-        )
-        return _chat_error(
-            code="MULTIPLE_PROJECTS",
-            message="Multiple projects found. Please specify one.",
-            status=400,
-            request_id=request_id,
-            details=disambiguation,
-        )
+        candidates = disambiguation.get("candidates", []) or []
+        candidate_count = len(candidates)
+
+        # PR29 — name-resolution fallback. ``requested_name`` is the
+        # value popped above from ``user_params["project_name"]`` (set
+        # only when the caller wrote ``project_name=<value>`` in the
+        # message — PR28's extractor). Resolution is exact-match-only
+        # and operates entirely on the candidate list returned by the
+        # resolver — no upstream probe, no LLM, no memory read.
+        # Returns ``None`` on zero or 2+ matches; in either case we
+        # fall through to the existing MULTIPLE_PROJECTS envelope.
+        resolved_id: Optional[str] = None
+        if requested_name:
+            resolved_id = resolve_name_from_candidates(
+                requested_name, candidates,
+            )
+
+        if resolved_id:
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            # Telemetry — log the LABEL of the resolved key only,
+            # never the name string or the resolved id. Mirrors the
+            # disambiguation log shape so consumers can compare
+            # rates of "resolved via name" vs "fell through to 400".
+            logger.info(
+                "chat tool_forced_name_resolved key=project_id "
+                "request_id=%s client_ip=%s tool=%s "
+                "tools_available=%d tools_filtered=%d wall_clock_ms=%d "
+                "candidates=%d",
+                request_id, client_ip, tool_name,
+                tools_available_count, tools_filtered_count, elapsed_ms,
+                candidate_count,
+            )
+            # Re-run resolution with the now-explicit project_id. The
+            # re-call short-circuits before any upstream probe (PR26's
+            # caller-params-take-precedence guard) and never writes
+            # memory (PR28's "explicit never writes memory" contract
+            # carries through unchanged). The returned dict is the
+            # canonical post-resolution params for the trace below.
+            params = await resolve_required_params(
+                tool_name, {"project_id": resolved_id}, _mcp_server.mcp,
+            )
+            # Fall through to the ``mcp.call_tool`` block below. DO
+            # NOT return — the rest of the forced-execution path
+            # (trace assembly, telemetry, JSONResponse) must run.
+        else:
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            # ``key=project_id`` is the triggering parameter — hardcoded
+            # today because ``project_id`` is the only disambiguatable
+            # required key in the chain registry. When multi-key chains
+            # ship, derive this from the disambiguation payload (e.g.
+            # via a ``key`` field on the sentinel) instead of the
+            # ``type`` field. Logs only the LABEL of the missing key —
+            # never any candidate id or name.
+            logger.info(
+                "chat tool_forced_disambiguation key=project_id "
+                "request_id=%s client_ip=%s tool=%s "
+                "tools_available=%d tools_filtered=%d wall_clock_ms=%d "
+                "candidates=%d",
+                request_id, client_ip, tool_name,
+                tools_available_count, tools_filtered_count, elapsed_ms,
+                candidate_count,
+            )
+            return _chat_error(
+                code="MULTIPLE_PROJECTS",
+                message="Multiple projects found. Please specify one.",
+                status=400,
+                request_id=request_id,
+                details=disambiguation,
+            )
 
     try:
         raw = await _mcp_server.mcp.call_tool(tool_name, params)
@@ -842,7 +911,17 @@ async def chat_handler(request: Request) -> JSONResponse:
     # directly. Skip when `available == filtered == 1` (degenerate / fallback)
     # to avoid invoking a tool the user never asked for. See module-level
     # PR20 comment block above _execute_forced_tool for the full contract.
+    #
+    # PR28: extract any user-supplied parameters (today: ``project_id=<uuid>``
+    # or a single bare UUID) from the last user message and forward them as
+    # caller params. Extraction is pure regex — no LLM, no fuzzy matching,
+    # no name resolution. PR26's precedence chain (explicit > memory >
+    # resolver) ensures an explicit value collapses ambiguity before the
+    # PR27 disambiguation envelope would fire.
     if tools_filtered_count == 1 and tools_filtered_count < tools_available_count:
+        from forge_bridge.console._param_extract import extract_explicit_params
+
+        user_params = extract_explicit_params(last_user_text)
         return await _execute_forced_tool(
             tool=tools[0],
             messages=messages,
@@ -852,6 +931,7 @@ async def chat_handler(request: Request) -> JSONResponse:
             tools_available_count=tools_available_count,
             tools_filtered_count=tools_filtered_count,
             tool_enforced_flag=tool_enforced_flag,
+            user_params=user_params,
         )
 
     # ---- Defensive: empty-tools guard before LLM dispatch -------------------

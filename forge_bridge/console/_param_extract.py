@@ -1,4 +1,4 @@
-"""PR28 — Deterministic user-supplied parameter injection.
+"""PR28 / PR29 — Deterministic user-supplied parameter injection.
 
 The PR27 disambiguation contract (`MULTIPLE_PROJECTS`) tells the caller
 "the system holds N candidates; pick one." This module is the picker:
@@ -7,12 +7,13 @@ message and hands a parameter dict to ``resolve_required_params``
 BEFORE memory hydration or resolver dispatch run.
 
 Hard constraints (mirror ``_tool_chain``):
-  1. **No LLM involvement.** Pure regex — runs in the request thread.
-  2. **No fuzzy matching.** No name-based, no partial, no transformed
-     matches. Only a strict UUID by default.
-  3. **No guessing.** If the message holds two-or-more bare UUIDs we
-     return nothing — ambiguity stays ambiguous and the existing PR27
-     ``MULTIPLE_PROJECTS`` envelope still fires.
+  1. **No LLM involvement.** Pure regex / string ops — runs in the
+     request thread.
+  2. **No fuzzy matching.** No partial, no substring, no transformed
+     matches. Only strict UUIDs and EXACT names (case-insensitive,
+     trimmed); name resolution itself lives in ``_name_resolve``.
+  3. **No guessing.** Two-or-more bare UUIDs → return nothing.
+     Ambiguity stays ambiguous and PR27 ``MULTIPLE_PROJECTS`` fires.
   4. **No memory writes.** Caller-supplied values are passed through
      ``resolve_required_params`` as caller params; PR26's "explicit
      never writes memory" contract handles the rest of the precedence
@@ -23,28 +24,40 @@ Hard constraints (mirror ``_tool_chain``):
 
 Supported input forms (STRICT, in priority order):
 
-  1. ``project_id=<uuid>`` — primary explicit form. Whitespace-
-     terminated. The KEY match is case-insensitive (``PROJECT_ID=``
-     and ``Project_Id=`` qualify); the UUID VALUE is preserved
-     verbatim from the original message. ``fullmatch`` on the
-     candidate so trailing punctuation/garbage falls through to the
-     bare-UUID fallback.
+  1. ``project_id=<uuid>`` (PR28) — most specific. Returns
+     ``{"project_id": "<uuid>"}`` and short-circuits all other forms.
+     The KEY match is case-insensitive (``PROJECT_ID=``,
+     ``Project_Id=``); the UUID VALUE is preserved verbatim. The
+     candidate boundary is ``[^\\w-]`` so trailing punctuation
+     (``,`` ``.`` ``;`` ``)``) terminates cleanly; only valid 8-4-4-4-12
+     hex passes ``fullmatch``, malformed candidates fall through.
 
-  2. Bare UUID (single match only) — fallback for users who paste
-     just a project id. If the message contains two-or-more bare
-     UUIDs, we return ``{}`` — better to let PR27 disambiguation
-     fire than to pick one arbitrarily.
+  2. ``project_name=<string>`` (PR29) — explicit name selector. Returns
+     ``{"project_name": "<value>"}`` and short-circuits the bare-UUID
+     fallback. The KEY match is case-insensitive; the VALUE is
+     whitespace-terminated (names with embedded spaces must use the
+     UUID form). Resolution is NOT attempted here — this module only
+     extracts the literal token; ``_name_resolve.resolve_name_from_
+     candidates`` does the matching against the PR27 candidate list.
 
-The keyed form takes precedence over the bare form. A message that
-contains both ``project_id=<uuidA>`` and a stray ``<uuidB>`` resolves
-to ``<uuidA>`` — the caller was explicit about the keyed value, the
-bare UUID is ignored as incidental context.
+  3. Bare UUID (single match only) — fallback for users who paste just
+     a project id. If the message contains two-or-more bare UUIDs, we
+     return ``{}`` — better to let PR27 disambiguation fire than to
+     pick one arbitrarily.
+
+Precedence is encoded by control flow: each higher-priority form
+returns early when matched. A message that contains both
+``project_id=<uuidA>`` and ``project_name=Beta`` resolves to
+``{"project_id": "<uuidA>"}`` — the UUID is the canonical handle.
+A message with ``project_name=Beta`` and a stray bare UUID resolves
+to ``{"project_name": "Beta"}`` — explicit keyed name wins over
+incidental UUID context.
 
 Whitespace handling: leading and trailing whitespace on the message is
 stripped before parsing so trivial formatting variance (a chat client
 appending ``"\n"``, copy-paste padding) does not change behavior.
-Inner whitespace is preserved as the candidate-terminator for the
-keyed form.
+Inner whitespace is preserved as the candidate-terminator for both
+keyed forms.
 """
 from __future__ import annotations
 
@@ -75,24 +88,26 @@ def extract_explicit_params(message: str) -> Dict[str, str]:
     """Parse explicit, deterministic parameters out of a user message.
 
     Returns a dict suitable for forwarding as caller params to
-    ``resolve_required_params``. Today the only key produced is
-    ``project_id``; the registry will grow as additional chain
-    resolvers come online.
+    ``resolve_required_params`` (when the dict carries ``project_id``)
+    or to the chat handler's PR29 name-resolution branch (when the dict
+    carries ``project_name``). Today only those two keys are produced;
+    the surface will grow as additional explicit selectors come online.
 
     Rules:
       - Leading / trailing whitespace on the message is stripped before
         parsing; trivial formatting variance must not change behavior.
-      - The ``project_id=`` key match is case-insensitive (``Project_Id=``
-        and ``PROJECT_ID=`` both qualify); the UUID *value* is preserved
-        verbatim from the original message so the downstream tool sees
-        what the caller wrote.
-      - ``project_id=<uuid>`` takes precedence over a bare UUID.
-      - The keyed candidate is ``fullmatch``-validated against the UUID
-        regex — partial / suffixed candidates fall through.
-      - Bare UUID fallback fires ONLY when the message contains exactly
-        one match. Multiple bare UUIDs → ``{}`` (let PR27 disambiguate).
-      - No transformation: the value the caller wrote is the value the
-        downstream tool sees.
+      - All keyed forms are case-insensitive (``Project_Id=``,
+        ``PROJECT_NAME=``, etc.); VALUES are preserved verbatim.
+      - Precedence (higher → lower):
+          1. ``project_id=<uuid>`` (PR28) — short-circuits everything
+             else; returns ``{"project_id": "<uuid>"}``.
+          2. ``project_name=<string>`` (PR29) — short-circuits the
+             bare-UUID fallback; returns ``{"project_name": "<value>"}``.
+          3. Bare UUID single-match — returns
+             ``{"project_id": "<uuid>"}``.
+      - Two-or-more bare UUIDs → ``{}`` (let PR27 disambiguate).
+      - No transformation: the value the caller wrote is the value
+        downstream code sees (matching is done by callers, not here).
     """
     params: Dict[str, str] = {}
 
@@ -139,6 +154,30 @@ def extract_explicit_params(message: str) -> Dict[str, str]:
         candidate = re.split(r"[^\w-]", after, maxsplit=1)[0] if after else ""
         if candidate and UUID_RE.fullmatch(candidate):
             params["project_id"] = candidate
+            return params
+
+    # PR29 — explicit name selector. Only fires when no valid keyed
+    # UUID was extracted above; a UUID is more specific (canonical
+    # handle) and wins by code order. The candidate boundary here is
+    # plain whitespace, NOT the UUID-narrow ``[^\w-]`` boundary —
+    # names can legitimately contain punctuation (``Project-Alpha``,
+    # ``proj.beta``), so we only stop at the first whitespace token.
+    # Names with embedded spaces are out of scope: the user must use
+    # the UUID form for those (a v1 limitation locked by the brief's
+    # "value is everything after = until end-of-token" rule).
+    name_key = "project_name="
+    if name_key in lower:
+        idx = lower.find(name_key) + len(name_key)
+        after = text[idx:]
+        # ``str.split(maxsplit=1)`` returns ``[]`` for an empty / all-
+        # whitespace string; the ``or [""]`` fallback keeps the index
+        # access safe without a separate branch.
+        candidate = (after.split(maxsplit=1) or [""])[0]
+        if candidate:
+            params["project_name"] = candidate
+            # Return early so an incidental bare UUID elsewhere in the
+            # message can't silently override the explicit keyed name —
+            # the user committed to the name form, honor it.
             return params
 
     # Bare-UUID fallback — only fires when the message contains exactly
