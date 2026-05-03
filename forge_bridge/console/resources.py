@@ -82,9 +82,17 @@ def register_console_resources(
     @mcp.tool(
         name="forge_manifest_read",
         description=(
-            "Read the current synthesis manifest. Alias for "
-            "`resources/read forge://manifest/synthesis` for MCP clients "
-            "that don't support resources (Cursor, Gemini CLI)."
+            "Forge: read the synthesis manifest — promoted/probationary tools "
+            "and synthesis stats from the learning pipeline.\n\n"
+            "Use this tool ONLY when:\n"
+            "- the user asks about synthesis state, promotion stats, or the manifest\n"
+            "- the user wants to know which synth_* tools have been minted\n\n"
+            "Do NOT use this tool for:\n"
+            "- listing all tools available to the agent → use forge_tools_read\n"
+            "- listing pipeline projects/shots/media → use the matching forge_list_*\n"
+            "- Flame state → use flame_* tools\n\n"
+            "Alias for `resources/read forge://manifest/synthesis` for MCP "
+            "clients that don't support resources (Cursor, Gemini CLI)."
         ),
         annotations={"readOnlyHint": True},
     )
@@ -95,9 +103,17 @@ def register_console_resources(
     @mcp.tool(
         name="forge_tools_read",
         description=(
-            "Read registered tools. Omit 'name' for the full list (alias for "
-            "`forge://tools`); pass 'name' for per-tool detail (alias for "
-            "`forge://tools/{name}`)."
+            "Forge: list MCP tools registered with this forge-bridge instance "
+            "(or one tool's detail by name).\n\n"
+            "Use this tool ONLY when:\n"
+            "- the user asks what tools/actions are available\n"
+            "- the user wants the schema of one tool by name\n\n"
+            "Do NOT use this tool for:\n"
+            "- the synthesis manifest → use forge_manifest_read\n"
+            "- pipeline projects/shots/media → use forge_list_*\n"
+            "- Flame state → use flame_* tools\n\n"
+            "Omit 'name' for the full registry (alias for `forge://tools`); "
+            "pass 'name' for per-tool detail (alias for `forge://tools/{name}`)."
         ),
         annotations={"readOnlyHint": True},
     )
@@ -145,8 +161,20 @@ def register_console_resources(
     @mcp.tool(
         name="forge_list_staged",
         description=(
-            "List staged operations with optional status / project_id filter and "
-            "pagination. status: proposed|approved|rejected|executed|failed (default: all)."
+            "Forge: list staged pipeline operations awaiting approval/execution.\n\n"
+            "Reads the staged_operation table — the queue of pending pipeline "
+            "mutations (renames, set-startframes, publishes) the operator must "
+            "approve before they run. Filters: status, project_id; supports "
+            "pagination. status values: proposed|approved|rejected|executed|"
+            "failed (default: all).\n\n"
+            "Use this tool ONLY when:\n"
+            "- the user asks about pending / proposed / staged operations\n"
+            "- the user wants the approval queue for the pipeline\n\n"
+            "Do NOT use this tool for:\n"
+            "- listing pipeline projects/shots/media → use forge_list_projects, etc.\n"
+            "- listing Flame libraries → use flame_list_libraries\n"
+            "- a single staged operation by ID → use forge_get_staged\n"
+            "- the proposed-only snapshot → use forge_staged_pending_read"
         ),
         annotations={"readOnlyHint": True, "idempotentHint": True},
     )
@@ -155,7 +183,16 @@ def register_console_resources(
 
     @mcp.tool(
         name="forge_get_staged",
-        description="Get a single staged operation by UUID.",
+        description=(
+            "Forge: get one staged pipeline operation by UUID.\n\n"
+            "Use this tool ONLY when:\n"
+            "- the user has a specific staged-operation UUID and wants its full record\n\n"
+            "Do NOT use this tool for:\n"
+            "- listing all staged operations → use forge_list_staged\n"
+            "- the proposed-only queue → use forge_staged_pending_read\n"
+            "- approving / rejecting → use forge_approve_staged / forge_reject_staged\n"
+            "- pipeline shots / projects → use forge_list_shots / forge_list_projects"
+        ),
         annotations={"readOnlyHint": True, "idempotentHint": True},
     )
     async def forge_get_staged(params: GetStagedInput) -> str:
@@ -163,7 +200,17 @@ def register_console_resources(
 
     @mcp.tool(
         name="forge_approve_staged",
-        description="Approve a staged operation. Requires non-empty actor identity.",
+        description=(
+            "Forge: approve one staged pipeline operation so the proposer can execute it.\n\n"
+            "Approval is bookkeeping — the proposer subscribes to the event and "
+            "executes against its own domain. Requires a non-empty actor identity.\n\n"
+            "Use this tool ONLY when:\n"
+            "- the user explicitly approves a staged operation by ID\n\n"
+            "Do NOT use this tool for:\n"
+            "- listing or inspecting → use forge_list_staged / forge_get_staged\n"
+            "- rejecting → use forge_reject_staged\n"
+            "- direct pipeline mutations (creating shots, etc.) → use forge_create_*"
+        ),
         annotations={
             "readOnlyHint": False,
             "idempotentHint": False,
@@ -175,7 +222,17 @@ def register_console_resources(
 
     @mcp.tool(
         name="forge_reject_staged",
-        description="Reject a staged operation. Requires non-empty actor identity.",
+        description=(
+            "Forge: reject one staged pipeline operation so the proposer drops it.\n\n"
+            "Requires a non-empty actor identity. Like approval, rejection is "
+            "bookkeeping — the proposer is the one that abandons the work.\n\n"
+            "Use this tool ONLY when:\n"
+            "- the user explicitly rejects a staged operation by ID\n\n"
+            "Do NOT use this tool for:\n"
+            "- listing or inspecting → use forge_list_staged / forge_get_staged\n"
+            "- approving → use forge_approve_staged\n"
+            "- direct pipeline mutations → use forge_create_* / forge_update_*"
+        ),
         annotations={
             "readOnlyHint": False,
             "idempotentHint": False,
@@ -205,7 +262,14 @@ def register_console_resources(
     @mcp.tool(
         name="forge_staged_pending_read",
         description=(
-            "Read the snapshot of pending (proposed) staged operations. "
+            "Forge: snapshot of pending (proposed-only) staged pipeline operations.\n\n"
+            "Use this tool ONLY when:\n"
+            "- the user wants the *pending approval* queue specifically\n"
+            "- the user wants a quick snapshot without filtering options\n\n"
+            "Do NOT use this tool for:\n"
+            "- listing approved/rejected/executed staged ops → use forge_list_staged\n"
+            "- one staged op by ID → use forge_get_staged\n"
+            "- pipeline shots/projects/media → use forge_list_*\n\n"
             "Alias for `resources/read forge://staged/pending` for MCP clients "
             "that don't support resources (Cursor, Gemini CLI)."
         ),

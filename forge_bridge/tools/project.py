@@ -12,10 +12,24 @@ from forge_bridge import bridge
 
 
 async def get_project() -> str:
-    """Get current Flame project info: name, paths, resolution, OCIO config.
+    """Flame: get the currently-open Flame project (name, paths, OCIO, version).
 
-    Returns project metadata including workspace name, library count,
-    media storage paths, and Flame version. Always safe to call.
+    Reads from the running Autodesk Flame session via its Python API.
+    Returns workspace name, library count, media storage paths, and the
+    Flame version. Always safe to call (read-only).
+
+    Use this tool ONLY when:
+    - the user asks about the *currently-open Flame project* on the host
+    - the user wants Flame-side metadata (paths, OCIO, version)
+
+    Do NOT use this tool for:
+    - listing forge-bridge pipeline projects (use forge_list_projects)
+    - getting forge-bridge pipeline project details by ID (use forge_get_project)
+    - shots, versions, media, libraries, or anything not at the Flame
+      project level
+
+    This tool is specific to the live Flame application — it requires
+    a running Flame session on the host.
     """
     data = await bridge.execute_json("""
         import flame, json
@@ -58,10 +72,27 @@ class ListLibrariesInput(BaseModel):
 
 
 async def list_libraries(params: Optional[ListLibrariesInput] = None) -> str:
-    """List all libraries in the current workspace with optional content counts.
+    """Flame: list libraries in the current Flame workspace.
 
-    Returns library names and, if requested, counts of folders, reels,
-    clips, and sequences within each.
+    A "library" here is an Autodesk Flame *workspace library* — the
+    top-level container shown in Flame's MediaHub. Returns each library's
+    name and open/closed state, with optional folder/reel/clip counts.
+
+    Use this tool ONLY when:
+    - the user asks about *Flame libraries* (a Flame-specific concept)
+    - the user wants the contents of the live Flame workspace
+
+    Do NOT use this tool for:
+    - listing forge-bridge pipeline projects → use forge_list_projects
+    - listing pipeline shots → use forge_list_shots
+    - listing pipeline versions → use forge_list_versions
+    - listing media on disk → use forge_list_media or flame_find_media
+    - role registry → use forge_list_roles
+    - the Flame Desktop (a different container) → use flame_list_desktop
+
+    This tool is specific to Flame workspace libraries only. If the user
+    asks about "projects" or anything other than libraries, this tool is
+    the WRONG choice.
     """
     # Pydantic v2 treats fields as required without a default. The CLI
     # `fbridge run flame_list_libraries` and the LLM tool-call path both
@@ -110,10 +141,23 @@ async def list_libraries(params: Optional[ListLibrariesInput] = None) -> str:
 
 
 async def list_desktop() -> str:
-    """List the desktop's reel groups, reels, batch groups, and their contents.
+    """Flame: list the current Flame Desktop's reel groups, reels, and batch groups.
 
-    Returns the full desktop structure including reel groups with their
-    reels and clip/sequence counts, plus batch group names.
+    The "Desktop" is Flame's working surface — distinct from a library.
+    Returns reel groups with nested reels and clip/sequence counts, plus
+    batch group names.
+
+    Use this tool ONLY when:
+    - the user asks about the *Flame Desktop* specifically
+    - the user wants what is currently on the artist's working surface
+
+    Do NOT use this tool for:
+    - Flame libraries (use flame_list_libraries — different container)
+    - pipeline shots → use forge_list_shots
+    - pipeline media → use forge_list_media
+
+    This tool is specific to Flame's Desktop view; it does not see
+    library, project, or pipeline-registry content.
     """
     data = await bridge.execute_json("""
         import flame, json
@@ -150,7 +194,7 @@ async def list_desktop() -> str:
 
 
 async def get_context() -> str:
-    """Get current Flame context: project, workspace, desktop, and full reel contents.
+    """Flame: full snapshot of the current Flame session (project, workspace, desktop, reels).
 
     Returns a complete snapshot of what Flame is currently showing:
     - Project name and path
@@ -159,9 +203,18 @@ async def get_context() -> str:
     - Every reel group → reel → clip/sequence (by name, type, tracks)
     - Batch group names
 
-    Use this tool first whenever you need to locate media in Flame or
-    diagnose why a search isn't finding expected clips. It uses
-    flame.project (singular) which is correct for Flame 2026.
+    Use this tool ONLY when:
+    - the user wants the *whole* Flame session state in one call
+    - diagnosing "why isn't Flame finding my clip" / "what's loaded right now"
+
+    Do NOT use this tool for:
+    - just the project metadata → use flame_get_project
+    - just the libraries → use flame_list_libraries
+    - just the desktop → use flame_list_desktop
+    - pipeline-registry projects/shots/versions → use forge_* equivalents
+
+    This tool is broad-by-design: prefer a narrower flame_* tool when the
+    user's question is scoped.
     """
     data = await bridge.execute_json("""
         import flame, json
@@ -234,10 +287,23 @@ class FindMediaInput(BaseModel):
 
 
 async def find_media(params: FindMediaInput) -> str:
-    """Search for clips and sequences by name across the project.
+    """Flame: search the live Flame session for clips/sequences by name.
 
-    Searches desktop reels and/or libraries for clips and sequences
-    whose names contain the query string (case-insensitive).
+    Searches Flame's desktop reels and/or workspace libraries for clips
+    and sequences whose names contain the query (case-insensitive). The
+    user must provide a query string.
+
+    Use this tool ONLY when:
+    - the user is searching for a *named clip or sequence inside Flame*
+    - the search target is in the live Flame session (desktop or libraries)
+
+    Do NOT use this tool for:
+    - listing all libraries (use flame_list_libraries — no name filter)
+    - listing media in the forge-bridge registry (use forge_list_media)
+    - listing published plates from the pipeline (use forge_list_published_plates)
+    - searching pipeline shots (use forge_list_shots)
+
+    This tool requires a running Flame session and a query argument.
     """
     data = await bridge.execute_json(f"""
         import flame, json

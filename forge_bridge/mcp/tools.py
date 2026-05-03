@@ -238,9 +238,24 @@ async def ping() -> str:
 # ─────────────────────────────────────────────────────────────
 
 async def list_projects() -> str:
-    """List all pipeline projects in forge-bridge.
+    """Forge: list all pipeline projects tracked by forge-bridge.
 
-    Returns project IDs, names, codes, and creation times.
+    Reads from the forge-bridge pipeline registry (Postgres). Returns
+    every project's UUID, full name, short code, and creation time.
+
+    Use this tool ONLY when:
+    - the user asks about pipeline-level *projects* across the studio
+    - the user wants project IDs, codes, or a roster of projects
+
+    Do NOT use this tool for:
+    - the currently-open Flame project → use flame_get_project
+    - Flame libraries inside a project → use flame_list_libraries
+    - shots within a project → use forge_list_shots
+    - media or plates → use forge_list_media / forge_list_published_plates
+    - one specific project by ID → use forge_get_project
+
+    This tool is specific to pipeline projects, NOT Flame libraries or
+    Flame's currently-loaded project.
     """
     try:
         from forge_bridge.server.protocol import project_list
@@ -259,7 +274,24 @@ class GetProjectInput(BaseModel):
 
 
 async def get_project(params: GetProjectInput) -> str:
-    """Get details for a specific project by ID."""
+    """Forge: get details for one pipeline project by UUID.
+
+    Reads a single project from the forge-bridge pipeline registry. The
+    user must already know the project's UUID (use forge_list_projects
+    to find one).
+
+    Use this tool ONLY when:
+    - the user has a specific project UUID and wants its full record
+    - the user wants metadata for one named pipeline project
+
+    Do NOT use this tool for:
+    - the currently-open Flame project → use flame_get_project
+    - listing all projects → use forge_list_projects
+    - shots inside a project → use forge_list_shots
+    - the Flame workspace's libraries → use flame_list_libraries
+
+    This tool is for pipeline registry lookup by UUID, not Flame state.
+    """
     try:
         from forge_bridge.server.protocol import project_get
         result = await _client().request(project_get(params.project_id))
@@ -308,10 +340,25 @@ class ListShotsInput(BaseModel):
 
 
 async def list_shots(params: ListShotsInput) -> str:
-    """List all shots in a project.
+    """Forge: list shots in a pipeline project.
 
-    Returns shot IDs, names, statuses, and cut information.
-    Optionally filter by status.
+    Reads from the forge-bridge pipeline registry. Returns shot IDs,
+    names, statuses, and cut info. Requires a project UUID; optional
+    status filter.
+
+    Use this tool ONLY when:
+    - the user wants the *shots* in a specific pipeline project
+    - the user provides (or implies) a project UUID
+
+    Do NOT use this tool for:
+    - listing pipeline projects → use forge_list_projects
+    - one specific shot by ID → use forge_get_shot
+    - shot versions → use forge_list_versions or forge_get_shot_versions
+    - Flame's loaded sequences → use flame_get_sequence_segments
+    - Flame libraries or media → use flame_list_libraries / flame_find_media
+
+    This tool needs a project_id; without one, ask the user or call
+    forge_list_projects first.
     """
     try:
         from forge_bridge.server.protocol import entity_list
@@ -337,10 +384,23 @@ class GetShotInput(BaseModel):
 
 
 async def get_shot(params: GetShotInput) -> str:
-    """Get details for a specific shot, optionally including its layer stack.
+    """Forge: get one pipeline shot by UUID, optionally with its layer stack.
 
-    The stack shows all layers (primary, matte, reference, etc.) with their
-    roles, orders, and associated version/media IDs.
+    Reads a single shot from the forge-bridge pipeline registry. The
+    stack (when included) lists all layers — primary, matte, reference,
+    etc. — with their roles, ordering, and version/media references.
+
+    Use this tool ONLY when:
+    - the user has a specific shot UUID and wants its full record
+    - the user wants the layer stack of one named shot
+
+    Do NOT use this tool for:
+    - listing all shots in a project → use forge_list_shots
+    - shot versions → use forge_get_shot_versions or forge_list_versions
+    - Flame's loaded sequences → use flame_get_sequence_segments
+    - Flame project / library state → use flame_get_project / flame_list_libraries
+
+    This tool requires a shot_id (UUID); without one, run forge_list_shots first.
     """
     try:
         from forge_bridge.server.protocol import entity_get, query_shot_stack
@@ -479,9 +539,25 @@ class ListVersionsInput(BaseModel):
 
 
 async def list_versions(params: ListVersionsInput) -> str:
-    """List versions in a project, optionally filtered by shot.
+    """Forge: list versions in a pipeline project, optionally narrowed to one shot.
 
-    Returns version numbers, statuses, and parent shot information.
+    Reads version records (numbered iterations) from the forge-bridge
+    pipeline registry. Requires a project_id; an optional shot_id narrows
+    the result to one shot's versions.
+
+    Use this tool ONLY when:
+    - the user asks about *versions* (numbered iterations) in the pipeline
+    - the user has a project UUID and (optionally) a shot UUID
+
+    Do NOT use this tool for:
+    - listing pipeline shots → use forge_list_shots
+    - listing pipeline projects → use forge_list_projects
+    - published plates (final delivery media) → use forge_list_published_plates
+    - all plate versions for one shot → use forge_get_shot_versions
+    - Flame sequence versions in the live session → use flame_inspect_sequence_versions
+
+    This tool is for the pipeline registry's version table; Flame
+    sequence versions are a different concept.
     """
     try:
         from forge_bridge.server.protocol import entity_list
@@ -555,11 +631,23 @@ async def get_dependents(params: GetDependentsInput) -> str:
 # ─────────────────────────────────────────────────────────────
 
 async def list_roles() -> str:
-    """List all registered roles in the pipeline registry.
+    """Forge: list registered shot-layer *roles* in the pipeline registry.
 
-    Roles define what layers can exist in a shot stack: primary, matte,
-    reference, audio, comp, etc. Each role has a stable UUID key that
-    persists across renames.
+    Roles are the controlled vocabulary for layers in a shot stack —
+    e.g. primary, matte, reference, audio, comp. Each role has a stable
+    UUID key that survives renames.
+
+    Use this tool ONLY when:
+    - the user asks about layer *roles* (the role vocabulary)
+    - the user wants the list of valid stack-layer types
+
+    Do NOT use this tool for:
+    - listing shots → use forge_list_shots
+    - the layers in one specific shot → use forge_get_shot_stack
+    - listing projects → use forge_list_projects
+    - listing libraries (a Flame concept) → use flame_list_libraries
+
+    This tool is the role registry, not a list of layers in a shot.
     """
     try:
         from forge_bridge.server.protocol import role_list
@@ -1136,13 +1224,25 @@ class ListMediaInput(BaseModel):
 
 
 async def list_media(params: ListMediaInput) -> str:
-    """List media entities with optional filters.
+    """Forge: list media entities (plates, renders) in the pipeline registry.
 
-    Returns all registered media (published plates, comp renders, etc.)
-    with their verification status, file paths, and metadata.
+    Reads from forge-bridge's media table. Returns published plates,
+    comp renders, etc. with verification status, file paths, and
+    metadata. Useful for auditing deliverables or finding unverified /
+    failed plates after a publish run.
 
-    Particularly useful for finding unverified or failed plates after
-    a publish run, or auditing what's been delivered for a shot.
+    Use this tool ONLY when:
+    - the user asks about *registered* media in the pipeline
+    - the user wants verification-status / file-path metadata for plates
+
+    Do NOT use this tool for:
+    - searching the live Flame session for clips → use flame_find_media
+    - listing published plates only → use forge_list_published_plates
+    - shots / projects → use forge_list_shots / forge_list_projects
+    - Flame libraries → use flame_list_libraries
+
+    This tool reads pipeline-registry media, not what is currently
+    loaded in Flame.
     """
     try:
         from forge_bridge.server.protocol import project_list, entity_list
@@ -1230,7 +1330,7 @@ class ListPublishedPlatesInput(BaseModel):
 
 
 async def list_published_plates(params: ListPublishedPlatesInput) -> str:
-    """List all video plates registered in the forge-bridge publish registry.
+    """Forge: list video plates in the forge-bridge publish registry.
 
     Returns one record per published plate (version entity) with:
     - shot name, asset name, track (L01/L02/…), colour space
@@ -1238,8 +1338,20 @@ async def list_published_plates(params: ListPublishedPlatesInput) -> str:
     - full file path on disk (from the location record)
     - version name and number
 
-    Use shot_name / sequence_name / colour_space to filter results.
-    Use get_shot_versions to drill into a specific shot's history.
+    Optional filters: shot_name, sequence_name, colour_space.
+
+    Use this tool ONLY when:
+    - the user wants the *delivered/published* plates (final media)
+    - the user is filtering plates by shot / sequence / colour space
+
+    Do NOT use this tool for:
+    - all media in the registry (published or not) → use forge_list_media
+    - all plate versions for one specific shot → use forge_get_shot_versions
+    - the publish lineage of a shot → use forge_get_shot_lineage
+    - searching Flame for loaded clips → use flame_find_media
+    - listing libraries / shots / projects → use the matching list_* tool
+
+    This tool reads the publish registry; it does NOT read Flame state.
     """
     try:
         from forge_bridge.server.protocol import project_list, entity_list
