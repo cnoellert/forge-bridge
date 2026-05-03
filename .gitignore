@@ -13,3 +13,8 @@ htmlcov/
 .venv
 venv/
 scripts/dogfood_uat_server.py
+
+.DS_Store
+.claude/
+forge_bridge.zip
+*.zip
