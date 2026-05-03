@@ -37,7 +37,7 @@ import time
 import uuid
 from dataclasses import asdict
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -365,6 +365,146 @@ async def health_handler(request: Request) -> JSONResponse:
 _CHAT_VALID_ROLES = frozenset({"user", "assistant", "tool"})
 
 
+# PR20 — deterministic tool execution when filter narrows to a single tool.
+#
+# Trigger condition:
+#     tools_filtered_count == 1 AND tools_filtered_count < tools_available_count
+#
+# The second clause is the safety guard against the degenerate case where the
+# system itself has only one tool available (test fixtures, bare-backend
+# deployments). In that case the filter cannot narrow — a single survivor is
+# either a coincidence or the capability-loss fallback (see
+# `_tool_filter.filter_tools_by_message` — falls back to the full list when
+# no tool name matches the message). Forcing in that case would call a tool
+# the user never asked for, so we leave the LLM in charge.
+#
+# Behavior:
+#   - Tool is invoked with empty arguments (`{}`). PR brief: "params = None
+#     (default) OR minimal inferred params if trivial" — empty dict is the
+#     trivial case and matches what the LLM would send for a no-arg call.
+#   - Validation / tool errors return a structured tool message in the chat
+#     reply (NOT 500) so the consumer (`fbridge chat`) can surface the error
+#     with the same shape as `fbridge run`. The HTTP envelope stays 200.
+#   - Response carries `tool_forced=True` (only on this path) plus a new
+#     `stop_reason="tool_forced"` so the wrapper trace can distinguish a
+#     forced call from a normal `end_turn`.
+#   - LLM router is NEVER invoked on this path. No clarification round-trip,
+#     no fallback to text — see brief STOP CONDITIONS.
+
+
+def _serialize_forced_tool_result(raw: Any) -> str:
+    """Serialize a FastMCP `call_tool` return into a string suitable for the
+    `tool` message body.
+
+    `call_tool` returns either `Sequence[ContentBlock]` (typically a list of
+    TextContent) or a `dict[str, Any]` when the underlying Python tool
+    returned a structured value. Both are coerced to a string here so the
+    chat reply payload matches the existing `tool` message shape (`content`
+    is always a string per `_CHAT_VALID_ROLES` validation upstream)."""
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, dict):
+        return json.dumps(raw, default=str)
+    if isinstance(raw, (list, tuple)):
+        # ContentBlock sequence — pull out text payloads, fall back to repr.
+        parts: list[str] = []
+        for block in raw:
+            text = getattr(block, "text", None)
+            if isinstance(text, str):
+                parts.append(text)
+                continue
+            # Pydantic model — dump as JSON for stability.
+            dump = getattr(block, "model_dump_json", None)
+            if callable(dump):
+                try:
+                    parts.append(dump())
+                    continue
+                except Exception:  # noqa: BLE001 — best-effort serialization
+                    pass
+            parts.append(repr(block))
+        return "\n".join(parts) if parts else ""
+    return repr(raw)
+
+
+async def _execute_forced_tool(
+    *,
+    tool: Any,
+    messages: list,
+    request_id: str,
+    started: float,
+    client_ip: str,
+    tools_available_count: int,
+    tools_filtered_count: int,
+    tool_enforced_flag: bool,
+) -> JSONResponse:
+    """PR20 short-circuit: invoke the sole filtered tool and shape the chat
+    reply. The LLM router is not called on this path."""
+    from forge_bridge.mcp import server as _mcp_server
+
+    tool_call_id = f"forced_{uuid.uuid4().hex[:12]}"
+    tool_name = tool.name
+
+    try:
+        raw = await _mcp_server.mcp.call_tool(tool_name, {})
+        tool_content = _serialize_forced_tool_result(raw)
+        tool_ok = True
+    except Exception as exc:  # noqa: BLE001 — classify, don't propagate
+        # Validation / tool error — surface as a structured tool message
+        # mirroring the `fbridge run` failure shape so the CLI can render
+        # it identically to a normal tool failure.
+        tool_content = json.dumps({
+            "error": {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            }
+        })
+        tool_ok = False
+        logger.info(
+            "chat tool_forced_error request_id=%s tool=%s exc_type=%s",
+            request_id, tool_name, type(exc).__name__,
+        )
+
+    out_messages = list(messages) + [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": tool_call_id,
+                "type": "function",
+                "function": {"name": tool_name, "arguments": "{}"},
+            }],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "name": tool_name,
+            "content": tool_content,
+        },
+    ]
+
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    logger.info(
+        "chat tool_forced request_id=%s client_ip=%s tool=%s "
+        "tools_available=%d tools_filtered=%d wall_clock_ms=%d "
+        "stop_reason=tool_forced tool_ok=%s",
+        request_id, client_ip, tool_name,
+        tools_available_count, tools_filtered_count, elapsed_ms, tool_ok,
+    )
+    return JSONResponse(
+        {
+            "messages": out_messages,
+            "stop_reason": "tool_forced",
+            "request_id": request_id,
+            "tools_available": tools_available_count,
+            "tools_filtered": tools_filtered_count,
+            "tool_enforced": tool_enforced_flag,
+            "tool_forced": True,
+        },
+        status_code=200,
+        headers={"X-Request-ID": request_id},
+    )
+
+
 def _chat_error(
     code: str,
     message: str,
@@ -593,6 +733,24 @@ async def chat_handler(request: Request) -> JSONResponse:
         router.system_prompt, tools_filtered_count,
     )
     tool_enforced_flag = is_tool_enforced(tools_filtered_count)
+
+    # ---- PR20: deterministic forced execution when filter narrowed to 1 -----
+    # If the message-based filter actively narrowed a multi-tool registry down
+    # to exactly one survivor, the LLM has nothing to decide — call the tool
+    # directly. Skip when `available == filtered == 1` (degenerate / fallback)
+    # to avoid invoking a tool the user never asked for. See module-level
+    # PR20 comment block above _execute_forced_tool for the full contract.
+    if tools_filtered_count == 1 and tools_filtered_count < tools_available_count:
+        return await _execute_forced_tool(
+            tool=tools[0],
+            messages=messages,
+            request_id=request_id,
+            started=started,
+            client_ip=client_ip,
+            tools_available_count=tools_available_count,
+            tools_filtered_count=tools_filtered_count,
+            tool_enforced_flag=tool_enforced_flag,
+        )
 
     # ---- D-14 / CHAT-02: outer 125s wraps FB-C's 120s inner cap --------------
     # D-14a translation matrix applied below — every cap-fire becomes 504, every
