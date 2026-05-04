@@ -305,6 +305,42 @@ async def resolve_required_params(
       ``DISAMBIGUATION_KEY in params`` and short-circuiting to a
       structured error response (today: 400 + ``MULTIPLE_PROJECTS``
       envelope with the candidates list under ``error.details``).
+
+    PR28 precedence:
+
+      Explicit parameters extracted from user input take highest
+      precedence. The chat handler runs ``extract_explicit_params``
+      against the most recent user message and forwards the resulting
+      dict as the ``params`` argument here. From the resolver's
+      perspective those are just caller params — but the upstream
+      contract is that explicit user input wins.
+
+      Order of resolution:
+
+        1. Explicit user params (PR28) — caller-supplied, including
+           values extracted from the user message.
+        2. Memory (PR26) — process-scoped cache of prior deterministic
+           resolutions; read-only on this path.
+        3. Deterministic resolver (PR25) — single upstream tool call
+           when state is unambiguous.
+
+      Explicit params:
+        - bypass disambiguation (PR27 sentinel never fires when the
+          required key is satisfied locally before the resolver runs);
+        - do NOT write to memory (the ``_MEMORY.set`` call is reachable
+          only on the resolver-success path — caller-provided values
+          short-circuit before that line);
+        - must be valid UUIDs in their explicit form (the
+          ``extract_explicit_params`` regex enforces this; no
+          transformation, no fuzzy matching).
+
+      DO NOT invert this order. A future change that consults memory
+      *before* checking caller params would silently couple cached state
+      to user-visible behavior — a caller resending a corrected
+      ``project_id`` would still get the stale memory value. The
+      ``if key not in resolved`` guard during memory hydration is the
+      single line that enforces this contract; any refactor that touches
+      it must keep the explicit-first invariant intact.
     """
     chain = _PR25_CHAINS.get(tool_name)
     if not chain:
