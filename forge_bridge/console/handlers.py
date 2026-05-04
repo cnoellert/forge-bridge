@@ -42,7 +42,7 @@ from typing import Any, Optional
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from forge_bridge.console._macros import expand_macro
+from forge_bridge.console._macros import delete_macro, expand_macro, list_macros
 from forge_bridge.console._rate_limit import (
     RateLimitDecision,
     check_rate_limit,
@@ -1120,6 +1120,46 @@ async def chat_handler(request: Request) -> JSONResponse:
         ),
         "",
     )
+
+    text = last_user_text.strip()
+    lower = text.lower()
+
+    if lower == "list macros":
+        return JSONResponse(
+            {
+                "status": "success",
+                "request_id": request_id,
+                "macros": list_macros(),
+            },
+            status_code=200,
+            headers={"X-Request-ID": request_id},
+        )
+
+    if lower == "delete macro" or lower.startswith("delete macro "):
+        if lower == "delete macro":
+            name = ""
+        elif lower.startswith("delete macro "):
+            name = text[len("delete macro "):].strip()
+        if not name:
+            return JSONResponse(
+                {
+                    "status": "success",
+                    "request_id": request_id,
+                    "deleted": None,
+                },
+                status_code=200,
+                headers={"X-Request-ID": request_id},
+            )
+        delete_macro(name)
+        return JSONResponse(
+            {
+                "status": "success",
+                "request_id": request_id,
+                "deleted": name,
+            },
+            status_code=200,
+            headers={"X-Request-ID": request_id},
+        )
 
     last_user_text = expand_macro(last_user_text)
 

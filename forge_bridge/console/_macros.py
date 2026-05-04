@@ -61,6 +61,26 @@ def get_macro(name: str) -> Optional[str]:
     return _MACROS.get(name.strip())
 
 
+def list_macros() -> Dict[str, str]:
+    """Return a copy of the registered macros (read-only; no side effects)."""
+    return dict(_MACROS)
+
+
+def delete_macro(name: str) -> None:
+    """Delete a macro by name (idempotent).
+
+    No error if the macro does not exist. Persists change if deletion occurs.
+    """
+    if not isinstance(name, str):
+        return
+    key = name.strip()
+    if not key:
+        return
+    if key in _MACROS:
+        del _MACROS[key]
+        _save_macros()
+
+
 def expand_macro(message: str) -> str:
     """Expand a macro at the start of the message.
 
