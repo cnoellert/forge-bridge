@@ -190,6 +190,15 @@ The installer copies `forge_bridge.py` into `/opt/Autodesk/shared/python/forge_b
 
 Launch (or relaunch) Flame. The hook auto-starts a Python HTTP server on `http://127.0.0.1:9999/`.
 
+### Flame Integration Requirements (contextual command entry)
+
+The Flame hook can run deterministic bridge commands from the **FORGE → Run Command…** contextual action. That path imports the `forge_bridge` package in-process.
+
+- Flame must run in an environment where **`forge_bridge`** is importable.
+- **Recommended:** from the repo, `pip install -e ".[dev,llm]"` in the same conda env you use for the MCP server.
+- **Or** set **`PYTHONPATH`** to include the repository / package root.
+- **Restart Flame** after environment changes.
+
 ---
 
 ## Step 5: Configure environment

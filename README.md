@@ -67,6 +67,7 @@ Shipped at **v1.4.1** (2026-04-30). 19 phases across 6 milestones. Active milest
 | Staged-operations platform (`/api/v1/staged`, MCP tools, lifecycle) | ✅ Shipped (v1.4, FB-A + FB-B) |
 | LLMRouter agentic tool-call loop (`complete_with_tools()`) | ✅ Shipped (v1.4, FB-C) |
 | Chat endpoint (`POST /api/v1/chat`) | ✅ Shipped (v1.4, FB-D + 16.1 + 16.2) |
+| Direct execution (`execute_command` / `fbridge exec`, PR31 envelope) | ✅ Shipped — see [docs/DIRECT_EXECUTION.md](docs/DIRECT_EXECUTION.md) |
 | WebSocket event server (`:9998`) | ✅ Shipped (graceful degradation per Phase 07.1) |
 | Learning pipeline (synthesis + probation + manifest) | ✅ Shipped (v1.0; refined through v1.4) |
 | Dependency graph traversal engine | 📋 Planned (relationships persist; no traversal module yet) |

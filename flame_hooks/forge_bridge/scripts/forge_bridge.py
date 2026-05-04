@@ -461,6 +461,153 @@ def _toggle_bridge(selection):
 
 
 # ========================================================================== #
+# PR39 — Contextual command entry (right-click; calls run_command_from_flame)
+# ========================================================================== #
+
+
+def _forge_contextual_menu_groups():
+    return (
+        {
+            "name": "FORGE",
+            "actions": (
+                {
+                    "name": "forge_run_command",
+                    "caption": "Forge: Run Command…",
+                },
+            ),
+        },
+    )
+
+
+def get_custom_ui_actions():
+    if not BRIDGE_ENABLED:
+        return ()
+    return _forge_contextual_menu_groups()
+
+
+def get_media_panel_custom_ui_actions():
+    if not BRIDGE_ENABLED:
+        return ()
+    return _forge_contextual_menu_groups()
+
+
+def _forge_prompt_for_command():
+    try:
+        try:
+            from PySide2 import QtWidgets
+        except Exception:
+            from PySide6 import QtWidgets
+
+        text, ok = QtWidgets.QInputDialog.getText(
+            None,
+            "Forge",
+            "Enter command:",
+        )
+
+        if ok and text and text.strip():
+            return text
+
+        return None
+    except Exception:
+        try:
+            import flame
+            flame.messages.show_in_dialog(
+                title="Forge",
+                message="Qt not available. Use terminal or bridge instead.",
+                type="info",
+                buttons=["OK"],
+            )
+        except Exception:
+            pass
+        return None
+
+
+def _forge_extract_context(info):
+    context = {}
+
+    try:
+        import flame
+
+        project = getattr(flame.projects, "current_project", None)
+        if project:
+            pid = getattr(project, "id", None)
+            if isinstance(pid, str) and pid.strip():
+                context["project_id"] = pid.strip()
+    except Exception:
+        pass
+
+    return context
+
+
+def _forge_show_result(result):
+    try:
+        import flame
+
+        status = result.get("status")
+        error = result.get("error")
+
+        if status == "success":
+            message = "Command executed successfully."
+        else:
+            code = None
+            if isinstance(error, dict):
+                code = error.get("code")
+            message = f"Error: {code or 'UNKNOWN'}"
+
+        flame.messages.show_in_dialog(
+            title="Forge",
+            message=message,
+            type="info",
+            buttons=["OK"],
+        )
+    except Exception:
+        print("Forge result:", result)
+
+
+def custom_ui_action(info, user_data):
+    if info.get("name") != "forge_run_command":
+        return
+
+    command = _forge_prompt_for_command()
+    if not command or not command.strip():
+        return
+
+    context = _forge_extract_context(info)
+
+    try:
+        from forge_bridge.flame.integration import run_command_from_flame
+    except Exception:
+        try:
+            import flame
+            flame.messages.show_in_dialog(
+                title="Forge",
+                message=(
+                    "forge_bridge is not available.\n\n"
+                    "Ensure it is installed in the environment used to launch Flame "
+                    "or PYTHONPATH is set correctly."
+                ),
+                type="info",
+                buttons=["OK"],
+            )
+        except Exception:
+            pass
+        return
+
+    try:
+        result = run_command_from_flame(command, context)
+    except Exception as e:
+        _forge_show_result(
+            {
+                "status": "error",
+                "error": {"code": "HOOK_EXECUTION_ERROR", "message": str(e)},
+            }
+        )
+        return
+
+    _forge_show_result(result)
+
+
+# ========================================================================== #
 # Web UI
 # ========================================================================== #
 
@@ -779,3 +926,7 @@ output.appendChild(welcome);
 </body>
 </html>
 """
+
+# Compatibility with builds expecting camelCase hooks
+getCustomUIActions = get_custom_ui_actions
+customUIAction = custom_ui_action
