@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 import httpx
 from httpx import ASGITransport
 
+from forge_bridge.console._macros import _clear_macros_for_tests
 from forge_bridge.console._memory import _MEMORY
 from forge_bridge.console._rate_limit import _reset_for_tests as _reset_rate_limit
 from forge_bridge.console.app import build_console_app
@@ -63,6 +64,14 @@ def _reset_chat_rate_limit():
     _reset_rate_limit()
     yield
     _reset_rate_limit()
+
+
+@pytest.fixture(autouse=True)
+def _reset_macros():
+    """PR33 — clear in-memory macro registry between tests."""
+    _clear_macros_for_tests()
+    yield
+    _clear_macros_for_tests()
 
 
 @pytest_asyncio.fixture

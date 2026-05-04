@@ -14,6 +14,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from forge_bridge.console._chain_parse import parse_chain
+from forge_bridge.console._macros import register_macro
 from forge_bridge.console._memory import _MEMORY
 from forge_bridge.console._param_extract import extract_explicit_params as _real_extract_explicit
 from forge_bridge.console.app import build_console_app
@@ -114,6 +115,44 @@ _MSG_TOO_LONG = (
 )
 _MSG_MULTI_THEN_VERSIONS = "list forge projects -> list versions"
 _MSG_MEMORY = _MSG_PROPAGATE
+
+
+# ── PR33: macro expands to same chain as direct PR30 message ─────────────
+
+
+def test_macro_executes_like_chain():
+    """Expanded macro runs the same two-step chain as typing _MSG_TWO_STEP."""
+    register_macro("test_macro", _MSG_TWO_STEP)
+
+    async def fake_call_tool(name, arguments):
+        if name == "forge_list_projects":
+            return _text_block(_single_project_payload())
+        if name == "forge_list_versions":
+            return _text_block(_versions_payload())
+        return _text_block("{}")
+
+    list_p, back_p, call_p, app, mock_router = _make_chain_chat_app(
+        fake_call_tool=fake_call_tool,
+    )
+    with list_p, back_p, call_p as call_mock:
+        client = TestClient(app)
+        resp = client.post(
+            "/api/v1/chat",
+            json={"messages": [{"role": "user", "content": "run test_macro"}]},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert (
+        sum(
+            1 for call in call_mock.call_args_list
+            if call.args and call.args[0] in (
+                "forge_list_projects",
+                "forge_list_versions",
+            )
+        )
+        == 2
+    )
+    mock_router.complete_with_tools.assert_not_called()
 
 
 # ── Integration tests (brief AC 1–7) ─────────────────────────────────────

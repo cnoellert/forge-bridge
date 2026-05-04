@@ -42,6 +42,7 @@ from typing import Any, Optional
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from forge_bridge.console._macros import expand_macro
 from forge_bridge.console._rate_limit import (
     RateLimitDecision,
     check_rate_limit,
@@ -1119,6 +1120,8 @@ async def chat_handler(request: Request) -> JSONResponse:
         ),
         "",
     )
+
+    last_user_text = expand_macro(last_user_text)
 
     # ---- PR30: deterministic multi-step tool chaining -----------------------
     # If the user message contains the ``->`` separator, parse it into a
