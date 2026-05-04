@@ -19,6 +19,7 @@ import typer
 from forge_bridge import config
 from forge_bridge.cli import chat as _chat
 from forge_bridge.cli import doctor as _doctor
+from forge_bridge.cli import exec as _exec
 from forge_bridge.cli import execs as _execs
 from forge_bridge.cli import health as _health
 from forge_bridge.cli import manifest as _manifest
@@ -31,7 +32,8 @@ Common workflows:
 
   fbridge doctor                 Check what's running and where (URLs + status).
   fbridge up                     Start the bridge runtime (mcp_http + state_ws).
-  fbridge chat "say hi"          Ask a question through the shared chat endpoint.
+  fbridge exec "list projects"   Deterministic in-process run (no HTTP, no LLM).
+  fbridge chat "say hi"          Ask through the shared chat endpoint (LLM).
   fbridge actions                Browse the tools currently registered.
 
 First time? Try: fbridge doctor → fbridge up → fbridge chat "hello"
@@ -106,6 +108,15 @@ Discovery:
   Use `fbridge actions` to see what's registered. Names are exact-match.
 """
 
+_EXEC_EPILOG = """\
+Examples:
+  fbridge exec "list forge projects"
+  fbridge exec "list forge projects -> list versions" --json
+
+Unlike ``fbridge chat``, this uses the in-process chain engine only — no HTTP
+to :9996 and no LLM. Requires tool backends the same way MCP tools do.
+"""
+
 _CHAT_EPILOG = """\
 Examples:
   fbridge chat "explain this batch setup"
@@ -147,6 +158,15 @@ app.command(
     ),
     epilog=_CHAT_EPILOG,
 )(_chat.chat_cmd)
+
+app.command(
+    "exec",
+    help=(
+        "Run a command string through the deterministic chain engine (PR30/PR31) "
+        "in-process — no Artist Console HTTP round-trip and no LLM."
+    ),
+    epilog=_EXEC_EPILOG,
+)(_exec.exec_cmd)
 
 app.command(
     "run",

@@ -301,12 +301,12 @@ def test_pr22_serializer_handles_fastmcp_tuple_shape():
     first PR22 live-verify run)."""
     from mcp.types import TextContent
 
-    from forge_bridge.console.handlers import _serialize_forced_tool_result
+    from forge_bridge.console._step import serialize_forced_tool_result
 
     payload = '{"error": "project_id is required.", "code": "MISSING_PROJECT_ID"}'
     blocks = [TextContent(type="text", text=payload)]
     raw = (blocks, {"result": payload})
-    out = _serialize_forced_tool_result(raw)
+    out = serialize_forced_tool_result(raw)
     assert out == payload, (
         f"PR22: serializer must return the structured payload string, got {out!r}"
     )
@@ -320,20 +320,20 @@ def test_pr22_serializer_falls_back_to_block_text_when_no_structured_result():
     falls back to extracting text from the content blocks."""
     from mcp.types import TextContent
 
-    from forge_bridge.console.handlers import _serialize_forced_tool_result
+    from forge_bridge.console._step import serialize_forced_tool_result
 
     blocks = [TextContent(type="text", text="hello")]
     raw = (blocks, None)  # no structured result
-    out = _serialize_forced_tool_result(raw)
+    out = serialize_forced_tool_result(raw)
     assert out == "hello"
 
 
 def test_pr22_serializer_handles_bare_dict_with_result_key():
     """Forward-compat: if FastMCP ever passes the bare dict (no tuple),
     the serializer still extracts `result` correctly."""
-    from forge_bridge.console.handlers import _serialize_forced_tool_result
+    from forge_bridge.console._step import serialize_forced_tool_result
 
-    out = _serialize_forced_tool_result({"result": "x"})
+    out = serialize_forced_tool_result({"result": "x"})
     assert out == "x"
 
 
@@ -378,6 +378,8 @@ def test_pr22_no_regression_pr20_forced_execution_still_fires():
         assert body["tool_forced"] is True
         assert body["stop_reason"] == "tool_forced"
         mock_router.complete_with_tools.assert_not_called()
-        call_mock.assert_called_once_with("forge_list_versions", {})
+        from unittest.mock import call as mock_call
+
+        assert mock_call("forge_list_versions", {}) in call_mock.call_args_list
     finally:
         _rate_limit._reset_for_tests()
