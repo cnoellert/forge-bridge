@@ -16,11 +16,13 @@ Rules (mirror the strict-determinism ethos of PR25–PR29):
   3. **No LLM planning.** The handler runs each step through the
      existing forced-execution pipeline — same filter, same resolver,
      same execution path as a single-step request.
-  4. **Scoped context propagation.** Only ``project_id`` and
-     ``shot_id`` flow forward, and ONLY when the previous step's
-     result yielded exactly one such value. Multi-value results emit
-     no context — better to let the next step disambiguate via PR27
-     than to guess which entry is "the answer."
+  4. **Scoped context propagation (PR32).** At most **one** caller
+     param flows forward from the previous step's parsed result:
+     ``project_id``, ``shot_id``, or ``version_id``, chosen by strict
+     priority (``projects`` list → ``shots`` → ``versions``), each only
+     when that list holds exactly one well-formed ``{id: str}``.
+     Multi-value lists emit no context for that key — better to let
+     the next step disambiguate via PR27 than to guess.
   5. **No memory writes from chain context.** Inherited context flows
      through the resolver as caller params; PR26's "explicit never
      writes memory" contract carries through unchanged.
@@ -74,63 +76,48 @@ def parse_chain(message: str) -> List[str]:
 
 # ── Chain context extraction ─────────────────────────────────────────────
 
-# Whitelist of context keys the chain may propagate. Each maps from a
-# RESULT-shaped key ("projects" / "shots") to the corresponding caller
-# PARAM key ("project_id" / "shot_id"). Adding a new propagated key
-# requires (a) appending here and (b) confirming the downstream tool's
-# requires/PR22 contract surfaces a structured ``MISSING_*`` when the
-# key is absent — the chain context is OPTIONAL fill, never a hard
-# requirement.
-_CHAIN_CONTEXT_KEYS: Dict[str, str] = {
-    # result key → param key
-    "projects": "project_id",
-    "shots": "shot_id",
-}
-
 
 def extract_chain_context(result: Any) -> Dict[str, str]:
-    """Extract deterministic context values from a parsed tool result.
+    """Deterministically extract a single context parameter from a tool result.
+
+    Priority (first match wins — no multi-key merge):
+
+      1. ``projects`` → ``project_id``
+      2. ``shots`` → ``shot_id``
+      3. ``versions`` → ``version_id``
 
     Rules:
-      - Inspects only the whitelisted result keys (``projects``,
-        ``shots``). Other keys are ignored.
-      - For each whitelisted key, extracts the contained entity's
-        ``id`` ONLY when the result holds EXACTLY ONE entry. Zero
-        entries or multiple entries yield no context (the chain step
-        couldn't pick one without guessing).
-      - Each extracted entry must be a dict with a non-empty string
-        ``id``. Malformed entries are skipped (treated as "no
-        propagatable id").
-      - Returns a dict of the resulting param keys (``project_id``,
-        ``shot_id``). Empty dict means "no context to propagate" —
-        the next step will run with only its own caller params.
 
-    Defensive on input shape: non-dict input returns ``{}``. The chain
-    executor tolerates this — a step that returned a JSON list or a
-    string still completes; it just doesn't seed context for the
-    next step.
+      - Only propagate when exactly **one** item exists in the list.
+      - Item must be a dict with a non-empty string ``id`` (after strip).
+      - Return immediately on the first qualifying key; otherwise ``{}``.
 
-    DO NOT extend this to read top-level ``id`` fields or unrelated
-    keys without a corresponding chain-registry update — silent
-    propagation of values the user didn't ask for would re-introduce
-    exactly the heuristic chaining PR30 forbids.
+    Defensive on input shape: non-dict input returns ``{}``.
     """
     if not isinstance(result, dict):
         return {}
 
-    context: Dict[str, str] = {}
-    for result_key, param_key in _CHAIN_CONTEXT_KEYS.items():
-        entries = result.get(result_key)
-        if not isinstance(entries, list) or len(entries) != 1:
-            # Zero or 2+ → ambiguous; skip. Non-list (e.g. None,
-            # a dict, a string) → malformed shape; skip.
-            continue
-        only = entries[0]
-        if not isinstance(only, dict):
-            continue
-        entity_id = only.get("id")
-        if not isinstance(entity_id, str) or not entity_id:
-            continue
-        context[param_key] = entity_id
+    def _single_id(lst: Any) -> str | None:
+        if (
+            isinstance(lst, list)
+            and len(lst) == 1
+            and isinstance(lst[0], dict)
+        ):
+            _id = lst[0].get("id")
+            if isinstance(_id, str) and _id.strip():
+                return _id
+        return None
 
-    return context
+    _id = _single_id(result.get("projects"))
+    if _id is not None:
+        return {"project_id": _id}
+
+    _id = _single_id(result.get("shots"))
+    if _id is not None:
+        return {"shot_id": _id}
+
+    _id = _single_id(result.get("versions"))
+    if _id is not None:
+        return {"version_id": _id}
+
+    return {}
