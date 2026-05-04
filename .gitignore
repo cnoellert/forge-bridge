@@ -18,3 +18,4 @@ scripts/dogfood_uat_server.py
 .claude/
 forge_bridge.zip
 *.zip
+.cursor/
