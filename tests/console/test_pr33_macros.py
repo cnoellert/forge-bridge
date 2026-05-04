@@ -1,6 +1,10 @@
 """PR33 — Macro expansion is deterministic and single-pass."""
 from __future__ import annotations
 
+import json
+
+import forge_bridge.console._macros as macros
+
 from forge_bridge.console._macros import expand_macro, register_macro
 
 
@@ -50,3 +54,32 @@ def test_macro_single_pass_no_recursion():
 
     # Only expands once: a -> b (not b -> c)
     assert out == "b"
+
+
+def test_macro_persists_to_file(tmp_path, monkeypatch):
+    macro_file = tmp_path / "macros.json"
+
+    monkeypatch.setattr(macros, "_MACRO_FILE", str(macro_file))
+
+    macros._clear_macros_for_tests()
+    macros.register_macro("persist_test", "list projects")
+
+    assert macro_file.exists()
+
+    data = json.loads(macro_file.read_text(encoding="utf-8"))
+    assert data.get("persist_test") == "list projects"
+
+
+def test_macro_loads_from_file(tmp_path, monkeypatch):
+    macro_file = tmp_path / "macros.json"
+    macro_file.write_text(
+        json.dumps({"loaded_macro": "list projects"}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(macros, "_MACRO_FILE", str(macro_file))
+
+    macros._clear_macros_for_tests()
+    macros._load_macros()
+
+    assert macros.get_macro("loaded_macro") == "list projects"

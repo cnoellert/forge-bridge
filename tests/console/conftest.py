@@ -67,8 +67,13 @@ def _reset_chat_rate_limit():
 
 
 @pytest.fixture(autouse=True)
-def _reset_macros():
-    """PR33 — clear in-memory macro registry between tests."""
+def _reset_macros(tmp_path, monkeypatch):
+    """PR33/PR34 — isolate macro storage per test; clear in-memory registry."""
+    mf = tmp_path / ".forge_macros_test.json"
+    monkeypatch.setattr(
+        "forge_bridge.console._macros._MACRO_FILE",
+        str(mf),
+    )
     _clear_macros_for_tests()
     yield
     _clear_macros_for_tests()
