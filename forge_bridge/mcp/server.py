@@ -347,7 +347,8 @@ def main(transport: str = "stdio", port: int = 9997) -> None:
             suitable for daemon mode; does not exit on stdin EOF).
         port: Port for FastMCP to bind under ``sse`` / ``streamable-http`` transports.
             Default 9997. Ignored under ``stdio``. Override via ``FORGE_MCP_PORT`` env var
-            or ``--mcp-port`` CLI flag (resolved before this function is called).
+            or ``--port`` CLI flag on the ``mcp http`` subcommand (resolved before this
+            function is called).
     """
     logging.basicConfig(
         level=logging.INFO,

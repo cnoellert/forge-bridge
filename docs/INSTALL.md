@@ -246,7 +246,7 @@ The default `FORGE_DB_URL=postgresql+asyncpg://forge:forge@localhost:5432/forge_
 The bootstrap script (Step 3) registered TWO services on your machine and started them in the right order. forge-bridge is a two-process system:
 
 - **`forge-bridge-server`** — the WebSocket bus on `:9998` (the canonical event-driven backplane; runs `python -m forge_bridge.server`)
-- **`forge-bridge`** — the MCP HTTP server on `:9997` + Artist Console + chat endpoint on `:9996` (runs `python -m forge_bridge --transport streamable-http --mcp-port 9997`); depends on the bus
+- **`forge-bridge`** — the MCP HTTP server on `:9997` + Artist Console + chat endpoint on `:9996` (runs `python -m forge_bridge mcp http --port 9997`); depends on the bus
 
 Closes Phase 20 gap #11 — earlier versions of this doc claimed `python -m forge_bridge` boots all surfaces in one shot. That was incorrect; the bus is a separate process and must start first. systemd `Requires=` (Linux) and a wrapper-script `:9998` readiness gate (macOS) handle the ordering invisibly now.
 
@@ -396,7 +396,7 @@ ollama list | grep qwen2.5-coder                       # confirms model is pulle
 | Port | Surface | Process |
 |------|---------|---------|
 | `9996` | Web UI + `/api/v1/chat` + `/api/v1/staged` + Read API | `python -m forge_bridge` (co-hosted via FastMCP lifespan) |
-| `9997` | MCP HTTP server (streamable-http transport) — daemon path only | `python -m forge_bridge --transport streamable-http --mcp-port 9997` |
+| `9997` | MCP HTTP server (streamable-http transport) — daemon path only | `python -m forge_bridge mcp http --port 9997` |
 | `9998` | WebSocket event bus | `python -m forge_bridge.server` (graceful degradation if unreachable per Phase 07.1) |
 | `9999` | Flame hook HTTP server | Flame process (loads hook on launch) |
 

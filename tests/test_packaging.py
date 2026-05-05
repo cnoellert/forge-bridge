@@ -148,21 +148,23 @@ def test_systemd_units_no_orphan_server_file():
 
 
 def test_systemd_facade_uses_daemon_transport():
-    """Plan 20.1-08: forge-bridge.service ExecStart MUST include --transport streamable-http.
+    """Plan 20.1-08: forge-bridge.service ExecStart MUST invoke the `mcp http` daemon subcommand.
 
-    Without an explicit transport flag, FastMCP defaults to stdio, reads /dev/null (due to
-    StandardInput=null), hits EOF, exits cleanly, and takes :9996 Console+chat+Read API down
-    with it.  streamable-http runs a long-lived uvicorn server that ignores stdin.
+    Without an explicit daemon-mode subcommand, FastMCP defaults to stdio, reads /dev/null (due
+    to StandardInput=null), hits EOF, exits cleanly, and takes :9996 Console+chat+Read API down
+    with it. `mcp http` runs a long-lived uvicorn server (streamable-http transport) that ignores
+    stdin. Syntax updated post-Plan 20.1-08 when top-level --transport flag was replaced by the
+    `mcp http` subcommand on the Typer CLI; intent (daemon-mode HTTP transport) is unchanged.
     """
     cfg = configparser.RawConfigParser()
     cfg.read(_PACKAGING / "systemd" / "forge-bridge.service")
     exec_start = cfg.get("Service", "ExecStart", fallback="")
-    assert "--transport streamable-http" in exec_start, (
-        f"forge-bridge.service ExecStart must include '--transport streamable-http' "
-        f"(Plan 20.1-08 gap closure); got: {exec_start!r}"
+    assert "mcp http" in exec_start, (
+        f"forge-bridge.service ExecStart must invoke the `mcp http` subcommand "
+        f"(Plan 20.1-08 gap closure, post-refactor syntax); got: {exec_start!r}"
     )
-    assert "--mcp-port 9997" in exec_start, (
-        f"forge-bridge.service ExecStart must include '--mcp-port 9997'; got: {exec_start!r}"
+    assert "--port 9997" in exec_start, (
+        f"forge-bridge.service ExecStart must include '--port 9997'; got: {exec_start!r}"
     )
 
 
@@ -314,15 +316,15 @@ def test_launchd_wrappers_exec_correct_module():
     console = (_LAUNCHD / "forge-bridge-daemon").read_text()
     assert "-m forge_bridge.server" in bus, \
         "forge-bridge-server-daemon: must exec `python -m forge_bridge.server` (the WS bus submodule)"
-    # Console wrapper must invoke `forge_bridge` parent module with daemon-mode transport flags
+    # Console wrapper must invoke `forge_bridge` parent module with the `mcp http` daemon subcommand
     assert "-m forge_bridge" in console, \
         "forge-bridge-daemon: must exec `python -m forge_bridge` (parent module → MCP+Console)"
-    assert "--transport streamable-http" in console, (
-        "forge-bridge-daemon: must pass '--transport streamable-http' "
-        "(Plan 20.1-08 gap closure — daemon must not use stdio transport)"
+    assert "mcp http" in console, (
+        "forge-bridge-daemon: must invoke the `mcp http` subcommand "
+        "(Plan 20.1-08 gap closure — daemon must not use stdio transport; post-refactor syntax)"
     )
-    assert "--mcp-port 9997" in console, \
-        "forge-bridge-daemon: must pass '--mcp-port 9997' (Plan 20.1-08)"
+    assert "--port 9997" in console, \
+        "forge-bridge-daemon: must pass '--port 9997' (Plan 20.1-08, post-refactor syntax)"
 
 
 def test_launchd_wrappers_bash_syntax_clean():
@@ -506,8 +508,8 @@ def test_daemon_persistence():
     proc = subprocess.Popen(
         [
             sys.executable, "-m", "forge_bridge",
-            "--transport", "streamable-http",
-            "--mcp-port", str(mcp_port),
+            "mcp", "http",
+            "--port", str(mcp_port),
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -521,7 +523,7 @@ def test_daemon_persistence():
             f"Exit code: {proc.poll()}"
         )
         assert _is_port_bound(mcp_port), (
-            f"FastMCP did not bind --mcp-port {mcp_port} within 5s of start"
+            f"FastMCP did not bind --port {mcp_port} within 5s of start"
         )
         # Console port is hardcoded to 9996 unless FORGE_CONSOLE_PORT is set.
         # If 9996 is taken by an unrelated process the lifespan degrades per
