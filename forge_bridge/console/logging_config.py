@@ -28,5 +28,9 @@ STDERR_ONLY_LOGGING_CONFIG = {
         "uvicorn.error":  {"handlers": ["default"], "level": "WARNING", "propagate": False},
         "uvicorn.access": {"handlers": ["default"], "level": "WARNING", "propagate": False},
         # uvicorn.access also disabled via access_log=False on uvicorn.Config (D-21).
+        # PR40 — without this, dictConfig wipes the root config from basicConfig and
+        # forge.exec INFO logs drop silently. Routes the entire forge.* namespace to
+        # the same stderr handler uvicorn uses; propagate=False prevents double-emit.
+        "forge":          {"handlers": ["default"], "level": "INFO",    "propagate": False},
     },
 }

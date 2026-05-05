@@ -364,6 +364,70 @@ async def health_handler(request: Request) -> JSONResponse:
         return _error("internal_error", "failed to read health", status=500)
 
 
+# -- PR40 — POST /api/v1/exec (deterministic execute; PR31 body, not D-01) ---
+
+_EXEC_HTTP_TIMEOUT = 60.0
+_exec_sem = asyncio.Semaphore(1)
+_exec_log = logging.getLogger("forge.exec")
+
+
+async def api_v1_exec_handler(request: Request) -> JSONResponse:
+    """Run ``execute_command`` with server-side serialization and a time limit.
+
+    Returns the raw PR31 dict (``status``, ``request_id``, ``chain``, ``error``).
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+
+    raw = payload.get("text")
+    text = raw.strip() if isinstance(raw, str) else ""
+
+    http_rid = str(uuid.uuid4())
+    _exec_log.info("exec start rid=%s text=%r", http_rid, text)
+
+    from forge_bridge.console import app as appmod
+
+    try:
+        async with _exec_sem:
+            result = await asyncio.wait_for(
+                appmod.execute_command(text),
+                timeout=_EXEC_HTTP_TIMEOUT,
+            )
+    except asyncio.TimeoutError:
+        rid = str(uuid.uuid4())
+        _exec_log.info(
+            "exec end rid=%s engine_rid=%s status=error code=TIMEOUT",
+            http_rid,
+            None,
+        )
+        return JSONResponse(
+            {
+                "status": "error",
+                "request_id": rid,
+                "chain": [],
+                "error": {
+                    "code": "TIMEOUT",
+                    "message": "Command execution exceeded time limit.",
+                    "step_index": None,
+                    "original_error": None,
+                },
+            }
+        )
+
+    engine_rid = result.get("request_id")
+    _exec_log.info(
+        "exec end rid=%s engine_rid=%s status=%s",
+        http_rid,
+        engine_rid,
+        result.get("status"),
+    )
+    return JSONResponse(result)
+
+
 # -- Phase 16 (FB-D) — chat endpoint -----------------------------------------
 
 # D-02 valid roles per native provider shape (Anthropic + Ollama both accept these).

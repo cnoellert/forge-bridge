@@ -13,6 +13,7 @@ from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
 from forge_bridge.console.handlers import (
+    api_v1_exec_handler,
     chat_handler,                      # NEW (Phase 16 / FB-D)
     execs_handler,
     health_handler,
@@ -41,6 +42,8 @@ from forge_bridge.console.ui_handlers import (
     ui_tools_handler,
 )
 
+from forge_bridge.console._execute import execute_command
+
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -67,6 +70,11 @@ def build_console_app(
     instance, reading through the SAME ConsoleReadAPI. No second app, no
     second read layer (Phase 9 D-25).
     """
+    # PR40 — ensure forge.exec INFO reaches uvicorn/root handlers (no extra handlers).
+    _forge_exec_log = logging.getLogger("forge.exec")
+    _forge_exec_log.setLevel(logging.INFO)
+    _forge_exec_log.propagate = True
+
     templates = Jinja2Templates(directory=str(_CONSOLE_DIR / "templates"))
 
     routes = [
@@ -76,6 +84,7 @@ def build_console_app(
         Route("/api/v1/execs", execs_handler, methods=["GET"]),
         Route("/api/v1/manifest", manifest_handler, methods=["GET"]),
         Route("/api/v1/health", health_handler, methods=["GET"]),
+        Route("/api/v1/exec", api_v1_exec_handler, methods=["POST"]),
         # Phase 10 — full-page /ui/* routes (HTML via Jinja2)
         Route("/ui/", ui_index_handler, methods=["GET"]),
         Route("/ui/tools", ui_tools_handler, methods=["GET"]),

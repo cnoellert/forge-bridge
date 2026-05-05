@@ -70,6 +70,15 @@ def test_phase9_api_routes_return_200(client, path):
     assert r.status_code == 200, f"{path} regressed to {r.status_code}"
 
 
+def test_api_v1_exec_route_registered(client):
+    """POST /api/v1/exec returns PR31 JSON (not D-01 envelope)."""
+    r = client.post("/api/v1/exec", json={"text": ""})
+    assert r.status_code == 200
+    body = r.json()
+    assert body.get("status") == "error"
+    assert body.get("error", {}).get("code") == "EMPTY_COMMAND"
+
+
 # -- Phase 10: /ui/ root redirects to /ui/tools ----------------------------
 
 def test_ui_root_redirects_to_tools(client):
