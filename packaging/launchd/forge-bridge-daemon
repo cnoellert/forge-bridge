@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # /usr/local/bin/forge-bridge-daemon
-# macOS wrapper for MCP+Console with bus-readiness gate.
-# launchd has no Requires= analog — the loop below replicates the systemd cascade ordering
-# forge-bridge.service gets via Requires=forge-bridge-server.service on Linux.
+# macOS wrapper for MCP+Console.
+#
+# Phase A.4 (2026-05-05): the bus-readiness gate (formerly a 30s `nc -z`
+# poll loop here) now lives inside the daemon's `bootstrap_daemon()` so
+# every entry point (this launchd path, `fbridge up`, direct `mcp http`,
+# `mcp stdio`) inherits the same wait. Override the default 30s wait via
+# FORGE_BRIDGE_BUS_WAIT_SECONDS in /etc/forge-bridge/forge-bridge.env.
 set -euo pipefail
 
 if [ -f /etc/forge-bridge/forge-bridge.env ]; then
@@ -10,13 +14,6 @@ if [ -f /etc/forge-bridge/forge-bridge.env ]; then
     . /etc/forge-bridge/forge-bridge.env
     set +a
 fi
-
-# Order gate — wait up to 30s for the bus to be reachable on :9998 before exec'ing.
-PORT="${FORGE_BRIDGE_PORT:-9998}"
-for i in $(seq 1 30); do
-    if nc -z localhost "$PORT" 2>/dev/null; then break; fi
-    sleep 1
-done
 
 exec "${FORGE_PYTHON:-/Users/__SUDO_USER__/miniconda3/envs/forge/bin/python}" \
      -m forge_bridge mcp http --port 9997

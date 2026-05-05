@@ -40,6 +40,11 @@ async def test_lifespan_publishes_console_read_api():
         _mcp_server, "startup_bridge", new=AsyncMock(return_value=None)
     ), patch.object(
         _mcp_server, "shutdown_bridge", new=AsyncMock(return_value=None)
+    ), patch.object(
+        # Phase A.4: skip the 30s bus-readiness wait in unit tests — same
+        # rationale as the startup_bridge patch above (Pitfall 7), avoid
+        # blocking on a port that isn't bound during the test.
+        _mcp_server, "_wait_for_bus", new=AsyncMock(return_value=False)
     ), patch(
         "forge_bridge.learning.watcher.watch_synthesized_tools",
         new=AsyncMock(return_value=None),
@@ -73,6 +78,11 @@ async def test_lifespan_wires_llm_router_into_console_read_api():
         _mcp_server, "startup_bridge", new=AsyncMock(return_value=None)
     ), patch.object(
         _mcp_server, "shutdown_bridge", new=AsyncMock(return_value=None)
+    ), patch.object(
+        # Phase A.4: skip the 30s bus-readiness wait in unit tests — same
+        # rationale as the startup_bridge patch above (Pitfall 7), avoid
+        # blocking on a port that isn't bound during the test.
+        _mcp_server, "_wait_for_bus", new=AsyncMock(return_value=False)
     ), patch(
         "forge_bridge.learning.watcher.watch_synthesized_tools",
         new=AsyncMock(return_value=None),
@@ -98,6 +108,11 @@ async def test_lifespan_teardown_clears_canonical_console_read_api():
         _mcp_server, "startup_bridge", new=AsyncMock(return_value=None)
     ), patch.object(
         _mcp_server, "shutdown_bridge", new=AsyncMock(return_value=None)
+    ), patch.object(
+        # Phase A.4: skip the 30s bus-readiness wait in unit tests — same
+        # rationale as the startup_bridge patch above (Pitfall 7), avoid
+        # blocking on a port that isn't bound during the test.
+        _mcp_server, "_wait_for_bus", new=AsyncMock(return_value=False)
     ), patch(
         "forge_bridge.learning.watcher.watch_synthesized_tools",
         new=AsyncMock(return_value=None),

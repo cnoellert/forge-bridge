@@ -35,8 +35,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import socket
+import time
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Optional
 
 from mcp.server.fastmcp import FastMCP
 
@@ -80,28 +83,156 @@ def get_client() -> AsyncClient:
 
 
 # ─────────────────────────────────────────────────────────────
-# Server lifespan — D-31 6-step sequence
+# Phase A.4 — startup-path unification (2026-05-05)
+#
+# Background. Multiple entry points (Claude Desktop's `mcp stdio`, direct
+# `mcp http`, `fbridge up`'s subprocess spawn, and the launchd plist) all
+# converge on the same MCP server process. Pre-Phase-A.4, only the launchd
+# wrapper (`packaging/launchd/forge-bridge-daemon`) had a 30s `nc -z`
+# pre-exec gate that waited for state_ws to be reachable on :9998 before
+# starting mcp_http. Every other entry point relied on whatever ordering
+# the caller set up. Under `fbridge up`, mcp_http and state_ws are
+# spawned as detached subprocesses essentially simultaneously — mcp_http's
+# 10s `wait_until_connected` deadline races state_ws's bind, and on race
+# loss the server module's `_client` global is set to None and stays None.
+# All forge_* tools then return "forge-bridge client not connected" until
+# the daemon is restarted. Same code, different state per launch path.
+#
+# Fix. Pull the bus-readiness gate INTO the daemon's bootstrap so every
+# entry point inherits identical initialization. `bootstrap_daemon()` is
+# the single source of truth: it polls the bus port, runs `startup_bridge`,
+# constructs the canonical singletons (ExecutionLog, ManifestService,
+# ConsoleReadAPI, LLMRouter), launches the watcher and console uvicorn
+# tasks, and returns a `_BootstrapResult` the lifespan yields over. The
+# launchd shell wrapper's `nc` loop is now redundant.
+#
+# Invariant. Any observable daemon behavior MUST be identical regardless
+# of which entry point started it. If a future initialization step is
+# needed, it lands in `bootstrap_daemon()`. No entry point may bypass.
 # ─────────────────────────────────────────────────────────────
 
-@asynccontextmanager
-async def _lifespan(mcp_server: FastMCP):
-    """Server lifespan (D-31 6-step sequence):
-      1. startup_bridge()
-      2. instantiate ManifestService + canonical ExecutionLog
-      3. launch watcher_task with manifest_service injected
-      4. build ConsoleReadAPI(execution_log=..., manifest_service=...)
-      5. build console Starlette app + register_console_resources(...)
-      6. launch console_task (uvicorn Server.serve())
 
-    Teardown reverses: cancel console_task, cancel watcher_task, shutdown_bridge.
+# Default bus-readiness wait (seconds). Mirrors the launchd shell wrapper's
+# 30s `nc -z` poll loop. Override via FORGE_BRIDGE_BUS_WAIT_SECONDS for
+# test environments or constrained boot scenarios.
+_DEFAULT_BUS_WAIT_SECONDS = 30.0
+
+
+@dataclass
+class _BootstrapResult:
+    """Singletons + task handles produced by ``bootstrap_daemon``.
+
+    The lifespan yields over this object and hands it back to
+    ``teardown_daemon`` on exit so cleanup mirrors construction order.
+    """
+
+    execution_log: Any
+    manifest_service: Any
+    console_read_api: Any
+    watcher_task: asyncio.Task
+    console_task: Optional[asyncio.Task]
+    console_server: Optional[Any]
+
+
+def _parse_bus_url(server_url: str) -> tuple[str, int]:
+    """Extract (host, port) from a ws://host:port URL.
+
+    Falls back to (127.0.0.1, 9998) on any parse failure — the bus poll
+    is a best-effort gate, not a hard precondition. A bad URL just
+    means the poll completes quickly and ``startup_bridge`` will surface
+    the real error.
+    """
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(server_url)
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or 9998
+        return host, port
+    except Exception:
+        return "127.0.0.1", 9998
+
+
+async def _wait_for_bus(
+    server_url: str,
+    timeout: float,
+    poll_interval: float = 0.5,
+) -> bool:
+    """Poll the WS bus port until reachable, or timeout expires.
+
+    Mirrors `nc -z localhost :9998` from the launchd shell wrapper, brought
+    into the daemon so every entry point benefits — not only the launchd
+    path. Returns True if the port accepted a TCP connection within the
+    timeout, False otherwise. Never raises.
+
+    Phase A.4 invariant: this function MUST run before ``startup_bridge``
+    in every daemon entry path. ``bootstrap_daemon`` enforces it.
+    """
+    if timeout <= 0:
+        # Test/edge path: skip the wait entirely. ``startup_bridge`` still
+        # runs and degrades gracefully on its own.
+        return False
+
+    host, port = _parse_bus_url(server_url)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=1.0):
+                logger.info(
+                    "bus reachable at %s:%d after %.1fs wait",
+                    host, port, timeout - (deadline - time.monotonic()),
+                )
+                return True
+        except OSError:
+            pass
+        await asyncio.sleep(poll_interval)
+    logger.warning(
+        "bus not reachable at %s:%d after %.1fs — proceeding with degraded "
+        "init (forge_* tools will return 'client not connected')",
+        host, port, timeout,
+    )
+    return False
+
+
+async def bootstrap_daemon(mcp_server: FastMCP) -> _BootstrapResult:
+    """Single source of truth for daemon initialization (Phase A.4).
+
+    Every entry point that runs the MCP server MUST go through this
+    function. No entry point may bypass any step. Future required
+    initialization MUST land here, not in a per-entry-point shim.
+
+    Steps (one-to-one with the prior ``_lifespan`` 6-step sequence,
+    with a new Step 0 that closes the `fbridge up` race):
+
+      0. Wait for the WS bus port to be reachable. Mirrors the launchd
+         shell wrapper's `nc -z` gate, now in-process so every entry
+         point inherits it (Phase A.4 fix).
+      1. ``startup_bridge()`` — connect AsyncClient to state_ws.
+      2. Instantiate canonical ExecutionLog + ManifestService.
+      3. Launch the registry watcher task.
+      4. Construct ConsoleReadAPI with LLMRouter wired in (Bug B fix).
+      5. Build the console Starlette app + register MCP resources.
+      6. Launch the console uvicorn task on :9996.
+
+    Returns a ``_BootstrapResult`` carrying the singletons + tasks the
+    lifespan needs to expose (for tools, the chat handler, telemetry)
+    and tear down (in reverse) on exit. The module globals
+    (``_canonical_execution_log`` etc.) are also set so existing
+    consumers that read them directly continue to work.
     """
     global _server_started, _canonical_execution_log, _canonical_manifest_service, _canonical_watcher_task, _canonical_console_read_api
 
-    # Step 1 — existing behavior
+    # Step 0 — bus-readiness gate (Phase A.4 unification).
+    bus_url = os.environ.get("FORGE_BRIDGE_URL", "ws://127.0.0.1:9998")
+    bus_wait_seconds = float(os.environ.get(
+        "FORGE_BRIDGE_BUS_WAIT_SECONDS", str(_DEFAULT_BUS_WAIT_SECONDS),
+    ))
+    await _wait_for_bus(bus_url, bus_wait_seconds)
+
+    # Step 1 — connect AsyncClient to state_ws (existing behavior).
     await startup_bridge()
     _server_started = True  # D-14: trips the register_tools() guard
 
-    # Step 2 — canonical singletons (API-04 + D-16 gate)
+    # Step 2 — canonical singletons (API-04 + D-16 gate).
     from forge_bridge.console.manifest_service import ManifestService
     from forge_bridge.console.read_api import (
         ConsoleReadAPI,
@@ -113,14 +244,9 @@ async def _lifespan(mcp_server: FastMCP):
     manifest_service = ManifestService()
     _canonical_execution_log = execution_log
     _canonical_manifest_service = manifest_service
-    # Record ids before the watcher task exists — I-02 task handle is installed
-    # directly on the module global in Step 3.
     register_canonical_singletons(execution_log, manifest_service)
 
-    # Step 3 — watcher with manifest_service injected
-    # (I-02: also register the task handle so /api/v1/health can detect a
-    # crashed watcher instead of falling back to the coarse _server_started
-    # boolean.)
+    # Step 3 — watcher with manifest_service injected (I-02 task handle).
     from forge_bridge.learning.watcher import watch_synthesized_tools
     watcher_task = asyncio.create_task(
         watch_synthesized_tools(mcp_server, manifest_service=manifest_service),
@@ -128,73 +254,99 @@ async def _lifespan(mcp_server: FastMCP):
     )
     _canonical_watcher_task = watcher_task
 
-    # Step 4 — ConsoleReadAPI (sole read layer)
+    # Step 4 — ConsoleReadAPI (sole read layer) with LLMRouter wired (Bug B).
     console_port = int(os.environ.get("FORGE_CONSOLE_PORT", "9996"))
-    # Step 4 (NEW per FB-B D-05) — Build canonical async session_factory singleton.
-    # Idempotent and lazy at the connection level; missing DB at startup does NOT
-    # crash _lifespan (matches the existing console-task graceful-degradation pattern
-    # at mcp/server.py:252-313). Connection errors surface only on first repo use.
     session_factory = get_async_session_factory()
-    # FB-D / Phase 16 — LLMRouter wired into ConsoleReadAPI so chat_handler
-    # (handlers.py) can reach it via app.state.console_read_api._llm_router (D-16).
-    # Construction is pure env-reading; clients are lazy on first use.
     from forge_bridge.llm.router import LLMRouter
     llm_router = LLMRouter()
     console_read_api = ConsoleReadAPI(
         execution_log=execution_log,
         manifest_service=manifest_service,
         console_port=console_port,
-        session_factory=session_factory,   # NEW (D-05)
-        llm_router=llm_router,             # NEW (FB-D / CHAT-01..05)
+        session_factory=session_factory,
+        llm_router=llm_router,
     )
-    # Phase 16.1 (D-07 #1): publish ConsoleReadAPI as a module global so
-    # tests/console/test_lifespan_wiring.py can verify _llm_router wiring.
     _canonical_console_read_api = console_read_api
 
-    # Step 5 — Starlette app + MCP resources/tools registration
+    # Step 5 — Starlette app + MCP resources/tools registration.
     from forge_bridge.console.app import build_console_app
     from forge_bridge.console.resources import register_console_resources
 
-    app = build_console_app(console_read_api, session_factory=session_factory)   # NEW (D-05)
+    app = build_console_app(console_read_api, session_factory=session_factory)
     register_console_resources(
         mcp_server, manifest_service, console_read_api,
-        session_factory=session_factory,   # NEW (D-05)
+        session_factory=session_factory,
     )
 
-    # Step 6 — launch console uvicorn task (may degrade per D-29)
+    # Step 6 — launch console uvicorn task (may degrade per D-29 / API-06).
     console_task, console_server = await _start_console_task(
         app, "127.0.0.1", console_port,
     )
 
+    return _BootstrapResult(
+        execution_log=execution_log,
+        manifest_service=manifest_service,
+        console_read_api=console_read_api,
+        watcher_task=watcher_task,
+        console_task=console_task,
+        console_server=console_server,
+    )
+
+
+async def teardown_daemon(result: _BootstrapResult) -> None:
+    """Reverse of ``bootstrap_daemon`` — every daemon entry point's
+    lifespan exit MUST go through this function.
+
+    Order: console uvicorn → watcher task → bridge client. Mirrors the
+    prior ``_lifespan`` finally block verbatim.
+    """
+    global _server_started, _canonical_execution_log, _canonical_manifest_service, _canonical_watcher_task, _canonical_console_read_api
+
+    if result.console_task is not None and result.console_server is not None:
+        result.console_server.should_exit = True
+        try:
+            await asyncio.wait_for(result.console_task, timeout=5.0)
+        except asyncio.TimeoutError:
+            result.console_task.cancel()
+            try:
+                await result.console_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    result.watcher_task.cancel()
+    try:
+        await result.watcher_task
+    except asyncio.CancelledError:
+        pass
+
+    await shutdown_bridge()
+    _server_started = False
+    _canonical_execution_log = None
+    _canonical_manifest_service = None
+    _canonical_watcher_task = None
+    _canonical_console_read_api = None
+
+
+# ─────────────────────────────────────────────────────────────
+# Server lifespan — thin wrapper over bootstrap_daemon / teardown_daemon
+# ─────────────────────────────────────────────────────────────
+
+@asynccontextmanager
+async def _lifespan(mcp_server: FastMCP):
+    """FastMCP lifespan — delegates to ``bootstrap_daemon`` (Phase A.4).
+
+    All initialization logic lives in ``bootstrap_daemon``; this wrapper
+    exists only to bridge the FastMCP lifespan ContextManager protocol
+    to the daemon's bootstrap / teardown functions. Future init lands
+    in ``bootstrap_daemon``, not here.
+    """
+    result = await bootstrap_daemon(mcp_server)
     try:
         yield
     finally:
-        # Teardown — reverse of setup
-        if console_task is not None and console_server is not None:
-            console_server.should_exit = True
-            try:
-                await asyncio.wait_for(console_task, timeout=5.0)
-            except asyncio.TimeoutError:
-                console_task.cancel()
-                try:
-                    await console_task
-                except (asyncio.CancelledError, Exception):
-                    pass
-            except (asyncio.CancelledError, Exception):
-                pass
-
-        watcher_task.cancel()
-        try:
-            await watcher_task
-        except asyncio.CancelledError:
-            pass
-
-        await shutdown_bridge()
-        _server_started = False  # reset for clean teardown / test isolation
-        _canonical_execution_log = None
-        _canonical_manifest_service = None
-        _canonical_watcher_task = None  # I-02: clear on teardown
-        _canonical_console_read_api = None  # Phase 16.1 D-07 #1: clear on teardown
+        await teardown_daemon(result)
 
 
 # ─────────────────────────────────────────────────────────────

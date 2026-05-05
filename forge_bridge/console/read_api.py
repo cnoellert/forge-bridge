@@ -378,6 +378,44 @@ class ConsoleReadAPI:
                 return {"status": "ok", "detail": "lifespan started"}
             return {"status": "fail", "detail": "lifespan not started"}
 
+        def _check_bridge_client() -> dict:
+            """Phase A.4 — surface whether ``startup_bridge()`` succeeded.
+
+            Pre-Phase-A.4, ``_check_mcp`` only inspected ``_server_started``,
+            which flips True before the bridge connection succeeds and stays
+            True even when the connection fails (graceful-degradation path
+            sets ``_client = None``). The result: ``/api/v1/health`` could
+            report ``mcp: ok`` while every ``forge_*`` tool returned the
+            "client not connected" error. This dedicated check closes the
+            visibility gap so the unified-bootstrap invariant is verifiable
+            from outside the process.
+            """
+            from forge_bridge.mcp import server as mcp_server
+            client = getattr(mcp_server, "_client", None)
+            if client is None:
+                return {
+                    "status": "fail",
+                    "connected": False,
+                    "detail": (
+                        "_client is None — startup_bridge did not connect. "
+                        "forge_* tools will fail until the daemon is "
+                        "restarted with the bus reachable."
+                    ),
+                }
+            try:
+                connected = bool(client.is_connected)
+            except Exception as exc:  # noqa: BLE001 — never let a bad client crash health
+                return {
+                    "status": "fail",
+                    "connected": False,
+                    "detail": f"is_connected probe raised {type(exc).__name__}",
+                }
+            return {
+                "status": "ok" if connected else "fail",
+                "connected": connected,
+                "detail": "connected" if connected else "client present but not connected",
+            }
+
         def _check_watcher() -> dict:
             """Inspect the canonical watcher task held by _lifespan (I-02).
 
@@ -488,6 +526,7 @@ class ConsoleReadAPI:
         )
 
         mcp = _check_mcp()
+        bridge_client = _check_bridge_client()  # Phase A.4 visibility gap closer
         watcher = _check_watcher()
         storage_callback = _check_storage_callback()
         console_port = _check_console_port()
@@ -495,6 +534,7 @@ class ConsoleReadAPI:
 
         services = {
             "mcp": mcp,
+            "bridge_client": bridge_client,  # Phase A.4
             "flame_bridge": flame_bridge,
             "ws_server": ws_server,
             "llm_backends": llm_backends,
@@ -515,6 +555,10 @@ class ConsoleReadAPI:
             or storage_callback["status"] == "fail"
             or flame_bridge["status"] == "fail"
             or ws_server["status"] == "fail"
+            # Phase A.4: bridge_client fail flips overall to "degraded" so
+            # operators see the forge_* tool failure mode without having to
+            # invoke a tool to discover it.
+            or bridge_client["status"] == "fail"
         )
         if critical_failures:
             status = "fail"
