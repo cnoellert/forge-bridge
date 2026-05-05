@@ -564,6 +564,89 @@ def _forge_show_result(result):
         print("Forge result:", result)
 
 
+# PR42 — hook posts directly to /api/v1/exec via stdlib HTTP; no forge_bridge
+# import required (the package isn't necessarily installed in Flame's interpreter).
+# Mirrors forge_bridge/flame/integration.py:run_command_from_flame.
+
+_FORGE_HTTP_TIMEOUT_S = 65.0
+_FORGE_DEFAULT_BASE_URL = "http://127.0.0.1:9996"
+
+
+def _forge_envelope(code, message):
+    # Synthesizes a PR31-shaped envelope for failures that never reach the
+    # daemon. Engine-originated envelopes pass through unchanged via json.loads.
+    import uuid
+    return {
+        "status": "error",
+        "request_id": str(uuid.uuid4()),
+        "chain": [],
+        "error": {
+            "code": code,
+            "message": message,
+            "step_index": None,
+            "original_error": None,
+        },
+    }
+
+
+def _forge_post_exec(text, context=None):
+    import json
+    import os
+    import socket
+    from urllib import error as _url_error
+    from urllib import request as _url_request
+
+    command = (text or "").strip()
+
+    parts = []
+    if command:
+        parts.append(command)
+    if context:
+        for k, v in context.items():
+            if (
+                isinstance(k, str)
+                and k.strip()
+                and isinstance(v, str)
+                and v.strip()
+            ):
+                parts.append(f"{k.strip()}={v.strip()}")
+    merged = " ".join(parts)
+
+    base_url = os.getenv("FORGE_CONSOLE_URL", _FORGE_DEFAULT_BASE_URL)
+    url = f"{base_url}/api/v1/exec"
+    payload = json.dumps({"text": merged}).encode("utf-8")
+
+    req = _url_request.Request(
+        url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with _url_request.urlopen(req, timeout=_FORGE_HTTP_TIMEOUT_S) as resp:
+            body = resp.read()
+
+        try:
+            return json.loads(body)
+        except json.JSONDecodeError:
+            return _forge_envelope(
+                "INVALID_JSON", "Invalid JSON response from daemon"
+            )
+
+    # HTTPError is a URLError subclass — must come first.
+    except _url_error.HTTPError as e:
+        return _forge_envelope("HTTP_STATUS", f"HTTP {e.code}")
+
+    except (_url_error.URLError, socket.timeout, TimeoutError) as e:
+        return _forge_envelope("TRANSPORT_ERROR", str(e))
+
+    # Broad catch is intentional. Flame runs this on the UI thread, and
+    # uncaught exceptions can destabilize the host application.
+    except Exception as e:  # noqa: BLE001
+        return _forge_envelope("UNKNOWN_ERROR", str(e))
+
+
 def custom_ui_action(info, user_data):
     if info.get("name") != "forge_run_command":
         return
@@ -573,37 +656,7 @@ def custom_ui_action(info, user_data):
         return
 
     context = _forge_extract_context(info)
-
-    try:
-        from forge_bridge.flame.integration import run_command_from_flame
-    except Exception:
-        try:
-            import flame
-            flame.messages.show_in_dialog(
-                title="Forge",
-                message=(
-                    "forge_bridge is not available.\n\n"
-                    "Ensure it is installed in the environment used to launch Flame "
-                    "or PYTHONPATH is set correctly."
-                ),
-                type="info",
-                buttons=["OK"],
-            )
-        except Exception:
-            pass
-        return
-
-    try:
-        result = run_command_from_flame(command, context)
-    except Exception as e:
-        _forge_show_result(
-            {
-                "status": "error",
-                "error": {"code": "HOOK_EXECUTION_ERROR", "message": str(e)},
-            }
-        )
-        return
-
+    result = _forge_post_exec(command, context)
     _forge_show_result(result)
 
 
