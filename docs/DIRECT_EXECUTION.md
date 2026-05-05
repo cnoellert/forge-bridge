@@ -1,11 +1,11 @@
 # Direct execution (`execute_command`)
 
-In-process deterministic command execution for integrations, the **`fbridge exec`** CLI, **`POST /api/v1/exec`** on the Artist Console (`:9996`), and the Flame hook adapter.
+Deterministic command execution shared by the **`fbridge exec`** CLI, the **`POST /api/v1/exec`** endpoint on the Artist Console (`:9996`), and the Flame hook adapter. As of PR41/PR42, every client routes through the daemon's HTTP endpoint — `execute_command` itself runs in-process *inside* the daemon, but no client embeds it.
 
 **APIs:**
 
-- `forge_bridge.console._execute.execute_command` (async; returns a **dict**).
-- `forge_bridge.flame.integration.run_command_from_flame` (sync; wraps `execute_command` for Flame UI — appends optional explicit `key=value` context, then `asyncio.run`).
+- `forge_bridge.console._execute.execute_command` (async; returns a **dict**) — used internally by the daemon's `/api/v1/exec` handler.
+- `forge_bridge.flame.integration.run_command_from_flame` (sync; PR42 — POSTs to `/api/v1/exec` via stdlib `urllib.request`, no httpx, no asyncio). Appends optional explicit `key=value` context. Returns the PR31 envelope from the daemon on success, or a synthesized PR31-shaped error envelope on transport/protocol failure (so Flame's UI thread never sees an exception).
 
 ---
 
