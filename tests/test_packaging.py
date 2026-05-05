@@ -291,13 +291,28 @@ def test_launchd_wrappers_shebang_and_strict_mode():
             f"{name}: missing 'set -euo pipefail' (bash hygiene baseline)"
 
 
-def test_launchd_console_wrapper_has_readiness_gate():
-    """forge-bridge-daemon MUST wait for :9998 before exec — replicates Linux Requires= cascade on macOS."""
+def test_launchd_console_wrapper_does_not_duplicate_python_readiness_gate():
+    """Phase A.4 (2026-05-05) — the bus-readiness gate moved INTO the daemon's
+    `bootstrap_daemon()` so every entry point (this launchd path, `fbridge up`,
+    direct `mcp http`, `mcp stdio`) inherits the same wait. The shell-level
+    `nc -z` poll loop was removed from this wrapper; it is now redundant.
+
+    This test guards against accidentally re-adding the duplicate gate
+    (which would be a step backwards from the unified bootstrap and would
+    re-create the "different state per launch path" bug Phase A.4 fixed).
+
+    The Python-side gate is tested in tests/test_bootstrap_unification.py.
+    """
     content = (_LAUNCHD / "forge-bridge-daemon").read_text()
-    assert 'nc -z localhost "$PORT"' in content, \
-        "forge-bridge-daemon: missing `nc -z localhost \"$PORT\"` readiness gate (Phase 20 gap #11 macOS parity)"
-    assert "for i in $(seq 1 30)" in content, \
-        "forge-bridge-daemon: readiness gate missing `for i in $(seq 1 30)` 30-second loop"
+    assert 'nc -z localhost "$PORT"' not in content, (
+        "forge-bridge-daemon: shell-level `nc -z` readiness gate is "
+        "redundant after Phase A.4 — bootstrap_daemon._wait_for_bus owns "
+        "this responsibility now. Remove the duplicate."
+    )
+    assert "for i in $(seq 1 30)" not in content, (
+        "forge-bridge-daemon: shell-level 30s poll loop is redundant after "
+        "Phase A.4 — see bootstrap_daemon._wait_for_bus."
+    )
 
 
 def test_launchd_wrappers_source_env_file():
