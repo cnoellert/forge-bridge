@@ -65,4 +65,22 @@ fbridge exec "list forge projects"
 fbridge exec "list forge projects -> list versions project_name=MyProj" --json
 ```
 
+As of PR41, the CLI **routes through the console daemon** (`POST /api/v1/exec`), not in-process. Single runtime: CLI → HTTP → `execute_command`. No fallback. Output rendering is unchanged from PR37: default = per-step formatted output, `--json` = raw PR31 envelope to stdout.
+
+**Daemon URL:** defaults to `http://127.0.0.1:9996`. Override with `FORGE_CONSOLE_URL`.
+
+**Client timeout:** 65s — slightly longer than the server's 60s envelope so a server-issued `TIMEOUT` reaches the client. Under `Semaphore(1)` contention, the *second* concurrent request can legitimately take ~120s end-to-end (60s queued + 60s executing); a 65s client will surface that as a transport failure (exit 2) before the server completes. Acceptable for v1 single-user; bump the client side later if contention surfaces.
+
+### Exit codes
+
+| Condition | Exit |
+|-----------|------|
+| `status == "success"` | 0 |
+| CLI usage error (e.g. missing argument) | 1 |
+| Transport failure (daemon unreachable, connect timeout, read error) | 2 |
+| Protocol error (non-200 status, non-JSON body) | 3 |
+| Execution error (`status == "error"` envelope) | 4 |
+
+Diverges from `fbridge doctor` (0/1/2) — exec consumers benefit from distinguishing transport, protocol, and execution failures for scripting.
+
 **`fbridge chat`** remains the HTTP + LLM-capable path.

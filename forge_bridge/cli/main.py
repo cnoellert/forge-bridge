@@ -32,7 +32,7 @@ Common workflows:
 
   fbridge doctor                 Check what's running and where (URLs + status).
   fbridge up                     Start the bridge runtime (mcp_http + state_ws).
-  fbridge exec "list projects"   Deterministic in-process run (no HTTP, no LLM).
+  fbridge exec "list projects"   Deterministic run via console daemon (no LLM).
   fbridge chat "say hi"          Ask through the shared chat endpoint (LLM).
   fbridge actions                Browse the tools currently registered.
 
@@ -113,8 +113,11 @@ Examples:
   fbridge exec "list forge projects"
   fbridge exec "list forge projects -> list versions" --json
 
-Unlike ``fbridge chat``, this uses the in-process chain engine only — no HTTP
-to :9996 and no LLM. Requires tool backends the same way MCP tools do.
+Routes through the console daemon (POST /api/v1/exec on :9996) — same shared
+chain engine as chat, no LLM. Fails loudly with exit code 2 if the daemon
+isn't running; start it with `fbridge up`. Override the daemon URL with
+``FORGE_CONSOLE_URL``. Exit codes: 0=success, 1=usage, 2=transport,
+3=protocol, 4=execution error.
 """
 
 _CHAT_EPILOG = """\
@@ -163,7 +166,8 @@ app.command(
     "exec",
     help=(
         "Run a command string through the deterministic chain engine (PR30/PR31) "
-        "in-process — no Artist Console HTTP round-trip and no LLM."
+        "via the console daemon (POST /api/v1/exec). No LLM. Fails loudly if the "
+        "daemon isn't running — start it with `fbridge up`."
     ),
     epilog=_EXEC_EPILOG,
 )(_exec.exec_cmd)

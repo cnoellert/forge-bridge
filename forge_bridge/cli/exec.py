@@ -1,15 +1,79 @@
-"""forge-bridge exec — PR37 deterministic in-process execution (no HTTP, no LLM)."""
+"""forge-bridge exec — PR41 deterministic execution via the console daemon (HTTP).
+
+Posts ``{text}`` to ``POST /api/v1/exec`` on the console daemon (default
+``:9996``, override via ``FORGE_CONSOLE_URL``). Output rendering is unchanged
+from PR37: default per-step formatted output, ``--json`` for raw PR31 envelope.
+No fallback to in-process execution — fails loudly if the daemon isn't running.
+"""
 from __future__ import annotations
 
-import asyncio
 import json
+import os
 import sys
 from typing import Annotated
 
 import typer
 
 _EXIT_OK = 0
-_EXIT_FAIL = 1
+_EXIT_USAGE = 1
+_EXIT_TRANSPORT = 2
+_EXIT_PROTOCOL = 3
+_EXIT_EXEC_FAIL = 4
+
+_DEFAULT_BASE_URL = "http://127.0.0.1:9996"
+_HTTP_TIMEOUT_S = 65.0
+
+
+class ExecTransportError(Exception):
+    """Transport / protocol failure from `_exec_http`.
+
+    `kind`:
+      ``CONNECT_ERROR`` — daemon unreachable (refused or connect-timeout).
+      ``HTTP_ERROR``    — other httpx error (read timeout, network, etc.).
+      ``HTTP_STATUS``   — non-200 response from the daemon.
+      ``INVALID_JSON``  — 200 response but body not decodable JSON.
+    """
+
+    def __init__(self, kind: str, detail: str | None = None) -> None:
+        self.kind = kind
+        self.detail = detail or kind
+        super().__init__(self.detail)
+
+
+def _exec_http(text: str, *, client=None) -> dict:
+    """POST `text` to /api/v1/exec and return the PR31 envelope.
+
+    `client` may be injected (typically `httpx.Client(transport=MockTransport(...))`)
+    for tests; production callers pass None and a one-off client is created here.
+    """
+    # Lazy-import httpx — cli/__init__.py contract: keep `--help` fast.
+    import httpx
+
+    base_url = os.getenv("FORGE_CONSOLE_URL", _DEFAULT_BASE_URL)
+    url = f"{base_url}/api/v1/exec"
+
+    own_client = client is None
+    if own_client:
+        client = httpx.Client(timeout=_HTTP_TIMEOUT_S)
+
+    try:
+        try:
+            resp = client.post(url, json={"text": text})
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            raise ExecTransportError("CONNECT_ERROR")
+        except httpx.HTTPError as e:
+            raise ExecTransportError("HTTP_ERROR", str(e))
+
+        if resp.status_code != 200:
+            raise ExecTransportError("HTTP_STATUS", str(resp.status_code))
+
+        try:
+            return resp.json()
+        except Exception:
+            raise ExecTransportError("INVALID_JSON")
+    finally:
+        if own_client:
+            client.close()
 
 
 def exec_cmd(
@@ -22,14 +86,22 @@ def exec_cmd(
         typer.Option("--json", help="Emit the PR31 response dict to stdout."),
     ] = False,
 ) -> None:
-    """Run the shared chain engine without the chat HTTP endpoint or LLM."""
-
-    async def _run() -> dict:
-        from forge_bridge.console._execute import execute_command
-
-        return await execute_command(command)
-
-    result = asyncio.run(_run())
+    """Run the shared chain engine via the console daemon (POST /api/v1/exec)."""
+    try:
+        result = _exec_http(command)
+    except ExecTransportError as e:
+        if e.kind == "CONNECT_ERROR":
+            sys.stderr.write(
+                "Error: forge_bridge console is not running.\n"
+                "Start it with `fbridge up`.\n"
+            )
+            raise typer.Exit(code=_EXIT_TRANSPORT)
+        if e.kind in ("HTTP_STATUS", "INVALID_JSON"):
+            sys.stderr.write(f"Error: {e.detail}\n")
+            raise typer.Exit(code=_EXIT_PROTOCOL)
+        # HTTP_ERROR — other httpx failures (read timeout, network) treated as transport.
+        sys.stderr.write(f"Error: {e.detail}\n")
+        raise typer.Exit(code=_EXIT_TRANSPORT)
 
     if as_json:
         sys.stdout.write(json.dumps(result, default=str) + "\n")
@@ -53,4 +125,4 @@ def exec_cmd(
                 sys.stderr.write(str(err) + "\n")
 
     if result.get("status") != "success":
-        raise typer.Exit(code=_EXIT_FAIL)
+        raise typer.Exit(code=_EXIT_EXEC_FAIL)
