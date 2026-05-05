@@ -498,10 +498,14 @@ def _forge_prompt_for_command():
         except Exception:
             from PySide6 import QtWidgets
 
+        # Label spells out the input shape — chain engine expects natural verb +
+        # noun + optional key=value kwargs, NOT exact tool names. Typing
+        # "forge_scan_roles" tokenizes against all tools and triggers
+        # tool_selection_ambiguous; "scan roles" lands cleanly.
         text, ok = QtWidgets.QInputDialog.getText(
             None,
             "Forge",
-            "Enter command:",
+            "Command (verb + noun, e.g. 'list projects' or 'list versions project_id=…'):",
         )
 
         if ok and text and text.strip():
@@ -539,24 +543,99 @@ def _forge_extract_context(info):
     return context
 
 
+def _forge_summarize(value, limit=120):
+    """Best-effort one-line preview of a chain step's result for dialog display."""
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        if "count" in value:
+            return f"count={value['count']}"
+        keys = list(value.keys())
+        if keys:
+            preview = ", ".join(keys[:5])
+            if len(keys) > 5:
+                preview += f", …+{len(keys) - 5}"
+            return f"keys: {preview}"
+        return ""
+    if isinstance(value, list):
+        return f"{len(value)} item(s)"
+    s = str(value)
+    return s if len(s) <= limit else s[: limit - 1] + "…"
+
+
+def _forge_format_result(result):
+    """Render a PR31 envelope into a multi-line dialog message.
+
+    Surfaces what the artist actually needs to act on:
+      - error.message and original_error.message (the *human* explanation)
+      - candidates list for tool_selection_ambiguous (what to try instead)
+      - per-step preview for success
+      - request_id (short) for log lookup when something is wrong
+    """
+    if not isinstance(result, dict):
+        return f"Unexpected response: {result!r}"
+
+    status = result.get("status", "unknown")
+    rid = result.get("request_id", "") or ""
+    rid_short = rid[:8] if isinstance(rid, str) else ""
+
+    if status == "success":
+        chain = result.get("chain") or []
+        lines = [f"Success — {len(chain)} step(s)"]
+        for i, item in enumerate(chain):
+            if not isinstance(item, dict):
+                continue
+            step = item.get("step", "")
+            preview = _forge_summarize(item.get("result"))
+            lines.append(f"  {i + 1}. {step}")
+            if preview:
+                lines.append(f"     → {preview}")
+        if rid_short:
+            lines.append("")
+            lines.append(f"request_id: {rid_short}")
+        return "\n".join(lines)
+
+    err = result.get("error") or {}
+    if not isinstance(err, dict):
+        return f"Error: {err}"
+
+    code = err.get("code", "UNKNOWN")
+    msg = err.get("message") or ""
+    lines = [f"Error: {code}"]
+    if msg:
+        lines.append("")
+        lines.append(msg)
+
+    orig = err.get("original_error")
+    if isinstance(orig, dict):
+        orig_type = orig.get("type")
+        orig_msg = orig.get("message")
+        if orig_msg:
+            lines.append("")
+            lines.append(f"Cause ({orig_type}):" if orig_type else "Cause:")
+            lines.append(orig_msg)
+        candidates = orig.get("candidates")
+        if isinstance(candidates, list) and candidates:
+            shown = candidates[:5]
+            lines.append("")
+            lines.append("Did you mean (try a more specific verb + noun):")
+            for c in shown:
+                lines.append(f"  • {c}")
+            if len(candidates) > 5:
+                lines.append(f"  …and {len(candidates) - 5} more")
+
+    if rid_short:
+        lines.append("")
+        lines.append(f"request_id: {rid_short}")
+    return "\n".join(lines)
+
+
 def _forge_show_result(result):
     try:
         import flame
-
-        status = result.get("status")
-        error = result.get("error")
-
-        if status == "success":
-            message = "Command executed successfully."
-        else:
-            code = None
-            if isinstance(error, dict):
-                code = error.get("code")
-            message = f"Error: {code or 'UNKNOWN'}"
-
         flame.messages.show_in_dialog(
             title="Forge",
-            message=message,
+            message=_forge_format_result(result),
             type="info",
             buttons=["OK"],
         )
