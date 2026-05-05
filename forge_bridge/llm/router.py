@@ -35,9 +35,58 @@ import json
 import logging
 import os
 import time
-from typing import Awaitable, Callable, Optional, TYPE_CHECKING
+from dataclasses import dataclass, field
+from typing import Any, Awaitable, Callable, Optional, TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Phase A chat-contract realignment (2026-05-05)
+#
+# ChatTurnResult is the load-bearing return type of complete_with_tools().
+# Chosen as a frozen dataclass over a 3-tuple because:
+#
+#   1. The contract is meant to be impossible to misuse — a named type
+#      surfaces drift through every call site, not just at the unpack.
+#   2. Future fields (usage_tokens, completed_iterations, terminal_reason)
+#      are obvious next additions; positional unpacks would silently break
+#      if a 4th tuple element were appended.
+#   3. Self-documenting at every read: result.final_text is unambiguous;
+#      result[0] is not.
+#
+# Mutation through this dataclass is forbidden — the router builds it once
+# at the loop's terminal moment and hands ownership to the handler.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ChatTurnResult:
+    """Structured return shape for ``LLMRouter.complete_with_tools()``.
+
+    Phase A invariant: the chat endpoint cannot lose tool execution history.
+    Every successful call surfaces the full conversation transcript and a
+    structured trace of every tool that was invoked.
+
+    Fields:
+        final_text: The model's terminal assistant text. Identical to
+            ``messages[-1]["content"]`` by construction.
+        messages: Full transcript in OpenAI-style chat format —
+            ``{role, content, tool_calls?, tool_call_id?, name?}``. Provider-
+            native shapes (Anthropic content blocks) are normalized at the
+            adapter boundary; no native format leaks past the router. The
+            list always ends with the terminal assistant turn, even when no
+            tools fired.
+        tool_trace: One entry per tool invocation, in invocation order.
+            Each entry: ``{tool_name, arguments, result, error, index}``.
+            On success: ``error is None`` and ``result`` is the parsed value.
+            On failure: ``result is None`` and ``error`` is a string. Never
+            both populated, never both null. Empty when no tools were called.
+    """
+
+    final_text: str
+    messages: list[dict]
+    tool_trace: list[dict] = field(default_factory=list)
 
 # Default system prompt injected into every local call.
 # Keeps Flame/pipeline context in scope without repeating it per-call.
@@ -277,7 +326,7 @@ class LLMRouter:
         tool_result_max_bytes: Optional[int] = None,
         parallel: bool = False,
         messages: Optional[list[dict]] = None,
-    ) -> str:
+    ) -> ChatTurnResult:
         """Run the FB-C agentic tool-call loop end-to-end.
 
         Sends prompt + tool schemas to the LLM (Anthropic if sensitive=False,
@@ -328,7 +377,14 @@ class LLMRouter:
                 v1.4 ships serial-only.
 
         Returns:
-            Final assistant text from the terminal turn.
+            ChatTurnResult — Phase A chat-contract realignment (2026-05-05).
+            Frozen dataclass carrying the terminal text, the full normalized
+            conversation transcript (OpenAI-style; provider-native shapes are
+            flattened at the adapter boundary), and a structured tool_trace
+            mirroring every invocation. ``messages[-1]`` is always the
+            terminal assistant turn; ``tool_trace`` is empty when no tools
+            were invoked. The system never collapses tool history into the
+            text return — that was the bug Phase A fixes.
 
         Raises:
             ValueError: If tools is empty (D-23).
@@ -430,8 +486,40 @@ class LLMRouter:
         prompt_tokens_total = 0
         completion_tokens_total = 0
         completed_iterations = 0
+        # Phase A.2: tool_trace accumulates one entry per tool invocation.
+        # Built alongside the per-iteration ToolCallResult list so error/
+        # success semantics line up exactly with what the LLM was told.
+        tool_trace: list[dict] = []
 
         # ---- Loop body (LLMTOOL-07 SET inside try/finally) ----------------
+
+        # Phase A.2: parse a sanitized tool-result string into structured form
+        # when possible. JSON failures fall back to the raw string so callers
+        # never lose visibility on tool output. The trace records the same
+        # text the LLM saw (post-sanitization) — symmetric with `messages`.
+        def _maybe_parse_result(content: str):
+            if not isinstance(content, str):
+                return content
+            try:
+                return json.loads(content)
+            except (json.JSONDecodeError, ValueError):
+                return content
+
+        def _record_trace(
+            tool_call_obj,
+            *,
+            result: Any = None,
+            error: Optional[str] = None,
+        ) -> None:
+            """Append one tool_trace entry. Phase A.2 invariant: success has
+            error is None, failure has result is None — never both populated."""
+            tool_trace.append({
+                "tool_name": tool_call_obj.tool_name,
+                "arguments": dict(tool_call_obj.arguments) if tool_call_obj.arguments else {},
+                "result": result,
+                "error": error,
+                "index": len(tool_trace),
+            })
 
         async def _loop_body() -> str:
             nonlocal prompt_tokens_total, completion_tokens_total, completed_iterations
@@ -487,6 +575,7 @@ class LLMRouter:
                             content=_sanitize_tool_result(synthetic, max_bytes=effective_max_bytes),
                             is_error=True,
                         ))
+                        _record_trace(call, error=synthetic)
                         elapsed_ms = int((time.monotonic() - turn_start) * 1000)
                         logger.info(
                             "tool-call iter=%d tool=%s args_hash=%s prompt_tokens=%d "
@@ -508,6 +597,7 @@ class LLMRouter:
                             content=_sanitize_tool_result(msg, max_bytes=effective_max_bytes),
                             is_error=True,
                         ))
+                        _record_trace(call, error=msg)
                         elapsed_ms = int((time.monotonic() - turn_start) * 1000)
                         logger.info(
                             "tool-call iter=%d tool=%s args_hash=%s prompt_tokens=%d "
@@ -557,6 +647,10 @@ class LLMRouter:
                             content=result_text,
                             is_error=False,
                         ))
+                        _record_trace(
+                            call,
+                            result=_maybe_parse_result(result_text),
+                        )
                     except asyncio.TimeoutError:
                         msg = f"ERROR: tool '{call.tool_name}' timed out after {per_tool_budget:.1f}s"
                         results.append(ToolCallResult(
@@ -565,6 +659,7 @@ class LLMRouter:
                             content=_sanitize_tool_result(msg, max_bytes=effective_max_bytes),
                             is_error=True,
                         ))
+                        _record_trace(call, error=msg)
                         status = "tool_timeout"
                     except KeyError as exc:
                         # invoke_tool raises KeyError on hallucinated name — message
@@ -578,6 +673,7 @@ class LLMRouter:
                             content=_sanitize_tool_result(msg, max_bytes=effective_max_bytes),
                             is_error=True,
                         ))
+                        _record_trace(call, error=msg)
                         status = "hallucinated"
                     except (Exception, SystemExit) as exc:  # D-34 belt-and-suspenders
                         # Phase 8 cf221fe: log type name only, never str(exc) which
@@ -596,6 +692,7 @@ class LLMRouter:
                             content=_sanitize_tool_result(msg, max_bytes=effective_max_bytes),
                             is_error=True,
                         ))
+                        _record_trace(call, error=msg)
                         status = "tool_error"
 
                     elapsed_ms = int((time.monotonic() - turn_start) * 1000)
@@ -621,8 +718,18 @@ class LLMRouter:
         try:
             try:
                 # D-04 wall-clock cap wraps the entire loop.
-                result = await asyncio.wait_for(_loop_body(), timeout=max_seconds)
-                return result
+                terminal_text = await asyncio.wait_for(
+                    _loop_body(), timeout=max_seconds,
+                )
+                # Phase A: assemble ChatTurnResult at the terminal moment.
+                # The adapter normalizes its provider-native state.messages to
+                # OpenAI-style and appends the terminal assistant turn so the
+                # consumer always has messages[-1] as the final reply.
+                return ChatTurnResult(
+                    final_text=terminal_text,
+                    messages=adapter.to_chat_messages(state, terminal_text),
+                    tool_trace=list(tool_trace),
+                )
             except asyncio.TimeoutError:
                 terminal_reason = "max_seconds"
                 raise LLMLoopBudgetExceeded(

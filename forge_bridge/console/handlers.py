@@ -597,10 +597,23 @@ async def _execute_forced_tool(
                 details=disambiguation,
             )
 
+    # Phase A.2 trace bookkeeping — the short-circuit invokes exactly one
+    # tool, so the trace always has exactly one entry. Result is the parsed
+    # tool output on success, None on failure; error is the failure message
+    # or None on success. Symmetric with the LLM-loop path's _record_trace.
+    trace_result: Any = None
+    trace_error: Optional[str] = None
+
     try:
         raw = await _mcp_server.mcp.call_tool(tool_name, params)
         tool_content = serialize_forced_tool_result(raw)
         tool_ok = True
+        # Surface the parsed tool output in the trace when it's JSON; fall
+        # back to the raw string so callers never lose visibility on shape.
+        try:
+            trace_result = json.loads(tool_content) if isinstance(tool_content, str) else tool_content
+        except (json.JSONDecodeError, ValueError):
+            trace_result = tool_content
     except Exception as exc:  # noqa: BLE001 — classify, don't propagate
         # Validation / tool error — surface as a structured tool message
         # mirroring the `fbridge run` failure shape so the CLI can render
@@ -612,6 +625,7 @@ async def _execute_forced_tool(
             }
         })
         tool_ok = False
+        trace_error = f"{type(exc).__name__}: {exc!s}"
         logger.info(
             "chat tool_forced_error request_id=%s tool=%s exc_type=%s",
             request_id, tool_name, type(exc).__name__,
@@ -635,6 +649,15 @@ async def _execute_forced_tool(
         },
     ]
 
+    # Phase A.2: short-circuit always produces exactly one trace entry.
+    tool_trace: list[dict] = [{
+        "tool_name": tool_name,
+        "arguments": dict(params) if params else {},
+        "result": trace_result,
+        "error": trace_error,
+        "index": 0,
+    }]
+
     elapsed_ms = int((time.monotonic() - started) * 1000)
     logger.info(
         "chat tool_forced request_id=%s client_ip=%s tool=%s "
@@ -645,7 +668,13 @@ async def _execute_forced_tool(
     )
     return JSONResponse(
         {
+            # Phase A: short-circuit emits the same canonical top-level keys
+            # as the LLM-loop path. The model never spoke on this path, so
+            # final_text is empty by Phase A decision (the assistant turn
+            # in messages is the synthetic tool_call entry, not a reply).
+            "final_text": "",
             "messages": out_messages,
+            "tool_trace": tool_trace,
             "stop_reason": "tool_forced",
             "request_id": request_id,
             "tools_available": tools_available_count,
@@ -1109,7 +1138,12 @@ async def chat_handler(request: Request) -> JSONResponse:
     tool_call_count_in = sum(1 for m in messages if m.get("role") == "tool")
 
     try:
-        result_text = await asyncio.wait_for(
+        # Phase A chat-contract realignment (2026-05-05): the router now
+        # returns a ChatTurnResult dataclass carrying final_text, the
+        # full normalized message transcript, and the structured tool_trace.
+        # The handler MUST NOT collapse the transcript back to
+        # ``input + final_text`` — that was the bug Phase A fixes.
+        chat_result = await asyncio.wait_for(
             router.complete_with_tools(
                 messages=messages,            # D-02a (plan 16-01)
                 tools=tools,
@@ -1121,6 +1155,9 @@ async def chat_handler(request: Request) -> JSONResponse:
             ),
             timeout=125.0,                    # CHAT-02 outer cap
         )
+        result_text = chat_result.final_text
+        result_messages = chat_result.messages
+        result_trace = chat_result.tool_trace
     except asyncio.TimeoutError:
         elapsed_ms = int((time.monotonic() - started) * 1000)
         logger.info(
@@ -1202,7 +1239,10 @@ async def chat_handler(request: Request) -> JSONResponse:
     # ---- Success path -------------------------------------------------------
 
     elapsed_ms = int((time.monotonic() - started) * 1000)
-    out_messages = list(messages) + [{"role": "assistant", "content": result_text}]
+    # Phase A: surface the router's normalized transcript verbatim. No
+    # input + final_text reconstruction — the router already accounts for
+    # input echo via the adapter's state.messages chain.
+    out_messages = result_messages
     logger.info(
         "chat ok request_id=%s client_ip=%s message_count_in=%d "
         "message_count_out=%d tool_call_count=%d tools_offered_count=%d "
@@ -1212,7 +1252,12 @@ async def chat_handler(request: Request) -> JSONResponse:
     )
     return JSONResponse(
         {
+            # Phase A: top-level final_text + tool_trace are part of the
+            # canonical response schema — both execution paths (this real
+            # LLM-loop path and the PR20 short-circuit) emit the same keys.
+            "final_text": result_text,
             "messages": out_messages,
+            "tool_trace": result_trace,
             "stop_reason": "end_turn",
             "request_id": request_id,
             # PR14 — narrow-tool-selection telemetry surfaced for the wrapper
@@ -1222,6 +1267,10 @@ async def chat_handler(request: Request) -> JSONResponse:
             # PR15 — true when the filtered set was small enough that we
             # forced the deterministic-call rules (≤3 tools).
             "tool_enforced": tool_enforced_flag,
+            # Phase A parity: short-circuit path emits tool_forced=True; the
+            # LLM-loop path emits False so top-level keys are identical
+            # across both paths (canonical schema invariant).
+            "tool_forced": False,
         },
         status_code=200,
         headers={"X-Request-ID": request_id},

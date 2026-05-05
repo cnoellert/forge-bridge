@@ -97,15 +97,85 @@ class _StubAdapter:
         # Record what the coordinator handed us so tests can assert on it.
         self.appended_results.append(list(results))
         new_history = list(state["history"])
-        new_history.append({"role": "assistant", "content": response.text})
+        # Phase A: record assistant turn with tool_calls so to_chat_messages
+        # can emit the OpenAI-style shape the chat contract expects.
+        assistant_entry: dict = {
+            "role": "assistant",
+            "content": response.text,
+        }
+        if response.tool_calls:
+            assistant_entry["tool_calls"] = [
+                {
+                    "id": tc.ref,
+                    "type": "function",
+                    "function": {"name": tc.tool_name, "arguments": tc.arguments},
+                }
+                for tc in response.tool_calls
+            ]
+        new_history.append(assistant_entry)
         for r in results:
             new_history.append({
                 "role": "tool",
+                "tool_call_id": r.tool_call_ref,
+                "name": r.tool_name,
                 "tool_name": r.tool_name,
                 "content": r.content,
                 "is_error": r.is_error,
             })
         return {**state, "history": new_history}
+
+    def to_chat_messages(
+        self,
+        state: dict,
+        terminal_text: str,
+    ) -> list[dict]:
+        """Phase A — stub mirrors the production adapters' chat-message contract.
+
+        Returns the assembled history (minus any system prompt) plus the
+        terminal assistant turn. Asserts on this output drive the regression
+        tests in tests/llm/test_chat_history_roundtrip.py.
+        """
+        import json as _json
+        flat: list[dict] = []
+        for msg in state.get("history", []):
+            role = msg.get("role")
+            if role == "system":
+                continue
+            if role == "tool":
+                flat.append({
+                    "role": "tool",
+                    "tool_call_id": msg.get("tool_call_id", ""),
+                    "name": msg.get("name") or msg.get("tool_name", ""),
+                    "content": msg.get("content", ""),
+                })
+                continue
+            if role == "assistant":
+                entry: dict = {
+                    "role": "assistant",
+                    "content": msg.get("content", "") or "",
+                }
+                tool_calls = msg.get("tool_calls")
+                if tool_calls:
+                    entry["tool_calls"] = []
+                    for tc in tool_calls:
+                        fn = tc.get("function") or {}
+                        args = fn.get("arguments")
+                        if not isinstance(args, str):
+                            args = _json.dumps(args or {})
+                        entry["tool_calls"].append({
+                            "id": tc.get("id", ""),
+                            "type": tc.get("type", "function"),
+                            "function": {
+                                "name": fn.get("name", ""),
+                                "arguments": args,
+                            },
+                        })
+                flat.append(entry)
+                continue
+            flat.append({"role": role, "content": msg.get("content", "")})
+
+        flat.append({"role": "assistant", "content": terminal_text})
+        return flat
 
 
 @pytest.fixture

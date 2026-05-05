@@ -80,7 +80,14 @@ def chat_app():
 
     async def _capturing_complete_with_tools(**kwargs):
         captured["messages_at_router"] = list(kwargs.get("messages") or [])
-        return "OK from mock LLM"
+        # Phase A: complete_with_tools must return a ChatTurnResult.
+        from forge_bridge.llm.router import ChatTurnResult
+        history = list(kwargs.get("messages") or [])
+        return ChatTurnResult(
+            final_text="OK from mock LLM",
+            messages=history + [{"role": "assistant", "content": "OK from mock LLM"}],
+            tool_trace=[],
+        )
 
     mock_router = MagicMock()
     mock_router.complete_with_tools = AsyncMock(

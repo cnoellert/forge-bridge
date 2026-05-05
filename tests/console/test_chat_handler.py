@@ -36,10 +36,35 @@ from forge_bridge.console.app import build_console_app
 from forge_bridge.console.manifest_service import ManifestService
 from forge_bridge.console.read_api import ConsoleReadAPI
 from forge_bridge.llm.router import (
+    ChatTurnResult,
     LLMLoopBudgetExceeded,
     LLMToolError,
     RecursiveToolLoopError,
 )
+
+
+def _make_phase_a_chat_result(*, final_text: str, messages, **_kwargs) -> ChatTurnResult:
+    """Phase A test helper — build a ChatTurnResult that mirrors the handler's
+    pre-Phase-A "echo input + append final_text" behavior. Lets tests that
+    just sample the final assistant text keep passing without bespoke mock
+    bodies. tool_trace is empty (these tests don't exercise tool activity)."""
+    return ChatTurnResult(
+        final_text=final_text,
+        messages=list(messages) + [{"role": "assistant", "content": final_text}],
+        tool_trace=[],
+    )
+
+
+def _async_chat_result(final_text: str = "OK from mock LLM"):
+    """AsyncMock side_effect factory that builds a ChatTurnResult per call,
+    echoing the caller's `messages=` kwarg so handler tests round-trip
+    cleanly under the Phase A contract."""
+    async def _impl(**kwargs):
+        return _make_phase_a_chat_result(
+            final_text=final_text,
+            messages=kwargs.get("messages") or [],
+        )
+    return _impl
 
 
 @pytest.fixture(autouse=True)
@@ -81,7 +106,7 @@ def chat_client():
     their own patch that overrides this default.
     """
     mock_router = MagicMock()
-    mock_router.complete_with_tools = AsyncMock(return_value="OK from mock LLM")
+    mock_router.complete_with_tools = AsyncMock(side_effect=_async_chat_result())
 
     ms = ManifestService()
     mock_log = MagicMock()
@@ -490,7 +515,9 @@ def test_pr15_chat_handler_returns_500_on_malformed_tool_text(chat_client):
     client, mock_router = chat_client
     mock_router.system_prompt = "base"
     mock_router.complete_with_tools = AsyncMock(
-        return_value='<|im_start|>{"name": "forge_test_probe", "arguments": {}}'
+        side_effect=_async_chat_result(
+            final_text='<|im_start|>{"name": "forge_test_probe", "arguments": {}}',
+        ),
     )
     r = client.post(
         "/api/v1/chat",
@@ -505,7 +532,9 @@ def test_pr15_chat_handler_legitimate_response_not_flagged(chat_client):
     client, mock_router = chat_client
     mock_router.system_prompt = "base"
     mock_router.complete_with_tools = AsyncMock(
-        return_value="There are 4 libraries: Default, WIP, Postings, Delivery."
+        side_effect=_async_chat_result(
+            final_text="There are 4 libraries: Default, WIP, Postings, Delivery.",
+        ),
     )
     r = client.post(
         "/api/v1/chat",
@@ -550,7 +579,7 @@ def _pr20_build_app(tools_list, fake_call_tool=None):
     from mcp.types import TextContent
 
     mock_router = MagicMock()
-    mock_router.complete_with_tools = AsyncMock(return_value="UNREACHED LLM")
+    mock_router.complete_with_tools = AsyncMock(side_effect=_async_chat_result("UNREACHED LLM"))
     mock_router.system_prompt = "base"
 
     ms = ManifestService()
