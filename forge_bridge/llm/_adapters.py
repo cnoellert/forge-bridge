@@ -286,6 +286,34 @@ class _ToolAdapter(Protocol):
         results: list[ToolCallResult],
     ) -> Any: ...
 
+    def to_chat_messages(
+        self,
+        state: Any,
+        terminal_text: str,
+    ) -> list[dict]:
+        """Phase A — emit the full conversation as OpenAI-style chat messages.
+
+        Normalizes provider-native message format (Anthropic content blocks,
+        Ollama's tool_name field) into the canonical wire shape used by
+        ``/api/v1/chat`` and the PR20 short-circuit baseline:
+
+            {"role": "user" | "assistant" | "tool" | "system",
+             "content": str,
+             "tool_calls": [...]?,         # assistant only, when calling tools
+             "tool_call_id": str?,         # tool only, identifies the call
+             "name": str?}                 # tool only, the tool's name
+
+        Implementations MUST:
+          - Convert any provider-native nested representations to flat
+            string ``content`` plus a sibling ``tool_calls`` array on
+            assistant turns. No content-block lists may leak.
+          - Append a terminal assistant message with ``content == terminal_text``
+            so callers always have ``messages[-1]`` as the final reply.
+          - Strip any leading ``role == "system"`` entry — system prompts
+            are an internal concern and never leave the router.
+        """
+        ...
+
 
 # ---------------------------------------------------------------------------
 # Anthropic adapter
@@ -459,6 +487,111 @@ class AnthropicToolAdapter:
 
         return {**state, "messages": new_messages}
 
+    def to_chat_messages(
+        self,
+        state: dict,
+        terminal_text: str,
+    ) -> list[dict]:
+        """Phase A — flatten Anthropic content-block messages to OpenAI-style.
+
+        Anthropic stores assistant turns as ``{role:assistant, content:[
+        {type:text,text}, {type:tool_use,id,name,input}, ...]}`` and tool
+        results inside user-role content blocks (``{type:tool_result,
+        tool_use_id,content,is_error}``). This method translates that wire
+        format into the canonical OpenAI shape used by the PR20 short-circuit
+        baseline and the chat handler's response contract.
+        """
+        flat: list[dict] = []
+        for msg in state["messages"]:
+            role = msg.get("role")
+            content = msg.get("content")
+
+            # Strings pass through verbatim — happens when callers seed state
+            # via ``messages=`` with simple text turns (no tool activity yet).
+            if isinstance(content, str):
+                if role == "system":
+                    continue  # system prompts stay internal (Phase A invariant)
+                flat.append({"role": role, "content": content})
+                continue
+
+            # Lists are content-block format; demux by block type.
+            if not isinstance(content, list):
+                # Unknown shape — keep it but coerce content to string for
+                # downstream JSON safety. Should not happen with the
+                # production AnthropicToolAdapter.
+                flat.append({"role": role, "content": json.dumps(content)})
+                continue
+
+            if role == "assistant":
+                text_parts: list[str] = []
+                tool_calls: list[dict] = []
+                for block in content:
+                    btype = block.get("type") if isinstance(block, dict) else None
+                    if btype == "text":
+                        text_parts.append(block.get("text", ""))
+                    elif btype == "tool_use":
+                        tool_calls.append({
+                            "id": block.get("id", ""),
+                            "type": "function",
+                            "function": {
+                                "name": block.get("name", ""),
+                                # Match short-circuit baseline: arguments as JSON string.
+                                "arguments": json.dumps(block.get("input") or {}),
+                            },
+                        })
+                entry: dict[str, Any] = {
+                    "role": "assistant",
+                    "content": "".join(text_parts),
+                }
+                if tool_calls:
+                    entry["tool_calls"] = tool_calls
+                flat.append(entry)
+                continue
+
+            if role == "user":
+                # Anthropic encodes tool_result inside user-role blocks.
+                # Each tool_result becomes a standalone role:tool message;
+                # any plain text in the same content list becomes a user
+                # message.
+                user_text_parts: list[str] = []
+                for block in content:
+                    btype = block.get("type") if isinstance(block, dict) else None
+                    if btype == "tool_result":
+                        result_content = block.get("content", "")
+                        # Anthropic allows nested-list content inside tool_result
+                        # — flatten to a single string for the wire.
+                        if isinstance(result_content, list):
+                            result_content = "".join(
+                                b.get("text", "") if isinstance(b, dict) else str(b)
+                                for b in result_content
+                            )
+                        flat.append({
+                            "role": "tool",
+                            "tool_call_id": block.get("tool_use_id", ""),
+                            # Anthropic doesn't track the tool name on the result
+                            # block. The handler's structural assertions look at
+                            # role + tool_call_id + content; name is best-effort.
+                            "name": block.get("name", "") or "",
+                            "content": str(result_content),
+                        })
+                    elif btype == "text":
+                        user_text_parts.append(block.get("text", ""))
+                if user_text_parts:
+                    flat.append({
+                        "role": "user",
+                        "content": "".join(user_text_parts),
+                    })
+                continue
+
+            # Other roles (system already filtered above): pass through
+            # but coerce content to string.
+            flat.append({"role": role, "content": str(content)})
+
+        # Append terminal assistant turn (Phase A invariant: messages[-1]
+        # is always the final assistant turn, regardless of tool activity).
+        flat.append({"role": "assistant", "content": terminal_text})
+        return flat
+
 
 # ---------------------------------------------------------------------------
 # Ollama adapter
@@ -617,7 +750,15 @@ class OllamaToolAdapter:
         response: _TurnResponse,
         results: list[ToolCallResult],
     ) -> dict:
-        """Append assistant turn + role:tool messages (research §3.3)."""
+        """Append assistant turn + role:tool messages (research §3.3).
+
+        Phase A: tool_calls entries gain a synthetic ``id`` (mirrored on the
+        sibling role:tool messages as ``tool_call_id``) so the wire shape
+        matches the PR20 short-circuit canonical baseline. This was already
+        the responsibility of ``to_chat_messages`` previously, but emitting
+        the id at append-time keeps the loop's internal state consistent
+        with what the wire eventually sees — no normalization shadow state.
+        """
         new_messages = list(state["messages"])
 
         assistant_msg: dict[str, Any] = {
@@ -627,6 +768,7 @@ class OllamaToolAdapter:
         if response.tool_calls:
             assistant_msg["tool_calls"] = [
                 {
+                    "id": tc.ref,
                     "type": "function",
                     "function": {"name": tc.tool_name, "arguments": tc.arguments},
                 }
@@ -635,11 +777,76 @@ class OllamaToolAdapter:
         new_messages.append(assistant_msg)
 
         # ORDER preserved (Ollama uses ORDER-based matching per §3.3).
-        for r in results:
+        # Phase A: include tool_call_id (mirrors the assistant's tool_calls.id)
+        # and the OpenAI-style ``name`` field alongside the legacy ``tool_name``
+        # field. The legacy field stays for back-compat with the live Ollama
+        # request path (state["messages"] is fed back to ollama.chat() in the
+        # next iteration); the new fields are what the wire response carries.
+        for idx, r in enumerate(results):
             new_messages.append({
                 "role": "tool",
-                "tool_name": r.tool_name,
+                "tool_call_id": r.tool_call_ref,
+                "name": r.tool_name,
+                "tool_name": r.tool_name,  # legacy, kept for in-loop Ollama compat
                 "content": r.content,
             })
 
         return {**state, "messages": new_messages}
+
+    def to_chat_messages(
+        self,
+        state: dict,
+        terminal_text: str,
+    ) -> list[dict]:
+        """Phase A — emit the conversation as OpenAI-style chat messages.
+
+        Ollama's internal state is already close to the wire format; this
+        method strips the leading system prompt (internal concern), drops
+        the legacy ``tool_name`` field on tool messages (kept in-state for
+        ollama.chat() compat), normalizes assistant tool_calls so
+        ``arguments`` is a JSON string (matching the PR20 short-circuit
+        baseline), and appends the terminal assistant turn.
+        """
+        flat: list[dict] = []
+        for msg in state["messages"]:
+            role = msg.get("role")
+            if role == "system":
+                # System prompts stay internal (Phase A invariant).
+                continue
+            if role == "tool":
+                flat.append({
+                    "role": "tool",
+                    "tool_call_id": msg.get("tool_call_id", ""),
+                    "name": msg.get("name") or msg.get("tool_name", ""),
+                    "content": msg.get("content", ""),
+                })
+                continue
+            if role == "assistant":
+                entry: dict[str, Any] = {
+                    "role": "assistant",
+                    "content": msg.get("content", "") or "",
+                }
+                tool_calls = msg.get("tool_calls")
+                if tool_calls:
+                    entry["tool_calls"] = []
+                    for tc in tool_calls:
+                        fn = tc.get("function") or {}
+                        args = fn.get("arguments")
+                        # PR20 short-circuit baseline: arguments is a JSON string.
+                        if not isinstance(args, str):
+                            args = json.dumps(args or {})
+                        entry["tool_calls"].append({
+                            "id": tc.get("id", ""),
+                            "type": tc.get("type", "function"),
+                            "function": {
+                                "name": fn.get("name", ""),
+                                "arguments": args,
+                            },
+                        })
+                flat.append(entry)
+                continue
+            # user (and any other non-system role) — pass through.
+            flat.append({"role": role, "content": msg.get("content", "")})
+
+        flat.append({"role": "assistant", "content": terminal_text})
+        return flat

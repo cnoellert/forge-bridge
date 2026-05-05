@@ -121,7 +121,8 @@ class TestLoopTermination:
                 "hi", tools=[_FakeTool("forge_x")],
                 tool_executor=AsyncMock(return_value="ignored"),
             )
-        assert result == "answer"
+        # Phase A: complete_with_tools returns ChatTurnResult, not bare str.
+        assert result.final_text == "answer"
 
     @pytest.mark.asyncio
     async def test_two_turn_loop_call_then_terminal(self):
@@ -138,7 +139,7 @@ class TestLoopTermination:
                 "show me", tools=[_FakeTool("forge_list")],
                 tool_executor=executor,
             )
-        assert result == "final"
+        assert result.final_text == "final"
         # Tool was invoked exactly once with the supplied args
         executor.assert_awaited_once_with("forge_list", {"k": "v"})
         # Result was appended to adapter
@@ -394,7 +395,7 @@ class TestToolErrorHandling:
             result = await router.complete_with_tools(
                 "x", tools=[_FakeTool("forge_buggy")], tool_executor=executor,
             )
-        assert result == "recovered"  # loop continued past the bad tool
+        assert result.final_text == "recovered"  # loop continued past the bad tool
         first = adapter.appended_results[0][0]
         assert first.is_error is True
         # Phase 8 cf221fe: exception type name in message, NOT str(exc)
@@ -417,7 +418,7 @@ class TestToolErrorHandling:
             result = await router.complete_with_tools(
                 "x", tools=[_FakeTool("forge_exit")], tool_executor=evil_tool,
             )
-        assert result == "survived"  # SystemExit was caught by D-34
+        assert result.final_text == "survived"  # SystemExit was caught by D-34
         first = adapter.appended_results[0][0]
         assert first.is_error is True
         assert "SystemExit" in first.content
@@ -635,7 +636,7 @@ class TestCompleteWithToolsMessagesKwarg:
                 tool_executor=AsyncMock(return_value="ignored"),
             )
         # Loop returned the terminal text from the stub.
-        assert result == "three tools were created"
+        assert result.final_text == "three tools were created"
         # Adapter saw the verbatim history (no auto-wrap into a synthetic single-turn user message).
         assert adapter.last_state is not None
         assert adapter.last_state["messages_kwarg"] == history, (
@@ -680,7 +681,7 @@ class TestCompleteWithToolsMessagesKwarg:
                 tools=[_FakeTool("forge_x")],
                 tool_executor=AsyncMock(return_value="ignored"),
             )
-        assert result == "legacy ok"
+        assert result.final_text == "legacy ok"
         assert adapter.last_state is not None
         # Auto-wrap path was taken — messages_kwarg is None, history is the
         # synthetic single-turn user message.
