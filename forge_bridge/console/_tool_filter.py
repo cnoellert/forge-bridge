@@ -226,6 +226,15 @@ NORMALIZATION_MAP: dict[str, str] = {
 }
 
 
+# A.5.3.1 — canonical verb tokens (the "list" cluster in NORMALIZATION_MAP).
+# Used by deterministic_narrow to detect verb-only overlap, which carries
+# no semantic narrowing signal. Keep in sync with the verb→canonical
+# entries in NORMALIZATION_MAP above. Today the set is just {"list"}; if
+# a future PR adds another verb-cluster (e.g., a "create" cluster mapping
+# add/new/make→create), add the new canonical form here as well.
+_VERB_TOKENS: frozenset[str] = frozenset({"list"})
+
+
 def normalize_token(token: str) -> str:
     """Map a single lowercase token to its canonical form.
 
@@ -436,18 +445,43 @@ def deterministic_narrow(tools: list[Any], message: str) -> list[Any]:
     # tokens (both = {forge, list, project}) but only the former matches
     # the LITERAL message tokens {list, projects}. Strict set
     # intersection on raw tokens — no normalization is applied here.
+    #
+    # A.5.3.1 guard: skip Rule 3 when Rule 1's overlap is verb-only
+    # across ALL survivors. The raw-token rule was designed to break ties
+    # on overlaps that include a noun (e.g., the motivating case above
+    # has both ``list`` and ``project`` in the normalized overlap). When
+    # the only normalized overlap is a verb token (e.g., ``{list}``), the
+    # raw rule degenerates into "whichever tool has the literal verb in
+    # its name wins" — an arbitrary pick on a non-signal. The original
+    # A.5.3.1 reproducer: ``"list projects"`` against
+    # ``[forge_get_staged, forge_list_staged]`` (the only in-process
+    # candidates when Flame is unreachable, after the reachability filter
+    # drops ``forge_list_projects``). Both tie on ``{list}`` (via
+    # ``get→list`` normalization); raw rule picked ``forge_list_staged``
+    # because its raw tokens contain ``list``. Returning >1 here lets the
+    # chat handler hand the decision to the LLM, and the chain executor
+    # surface a ``tool_selection_ambiguous`` error — both correct
+    # responses to "no semantic match in the candidate set."
     if len(survivors) > 1:
-        msg_raw = _raw_message_tokens(message)
-        if msg_raw:
-            raw_scored: list[tuple[Any, int]] = []
-            for t in survivors:
-                name = (getattr(t, "name", "") or "").lower()
-                raw_scored.append((t, len(_raw_tool_tokens(name) & msg_raw)))
-            max_raw = max(c for _, c in raw_scored)
-            if max_raw > 0:
-                # At least one survivor has a literal-token match — keep
-                # only the maximum scorers. If still tied, fall through
-                # (LLM decides).
-                survivors = [t for t, c in raw_scored if c == max_raw]
+        overlap_is_verb_only = all(
+            not (
+                (_pr14_tokens((getattr(t, "name", "") or "").lower()) & msg_tokens)
+                - _VERB_TOKENS
+            )
+            for t in survivors
+        )
+        if not overlap_is_verb_only:
+            msg_raw = _raw_message_tokens(message)
+            if msg_raw:
+                raw_scored: list[tuple[Any, int]] = []
+                for t in survivors:
+                    name = (getattr(t, "name", "") or "").lower()
+                    raw_scored.append((t, len(_raw_tool_tokens(name) & msg_raw)))
+                max_raw = max(c for _, c in raw_scored)
+                if max_raw > 0:
+                    # At least one survivor has a literal-token match —
+                    # keep only the maximum scorers. If still tied, fall
+                    # through (LLM decides).
+                    survivors = [t for t, c in raw_scored if c == max_raw]
 
     return survivors
