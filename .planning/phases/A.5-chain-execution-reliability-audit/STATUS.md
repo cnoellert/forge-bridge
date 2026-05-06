@@ -1,9 +1,11 @@
-# A.5 Status: RESUMED (sharpened scope)
+# A.5 Status: RESUMED (sharpened scope) — A.5.3.1 SHIPPED 2026-05-06
 
 **Paused:** 2026-05-06
 **Resumed:** 2026-05-06 (same day; A.6 closed environmentally)
 **A.6 outcome:** environmental finding, no code change. See `../A.6-daemon-runtime-integrity/A.6-CLOSE.md`.
 **A.5.1 disposition:** **closed not-a-bug** — root cause was unreachable cross-host Ollama (`192.168.86.15:11434`), not a code regression in A.4 or elsewhere. The 75-second `LLMToolError` is the OS TCP connect default firing on an unreachable IPv4 host. The daemon's runtime substrate is structurally confirmed correct (`docs/learnings/a4-runtime-integrity-confirmed.md`).
+**A.5.2 disposition:** **shipped** (commit 3419082) — canonical empty-args contract + `forge_list_staged` Pattern B migration + mechanical enforcement test + path-specific regression coverage. PR22 drift backlog (5 tools) deferred per phase boundary.
+**A.5.3.1 disposition:** **shipped** (commit d15c00e) — verb-only-overlap guard in `deterministic_narrow` Rule 3. Smoke Test 3 codified in both Flame-reachable and Flame-unreachable scenarios; chain-step integration test asserts `tool_selection_ambiguous` is the user-facing recovery path. First entry of `docs/learnings/2026-05-06-narrowing-vocabulary.md` written.
 
 ---
 
@@ -55,10 +57,10 @@ Test 1 / Test 5 codification: recommended to land regardless — they verify "pu
 
 ## Resume sequence
 
-1. **A.5.2** — investigate + land forced-tool schema fix; codify Tests 0 + 2.
-2. **A.5.3.1** — investigate + land "list projects" semantic-mismatch fix; write vocabulary learnings note (first entry); codify Test 3.
-3. **Hold** — A.5.3.2 (over-eager collapse) and Test 4 codification + final smoke pass remain blocked on LLM reachability.
-4. When LLM reachability returns: A.5.3.2 instrumentation + diagnosis + fix; Test 4 codification; final smoke pass; A.5 close.
+1. ~~**A.5.2** — investigate + land forced-tool schema fix; codify Tests 0 + 2.~~ **SHIPPED 2026-05-06** (commit 3419082).
+2. ~~**A.5.3.1** — investigate + land "list projects" semantic-mismatch fix; write vocabulary learnings note (first entry); codify Test 3.~~ **SHIPPED 2026-05-06** (commit d15c00e).
+3. **A.5.3.2** — UNBLOCKED. LLM reachability returned (localhost Ollama wired in `/etc/forge-bridge/forge-bridge.env`). Build instrumentation (small wrapper around `complete_with_tools` capturing narrower's choice vs LLM's choice on the same prompt + candidate list), diagnose over-eager PR20 collapse, land fix, codify Test 4, append second entry to `docs/learnings/2026-05-06-narrowing-vocabulary.md`.
+4. **Final smoke pass** (Tests 0–5) before A.5 close.
 
 ---
 
