@@ -98,10 +98,12 @@ For each captured prompt, the comparison instrument records:
 
 ### Divergence classification — required output shape
 
-Every record carries exactly one of four values. This is a **required
-output shape**, not a derived analytic — categorical analyzability has
-to be in the corpus from the first sample, not reconstructed later from
-optional fields:
+Every record carries exactly one classification value. This is a
+**required output shape**, not a derived analytic — categorical
+analyzability has to be in the corpus from the first sample, not
+reconstructed later from optional fields. The four operational classes
+are the analysis targets; a fifth `AMBIGUOUS` bucket exists as honest
+acknowledgment that not every record fits cleanly:
 
 | Value | Meaning | Operational signal |
 |-------|---------|--------------------|
@@ -109,6 +111,16 @@ optional fields:
 | `SAME_TOOL` | Narrower's collapsed tool == LLM's selected tool | confident determinism is correct in this case; PR20 is doing its job. |
 | `DIFFERENT_TOOL` | Both pick a tool, but different ones | the canonical hijacking case. The asymmetry below is what makes this expensive. |
 | `MULTI_TOOL` | LLM emits a multi-tool plan; narrower (if it collapsed) chose at most one | over-eager collapse case. Multi-intent prompts being narrowed into single-step execution. |
+| `AMBIGUOUS` | None of the above can be cleanly determined: malformed LLM response, partial-overlap multi-tool sets the four buckets don't cover, comparator timeout mid-decision, or any case where forcing a fit would produce noise | Honest unclassifiable. Forced fit corrupts analysis. The bucket exists so we don't shoehorn — see `A.5.3.2-INSTRUMENT-CONTRACT.md` §5. |
+
+The four operational classes (`LLM_DECLINED` / `SAME_TOOL` /
+`DIFFERENT_TOOL` / `MULTI_TOOL`) are what we ANALYZE — they answer the
+"is the narrower diverging from the planner?" question. `AMBIGUOUS` is
+what we DO with records that resist categorical analysis; treating it
+as a first-class output prevents two failure modes: (1) corruption of
+the four operational counts by forced-fit records; (2) loss of
+unclassifiable records from the corpus altogether (which would skew
+the visible distribution).
 
 The instrument must surface this field per record. Aggregate analysis
 of corpus categories (e.g., "what prompt-family X looks like by
