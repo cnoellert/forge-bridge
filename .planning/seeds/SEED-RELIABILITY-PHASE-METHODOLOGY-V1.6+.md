@@ -21,7 +21,7 @@ The patterns split into two categories that protect against different failure mo
 | Category | Protects against | Sample size |
 |----------|-------------------|-------------|
 | **Procedural mechanics** — what to do | Doing reliability work in a sequence that compounds errors | 3 |
-| **Reliability character** — how to behave when doing it gets hard | Abandoning the procedure under pressure or emotional momentum | 1 |
+| **Reliability character** — how to behave when doing it gets hard | Abandoning the procedure under pressure (2.1) or shipping a contract that looks sound but rots under contributor pressure (2.2) | 2 (each at sample-size 1; categorically distinct) |
 
 These are intentionally separate. A team can know the procedure and still fail to apply it under stress. A team can have the right instincts and still produce shallow work without the procedure. Both are needed; neither subsumes the other.
 
@@ -65,7 +65,7 @@ Three observations, each captured during A.6, each independent of the others.
 
 ## Category 2 — Reliability character
 
-One observation, captured during A.6 and worth distinguishing from the procedural three.
+Two observations, captured during A.6 and the A.5.3.2 contract landing, both worth distinguishing from the procedural three.
 
 ### 2.1 Discipline vindicated before evidence existed
 
@@ -83,6 +83,28 @@ The procedure was vindicated three steps later, when Step 3's environmental prob
 **The protective value was structural, not procedural.** The spec did not just describe what to do; it removed the option of doing something else under pressure. That removal is what character looks like as code.
 
 **Forward rule.** Reliability phase specs should explicitly remove patching authority during diagnostic phases — not as guidance but as a hard boundary. The boundary protects against the team's own future emotional state, not against incompetence. A team that knows the procedure and respects it in calm conditions will still default to "just look there" when the suspect is obvious. The spec must be the thing that says no.
+
+### 2.2 Interlock vs. coexist — the durability check for contracts
+
+**What it means.** When reviewing an architectural contract (a phase spec, an instrument contract, an API surface boundary), check whether the rules **interlock** — each rule reinforcing others such that removing any single one weakens the protection that others depend on — or merely **coexist** — each rule standing alone, removable in isolation without obviously breaking the others.
+
+Interlocking is the **durability property** of a contract. Coexistence is what makes contracts that "look sound" but corrode under contributor pressure: any one rule can be relaxed in isolation without obviously breaking the others, so each relaxation looks locally defensible until the whole structure is gone.
+
+**Why this is character, not procedure.** Procedure tells you which rules to write. Character is what notices, during review, that a contract reads like a list rather than a structure — and pushes back to add the missing reinforcement. The procedural mechanic ("write down what's out of scope") is taught from a doc; the character observation ("but does this exclusion *defend* anything else, or does it stand alone?") has to be modeled and reinforced through worked examples.
+
+The character form of the rule: **a contract whose load-bearing protections do not interlock will eventually fail to the slow-drift failures it was supposed to prevent**, regardless of how thoroughly each individual rule is written. Contributor pressure is patient; an unmeshed structure rots one rule at a time.
+
+**Concrete instance (A.5.3.2 instrument contract, 2026-05-06).** The first redline pass of the A.5.3.2 instrument contract produced an exclusion list (§8.1–§8.8) that looked complete on its own. The redline pass that landed it added the structural invariants block (§2.2 I-1, I-2, I-3), the §8.9–§8.11 exclusions that mirror them, and the AMBIGUOUS bucket (§5) that pairs with the no-auto-synthesis rule (§8.9) — turning what had been eight independent exclusions into six interlocking pairs. The pre-redline contract would have rotted at the first contributor pressure to "merge classification into Layer 1 for convenience"; the post-redline contract makes that proposal visibly inconsistent with three other rules at once.
+
+The recognition pattern fired during contract review specifically because the redline reviewer asked "removing this rule, what else weakens?" and surfaced cases where the answer was "nothing visibly" — and treated those as gaps rather than as "this rule stands on its own merit."
+
+**Forward rule.** During architectural contract review, run the interlock check explicitly: for each load-bearing rule, name at least one other rule whose protection depends on it. If a rule cannot be paired with another rule it reinforces, treat that as a flag — either the rule is decorative (consider removing) or the contract is missing the reinforcement that would make it durable.
+
+This is not a requirement that every rule interlock with every other. Some rules legitimately cover concerns nothing else touches; tactical contracts (one-off, single-PR) need not interlock at all. The forward rule applies to **load-bearing protections in contracts that have to survive long-term contributor turnover** — exactly the contracts where slow-drift failure is the dominant risk.
+
+**Why this is sample-size 1.** This recognition pattern was named explicitly during one contract landing. The pattern was likely operating implicitly across earlier reliability work (the Phase A truthful-chat contract may have benefited from similar interlock — worth checking retrospectively), but it had not been articulated as the durability check it is. Promotion to formal methodology requires at least one more contract review where the interlock check surfaces a genuine gap that pure-procedure review would have missed.
+
+**Cross-reference.** `docs/learnings/2026-05-06-interlocking-architecture.md` — the A.5.3.2 contract's six interlocking pairs as a worked example.
 
 ---
 
@@ -118,4 +140,5 @@ Until those conditions hold, this seed is the durable form. It can be referenced
 - `.planning/phases/A.6-daemon-runtime-integrity/STEP-3-FINDINGS.md` — concrete instance of pattern 1.2 (bisect causal verification).
 - `.planning/phases/A.6-daemon-runtime-integrity/A.6-CLOSE.md` — synthesis across patterns 1.1–1.3.
 - `.planning/phases/A.5-chain-execution-reliability-audit/PHASE-A.5-SPEC.md` and `A.5.1-ELEVATE.md` — concrete instance of character observation 2.1 (mandatory hard-elevate, removal of patching authority during diagnosis).
+- `.planning/phases/A.5-chain-execution-reliability-audit/A.5.3.2-INSTRUMENT-CONTRACT.md` and `docs/learnings/2026-05-06-interlocking-architecture.md` — concrete instance of character observation 2.2 (interlock vs. coexist; six interlocking pairs as worked example).
 - `docs/learnings/2026-05-06-phase-transition.md` — project-level framing of the operational-adulthood transition that surfaced these patterns.
