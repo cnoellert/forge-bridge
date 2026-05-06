@@ -178,7 +178,11 @@ def register_console_resources(
         ),
         annotations={"readOnlyHint": True, "idempotentHint": True},
     )
-    async def forge_list_staged(params: ListStagedInput) -> str:
+    async def forge_list_staged(params: Optional[ListStagedInput] = None) -> str:
+        # PR22 Pattern B (see forge_bridge/mcp/tools.py module docstring + docs/TOOL_AUTHORING.md):
+        # all fields in ListStagedInput are optional — invoking with `{}` is the
+        # canonical "list everything with default pagination" call. _list_staged_impl
+        # handles params is None.
         return await _list_staged_impl(params, console_read_api)
 
     @mcp.tool(

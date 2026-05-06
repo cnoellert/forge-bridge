@@ -12,6 +12,66 @@ Design principles:
   - Human-readable JSON output — the LLM reads this
   - Errors are returned as JSON with an "error" key, not raised
     (MCP tools should always return something, not crash)
+
+
+─────────────────────────────────────────────────────────────────────────
+  Canonical Empty-Arguments Contract — PR22 (binding for all new tools)
+─────────────────────────────────────────────────────────────────────────
+
+Every tool registered via mcp.tool() must adopt EXACTLY ONE of three
+canonical handler-signature patterns. The choice is determined by what
+the tool's input model genuinely requires; it is not stylistic.
+
+The contract exists because PR20 deterministic forced execution invokes
+the tool with ``arguments={}`` whenever the message-narrower collapses
+to a single survivor. If the handler signature requires ``params`` (no
+default), Pydantic v2 surfaces ``Field required [type=missing]`` and the
+forced-call path fails loudly instead of giving the body a chance to
+return a graceful structured response. The contract closes that gap.
+
+  Pattern A — zero args
+      async def f() -> str
+
+      Use when the tool has no parameters at all. The MCP Arguments
+      schema is empty; ``{}`` is accepted trivially.
+      Examples: ``ping``, ``list_projects``, ``list_roles``,
+                ``forge_staged_pending_read``.
+
+  Pattern B — defaultable params
+      async def f(params: Optional[<Model>] = None) -> str
+
+      Use when ALL fields in <Model> are optional with sensible
+      defaults (or the tool can produce a useful result with no input).
+      The body MUST handle ``params is None`` — either by treating it
+      as the default-everything case (e.g. ``params = <Model>()``) or
+      by returning a structured ``_err()`` envelope naming the missing
+      input. The body MUST NOT raise on None.
+      Examples: ``list_shots``, ``list_versions``.
+
+  Pattern C — required params
+      async def f(params: <Model>) -> str
+
+      Use ONLY when <Model> has at least one required field
+      (``Field(..., ...)``). Pydantic correctly rejects ``{}`` because
+      the caller is genuinely missing required input — that IS the
+      contract: the schema is doing its job.
+      Examples: ``get_shot``, ``update_shot_status``,
+                ``forge_approve_staged``, ``forge_reject_staged``.
+
+Anti-pattern (DO NOT introduce): ``async def f(params: <Model>) -> str``
+where <Model> has all-optional fields. This silently produces the
+"forced-call sends ``{}`` → Pydantic rejects ``params``" failure mode
+that PR22 closed. If your input model has all-optional fields, the
+correct pattern is B, not C.
+
+The contract is enforced mechanically in tests/ — walking the FastMCP
+registry, inspecting each tool's input schema, asserting that
+``{}`` invocation matches the expected behavior given the schema. New
+non-compliant tools fail CI at registration time, not at runtime.
+
+See ``docs/TOOL_AUTHORING.md`` for the durable architectural reference
+including rationale, canonical examples, and the migration path for
+existing tools whose input shape has drifted out of compliance.
 """
 
 from __future__ import annotations
@@ -89,8 +149,22 @@ class RejectStagedInput(BaseModel):
 # registration site without passing state through module globals.
 
 
-async def _list_staged_impl(params: "ListStagedInput", console_read_api) -> str:
-    """List staged operations with optional status/project_id filter + pagination."""
+async def _list_staged_impl(
+    params: Optional["ListStagedInput"], console_read_api,
+) -> str:
+    """List staged operations with optional status/project_id filter + pagination.
+
+    PR22 Pattern B (see module docstring + docs/TOOL_AUTHORING.md): the registered
+    tool ``forge_list_staged`` declares ``params: Optional[ListStagedInput] = None``
+    so the FastMCP Arguments schema accepts ``{}`` (the shape PR20 forced execution
+    and ``/api/v1/exec`` deterministic engine both send when they collapse to a
+    single tool with no extracted parameters). When ``params is None`` here, the
+    canonical interpretation is "list everything with default pagination" —
+    ``ListStagedInput()`` materializes the all-defaults case, identical to what
+    Pydantic would produce for ``{"params": {}}``.
+    """
+    if params is None:
+        params = ListStagedInput()
     if params.status is not None and params.status not in _STAGED_STATUSES:
         return json.dumps({
             "error": {
