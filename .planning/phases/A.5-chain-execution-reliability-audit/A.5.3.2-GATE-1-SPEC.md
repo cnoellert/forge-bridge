@@ -21,8 +21,7 @@ in the contract; Gate 1 is the first of the four phased landings.
 
 ## 0. Crystallizing sentence (verbatim — load-bearing)
 
-> **Capture is emitted after arbitration decisions are finalized and
-> must not structurally participate in the arbitration pipeline.**
+> **Capture is emitted after arbitration decisions are finalized and must not structurally participate in the arbitration pipeline.**
 
 This sentence lands verbatim in two places:
 
@@ -231,8 +230,7 @@ Both sites are covered by the regression test plan in §7.
 
 ## 5. Capture invocation contract
 
-> **Capture is emitted after arbitration decisions are finalized and
-> must not structurally participate in the arbitration pipeline.**
+> **Capture is emitted after arbitration decisions are finalized and must not structurally participate in the arbitration pipeline.**
 
 ### 5.1 The visual-asymmetry pattern (binding)
 
