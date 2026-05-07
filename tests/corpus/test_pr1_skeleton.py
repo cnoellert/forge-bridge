@@ -172,7 +172,7 @@ def _valid_record() -> dict:
         },
         "narrower": {
             "decision": ["forge_list_staged"],
-            "pr20_fired": True,
+            "pr20_condition_met": True,
             "collapse_occurred": True,
             "ambiguity_state": "single_survivor",
             "latency_ms": 0.42,
@@ -301,16 +301,16 @@ def test_validate_rejects_empty_identity_hash():
         validate_capture_record(record)
 
 
-def test_validate_rejects_non_bool_pr20_fired():
-    """pr20_fired must be a strict bool — not a truthy int."""
+def test_validate_rejects_non_bool_pr20_condition_met():
+    """pr20_condition_met must be a strict bool — not a truthy int."""
     from forge_bridge.corpus import (
         SchemaValidationError,
         validate_capture_record,
     )
 
     record = _valid_record()
-    record["narrower"]["pr20_fired"] = 1  # truthy but not bool
-    with pytest.raises(SchemaValidationError, match="pr20_fired"):
+    record["narrower"]["pr20_condition_met"] = 1  # truthy but not bool
+    with pytest.raises(SchemaValidationError, match="pr20_condition_met"):
         validate_capture_record(record)
 
 
@@ -323,8 +323,8 @@ def test_validate_rejects_non_bool_pr20_fired():
 # ``tests/corpus/test_pr3_*.py``.
 
 
-# ── Discipline test: schema constraint on pr20_fired bool ──────────────────
+# ── Discipline test: schema constraint on pr20_condition_met bool ─────────
 #
 # Strict bool checking guards against a class of subtle bugs where
 # truthy/falsy ints would silently pass. This pairs with the contract
-# §3 schema definition (pr20_fired: bool).
+# §3 schema definition (pr20_condition_met: bool).

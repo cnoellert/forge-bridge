@@ -95,7 +95,7 @@ _REQUIRED_IDENTITY_KEYS: frozenset[str] = frozenset({
 })
 
 _REQUIRED_NARROWER_KEYS: frozenset[str] = frozenset({
-    "decision", "pr20_fired", "collapse_occurred",
+    "decision", "pr20_condition_met", "collapse_occurred",
     "ambiguity_state", "latency_ms",
 })
 
@@ -223,8 +223,10 @@ def _validate_narrower(narrower: Any) -> None:
         raise SchemaValidationError(
             "narrower.decision must be a list (possibly empty)"
         )
-    if not isinstance(narrower["pr20_fired"], bool):
-        raise SchemaValidationError("narrower.pr20_fired must be a bool")
+    if not isinstance(narrower["pr20_condition_met"], bool):
+        raise SchemaValidationError(
+            "narrower.pr20_condition_met must be a bool"
+        )
     if not isinstance(narrower["collapse_occurred"], bool):
         raise SchemaValidationError(
             "narrower.collapse_occurred must be a bool"

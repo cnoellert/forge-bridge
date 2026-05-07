@@ -294,7 +294,7 @@ required field is a `schema_version` bump.
   },
   "narrower": {
     "decision": ["forge_list_staged"],
-    "pr20_fired": true,
+    "pr20_condition_met": true,
     "collapse_occurred": true,
     "ambiguity_state": "single_survivor",
     "latency_ms": 0.42

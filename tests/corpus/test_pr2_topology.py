@@ -311,7 +311,7 @@ def _minimal_record_with_topology(topology_block: dict) -> dict:
         },
         "narrower": {
             "decision": [],
-            "pr20_fired": False,
+            "pr20_condition_met": False,
             "collapse_occurred": False,
             "ambiguity_state": "zero_survivor",
             "latency_ms": 0.0,

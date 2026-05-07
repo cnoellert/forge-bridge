@@ -403,7 +403,7 @@ arbitration-shaped logic adjacent to the capture site.
   pass `registered_tools` (deployment identity) distinct from
   `candidate_set_post_reachability` (runtime topology) distinct
   from arbitration inputs (`candidate_set_post_pr14`,
-  `narrower_decision`, `pr20_fired`, `collapse_occurred`,
+  `narrower_decision`, `pr20_condition_met`, `collapse_occurred`,
   `ambiguity_state`). The orthogonal truth surfaces remain
   explicit call-site responsibilities — the chat handler holds
   the full registered tool set before any filtering, so it is the

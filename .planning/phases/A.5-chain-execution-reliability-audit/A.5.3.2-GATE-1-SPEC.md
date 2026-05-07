@@ -287,7 +287,7 @@ def emit_divergence_capture(
     candidate_set_post_reachability: list[Any],
     candidate_set_post_pr14: list[Any],
     narrower_decision: list[Any],
-    pr20_fired: bool,
+    pr20_condition_met: bool,
     collapse_occurred: bool,
     ambiguity_state: str,
     narrower_latency_ms: float,

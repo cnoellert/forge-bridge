@@ -23,6 +23,35 @@ this spec ships only the persistence layer.
 
 ---
 
+## Deviation note (added 2026-05-07 during PR 4 spec review pass)
+
+The schema field this spec calls `pr20_fired` was renamed
+`pr20_condition_met` in PR 4 — a v1 schema correction caught
+during integration review **before any production corpus existed**,
+so it lands as an in-place rename rather than a `SCHEMA_VERSION`
+bump. The renamed field describes *present observed truth*
+(the PR 20 branch condition is satisfied at the moment of capture)
+rather than *future path certainty* (the PR 20 path fired). Capture
+emits **before** the branch executes, so the original name was
+semantically inaccurate.
+
+The historical code blocks below (§5.1 builder signature, §5.2
+`emit_divergence_capture` signature, and the §5 orthogonal-
+truth-surfaces table) intentionally retain the original
+`pr20_fired` name as the pre-PR-4 record of what PR 3 shipped.
+The current binding name is `pr20_condition_met`. Any
+implementation, test, or reader of this spec MUST use
+`pr20_condition_met` — see `A.5.3.2-PR4-SPEC.md` §4.1
+("Field-derivation semantics") and §7 (step 0 of the
+implementation sequence) for the rename's binding rationale and
+the file-by-file scope.
+
+This deviation note is the routing redirect: future readers who
+encounter `pr20_fired` in this historical spec should follow it to
+the PR 4 spec without relitigating the rename.
+
+---
+
 ## 0. Crystallizing sentences (verbatim — load-bearing)
 
 Six sentences travel verbatim from this spec into the writer

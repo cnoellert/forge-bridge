@@ -67,7 +67,7 @@ def base_writer_args(**overrides: Any) -> dict[str, Any]:
             tool("forge_get_staged"),
         ],
         "narrower_decision": [tool("forge_list_staged")],
-        "pr20_fired": True,
+        "pr20_condition_met": True,
         "collapse_occurred": True,
         "ambiguity_state": "single_survivor",
         "narrower_latency_ms": 0.42,
