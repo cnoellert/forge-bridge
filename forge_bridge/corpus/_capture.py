@@ -1,6 +1,38 @@
 """forge_bridge.corpus._capture — Layer 1 divergence corpus capture.
 
-Capture is emitted after arbitration decisions are finalized and must not structurally participate in the arbitration pipeline.
+Capture is emitted after arbitration decisions are finalized and
+must not structurally participate in the arbitration pipeline.
+
+PR 3 carrier sentences (verbatim, load-bearing — see
+``A.5.3.2-PR3-SPEC.md`` §0):
+
+Phase-level architectural intent (from the framing):
+
+  Preserve Layer 1 truthfulness while introducing persistence.
+
+  Once persistence exists, future interpretation layers begin
+  inheriting authority from it automatically. That is why PR 3 is
+  dangerous: not because it writes data, but because it creates
+  institutional memory.
+
+Orthogonal truth surfaces — input-parameter discipline (§5):
+
+  The registered tool set is deployment identity, not runtime
+  topology. Candidate sets are topology-sensitive operational
+  subsets and are therefore insufficient inputs for
+  deployment-stable identity hashing.
+
+  The builder receives all three as explicit inputs. The builder
+  does not discover them.
+
+Atomic-append discipline — persistence-layer architectural
+property (§6.5):
+
+  Corpus existence implies at least one truthful persisted
+  capture.
+
+  The architecture should not introduce corruption windows larger
+  than the platform already imposes.
 
 This module implements the runtime probe (env-var-gated) and the
 test-fixture path that emits Layer 1 records per the A.5.3.2
@@ -12,24 +44,54 @@ instrument contract. The contract's structural invariants
   - I-3: this module is imported by daemon code paths but only
          performs disk writes — no LLM calls, no comparator logic.
 
+PR 3 makes three additional invariants operational:
+
+  - I-5 (append-only executable). The writer opens files only with
+        ``mode="a"``; no rewrite/mutation/update/merge/overwrite
+        paths exist. See ``A.5.3.2-PR3-SPEC.md`` §7.
+  - I-6 (failure-invisibility). Every persistence-failure mode is
+        caught and logged at WARNING; no exception ever propagates
+        from ``emit_divergence_capture``. Observation failure
+        cannot become arbitration failure. See spec §8.
+  - §6.5 (atomic-append at the line boundary). Each emission
+        performs exactly one ``file.write(...)`` call. Header +
+        first record are bundled into one call when creating a new
+        file. The writer never attempts partial-record recovery,
+        in-place repair, continuation writes, or seek-and-
+        reconstruct. If a write fails, the record is considered
+        lost. Recovery semantics belong outside Layer 1
+        persistence.
+
 See ``A.5.3.2-INSTRUMENT-CONTRACT.md`` §3 for the canonical record
 shape and ``A.5.3.2-GATE-1-SPEC.md`` §5 for the capture-invocation
 contract this module implements.
-
-PR 1 status: env-var gate implemented; ``emit_divergence_capture`` is
-a stub that raises NotImplementedError. Capture builder + writer land
-in PR 3.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
-from typing import Any
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable
+
+from forge_bridge.corpus._identity import (
+    daemon_git_sha,
+    narrower_version_hash,
+    registered_tools_snapshot_hash,
+)
+from forge_bridge.corpus._schema import (
+    SCHEMA_VERSION,
+    validate_capture_record,
+)
+from forge_bridge.corpus._topology import snapshot_topology
 
 logger = logging.getLogger(__name__)
 
 # Per A.5.3.2-GATE-1-SPEC.md §6.
 _ENV_VAR = "FORGE_BRIDGE_DIVERGENCE_CAPTURE"
+_CORPUS_DIR_ENV_VAR = "FORGE_BRIDGE_CORPUS_DIR"
 _TRUTHY = frozenset({"1", "true", "yes"})
 _FALSY = frozenset({"", "0", "false", "no"})
 
@@ -83,9 +145,176 @@ def divergence_capture_enabled() -> bool:
     return False
 
 
+# ── Builder ────────────────────────────────────────────────────────────────
+
+
+def _now_iso_ms() -> str:
+    """Current UTC time as ISO 8601 with millisecond precision and Z
+    suffix. Format example: ``"2026-05-07T14:32:11.123Z"``.
+
+    Per spec §12 decision 5: millisecond precision is sufficient for
+    arbitration timing analytics; sub-millisecond precision is not
+    operationally useful and would falsely suggest finer
+    measurement than the underlying narrower latency provides.
+    """
+    now = datetime.now(tz=timezone.utc)
+    iso = now.isoformat(timespec="milliseconds")
+    return iso.replace("+00:00", "Z")
+
+
+def _new_uuid() -> str:
+    """Fresh uuid4 as string. Indirection exists so tests can inject
+    deterministic uuids via ``_build_capture_record(new_uuid=...)``."""
+    return str(uuid.uuid4())
+
+
+def _tool_names(tools: list[Any]) -> list[str]:
+    """Extract tool names from a list of tool objects, dicts, or
+    strings. Used to convert candidate sets and narrower decision
+    lists into the schema's required shape (lists of tool name
+    strings) per contract §3.
+
+    Production callers pass FastMCP ``Tool`` objects (with ``.name``
+    attribute). Tests may pass raw strings or dicts; both are
+    handled.
+    """
+    names: list[str] = []
+    for t in tools:
+        if isinstance(t, str):
+            names.append(t)
+            continue
+        n = getattr(t, "name", None)
+        if n is None and isinstance(t, dict):
+            n = t.get("name")
+        names.append(str(n) if n is not None else "")
+    return names
+
+
+def _build_capture_record(
+    *,
+    prompt: str,
+    registered_tools: list[Any],
+    candidate_set_post_reachability: list[Any],
+    candidate_set_post_pr14: list[Any],
+    narrower_decision: list[Any],
+    pr20_fired: bool,
+    collapse_occurred: bool,
+    ambiguity_state: str,
+    narrower_latency_ms: float,
+    source: str,
+    now: Callable[[], str] | None = None,
+    new_uuid: Callable[[], str] | None = None,
+) -> dict:
+    """Build a Layer 1 record dict per
+    ``A.5.3.2-INSTRUMENT-CONTRACT.md`` §3. Pure function — no I/O,
+    no exceptions caught (any failure surfaces to the writer's
+    failure-invisibility wrapper).
+
+    ``registered_tools`` is a separate parameter from the candidate
+    sets per ``A.5.3.2-PR3-SPEC.md`` §5 (orthogonal-truth-surfaces
+    framing): registered tools fingerprint deployment identity;
+    candidate sets fingerprint runtime topology; arbitration
+    inputs/outputs fingerprint decision truth. Recombining them
+    would conflate identity drift with topology drift in the
+    resulting hash.
+
+    ``now`` and ``new_uuid`` are test-injection seams. Production
+    callers do not provide them (the defaults are ``_now_iso_ms``
+    and ``_new_uuid``). Tests pass deterministic substitutes when
+    full record-content assertions matter.
+
+    The builder is exposed for testing only; production code must
+    not import ``_build_capture_record`` directly. The leading
+    underscore is the binding contract.
+    """
+    _now = now or _now_iso_ms
+    _uuid = new_uuid or _new_uuid
+
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "capture_id": _uuid(),
+        "captured_at": _now(),
+        "source": source,
+        "prompt": prompt,
+        "candidate_set": {
+            "post_reachability": _tool_names(candidate_set_post_reachability),
+            "post_pr14_filter": _tool_names(candidate_set_post_pr14),
+        },
+        "topology": snapshot_topology(),
+        "identity": {
+            "narrower_version_hash": narrower_version_hash(),
+            "registered_tools_snapshot_hash": (
+                registered_tools_snapshot_hash(registered_tools)
+            ),
+            "daemon_git_sha": daemon_git_sha(),
+        },
+        "narrower": {
+            "decision": _tool_names(narrower_decision),
+            "pr20_fired": pr20_fired,
+            "collapse_occurred": collapse_occurred,
+            "ambiguity_state": ambiguity_state,
+            "latency_ms": narrower_latency_ms,
+        },
+    }
+
+
+# ── Writer ─────────────────────────────────────────────────────────────────
+
+
+def _resolve_corpus_dir() -> Path:
+    """Resolve the corpus directory path. ``FORGE_BRIDGE_CORPUS_DIR``
+    overrides; the default is ``~/.forge-bridge/corpus/`` (per
+    contract §7).
+
+    Per spec §6.1: the env-var override is the single test-isolation
+    surface. ``emit_divergence_capture`` does not take a path
+    argument because the helper signature stays fire-and-forget per
+    the framing's mechanical-dumbness constraint.
+    """
+    override = os.environ.get(_CORPUS_DIR_ENV_VAR, "").strip()
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".forge-bridge" / "corpus"
+
+
+def _make_header(captured_at: str) -> dict:
+    """Build the per-file header record. Format pinned by contract §7
+    + spec §6.3."""
+    return {
+        "_header": True,
+        "schema_version": SCHEMA_VERSION,
+        "created_at": captured_at,
+        "format": "forge-bridge-divergence-corpus-v1",
+    }
+
+
+def _serialize_line(record: dict) -> str:
+    """Serialize a record to a single JSONL line. Compact separators,
+    UTF-8 friendly (``ensure_ascii=False`` per spec §12 decision 6),
+    terminated by ``\\n``."""
+    return json.dumps(
+        record, ensure_ascii=False, separators=(",", ":"),
+    ) + "\n"
+
+
+def _prompt_prefix_for_log(prompt: Any) -> str:
+    """Truncated prompt prefix for WARNING messages.
+
+    Contract §8.4 privacy posture: never log the full prompt. First
+    32 characters max, ellipsis if truncated, empty string if the
+    input is not a string (which itself is a logged failure mode).
+    """
+    if not isinstance(prompt, str):
+        return ""
+    if len(prompt) <= 32:
+        return prompt
+    return prompt[:32] + "..."
+
+
 def emit_divergence_capture(
     *,
     prompt: str,
+    registered_tools: list[Any],
     candidate_set_post_reachability: list[Any],
     candidate_set_post_pr14: list[Any],
     narrower_decision: list[Any],
@@ -95,17 +324,100 @@ def emit_divergence_capture(
     narrower_latency_ms: float,
     source: str,
 ) -> None:
-    """Fire-and-forget Layer 1 capture. See module docstring for the
-    crystallizing sentence and architectural intent.
+    """Fire-and-forget Layer 1 capture. Returns ``None``.
 
-    PR 1 stub: raises NotImplementedError. The capture builder + writer
-    land in PR 3. Stub-as-error rather than stub-as-noop is intentional
-    — accidental integration before PR 3 fails loudly rather than
-    silently dropping records.
+    Per ``A.5.3.2-PR3-SPEC.md`` §5.2, every step inside this
+    function body is wrapped in a single ``try`` / ``except
+    Exception`` block. Any exception — schema validation,
+    filesystem error, encoding failure, lock contention, anything —
+    is caught, logged at WARNING with structured detail (call site,
+    failure mode, prompt prefix per contract §8.4 privacy posture),
+    and swallowed. The function returns ``None`` regardless.
+    Observation failure cannot become arbitration failure (I-6).
+
+    Per spec §6.5, the file write is a single ``file.write(...)``
+    call: header + first record bundled when creating a new file,
+    record alone when appending to an existing file. The writer
+    never attempts partial-record recovery, in-place repair,
+    continuation writes, or seek-and-reconstruct. If a write fails,
+    the record is considered lost.
+
+    Per spec §5 (orthogonal truth surfaces), ``registered_tools``
+    is a separate parameter from the candidate sets — it
+    fingerprints deployment identity, distinct from runtime
+    topology (candidate_set_post_reachability) and arbitration
+    decision (narrower_decision et al). The parameters are
+    deliberately separate because they fingerprint orthogonal
+    truths. This is not redundancy. It is semantic boundary
+    preservation.
     """
-    raise NotImplementedError(
-        "emit_divergence_capture is a PR 1 skeleton stub; the capture "
-        "builder + writer land in PR 3. Do not integrate into call "
-        "sites yet — the two arbitration call sites are added in PR 4 "
-        "(chat handler) and PR 5 (chain step)."
-    )
+    try:
+        record = _build_capture_record(
+            prompt=prompt,
+            registered_tools=registered_tools,
+            candidate_set_post_reachability=candidate_set_post_reachability,
+            candidate_set_post_pr14=candidate_set_post_pr14,
+            narrower_decision=narrower_decision,
+            pr20_fired=pr20_fired,
+            collapse_occurred=collapse_occurred,
+            ambiguity_state=ambiguity_state,
+            narrower_latency_ms=narrower_latency_ms,
+            source=source,
+        )
+        validate_capture_record(record)
+
+        corpus_dir = _resolve_corpus_dir()
+        corpus_dir.mkdir(parents=True, exist_ok=True)
+
+        # File-per-UTC-day per contract §7. Date is taken from the
+        # record's ``captured_at`` so multiple records emitted in the
+        # same instant land in the same file deterministically.
+        date_part = record["captured_at"][:10]  # "YYYY-MM-DD"
+        path = corpus_dir / f"capture-{date_part}.jsonl"
+
+        # §6.5: bundle header + first record into a single
+        # file.write(...) call when the file is new or empty. The
+        # bundling preserves the carrier invariant "Corpus existence
+        # implies at least one truthful persisted capture." A
+        # write(header) followed by write(record) two-step would
+        # create the transient impossible state the bundling rule
+        # exists to prevent.
+        needs_header = not (path.exists() and path.stat().st_size > 0)
+
+        record_line = _serialize_line(record)
+        if needs_header:
+            header_line = _serialize_line(_make_header(record["captured_at"]))
+            payload = header_line + record_line
+        else:
+            payload = record_line
+
+        # §6.5: exactly one file.write(...) per emission. The single
+        # write is the atomic-append discipline made operational. No
+        # split into JSON-emission + newline-emission. No split into
+        # header-write + record-write. No buffering beyond what the
+        # OS provides. Open → write → flush → close, every emission.
+        with path.open("a", encoding="utf-8") as f:
+            f.write(payload)
+            f.flush()
+
+    except Exception as exc:  # noqa: BLE001 — I-6 failure invisibility
+        # I-6: observation failure cannot become arbitration failure.
+        # Every failure mode (disk full, permission, partial write,
+        # serialization, malformed runtime state, etc.) is caught
+        # here and logged at WARNING. Nothing escapes.
+        try:
+            source_marker = source if isinstance(source, str) else "<invalid>"
+            logger.warning(
+                "capture write failed: source=%s, error=%s: %s, prompt_prefix=%r",
+                source_marker,
+                type(exc).__name__,
+                exc,
+                _prompt_prefix_for_log(prompt),
+            )
+        except Exception:  # noqa: BLE001 — even logging must not propagate
+            # If even the WARNING log fails (e.g., logging subsystem
+            # broken), we silently swallow. I-6 is binding: nothing
+            # escapes from this function.
+            pass
+
+    return None

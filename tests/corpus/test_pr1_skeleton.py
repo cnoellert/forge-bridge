@@ -22,7 +22,6 @@ own test files alongside their implementations.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 import pytest
 
@@ -122,26 +121,15 @@ def test_divergence_capture_enabled_distinct_invalid_values_each_warn(
         assert "perhaps" in warnings[0].getMessage()
 
 
-# ── emit_divergence_capture stub ───────────────────────────────────────────
-
-
-def test_emit_divergence_capture_stub_raises():
-    """Stub-as-error rather than stub-as-noop is intentional —
-    accidental integration before PR 3 surfaces immediately."""
-    from forge_bridge.corpus import emit_divergence_capture
-
-    with pytest.raises(NotImplementedError, match="PR 1 skeleton stub"):
-        emit_divergence_capture(
-            prompt="x",
-            candidate_set_post_reachability=[],
-            candidate_set_post_pr14=[],
-            narrower_decision=[],
-            pr20_fired=False,
-            collapse_occurred=False,
-            ambiguity_state="single_survivor",
-            narrower_latency_ms=0.0,
-            source="fixture",
-        )
+# ── emit_divergence_capture / read_capture_file stubs removed in PR 3 ──────
+#
+# ``test_emit_divergence_capture_stub_raises`` and
+# ``test_reader_stub_raises`` were removed when PR 3 replaced the
+# stubs with real implementations. The real behavior is verified by
+# ``tests/corpus/test_pr3_writer.py``,
+# ``tests/corpus/test_pr3_reader.py``,
+# ``tests/corpus/test_pr3_round_trip.py``, and the discipline grep
+# in ``tests/corpus/test_pr3_discipline.py``.
 
 
 # ── validate_capture_record ────────────────────────────────────────────────
@@ -326,22 +314,13 @@ def test_validate_rejects_non_bool_pr20_fired():
         validate_capture_record(record)
 
 
-# ── PR 3 stubs still raise (PR 2 stubs are now implemented) ────────────────
-
-
-def test_reader_stub_raises():
-    """read_capture_file lands in PR 3 alongside the writer."""
-    from forge_bridge.corpus import read_capture_file
-
-    with pytest.raises(NotImplementedError, match="PR 3"):
-        list(read_capture_file(Path("/nonexistent")))
-
-
 # Note: ``test_topology_stub_raises`` and ``test_identity_stubs_raise``
 # were removed in PR 2 because their underlying stubs are now
-# implemented. PR 2's actual behavior is verified by
-# ``tests/corpus/test_pr2_topology.py`` and
-# ``tests/corpus/test_pr2_identity.py``.
+# implemented. ``test_emit_divergence_capture_stub_raises`` and
+# ``test_reader_stub_raises`` were removed in PR 3 (the writer and
+# reader are now real implementations). The real behavior is
+# verified by ``tests/corpus/test_pr2_*.py`` and
+# ``tests/corpus/test_pr3_*.py``.
 
 
 # ── Discipline test: schema constraint on pr20_fired bool ──────────────────

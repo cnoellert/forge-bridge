@@ -33,6 +33,26 @@ class SchemaValidationError(ValueError):
     """Raised when a record does not conform to the Layer 1 schema."""
 
 
+class SchemaVersionMismatch(ValueError):
+    """Raised by the reader when a Layer 1 file's header records a
+    ``schema_version`` that does not match this reader's expected
+    ``SCHEMA_VERSION``.
+
+    Per ``A.5.3.2-INSTRUMENT-CONTRACT.md`` §9 the remediation message
+    is ``"schema_version=N records require reader version M; upgrade
+    or filter."`` — the reader formats N (record's version) and M
+    (this reader's version) into the message at raise time. Hard
+    error rather than skip-and-warn because the entire file's record
+    shape is determined by ``schema_version`` — once it diverges,
+    per-line skip is meaningless.
+
+    Schema migrations write new files (per I-1); old files keep
+    their original ``schema_version``. Encountering this exception
+    means a consumer needs to upgrade its reader code or filter the
+    file out of the consumed set, not that the file is corrupted.
+    """
+
+
 # Required top-level keys for a v1 capture record (per contract §3).
 _REQUIRED_TOP_KEYS: frozenset[str] = frozenset({
     "schema_version",
