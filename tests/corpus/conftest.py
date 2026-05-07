@@ -29,3 +29,43 @@ def clean_warning_state():
     # Post-yield clear keeps subsequent tests clean even if the test
     # body mutates the set further than expected.
     _warned_invalid_values.clear()
+
+
+@pytest.fixture
+def clean_identity_caches():
+    """Reset lazy-cached identity hashes so the test sees a cold cache.
+
+    Tests that exercise ``narrower_version_hash`` / ``daemon_git_sha``
+    first-call vs. cached-call behavior must request this fixture
+    explicitly. Without it, the first PR 2 test to run pre-warms the
+    caches and subsequent first-call assertions become order-dependent.
+
+    Same explicit-request pattern as ``clean_warning_state``; same
+    rationale (the dependency is visible at the test signature).
+
+    See the comment block on ``_narrower_hash_cache`` /
+    ``_daemon_git_sha_cache`` in ``forge_bridge/corpus/_identity.py``
+    for the design rationale.
+    """
+    from forge_bridge.corpus._identity import _reset_caches_for_tests
+
+    _reset_caches_for_tests()
+    yield
+    _reset_caches_for_tests()
+
+
+@pytest.fixture
+def clean_flame_reachability_cache():
+    """Clear the ``_tool_filter._cache`` so topology snapshots see a
+    cold cache.
+
+    Tests that exercise ``snapshot_topology`` against specific cache
+    states (warm with reachable=True, warm with reachable=False, cold)
+    must request this fixture so they're not contaminated by prior
+    tests' probes.
+    """
+    from forge_bridge.console._tool_filter import _cache as _flame_cache
+
+    _flame_cache.clear()
+    yield
+    _flame_cache.clear()

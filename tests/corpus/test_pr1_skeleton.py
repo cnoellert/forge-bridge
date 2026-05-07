@@ -326,31 +326,7 @@ def test_validate_rejects_non_bool_pr20_fired():
         validate_capture_record(record)
 
 
-# ── PR 2/PR 3 stubs raise as documented ────────────────────────────────────
-
-
-def test_topology_stub_raises():
-    """snapshot_topology lands in PR 2."""
-    from forge_bridge.corpus._topology import snapshot_topology
-
-    with pytest.raises(NotImplementedError, match="PR 2"):
-        snapshot_topology()
-
-
-def test_identity_stubs_raise():
-    """All three identity helpers land in PR 2."""
-    from forge_bridge.corpus._identity import (
-        daemon_git_sha,
-        narrower_version_hash,
-        registered_tools_snapshot_hash,
-    )
-
-    with pytest.raises(NotImplementedError, match="PR 2"):
-        narrower_version_hash()
-    with pytest.raises(NotImplementedError, match="PR 2"):
-        registered_tools_snapshot_hash([])
-    with pytest.raises(NotImplementedError, match="PR 2"):
-        daemon_git_sha()
+# ── PR 3 stubs still raise (PR 2 stubs are now implemented) ────────────────
 
 
 def test_reader_stub_raises():
@@ -359,6 +335,13 @@ def test_reader_stub_raises():
 
     with pytest.raises(NotImplementedError, match="PR 3"):
         list(read_capture_file(Path("/nonexistent")))
+
+
+# Note: ``test_topology_stub_raises`` and ``test_identity_stubs_raise``
+# were removed in PR 2 because their underlying stubs are now
+# implemented. PR 2's actual behavior is verified by
+# ``tests/corpus/test_pr2_topology.py`` and
+# ``tests/corpus/test_pr2_identity.py``.
 
 
 # ── Discipline test: schema constraint on pr20_fired bool ──────────────────
