@@ -64,6 +64,15 @@ def snapshot_topology() -> dict[str, Any]:
     Reads existing state. Never probes. Never initializes. Never
     spawns. Idempotent: repeated calls are operationally
     indistinguishable except for ``probed_at`` freshness.
+
+    The reachability values reflect the calling context's view of
+    backends. In-daemon invocations show the daemon's own
+    reachability cache (warm — reflects recent probes).
+    Out-of-daemon invocations (e.g., one-shot scripts) show
+    cold-cache state with ``reachable=false`` across all backends,
+    since no probe has occurred. Both forms are truthful Layer 1
+    data; consumers reading the corpus must not interpret
+    cold-cache states as evidence of backend outage.
     """
     # NOTE: Direct read of the private _cache attribute. We deliberately
     # do NOT call _get_backend_reachability(): that function probes on
