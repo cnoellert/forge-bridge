@@ -1,23 +1,38 @@
-"""PR 3 — discipline grep test (I-4 / spec §10).
+"""Discipline grep — bounded participation-creep boundary.
 
-Verifies the load-bearing structural asymmetry that defines PR 3:
-``forge_bridge.corpus`` is a real, callable package after PR 3 —
-``emit_divergence_capture`` and ``read_capture_file`` are real
-implementations — but no production code path imports it. The two
-arbitration call sites land in PR 4 (chat handler) and PR 5 (chain
-step). Until then, the writer is real but uncalled.
+Originally landed in PR 3 as a *literal* "zero production imports of
+``forge_bridge.corpus``" assertion. PR 4 transitions the test to
+**allowlist mode**: each named integration call site is added
+explicitly. Files not on the allowlist must still produce zero
+imports.
 
-Same property held in PR 1 and PR 2 (verified at commit time in
-each PR's commit message). PR 3 promotes the discipline check from
-commit-time prose to executable test, because the asymmetry is more
-fragile after the writer becomes real — the temptation to "just
-wire up the chat handler quickly while we're here" is highest at
-the moment the writer first works.
+The asymmetry doesn't disappear — it gets bounded. Per
+``A.5.3.2-PR4-FRAMING.md`` §2:
 
-When this test starts failing on a future PR, that PR is either
-PR 4/5 (in which case it should explicitly allowlist the
-integration site, see spec §10.3) or it is a discipline regression
-(in which case CI rejects it).
+  *"`handlers.py` is now an intentionally permitted observational
+  emission surface. That truthful acknowledgment is healthier than
+  pretending the asymmetry still literally means 'zero imports'.
+  Bounded asymmetry, named explicitly, is more durable than literal
+  asymmetry maintained by ignoring real integration."*
+
+Allowlist contract (PR 4 framing §2):
+
+- The test continues to walk the production tree.
+- Files matching ``_ALLOWLIST`` are permitted to import
+  ``forge_bridge.corpus``.
+- Files not on ``_ALLOWLIST`` still produce zero imports.
+- ``_ALLOWLIST`` growth is reviewable at the spec layer. Each
+  future PR introducing a new corpus call site amends
+  ``_ALLOWLIST`` by exactly one named entry, with spec amendment.
+
+Other paths to make this test pass are rejected at the spec layer
+(PR 4 framing §2):
+
+- **Mocking the import out** — erodes mechanical visibility.
+- **Removing the test** — bounded asymmetry is what protects
+  against participation creep at unrelated call sites.
+- **Inverting the test** — positive-only assertion on allowlisted
+  files removes the negative across the rest of the tree.
 """
 from __future__ import annotations
 
@@ -31,16 +46,37 @@ _FORBIDDEN_NEEDLES: tuple[str, ...] = (
     "import forge_bridge.corpus",
 )
 
+# Files explicitly permitted to import forge_bridge.corpus. Each
+# entry is one named call-site integration.
+#
+# PR 4 adds the chat-handler integration. PR 5 will add
+# ``console/_step.py`` (chain-step integration). Growth is
+# reviewable at the spec layer per A.5.3.2-PR4-FRAMING.md §2.
+#
+# Paths are relative to forge_bridge/ (the package root). They
+# match the rglob form below — POSIX-style separators.
+_ALLOWLIST: tuple[str, ...] = (
+    "console/handlers.py",
+)
+
 
 def test_zero_production_imports_outside_corpus():
     """Walk the production package tree (excluding ``corpus/``
-    itself) and assert no source file imports
-    ``forge_bridge.corpus`` in any form.
+    itself and ``_ALLOWLIST`` entries) and assert no source file
+    imports ``forge_bridge.corpus`` in any form.
 
-    Test files (under ``tests/``) and the corpus package itself are
-    deliberately excluded — the discipline applies to the
+    Test files (under ``tests/``) and the corpus package itself
+    are deliberately excluded — the discipline applies to the
     *production code path*, which means code that runs in the
     daemon under normal operation.
+
+    Allowlisted files are permitted to import the corpus emission
+    path (``divergence_capture_enabled`` / ``emit_divergence_capture``
+    / ``_capture``). Allowlist entries do not relax the
+    participation-creep boundary — they are still subject to the
+    narrowing-subsystem grep test in
+    ``test_pr4_participation_creep.py``, which forbids importing
+    any corpus module *other than* the emission path.
     """
     package_root = Path(forge_bridge.__file__).parent
     corpus_subtree = package_root / "corpus"
@@ -53,7 +89,13 @@ def test_zero_production_imports_outside_corpus():
             py.relative_to(corpus_subtree)
             continue
         except ValueError:
-            pass  # py is outside corpus_subtree — keep checking
+            pass
+
+        rel = py.relative_to(package_root).as_posix()
+
+        # Skip allowlisted integration sites.
+        if rel in _ALLOWLIST:
+            continue
 
         try:
             text = py.read_text(encoding="utf-8")
@@ -63,21 +105,31 @@ def test_zero_production_imports_outside_corpus():
         for lineno, line in enumerate(text.splitlines(), start=1):
             stripped = line.strip()
             # Skip pure-comment lines so doc references in comments
-            # don't trip the discipline check (this matches §10.2:
-            # "Documentation references are encouraged. The test
-            # matches the literal from/import syntax only.").
+            # don't trip the discipline check (matches §10.2 of the
+            # PR 3 spec: "Documentation references are encouraged.
+            # The test matches the literal from/import syntax only.").
             if stripped.startswith("#"):
                 continue
             for needle in _FORBIDDEN_NEEDLES:
                 if needle in line:
-                    rel = py.relative_to(package_root)
-                    offenders.append((str(rel), lineno, stripped))
+                    offenders.append((rel, lineno, stripped))
                     break
 
     assert offenders == [], (
-        "PR 3 discipline violated: forge_bridge.corpus is imported "
-        "by production code path(s). Call-site integration belongs "
-        "in PR 4 (chat handler) or PR 5 (chain step), not PR 3.\n"
+        "Discipline violated: forge_bridge.corpus is imported by "
+        "production code path(s) NOT on the allowlist (currently: "
+        f"{list(_ALLOWLIST)}).\n"
+        "\n"
+        "Either:\n"
+        "  (a) the import is genuine integration — add the file to "
+        "_ALLOWLIST with spec amendment, or\n"
+        "  (b) the import was accidental — remove it.\n"
+        "\n"
+        "The bounded asymmetry is what protects against "
+        "participation creep at unrelated call sites; mocking, "
+        "removing, or inverting this test is rejected at the spec "
+        "layer per A.5.3.2-PR4-FRAMING.md §2.\n"
+        "\n"
         "Offenders:\n"
         + "\n".join(f"  {p}:{n}: {l}" for p, n, l in offenders)
     )
