@@ -432,8 +432,9 @@ def test_writer_bundles_header_with_first_record(
     # Payload ends with newline (record terminator).
     assert payload.endswith("\n")
     # Payload contains exactly two newlines: end of header + end of record.
-    assert payload.count("\n") == 2, (
-        f"first-emission payload has {payload.count('\\n')} newlines; "
+    newline_count = payload.count("\n")
+    assert newline_count == 2, (
+        f"first-emission payload has {newline_count} newlines; "
         f"expected exactly 2 (end of header + end of record): "
         f"{payload!r}"
     )
