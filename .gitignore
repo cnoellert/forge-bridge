@@ -19,3 +19,4 @@ scripts/dogfood_uat_server.py
 forge_bridge.zip
 *.zip
 .cursor/
+/PASSOFF.md
