@@ -21,7 +21,7 @@ The patterns split into two categories that protect against different failure mo
 | Category | Protects against | Sample size |
 |----------|-------------------|-------------|
 | **Procedural mechanics** — what to do | Doing reliability work in a sequence that compounds errors | 3 |
-| **Reliability character** — how to behave when doing it gets hard | Abandoning the procedure under pressure (2.1) or shipping a contract that looks sound but rots under contributor pressure (2.2) | 2 (each at sample-size 1; categorically distinct) |
+| **Reliability character** — how to behave when doing it gets hard | Abandoning the procedure under pressure (2.1), shipping a contract that looks sound but rots under contributor pressure (2.2), or applying procedural discipline to substrate that has matured into needing property-preservation discipline (2.3) | 3 (each at sample-size 1; categorically distinct) |
 
 These are intentionally separate. A team can know the procedure and still fail to apply it under stress. A team can have the right instincts and still produce shallow work without the procedure. Both are needed; neither subsumes the other.
 
@@ -105,6 +105,24 @@ This is not a requirement that every rule interlock with every other. Some rules
 **Why this is sample-size 1.** This recognition pattern was named explicitly during one contract landing. The pattern was likely operating implicitly across earlier reliability work (the Phase A truthful-chat contract may have benefited from similar interlock — worth checking retrospectively), but it had not been articulated as the durability check it is. Promotion to formal methodology requires at least one more contract review where the interlock check surfaces a genuine gap that pure-procedure review would have missed.
 
 **Cross-reference.** `docs/learnings/2026-05-06-interlocking-architecture.md` — the A.5.3.2 contract's six interlocking pairs as a worked example.
+
+### 2.3 Substrate maturity shifts discipline mode — from sequencing to property-preservation
+
+**What it means.** As a project's reliability substrate hardens — as more invariants are tested, more contracts are landed, more architectural boundaries are explicit — the dominant discipline shifts from procedural to property-preserving. Early phases need sequencing rules ("do A before B"), scope guards ("not in this PR"), gating thresholds ("don't merge until X is green"). Mature phases need property-preservation: invariants that have been named, written verbatim into the codebase, repeated across docstrings + tests + commit messages, and enforced as test assertions.
+
+The recognition signal: when the same constraint is being discussed in chat, named in module docstrings, asserted in test fixtures, and quoted verbatim in commit messages, that repetition is not noise — it is the property crystallizing into the codebase. The discipline at that layer is *property-preservation*, not sequencing.
+
+**Why this is character, not procedure.** Procedure would prescribe "land work in this order." Character is noticing that the *mode* of discipline has shifted, and pivoting accordingly. A team that knows the procedural rules but doesn't recognize the mode shift will keep applying sequencing discipline ("do PR 1 then PR 2 then PR 3") to a substrate that now needs property-preservation discipline ("preserve invariants 1–4 across every change"). Both modes are needed — but at different moments. Misapplying procedural discipline to a property-preservation moment produces correct sequencing of work that quietly violates the invariants the substrate depended on.
+
+**Concrete instance (A.5.3.2 PR 2 review, 2026-05-06).** PR 2's review surfaced a set of four architectural invariants (descriptive-not-evaluative; observational-not-semantic; no-lazy-side-effects; loud-asymmetry). The user-supplied review framing required they land **verbatim** in three places: the commit message under "preserved invariants," each test module's top-level docstring, and the in-code module docstrings as design rationale. The repetition was the discipline working — three independent sites, each carrying the same exact words, each acting as a constraint surface for future contributors.
+
+Compare to PR 1's review surface, which was dominated by sequencing concerns ("Layer 1 only, no comparator, no call-site integration, no capture writes"). PR 2's review surface was almost entirely about properties: descriptive-not-evaluative, observational-not-semantic, no lazy side effects, loud asymmetry. Same review-surface shape, fundamentally different discipline emphasis. The substrate had matured between PR 1 and PR 2; the discipline mode had to follow.
+
+**Forward rule.** When reviewing work at a maturing substrate level, prefer naming properties over prescribing sequences. If a "be careful here" pattern emerges in multiple turns of conversation about the same scope, it has likely already become a property — capture it verbatim, repeat it across sites (module docstrings, test docstrings, commit messages, regression tests where possible), make it greppable. The repetition is what makes the property survive contributor turnover. A property named in only one place is a comment; a property named verbatim in three or more places becomes part of the codebase's structure.
+
+**Why this is sample-size 1.** The recognition pattern was named during PR 2's review specifically. It was likely operating earlier (the A.5.3.2 contract landing in commit `5b22c59` involved similar verbatim repetition of orientation principles), but had not been articulated as the *mode shift* it represents. Promotion to formal methodology requires at least one more cycle where the mode shift surfaces explicitly during a review and the property-preservation discipline produces a measurably better contract than the procedural version would have.
+
+**Cross-reference.** A.5.3.2 PR 2 (`forge_bridge/corpus/_topology.py`, `forge_bridge/corpus/_identity.py`, `tests/corpus/test_pr2_topology.py`, `tests/corpus/test_pr2_identity.py`) — the worked example. The four invariants appear verbatim in the test docstrings, and will appear verbatim in the PR 2 commit message under "preserved invariants."
 
 ---
 
