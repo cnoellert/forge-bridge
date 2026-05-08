@@ -976,3 +976,71 @@ def test_lint_accepts_chain_step_pattern():
             for f in failures
         )
     )
+
+
+# ---------------------------------------------------------------------------
+# Helper-internal check (per A.5.3.2-PR6-SPEC.md §4.3 + §6.1 test 2).
+# ---------------------------------------------------------------------------
+
+
+def test_emit_helper_does_not_internally_call_gate():
+    """Validate that ``emit_divergence_capture`` does not
+    internally call ``divergence_capture_enabled()`` (silent-no-
+    op-on-disabled prohibited pattern).
+
+    Per A.5.3.2-GATE-1-SPEC.md §5.3 first prohibited pattern: the
+    gate must live at the call site, not inside the helper. A
+    helper that internally checks the gate would visually fuse
+    arbitration and observation by hiding the gate from the call
+    site, eroding the §5.1 visual asymmetry.
+
+    This check is co-located with the call-site shape lint
+    because both protect the same architectural commitment (the
+    gate's location at the call site) at different layers (call
+    site vs. helper-internal).
+    """
+    capture_module = (
+        Path(forge_bridge.__file__).parent / "corpus" / "_capture.py"
+    )
+    source = capture_module.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    # Locate the emit_divergence_capture function definition.
+    emit_def: ast.FunctionDef | None = None
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.FunctionDef)
+                and node.name == "emit_divergence_capture"):
+            emit_def = node
+            break
+    assert emit_def is not None, (
+        "emit_divergence_capture definition not found in "
+        f"{capture_module}"
+    )
+
+    # Walk the function body for any Call to divergence_capture_enabled.
+    offenders: list[int] = []
+    for sub in ast.walk(emit_def):
+        if (isinstance(sub, ast.Call)
+                and isinstance(sub.func, ast.Name)
+                and sub.func.id == "divergence_capture_enabled"):
+            offenders.append(sub.lineno)
+
+    assert not offenders, (
+        "Gate-inside-helper prohibition violated: "
+        "emit_divergence_capture internally calls "
+        "divergence_capture_enabled() at line(s) "
+        f"{offenders} of {capture_module}.\n"
+        "\n"
+        "Per A.5.3.2-GATE-1-SPEC.md §5.3 first prohibited "
+        "pattern: the gate must live at the call site, not "
+        "inside the helper. The visual-asymmetry pattern (§5.1) "
+        "requires the `if divergence_capture_enabled():` guard "
+        "to be visible at the call site so future contributors "
+        "perceive observation as optional and gated. Folding the "
+        "gate inside the helper would visually fuse arbitration "
+        "and observation, hiding the gate from the call site.\n"
+        "\n"
+        "If a future PR genuinely requires helper-internal gate "
+        "logic, that requires spec amendment (A.5.3.2-PR6-SPEC.md "
+        "§4.3) — not silent absorption."
+    )
