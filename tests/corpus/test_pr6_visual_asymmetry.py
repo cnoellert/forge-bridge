@@ -878,3 +878,101 @@ def test_lint_accepts_internal_section_break():
         "        )\n"
     )
     assert _validate_source(synthetic) == []
+
+
+# ---------------------------------------------------------------------------
+# Real-source regression tests (per A.5.3.2-PR6-SPEC.md §6.1 tests 16-17).
+# ---------------------------------------------------------------------------
+#
+# These tests lock the current handlers.py + _step.py call-site
+# shapes as canonical. They run the validator over the actual
+# production source (NOT a synthetic snippet) and assert empty
+# failure list.
+#
+# A future PR that mutates the canonical pattern at either site
+# fires a structural assertion here BEFORE the umbrella test
+# (step 8) catches it across the whole tree, giving the operator
+# a more focused failure message.
+#
+# Test scope is the FILE, not a line range — the validator
+# discovers emit calls via _find_emit_call_sites; we filter to
+# the named function so changes to surrounding code do not
+# accidentally turn this test green by routing through a
+# different surface.
+
+
+def _validate_production_file_function(
+    file_relative: str, function_name: str,
+) -> list[_CallSiteFailure]:
+    """Read ``file_relative`` (relative to forge_bridge/), parse,
+    discover emit call sites, filter to those whose enclosing
+    function matches ``function_name``, validate each, return the
+    aggregated failure list.
+    """
+    package_root = Path(forge_bridge.__file__).parent
+    target = package_root / file_relative
+    source = target.read_text(encoding="utf-8")
+    source_lines = source.splitlines()
+    tree = ast.parse(source)
+
+    failures: list[_CallSiteFailure] = []
+    for enclosing_function, call in _find_emit_call_sites(tree):
+        if enclosing_function.name != function_name:
+            continue
+        failures.extend(_validate_call_site(
+            file=target,
+            source_lines=source_lines,
+            tree=tree,
+            enclosing_function=enclosing_function,
+            call=call,
+        ))
+    return failures
+
+
+def test_lint_accepts_chat_handler_pattern():
+    """Locks ``forge_bridge/console/handlers.py::chat_handler``'s
+    canonical shape as accepted. PR 4 step 6 landing.
+
+    A failure here means a future PR has mutated the chat-
+    handler's emit call site shape away from the canonical
+    pattern. Per A.5.3.2-PR6-SPEC.md §8 phase-end conditions:
+    review surfaces which Property/Rejection fired and routes
+    the offender (revert the change OR spec amendment if the
+    change is genuinely needed).
+    """
+    failures = _validate_production_file_function(
+        "console/handlers.py", "chat_handler",
+    )
+    assert failures == [], (
+        "chat_handler call-site shape regression:\n"
+        + "\n".join(
+            f"  {f.failure_id} at {f.file.name}:{f.lineno}\n"
+            f"    {f.detail}"
+            for f in failures
+        )
+    )
+
+
+def test_lint_accepts_chain_step_pattern():
+    """Locks ``forge_bridge/console/_step.py::execute_chain_step``'s
+    canonical shape as accepted. PR 5 step 6 landing.
+
+    A failure here means a future PR has mutated the chain-step
+    emit call site shape away from the canonical pattern. The
+    site differs from chat_handler in field semantics
+    (pr20_condition_met=False; ambiguity rejection captures the
+    filtered list verbatim) but the structural shape is
+    identical — Property D's separator → carrier → guard →
+    emission grammar applies symmetrically.
+    """
+    failures = _validate_production_file_function(
+        "console/_step.py", "execute_chain_step",
+    )
+    assert failures == [], (
+        "execute_chain_step call-site shape regression:\n"
+        + "\n".join(
+            f"  {f.failure_id} at {f.file.name}:{f.lineno}\n"
+            f"    {f.detail}"
+            for f in failures
+        )
+    )
