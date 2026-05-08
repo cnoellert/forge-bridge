@@ -133,15 +133,26 @@ class _CallSiteFailure:
 
 
 # ---------------------------------------------------------------------------
-# AST + text helpers — full bodies land at step 3.
+# AST + text helpers (per A.5.3.2-PR6-SPEC.md §4.4).
 # ---------------------------------------------------------------------------
 
 def _walk_production_tree() -> Iterator[Path]:
     """Yield .py files in forge_bridge/, excluding corpus/.
 
-    Per A.5.3.2-PR6-SPEC.md §4.4. Body lands at step 3.
+    The lint walks the production tree to discover candidate call
+    sites for ``emit_divergence_capture(...)``. The corpus subtree
+    itself is excluded — it defines the helper, it does not invoke
+    it. Tests under ``tests/`` are not part of the production tree.
     """
-    raise NotImplementedError("step 3+")
+    package_root = Path(forge_bridge.__file__).parent
+    corpus_subtree = package_root / "corpus"
+    for py in package_root.rglob("*.py"):
+        try:
+            py.relative_to(corpus_subtree)
+            continue
+        except ValueError:
+            pass
+        yield py
 
 
 def _find_emit_call_sites(
@@ -150,56 +161,157 @@ def _find_emit_call_sites(
     """Walk ``tree`` and return ``(enclosing_function, emit_call)``
     pairs for every ``emit_divergence_capture(...)`` invocation.
 
-    Per A.5.3.2-PR6-SPEC.md §4.4. Body lands at step 3.
+    Ownership is attached at the discovery surface — the enclosing
+    function is captured at the moment the call is identified, not
+    reconstructed later via a downstream parent-walk inference
+    helper. This aligns with the PR 4/5 moment-of-authority
+    lineage: structural truth lives at the discovery point, not in
+    inference helpers that reconstruct it after the fact.
+
+    A NodeVisitor maintains a function stack so the innermost
+    enclosing FunctionDef is captured per emit call. Calls that
+    appear at module scope (no enclosing function) are NOT
+    surfaced — the canonical pattern lives inside a function by
+    definition.
     """
-    raise NotImplementedError("step 3+")
+    sites: list[
+        tuple[ast.FunctionDef | ast.AsyncFunctionDef, ast.Call]
+    ] = []
+
+    class _Visitor(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self._stack: list[
+                ast.FunctionDef | ast.AsyncFunctionDef
+            ] = []
+
+        def visit_FunctionDef(
+            self, node: ast.FunctionDef,
+        ) -> None:
+            self._stack.append(node)
+            self.generic_visit(node)
+            self._stack.pop()
+
+        def visit_AsyncFunctionDef(
+            self, node: ast.AsyncFunctionDef,
+        ) -> None:
+            self._stack.append(node)
+            self.generic_visit(node)
+            self._stack.pop()
+
+        def visit_Call(self, node: ast.Call) -> None:
+            if (isinstance(node.func, ast.Name)
+                    and node.func.id == "emit_divergence_capture"
+                    and self._stack):
+                sites.append((self._stack[-1], node))
+            self.generic_visit(node)
+
+    _Visitor().visit(tree)
+    return sites
 
 
 def _enclosing_if(tree: ast.AST, target: ast.Call) -> ast.If | None:
-    """Return the If statement whose body directly contains target.
+    """Return the If statement whose body directly contains
+    ``target``'s expression statement.
 
-    Per A.5.3.2-PR6-SPEC.md §4.4. Body lands at step 3.
+    Returns None if ``target`` is not directly contained by an If
+    body (e.g., a bare call at function scope, or a call nested
+    inside a deeper expression).
     """
-    raise NotImplementedError("step 3+")
+    for node in ast.walk(tree):
+        if isinstance(node, ast.If):
+            for stmt in node.body:
+                if isinstance(stmt, ast.Expr) and stmt.value is target:
+                    return node
+    return None
 
 
 def _is_canonical_guard_test(test: ast.expr) -> bool:
-    """True iff ``test`` is exactly Call(Name('divergence_capture_enabled')).
+    """True iff ``test`` is exactly
+    ``Call(Name('divergence_capture_enabled'))`` with no args, no
+    keywords, no boolean operators.
 
-    Per A.5.3.2-PR6-SPEC.md §4.4. Body lands at step 3.
+    Patterns like ``divergence_capture_enabled() and len(filtered)
+    == 1`` (BoolOp) are rejected here — Property A's canonical
+    guard shape is the bare zero-arg call, not any larger boolean
+    expression that happens to include it.
     """
-    raise NotImplementedError("step 3+")
+    return (
+        isinstance(test, ast.Call)
+        and isinstance(test.func, ast.Name)
+        and test.func.id == "divergence_capture_enabled"
+        and not test.args
+        and not test.keywords
+    )
 
 
 def _narrowing_call_lines(
     function: ast.FunctionDef | ast.AsyncFunctionDef,
 ) -> list[int]:
-    """Return line numbers of narrowing-function calls within ``function``.
+    """Return line numbers of narrowing-function calls within
+    ``function``.
 
-    Per A.5.3.2-PR6-SPEC.md §4.4. Body lands at step 3.
+    A call counts if its callee Name's id is in
+    NARROWING_FUNCTION_NAMES (the operational mechanism per §4.2).
+    The constant is *how* the lint detects narrowing; the
+    protected property is *that* no narrowing occurs downstream of
+    finalized arbitration capture.
+
+    Helper signature expresses actual authority surface — the
+    enclosing function — and nothing else. The search domain IS
+    the function body.
     """
-    raise NotImplementedError("step 3+")
+    return [
+        sub.lineno for sub in ast.walk(function)
+        if (isinstance(sub, ast.Call)
+            and isinstance(sub.func, ast.Name)
+            and sub.func.id in NARROWING_FUNCTION_NAMES)
+    ]
 
 
 def _blank_line_count_above(
     source_lines: list[str], guard_line_index: int,
 ) -> int:
-    """Count contiguous blank lines immediately above ``guard_line_index``.
+    """Count contiguous blank lines immediately above
+    ``guard_line_index``.
 
-    Per A.5.3.2-PR6-SPEC.md §4.4. Body lands at step 3.
+    ``source_lines`` is zero-indexed; ``guard_line_index`` is the
+    zero-indexed line of the ``if divergence_capture_enabled():``
+    statement. Walks upward from ``guard_line_index - 1`` until a
+    non-blank line is hit; returns the count of blank lines
+    traversed.
     """
-    raise NotImplementedError("step 3+")
+    count = 0
+    i = guard_line_index - 1
+    while i >= 0 and _BLANK_LINE_RE.match(source_lines[i]):
+        count += 1
+        i -= 1
+    return count
 
 
 def _comment_block_above(
     source_lines: list[str], guard_line_index: int,
 ) -> tuple[int, int] | None:
-    """Return (start_idx, end_idx) of the contiguous comment block
-    above the blank-line gap, or None if no comment block exists.
+    """Return ``(start_idx, end_idx)`` of the contiguous comment
+    block above the blank-line gap, or None if no comment block
+    exists.
 
-    Per A.5.3.2-PR6-SPEC.md §4.4. Body lands at step 3.
+    Both indices are zero-indexed and inclusive. The block ends at
+    the last comment line directly above the gap and begins at the
+    first comment line walking upward from there. Pure-comment
+    lines (lines whose first non-whitespace character is ``#``)
+    constitute the block.
     """
-    raise NotImplementedError("step 3+")
+    # Skip the blank-line gap.
+    i = guard_line_index - 1
+    while i >= 0 and _BLANK_LINE_RE.match(source_lines[i]):
+        i -= 1
+    if i < 0 or not _COMMENT_LINE_RE.match(source_lines[i]):
+        return None
+    end = i
+    while i >= 0 and _COMMENT_LINE_RE.match(source_lines[i]):
+        i -= 1
+    start = i + 1
+    return (start, end)
 
 
 def _opens_with_separator(
@@ -208,6 +320,9 @@ def _opens_with_separator(
     """True iff the comment line at ``block_start_idx`` begins with
     the canonical visual separator (per Property D.2).
 
-    Per A.5.3.2-PR6-SPEC.md §4.4. Body lands at step 3.
+    Leading whitespace before the ``#`` is allowed so indented
+    comment blocks (the call sites' actual shape) are accepted.
     """
-    raise NotImplementedError("step 3+")
+    line = source_lines[block_start_idx]
+    stripped = line.lstrip()
+    return stripped.startswith(_SEPARATOR_PREFIX)
