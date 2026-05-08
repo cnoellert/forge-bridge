@@ -72,9 +72,31 @@ from starlette.testclient import TestClient  # noqa: E402
 
 from forge_bridge.console import _rate_limit  # noqa: E402
 
+# Construction helpers relocated to _pr4_helpers.py at PR 4 step 7.
+# They are shared PR-4 hostile-environment infrastructure now, not
+# step-5-owned. Step-5 behavior is unchanged — these are import
+# substitutions only.
+from tests.corpus._pr4_helpers import (  # noqa: E402
+    _make_test_tool,
+    _passthrough_filter,
+    _stub_chat_result,
+)
+
 
 _CORPUS_PACKAGE = "forge_bridge.corpus"
 _HANDLER_MODULE = "forge_bridge.console.handlers"
+# forge_bridge.console.app's top-level `from forge_bridge.console.handlers
+# import chat_handler` binds the chat_handler SYMBOL at module-load time.
+# If app loaded BEFORE this test (e.g., another corpus test in the same
+# pytest session called build_console_app via tests/corpus/_pr4_helpers.py),
+# app.chat_handler points at the PRE-reload handlers module — bypassing
+# the fallback bindings the reload installs. Reloading app along with
+# handlers ensures the re-imported chat_handler symbol resolves to the
+# post-reload module. The no-dependency property (arbitration completes
+# when corpus is structurally absent) is unchanged; this hardens the
+# test against ordering with respect to other suite members that import
+# app at their own discretion.
+_APP_MODULE = "forge_bridge.console.app"
 
 
 class _CorpusSentinel(ModuleType):
@@ -100,37 +122,6 @@ class _CorpusSentinel(ModuleType):
             f"to exist.' That sentence must remain false for the "
             f"lifetime of this architecture."
         )
-
-
-def _make_test_tool():
-    """Non-empty Tool so the chat handler's empty-registry guard does
-    not short-circuit before we exercise the no-dependency property."""
-    from mcp.types import Tool
-    return Tool(
-        name="forge_test_probe",
-        description="Test probe for no-dependency assertion.",
-        inputSchema={"type": "object", "properties": {}, "required": []},
-    )
-
-
-async def _passthrough_filter(tools):
-    """Default reachability-filter stub: pass all tools through. The
-    chat handler's real filter would TCP-probe :9999, which is
-    unwanted in test context."""
-    return tools
-
-
-async def _stub_chat_result(**kwargs):
-    """LLMRouter mock: returns a minimal ChatTurnResult so the chat
-    handler reaches the divergence-capture call site (where step 6
-    will land integration code) before constructing the response."""
-    from forge_bridge.llm.router import ChatTurnResult
-    return ChatTurnResult(
-        final_text="OK",
-        messages=list(kwargs.get("messages") or [])
-        + [{"role": "assistant", "content": "OK"}],
-        tool_trace=[],
-    )
 
 
 @pytest.fixture(autouse=True)
@@ -184,12 +175,22 @@ def test_arbitration_completes_when_corpus_unavailable(
     # Naive top-level imports would fail here. The test enforces
     # the constraint; the implementation chooses its mechanism.
     monkeypatch.delitem(sys.modules, _HANDLER_MODULE, raising=False)
+    # Drop the app module too: its top-level `from
+    # forge_bridge.console.handlers import chat_handler` binds the
+    # symbol at module-load time. If app was loaded earlier in the
+    # same pytest session (e.g., by step 7's integration tests
+    # calling `_drive_chat_request`), app.chat_handler would still
+    # point at the pre-reload handlers and would bypass the fallback
+    # bindings that the reload below installs.
+    monkeypatch.delitem(sys.modules, _APP_MODULE, raising=False)
 
     # If the reimport itself raises, the no-dependency property has
     # been violated. The assertion here is: the import succeeds.
     importlib.import_module(_HANDLER_MODULE)
 
-    # Build a fresh app under the sentinel patch.
+    # Build a fresh app under the sentinel patch. The import below
+    # re-loads forge_bridge.console.app (delitem above) so its
+    # chat_handler symbol resolves to the post-reload handlers.
     from forge_bridge.console.app import build_console_app
     from forge_bridge.console.manifest_service import ManifestService
     from forge_bridge.console.read_api import ConsoleReadAPI
