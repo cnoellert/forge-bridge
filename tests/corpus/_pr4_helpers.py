@@ -1,22 +1,46 @@
-"""Shared helpers for PR 4 tests.
+"""Shared helpers for PR 4 + PR 5 tests.
 
-Ships:
+Ships PR 4 infrastructure (chat-handler integration) and PR 5
+extensions (chain-step integration). Per
+``A.5.3.2-PR5-SPEC.md`` §6.2: extending this file in place rather
+than renaming or splitting — the file's name encodes its history
+(PR 4 introduction), not its ownership; both PRs share the
+hostile-environment infrastructure for arbitration-invariance
+testing under capture-state cycling.
+
+PR 4 surface (chat-handler):
 
   - ``CaptureState`` Literal + ``capture_state_cycling`` fixture +
-    narrow ``Path.open`` failure-injection helper (step 4).
+    narrow ``Path.open`` failure-injection helper.
   - Chat-handler construction helpers (``_make_test_tool``,
     ``_passthrough_filter``, ``_stub_chat_result``,
-    ``_reset_rate_limit_fixture``) — relocated from
-    ``test_pr4_no_dependency.py`` (step 5) at step 7. They are
-    shared PR-4 hostile-environment infrastructure, not owned by
-    any single test file.
-  - ``_drive_chat_request`` — single-invocation driver returning
-    ``(response, mock_router)``; both step-7 and the no-dependency
-    test compose against it.
-  - Step-7 assertion helpers — ``_assert_arbitration_invariance``,
+    ``_reset_rate_limit_fixture``).
+  - ``_drive_chat_request`` — single-invocation chat driver returning
+    ``(response, mock_router)``.
+  - PR 4 assertion helpers — ``_assert_arbitration_invariance``,
     ``_assert_arbitration_response_equivalent``,
     ``_assert_no_failed_write_residue``,
     ``_assert_authority_surface_invariance``.
+
+PR 5 surface (chain-step):
+
+  - ``_stub_call_tool`` + ``_stub_resolve_required_params`` —
+    chain-path stubs for ``mcp.call_tool`` and
+    ``forge_bridge.console._tool_chain.resolve_required_params``.
+    Default success-path returns; tests override per-scenario.
+  - ``_drive_chain_request`` — multi-step chain driver. Drives a
+    multi-step prompt through the chat handler (which routes to
+    ``_execute_chain → run_chain_steps → execute_chain_step``).
+    Returns ``(response, mock_call_tool)``.
+  - PR 5 assertion helpers — ``_assert_chain_step_arbitration_invariance``
+    (chain envelope shape variant) +
+    ``_assert_chain_step_arbitration_response_equivalent``
+    (IS-compared / IS-ignored boundary re-derived for the chain
+    envelope per ``A.5.3.2-PR4-CLOSE.md`` §3.5).
+
+Both PRs reuse ``capture_state_cycling`` unchanged. The fixture is
+closed for extension at the spec layer; PR 5 must NOT add a fifth
+state.
 
 Per ``A.5.3.2-PR4-FRAMING.md`` §1.2 and ``A.5.3.2-PR4-SPEC.md`` §5,
 the architectural concern PR 4 introduces (capture-call-site state
@@ -750,3 +774,333 @@ def _assert_authority_surface_invariance(
         f"must reflect the producer-surface truth at the moment of "
         f"authority, not reconstructed downstream state."
     )
+
+
+# ─── PR 5 chain-step infrastructure ────────────────────────────────────────
+#
+# Per A.5.3.2-PR5-SPEC.md §6.2: extending this file in place. The
+# chain-step driver and assertion helpers below compose against the
+# same capture_state_cycling fixture, the same _make_test_tool /
+# _passthrough_filter helpers, the same _read_records reader. The
+# only PR-5-specific construction infrastructure is here.
+
+
+async def _stub_call_tool(name: str, params: dict, /) -> Any:
+    """Default ``mcp.call_tool`` mock for chain-step integration tests.
+
+    Returns a JSON-string structure that ``serialize_forced_tool_result``
+    handles cleanly (string passthrough). Tests requiring richer return
+    shapes pass an explicit override via ``_drive_chain_request``'s
+    ``call_tool_side_effect`` parameter.
+    """
+    return f'{{"result": "called:{name}"}}'
+
+
+async def _stub_resolve_required_params(
+    tool_name: str, resolver_input: dict, mcp: Any, /,
+) -> dict:
+    """Default ``resolve_required_params`` mock — returns empty params.
+
+    The chain-step capture call site fires BEFORE ``resolve_required_params``
+    is invoked (capture is at narrowing-finalization, params resolution is
+    downstream). Tests asserting capture-emission therefore do not depend
+    on params resolution behavior; this stub keeps the chain proceeding
+    past the resolution step without forcing tests to construct realistic
+    resolver chains.
+
+    Per A.5.3.2-PR5-SPEC.md §4.1 architectural property: capture is
+    arbitration-aware, not branch-aware. Subsequent failure paths
+    (e.g., MULTIPLE_PROJECTS) do not re-trigger capture. This stub's
+    empty-params return path drives the success branch through
+    ``mcp.call_tool``; tests for the MULTIPLE_PROJECTS-style downstream
+    failure shape would override this stub.
+    """
+    return {}
+
+
+def _drive_chain_request(
+    *,
+    tools_list: list[Any] | None = None,
+    prompt: str = "first -> second",
+    call_tool_side_effect: Callable | None = None,
+) -> tuple[Any, AsyncMock]:
+    """Drive a multi-step chain request through a freshly-built console app.
+
+    Returns ``(response, mock_call_tool)``.
+
+    Default prompt parses to a 2-step chain via ``parse_chain``
+    (the ``->`` separator triggers the ``_execute_chain`` branch in
+    ``chat_handler``, which routes to ``run_chain_steps`` →
+    ``execute_chain_step`` per step). Default ``tools_list`` is a single
+    ``forge_test_probe`` tool; every step text matches that one tool via
+    ``filter_tools_by_message``'s no-token-overlap fallback (returns the
+    full input list unchanged), so each step lands in the success path.
+
+    For ambiguity-rejection scenarios, pass ``tools_list`` with multiple
+    tools whose names share keywords with the step text (PR14 narrows
+    to a multi-survivor set; deterministic_narrow does not collapse;
+    ``len(filtered) != 1`` triggers the rejection envelope AFTER capture
+    has already emitted).
+
+    For zero-match scenarios, pass tools whose names + descriptions
+    have zero token overlap with the step text — but note PR14's
+    fallback returns the full list rather than an empty list when no
+    overlap exists, so this scenario is hard to construct via
+    ``filter_tools_by_message`` alone. Tests requiring a literal
+    zero-match path may need to mock ``filter_tools_by_message`` itself.
+
+    The TestClient context manager wraps the actual request so the
+    Starlette app's lifespan events fire correctly. Mocks installed:
+
+      - ``forge_bridge.mcp.server.mcp.list_tools`` → returns ``tools_list``
+      - ``forge_bridge.mcp.server.mcp.call_tool`` → ``_stub_call_tool``
+        (or ``call_tool_side_effect`` override)
+      - ``forge_bridge.console.handlers.filter_tools_by_reachable_backends``
+        → ``_passthrough_filter``
+      - ``forge_bridge.console._tool_chain.resolve_required_params``
+        → ``_stub_resolve_required_params``
+
+    The ``mock_call_tool`` is returned so tests can assert on
+    invocation count, args, etc. — useful for confirming that
+    rejection-path tests did NOT call ``mcp.call_tool`` (capture
+    fired but the rejection envelope returned before tool execution).
+    """
+    from starlette.testclient import TestClient
+
+    from forge_bridge.console.app import build_console_app
+    from forge_bridge.console.manifest_service import ManifestService
+    from forge_bridge.console.read_api import ConsoleReadAPI
+
+    if tools_list is None:
+        tools_list = [_make_test_tool()]
+
+    mock_router = MagicMock()
+    mock_router.complete_with_tools = AsyncMock(side_effect=_stub_chat_result)
+    mock_log = MagicMock()
+    mock_log.snapshot.return_value = ([], 0)
+
+    mock_call_tool = AsyncMock(
+        side_effect=call_tool_side_effect or _stub_call_tool,
+    )
+
+    api = ConsoleReadAPI(
+        execution_log=mock_log,
+        manifest_service=ManifestService(),
+        llm_router=mock_router,
+    )
+    app = build_console_app(api)
+
+    with patch(
+        "forge_bridge.mcp.server.mcp.list_tools",
+        new=AsyncMock(return_value=tools_list),
+    ), patch(
+        "forge_bridge.mcp.server.mcp.call_tool",
+        new=mock_call_tool,
+    ), patch(
+        "forge_bridge.console.handlers.filter_tools_by_reachable_backends",
+        side_effect=_passthrough_filter,
+    ), patch(
+        "forge_bridge.console._tool_chain.resolve_required_params",
+        side_effect=_stub_resolve_required_params,
+    ):
+        client = TestClient(app)
+        response = client.post(
+            "/api/v1/chat",
+            json={"messages": [{"role": "user", "content": prompt}]},
+        )
+
+    return response, mock_call_tool
+
+
+def _assert_chain_step_arbitration_invariance(
+    response: Any,
+    mock_call_tool: AsyncMock,
+    *,
+    expected_step_count: int,
+    expected_status: str = "success",
+) -> None:
+    """Single-invocation structural properties for the chain envelope
+    shared across all capture states.
+
+    PROTECTED PROPERTY:
+      Capture state must not change what the chain executor returns to
+      the operator. Per ``A.5.3.2-PR5-FRAMING.md`` §1.2 (inheriting
+      PR 4 framing §1.2): "If operator-visible behavior changes based on
+      capture state, the participation boundary has already been crossed
+      regardless of internal architecture claims."
+
+    OPERATIONAL EXPRESSION (today's checks):
+      1. HTTP status code: 200 on ``success``, 400 on ``error``.
+      2. Response body has chain-envelope keys ``{status, request_id,
+         chain, error}``.
+      3. ``body["status"]`` matches ``expected_status``.
+      4. ``body["chain"]`` is a list of length ``expected_step_count``
+         on success (chain executes through). On error, length matches
+         the step index that failed (zero-indexed; the failing step
+         itself is NOT appended to ``chain``).
+      5. ``response.headers`` contains ``X-Request-ID``.
+      6. ``mock_call_tool`` invocation count matches expectations:
+         ``expected_step_count`` invocations on success;
+         ``len(body["chain"])`` invocations on error (each completed
+         step before the failing one called ``mcp.call_tool`` once).
+
+    Each assertion protects a distinct failure mode. Removing any one
+    is a spec amendment, not an implementation choice.
+
+    Per ``A.5.3.2-PR5-SPEC.md`` §4.1 architectural property: capture
+    fires AT narrowing-finalization, not at chain envelope assembly.
+    Therefore capture-state perturbation that altered the chain
+    envelope shape would indicate a participation-boundary leak —
+    capture's per-step emission must not influence subsequent chain
+    progression.
+    """
+    # 1. Status code.
+    expected_status_code = 200 if expected_status == "success" else 400
+    assert response.status_code == expected_status_code, (
+        f"chain executor returned status {response.status_code}; "
+        f"expected {expected_status_code}. Capture state must not "
+        f"perturb arbitration output. Body: {response.text!r}"
+    )
+
+    # 2. Response body keys.
+    body = response.json()
+    assert isinstance(body, dict), (
+        f"response body is not a JSON object: {body!r}"
+    )
+    for required_key in ("status", "request_id", "chain", "error"):
+        assert required_key in body, (
+            f"chain envelope missing required key {required_key!r}: "
+            f"{body!r}"
+        )
+
+    # 3. status field matches expected.
+    assert body["status"] == expected_status, (
+        f"chain envelope status={body['status']!r}; expected "
+        f"{expected_status!r}. Body: {body!r}"
+    )
+
+    # 4. chain length.
+    chain = body["chain"]
+    assert isinstance(chain, list), (
+        f"chain field is not a list: {chain!r}"
+    )
+    if expected_status == "success":
+        assert len(chain) == expected_step_count, (
+            f"chain length {len(chain)}; expected "
+            f"{expected_step_count}. Successful chain executes all "
+            f"steps. Body: {body!r}"
+        )
+
+    # 5. X-Request-ID header.
+    assert "X-Request-ID" in response.headers, (
+        f"response missing X-Request-ID header. Headers: "
+        f"{dict(response.headers)!r}"
+    )
+
+    # 6. mcp.call_tool invocation count matches completed-step count.
+    expected_call_tool_count = (
+        expected_step_count if expected_status == "success"
+        else len(chain)
+    )
+    assert mock_call_tool.call_count == expected_call_tool_count, (
+        f"mcp.call_tool invocation count={mock_call_tool.call_count}; "
+        f"expected {expected_call_tool_count} (one per completed "
+        f"chain step). Body: {body!r}"
+    )
+
+
+def _assert_chain_step_arbitration_response_equivalent(
+    response_a: Any,
+    response_b: Any,
+) -> None:
+    """Assert two chain-executor responses are arbitration-equivalent.
+
+    The protected property is *semantic* arbitration equivalence, not
+    literal byte-for-byte identity. Capture state must not perturb the
+    chain envelope observed by the operator.
+
+    COMPARED (must match):
+      - HTTP status code
+      - Response body keys: ``{status, request_id, chain, error}``
+      - ``body["status"]``
+      - ``body["chain"]`` length and per-step ``step`` text
+      - ``body["error"]`` shape on error path (code, step_index;
+        ``original_error.type`` if present)
+      - Presence of ``X-Request-ID`` header
+
+    INTENTIONALLY IGNORED (expected to differ across requests):
+      - ``body["request_id"]`` — UUID per request
+      - ``X-Request-ID`` header VALUE — UUID per request
+      - Per-step ``result`` content (may vary by stub timing /
+        invocation order details that don't affect arbitration)
+      - ``body["error"]["message"]`` — human-readable text
+      - ``body["error"]["original_error"]["message"]`` — same
+      - Server-Date / response timing headers
+
+    The IS-compared / IS-ignored boundary is re-derived from PR 4's
+    chat-envelope variant per ``A.5.3.2-PR4-CLOSE.md`` §3.5: chain
+    steps return ``{status, request_id, chain, error}``, not
+    ``{messages, stop_reason, request_id}``. The structural
+    difference forces a chain-envelope-specific helper rather than
+    parameterizing the chat-envelope helper.
+
+    Failure under this assertion means capture state perturbed
+    arbitration output — PR 5 inheriting PR 4's single most
+    important invariant has been violated at the chain-step surface.
+    """
+    assert response_a.status_code == response_b.status_code, (
+        f"response status codes differ: {response_a.status_code} vs "
+        f"{response_b.status_code}. Capture state must not perturb "
+        f"chain envelope."
+    )
+
+    body_a = response_a.json()
+    body_b = response_b.json()
+    assert set(body_a.keys()) == set(body_b.keys()), (
+        f"chain envelope body keys differ: {sorted(body_a.keys())} "
+        f"vs {sorted(body_b.keys())}"
+    )
+
+    assert body_a.get("status") == body_b.get("status"), (
+        f"chain envelope status differs: {body_a.get('status')!r} vs "
+        f"{body_b.get('status')!r}"
+    )
+
+    chain_a = body_a.get("chain", [])
+    chain_b = body_b.get("chain", [])
+    assert len(chain_a) == len(chain_b), (
+        f"chain length differs: {len(chain_a)} vs {len(chain_b)}"
+    )
+    for i, (step_a, step_b) in enumerate(zip(chain_a, chain_b)):
+        assert step_a.get("step") == step_b.get("step"), (
+            f"chain[{i}].step differs: {step_a.get('step')!r} vs "
+            f"{step_b.get('step')!r}"
+        )
+
+    err_a = body_a.get("error")
+    err_b = body_b.get("error")
+    if err_a is None and err_b is None:
+        pass  # success path on both sides; nothing more to compare.
+    else:
+        assert err_a is not None and err_b is not None, (
+            f"error field presence differs: a={err_a!r}, b={err_b!r}"
+        )
+        assert err_a.get("code") == err_b.get("code"), (
+            f"error.code differs: {err_a.get('code')!r} vs "
+            f"{err_b.get('code')!r}"
+        )
+        assert err_a.get("step_index") == err_b.get("step_index"), (
+            f"error.step_index differs: {err_a.get('step_index')!r} "
+            f"vs {err_b.get('step_index')!r}"
+        )
+        orig_a = err_a.get("original_error") or {}
+        orig_b = err_b.get("original_error") or {}
+        assert orig_a.get("type") == orig_b.get("type"), (
+            f"error.original_error.type differs: "
+            f"{orig_a.get('type')!r} vs {orig_b.get('type')!r}"
+        )
+
+    for resp, label in ((response_a, "a"), (response_b, "b")):
+        assert "X-Request-ID" in resp.headers, (
+            f"response_{label} missing X-Request-ID header"
+        )
