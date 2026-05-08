@@ -2,13 +2,58 @@
 
 Moved from ``handlers._execute_chain_step`` so engine and CLI can import without
 circular imports from ``handlers``.
+
+A.5.3.2 PR 5 — chain-step capture integration (Shape A guarded import). The
+``forge_bridge.corpus`` package is structurally optional at module-load time;
+absence is logged and the emission path becomes a no-op. The chat handler's
+PR 4 surface uses the same shape (handlers.py:90-115). Per
+A.5.3.2-PR5-FRAMING.md §1: "Same topology applies at _step.py module load —
+not a separate guarded import, since both modules import emission helpers
+from the same forge_bridge.corpus namespace." Symmetric topology, identical
+fallback semantics; the duplicate WARNING-on-load is an O(1) cost per
+process lifetime.
 """
 from __future__ import annotations
 
 import json
+import logging
+import time
 from typing import Any
 
 from forge_bridge.console._tool_filter import deterministic_narrow, filter_tools_by_message
+
+# A.5.3.2 PR 5 §4.1 — Shape A guarded import for divergence capture.
+# Per A.5.3.2-PR5-FRAMING.md §1.4 (inheriting PR 4 framing §1.4):
+# "The arbitration layer now expects capture infrastructure to exist."
+# That sentence MUST remain false for the lifetime of this architecture.
+# If forge_bridge.corpus is structurally absent at module load, fallback
+# bindings preserve arbitration completion; capture becomes a no-op.
+try:
+    from forge_bridge.corpus import (
+        divergence_capture_enabled,
+        emit_divergence_capture,
+    )
+except ImportError as _corpus_import_error:
+    # Direct getLogger call used intentionally here: this branch
+    # executes during module-load-time topology resolution before
+    # the module-level logger binding below exists. Same rationale
+    # as handlers.py:99-101.
+    logging.getLogger(__name__).warning(
+        "forge_bridge.corpus is structurally absent at _step load; "
+        "divergence-capture disabled for this process lifetime. "
+        "(Import-time observation, distinct from "
+        "FORGE_BRIDGE_DIVERGENCE_CAPTURE env-driven gating.) "
+        "import_error=%s",
+        _corpus_import_error,
+    )
+
+    def divergence_capture_enabled(*_args, **_kwargs) -> bool:
+        return False
+
+    def emit_divergence_capture(*_args, **_kwargs) -> None:
+        pass
+
+logger = logging.getLogger(__name__)
 
 
 def serialize_forced_tool_result(raw: Any) -> str:
@@ -49,6 +94,27 @@ def serialize_forced_tool_result(raw: Any) -> str:
     return repr(raw)
 
 
+def _ambiguity_state_for_chain_step(n: int) -> str:
+    """Translate narrowing-count to the schema's ``ambiguity_state``
+    string at the chain-step surface. Translation-only; no inferential
+    logic per the binding constraint in ``A.5.3.2-PR4-SPEC.md`` §4.1.
+
+    Mirrors ``handlers.py::_ambiguity_state_for``; the helpers are NOT
+    deduplicated because the chat-handler and chain-step views of
+    ``ambiguity_state`` are orthogonal authority surfaces (per
+    ``A.5.3.2-PR5-FRAMING.md`` §2.2 architectural protection bullet 3
+    + ``A.5.3.2-PR5-SPEC.md`` §4.1 helper-duplication binding).
+    Conflating them via shared helper extraction would introduce a
+    hidden cross-site coupling that schema-validation shortcuts could
+    later exploit. Same translation behavior; independent surface.
+
+    A future PR proposing to extract ``_ambiguity_state_for`` and this
+    helper into a shared module is rejected at the spec layer per
+    ``A.5.3.2-PR5-SPEC.md`` §8 phase-end conditions.
+    """
+    return {0: "zero_survivor", 1: "single_survivor"}.get(n, "multi_survivor")
+
+
 async def execute_chain_step(
     *,
     step_text: str,
@@ -76,17 +142,110 @@ async def execute_chain_step(
         resolve_required_params,
     )
 
+    # PR 5 §4.1 — deployment identity snapshot. Per framing §2.1:
+    # the chain-step's deployment identity is the caller's view, not
+    # the global daemon registry view. Bound at function entry,
+    # BEFORE any local interpretation or narrowing activity, so the
+    # moment-of-authority truth is preserved regardless of downstream
+    # reinterpretation. Authority-surface protection, not local-scope
+    # minimization.
+    registered_tools = tools
+
+    # PR 5 §4.1 — runtime topology snapshot collapses with deployment
+    # identity at this surface. There is no reachability filter here;
+    # that filter ran upstream in handlers.py. Per A.5.3.2-PR4-CLOSE.md
+    # §3.1 this collapse is named explicitly so it is not silently
+    # overloaded across the two call sites.
+    tools_post_reachability = tools
+
     user_params = extract_explicit_params(step_text)
 
     merged: dict = {**(inherited_context or {}), **user_params}
     requested_name = merged.get("project_name")
     resolver_input = {k: v for k, v in merged.items() if k != "project_name"}
 
+    # PR 5 §4.1 — narrower-latency instrumentation. Measurement
+    # happens regardless of divergence_capture_enabled() per spec:
+    # latency belongs to the arbitration path, not the capture path.
+    # Decoupling protects against a later "let's only measure when
+    # capturing" simplification that would couple arbitration timing
+    # to capture state and weaken the §1.4 no-dependency property.
+    narrower_started = time.perf_counter()
     filtered = filter_tools_by_message(tools, step_text)
+
+    # PR 5 §4.1 — arbitration-input snapshot. Captures the post-PR14
+    # set BEFORE deterministic_narrow has a chance to collapse it.
+    # Used by collapse_occurred derivation (multi-to-single transition
+    # diagnostic on the success path).
+    tools_post_pr14 = filtered
+
     if len(filtered) > 1:
         narrowed = deterministic_narrow(filtered, step_text)
         if len(narrowed) < len(filtered):
             filtered = narrowed
+    narrower_latency_ms = (time.perf_counter() - narrower_started) * 1000.0
+
+    # ── Capture is emitted after arbitration decisions are finalized
+    #    and must not structurally participate in the arbitration
+    #    pipeline. (PR 3 spec §0; PR 4 framing §0.)
+    #
+    #    PR 4 is the controlled introduction of observational
+    #    side-effects into live arbitration surfaces. The risk
+    #    category has shifted from persistence-substrate risk to
+    #    participation-creep risk. (PR 4 framing §0.)
+    #
+    #    The call site is the source of the three explicit inputs.
+    #    The integration layer passes truth. The integration layer
+    #    never reconstructs truth. The builder does not discover
+    #    runtime state. (PR 4 framing §3.)
+    #
+    #    Capture emission occurs only after arbitration state is
+    #    finalized for the current execution path. Capture records
+    #    completed arbitration observations, not provisional
+    #    intermediate state. (PR 4 spec §0.)
+    #
+    #    ── PR 5 specializations ──
+    #
+    #    PR 5 is the second call site under the integration discipline
+    #    PR 4 established. The risk profile is inherited; the surface
+    #    geometry is not. (PR 5 framing §0.)
+    #
+    #    The chain-step's deployment identity is the caller's view,
+    #    not the global daemon registry view. (PR 5 framing §0 +
+    #    §2.1.)
+    #
+    #    Ambiguity rejection is an arbitration outcome. Capture must
+    #    record it. At this surface, narrower_decision carries the
+    #    filtered list verbatim at narrowing finalization — including
+    #    zero-match and multi-match rejection paths. pr20_condition_met
+    #    is always False and collapse_occurred is False on all
+    #    rejection paths. These semantics differ from the chat-handler
+    #    case and must not be silently overloaded. (PR 5 framing §2.2.)
+    #
+    #    Capture is arbitration-aware, not branch-aware. The single
+    #    insertion point at narrowing-finalization preserves capture's
+    #    relationship to the arbitration event itself, not to its
+    #    downstream semantic interpretations. Subsequent failure paths
+    #    (e.g., MULTIPLE_PROJECTS) do not re-trigger capture; capture
+    #    has already recorded the truthful single-tool narrowing
+    #    result. (PR 5 spec §4.1.)
+
+    if divergence_capture_enabled():
+        emit_divergence_capture(
+            prompt=step_text,
+            registered_tools=registered_tools,
+            candidate_set_post_reachability=tools_post_reachability,
+            candidate_set_post_pr14=tools_post_pr14,
+            narrower_decision=filtered,
+            pr20_condition_met=False,
+            collapse_occurred=(
+                len(filtered) == 1 and len(tools_post_pr14) > 1
+            ),
+            ambiguity_state=_ambiguity_state_for_chain_step(len(filtered)),
+            narrower_latency_ms=narrower_latency_ms,
+            source="runtime",
+        )
+
     if len(filtered) != 1:
         return {"error": {
             "type": "tool_selection_ambiguous",
