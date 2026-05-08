@@ -67,6 +67,53 @@ from forge_bridge.llm.router import (
 )
 from forge_bridge.store.staged_operations import StagedOpRepo, StagedOpLifecycleError
 
+# Shape A — top-level guarded import (PR 4 step 6 topology lock).
+#
+# Corpus availability is resolved ONCE at handler module load. The
+# `except ImportError:` branch defines fallback bindings that
+# preserve the call-site contract (divergence_capture_enabled
+# returns False; emit_divergence_capture is a no-op) when the
+# corpus package is structurally absent.
+#
+# Maintenance invariant: fallback signatures intentionally mirror
+# the public corpus API surface. Signature drift between the
+# fallback and the real implementation risks asymmetric behavior
+# under hostile environments — future corpus API expansion must
+# preserve compatibility with the fallback shapes here. The *_args,
+# **_kwargs catchalls absorb benign evolution; semantic changes
+# (e.g., adding a required parameter that fallbacks must honor)
+# require explicit synchronized updates to both surfaces.
+#
+# This duplication is intentional, not participation creep — the
+# fallbacks observe nothing about the corpus, do nothing about
+# arbitration, and disappear when the real corpus is importable.
+# Per A.5.3.2-PR4-FRAMING.md §1.4, the no-dependency property
+# requires that the import itself be optional; this is the
+# minimum surface that makes that requirement operational.
+try:
+    from forge_bridge.corpus import (
+        divergence_capture_enabled,
+        emit_divergence_capture,
+    )
+except ImportError as _corpus_import_error:
+    # Direct getLogger call used intentionally here: this branch
+    # executes during module-load-time topology resolution before
+    # the module-level logger binding below exists.
+    logging.getLogger(__name__).warning(
+        "forge_bridge.corpus is structurally absent at handler load; "
+        "divergence-capture disabled for this process lifetime. "
+        "(Import-time observation, distinct from "
+        "FORGE_BRIDGE_DIVERGENCE_CAPTURE env-driven gating.) "
+        "import_error=%s",
+        _corpus_import_error,
+    )
+
+    def divergence_capture_enabled(*_args, **_kwargs) -> bool:
+        return False
+
+    def emit_divergence_capture(*_args, **_kwargs) -> None:
+        pass
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_LIMIT = 50
@@ -760,6 +807,20 @@ def _chat_error(
     )
 
 
+def _ambiguity_state_for(n: int) -> str:
+    """Translate narrowing-count to the schema's ``ambiguity_state``
+    string. Translation-only; no inferential logic per the binding
+    constraint in ``A.5.3.2-PR4-SPEC.md`` §4.1.
+
+    A future PR proposing to add "smart" ambiguity detection
+    (e.g., "if multi_survivor but the tools share a common prefix,
+    classify as semi_collapsed") is rejected at the spec layer —
+    that interpretation belongs in Layer 2 or a higher analytic
+    layer, not in the capture call site.
+    """
+    return {0: "zero_survivor", 1: "single_survivor"}.get(n, "multi_survivor")
+
+
 async def chat_handler(request: Request) -> JSONResponse:
     """POST /api/v1/chat — Phase 16 FB-D chat endpoint.
 
@@ -922,6 +983,20 @@ async def chat_handler(request: Request) -> JSONResponse:
             request_id,
         )
 
+    # PR 4 §5 — deployment identity snapshot. Truth captured at the
+    # moment of authority; subsequent rebinds of `tools` do not
+    # erode this binding. Per framing §3: "The integration layer
+    # passes truth. The integration layer never reconstructs truth."
+    #
+    # Placement note: lands here (post-empty-list-guard) rather
+    # than immediately post-list_tools() because the binding is
+    # only meaningful on the success path. Implicit invariant:
+    # lines between list_tools() and this binding must remain
+    # transformation-free; a future addition transforming `tools`
+    # in that range would silently corrupt this snapshot's
+    # semantic meaning.
+    registered_tools = tools
+
     # ---- 16.1 D-01: backend-aware tool-list filter ---------------------------
     # Drop tools whose runtime backend is unreachable. `synth_*` and the
     # in-process `forge_*` tools (staged-ops, manifest_read, tools_read)
@@ -937,6 +1012,16 @@ async def chat_handler(request: Request) -> JSONResponse:
             503,
             request_id,
         )
+
+    # PR 4 §5 — runtime topology snapshot. Captures the post-
+    # reachability set BEFORE the `tools = filtered_tools` rebind
+    # has any chance to be misread (spec §4.1). Snapshot derives
+    # from `filtered_tools` (the authoritative producer surface)
+    # rather than the downstream alias — framing §3:
+    # "The integration layer passes truth. The integration layer
+    # never reconstructs truth."
+    tools_post_reachability = filtered_tools
+
     tools = filtered_tools  # rebind so downstream uses filtered list
 
     # ---- PR14: message-based pre-filter to narrow tool selection ------------
@@ -1039,8 +1124,21 @@ async def chat_handler(request: Request) -> JSONResponse:
             started=started,
         )
 
+    # PR 4 §4.1 — narrower-latency instrumentation. Measurement
+    # happens regardless of divergence_capture_enabled() per spec:
+    # latency belongs to the arbitration path, not the capture
+    # path. Decoupling protects against a later "let's only
+    # measure when capturing" simplification that would couple
+    # arbitration timing to capture state.
+    narrower_started = time.perf_counter()
     tools = filter_tools_by_message(tools, last_user_text)
     tools_filtered_count = len(tools)
+
+    # PR 4 §5 — arbitration-input snapshot. Captures the
+    # post-PR14 set BEFORE the PR21 deterministic-narrow pass
+    # would collapse it. Used by collapse_occurred derivation
+    # (multi-to-single transition diagnostic).
+    tools_post_pr14 = tools
 
     # ---- PR21: deterministic disambiguation for multi-tool matches ----------
     # When PR14 returns >1 candidate, attempt a second narrowing pass: max
@@ -1063,6 +1161,46 @@ async def chat_handler(request: Request) -> JSONResponse:
         if len(narrowed) < len(tools):
             tools = narrowed
             tools_filtered_count = len(narrowed)
+    narrower_latency_ms = (time.perf_counter() - narrower_started) * 1000.0
+
+    # ── Capture is emitted after arbitration decisions are finalized
+    #    and must not structurally participate in the arbitration
+    #    pipeline. (PR 3 spec §0; PR 4 framing §0.)
+    #
+    #    PR 4 is the controlled introduction of observational
+    #    side-effects into live arbitration surfaces. The risk
+    #    category has shifted from persistence-substrate risk to
+    #    participation-creep risk. (PR 4 framing §0.)
+    #
+    #    The call site is the source of the three explicit inputs.
+    #    The integration layer passes truth. The integration layer
+    #    never reconstructs truth. The builder does not discover
+    #    runtime state. (PR 4 framing §3.)
+    #
+    #    Capture emission occurs only after arbitration state is
+    #    finalized for the current execution path. Capture records
+    #    completed arbitration observations, not provisional
+    #    intermediate state. (PR 4 spec §0.)
+
+    if divergence_capture_enabled():
+        emit_divergence_capture(
+            prompt=last_user_text,
+            registered_tools=registered_tools,
+            candidate_set_post_reachability=tools_post_reachability,
+            candidate_set_post_pr14=tools_post_pr14,
+            narrower_decision=tools,
+            pr20_condition_met=(
+                tools_filtered_count == 1
+                and tools_filtered_count < tools_available_count
+            ),
+            collapse_occurred=(
+                tools_filtered_count == 1
+                and len(tools_post_pr14) > 1
+            ),
+            ambiguity_state=_ambiguity_state_for(tools_filtered_count),
+            narrower_latency_ms=narrower_latency_ms,
+            source="runtime",
+        )
 
     # ---- PR15: deterministic-tool-call enforcement --------------------------
     # Stack the existing pipeline system prompt with the PR15 rule block so
