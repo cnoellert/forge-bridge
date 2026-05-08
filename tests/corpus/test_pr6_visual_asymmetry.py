@@ -326,3 +326,293 @@ def _opens_with_separator(
     line = source_lines[block_start_idx]
     stripped = line.lstrip()
     return stripped.startswith(_SEPARATOR_PREFIX)
+
+
+# ---------------------------------------------------------------------------
+# Validation logic (per A.5.3.2-PR6-SPEC.md §5).
+# ---------------------------------------------------------------------------
+#
+# The validators compose Properties A-D and Rejections 1, 2, 4
+# into a single per-call-site validation pass. Rejection 3 is NOT
+# a separate validator — per A.5.3.2-PR6-FRAMING.md §4.2 + §5, it
+# is the named *consequence* of Properties A-D + Rejections 1, 2,
+# 4 holding. PR 6 owns Layer 3 only; cross-module fused-helper
+# drift is caught at Layers 1 + 2.
+#
+# Aggregation rationale: failures accumulate rather than
+# halt-on-first. A single fused-helper scratch fires Property A +
+# Property D simultaneously; the operator should see both
+# failures in the lint output, not just the first. The single
+# exception is the Property A short-circuit — if the call has no
+# enclosing guarded If, downstream property checks reference an
+# `if_stmt` that does not exist; the validator records the
+# Property A failure and returns.
+
+# Failure-message preludes — quoted in each per-rejection detail
+# so the operator reading a CI failure encounters the
+# architectural commitment, not just a structural mismatch
+# (per A.5.3.2-PR6-FRAMING.md §2.4: "the lint is the room's
+# mechanical memory").
+
+_PROPERTY_A_PRELUDE = (
+    "Per A.5.3.2-GATE-1-SPEC.md §5.3 first prohibited pattern: "
+    "the gate must live at the call site, not inside the helper. "
+    "The visual-asymmetry pattern (§5.1) requires the "
+    "`if divergence_capture_enabled():` guard to be visible at "
+    "the call site so future contributors perceive observation "
+    "as optional and gated."
+)
+
+_PROPERTY_B_PRELUDE = (
+    "Per A.5.3.2-GATE-1-SPEC.md §5.1 canonical pattern: the "
+    "guard's body contains exactly one statement — the "
+    "`emit_divergence_capture(...)` call. Additional statements "
+    "would visually fuse capture with surrounding logic and "
+    "erode the asymmetry between observation and arbitration."
+)
+
+_PROPERTY_C_PRELUDE = (
+    "Per A.5.3.2-GATE-1-SPEC.md §5.2 helper signature: the call "
+    "is keyword-only with `source=\"runtime\"` (PR 3 schema "
+    "enum). The lint validates only the structural enum value; "
+    "field count, names, and order are the helper signature's "
+    "job."
+)
+
+_PROPERTY_D_1_PRELUDE = (
+    "Per A.5.3.2-PR6-FRAMING.md §4.1 D.1 (visual grammar lock): "
+    "0 or 1 blank lines permitted between the carrier comment "
+    "block and the guard. Locking 'exactly 1' would elevate "
+    "formatting trivia into invariant status; permitting 2+ "
+    "would erode adjacency entirely. The 0-or-1 range is "
+    "shape-preserving flexibility; 2+ is shape-eroding."
+)
+
+_PROPERTY_D_2_PRELUDE = (
+    "Per A.5.3.2-PR6-FRAMING.md §4.1 D.2 (separator placement "
+    "lock): the canonical visual separator must be the OPENING "
+    "line of the comment block. Presence elsewhere in the block "
+    "is insufficient — the separator's specific position carries "
+    "the meaning 'observation begins here, distinct from "
+    "arbitration above'; that meaning evaporates if the "
+    "separator can drift within the block."
+)
+
+_PROPERTY_D_BLOCK_MISSING_PRELUDE = (
+    "Per A.5.3.2-PR6-FRAMING.md §4.1 D (visual grammar lock): "
+    "the canonical pattern is separator → carrier block → guard "
+    "→ emission. A guard without a preceding carrier block has "
+    "no observational header; future readers would not perceive "
+    "this code as 'observation, distinct from arbitration'."
+)
+
+_REJECTION_2_PRELUDE = (
+    "Protected property violated: \"No additional narrowing "
+    "operation may occur downstream of finalized arbitration "
+    "capture.\" "
+    "(NARROWING_FUNCTION_NAMES is the operational mechanism for "
+    "identifying narrowing calls — NOT the protected property "
+    "itself. Per A.5.3.2-PR6-FRAMING.md §4.2 Rejection 2: the "
+    "constant is *how* the lint detects; the property is *what* "
+    "the lint protects.) "
+    "Per A.5.3.2-GATE-1-SPEC.md §5.3 third prohibited pattern: "
+    "capture is a record OF the decision, not an observer "
+    "INSIDE the decision pipeline."
+)
+
+_REJECTION_4_PRELUDE = (
+    "Per A.5.3.2-PR5-SPEC.md §4.1 (arbitration-aware, not "
+    "branch-aware): emission is gated on "
+    "`divergence_capture_enabled()`, NOT on success/failure "
+    "branches. The single insertion point preserves capture's "
+    "relationship to the arbitration event itself, not to its "
+    "downstream semantic interpretations. A guard that combines "
+    "the gate with branch state via boolean operator collapses "
+    "this distinction."
+)
+
+
+def _validate_visual_grammar(
+    file: Path,
+    source_lines: list[str],
+    if_stmt: ast.If,
+) -> list[_CallSiteFailure]:
+    """Validate Property D — the four-element visual grammar:
+    separator → carrier block → guard → emission.
+
+    ``if_stmt.lineno`` is one-indexed (Python AST convention);
+    convert to zero-indexed for source_lines list indexing. The
+    guard line itself is at ``if_stmt.lineno - 1``.
+    """
+    failures: list[_CallSiteFailure] = []
+    guard_idx = if_stmt.lineno - 1  # zero-indexed
+
+    # D.1 — blank line semantics (0 or 1 permitted; 2+ rejects).
+    blank_count = _blank_line_count_above(source_lines, guard_idx)
+    if blank_count > 1:
+        failures.append(_CallSiteFailure(
+            file=file, lineno=if_stmt.lineno,
+            failure_id="property_d_1",
+            detail=(
+                f"{blank_count} blank lines between carrier "
+                "comment block and guard; canonical pattern "
+                "permits 0 or 1.\n\n"
+                + _PROPERTY_D_1_PRELUDE
+            ),
+        ))
+
+    # D.2 — separator placement (block must open with `# ──`).
+    block = _comment_block_above(source_lines, guard_idx)
+    if block is None:
+        failures.append(_CallSiteFailure(
+            file=file, lineno=if_stmt.lineno,
+            failure_id="property_d_block_missing",
+            detail=(
+                "No carrier comment block found above the "
+                "guard.\n\n"
+                + _PROPERTY_D_BLOCK_MISSING_PRELUDE
+            ),
+        ))
+    else:
+        block_start, _block_end = block
+        if not _opens_with_separator(source_lines, block_start):
+            failures.append(_CallSiteFailure(
+                file=file, lineno=block_start + 1,  # one-indexed
+                failure_id="property_d_2",
+                detail=(
+                    "Carrier comment block does not open with "
+                    f"the canonical visual separator "
+                    f"'{_SEPARATOR_PREFIX}'.\n\n"
+                    + _PROPERTY_D_2_PRELUDE
+                ),
+            ))
+
+    return failures
+
+
+def _validate_call_site(
+    file: Path,
+    source_lines: list[str],
+    tree: ast.AST,
+    enclosing_function: ast.FunctionDef | ast.AsyncFunctionDef,
+    call: ast.Call,
+) -> list[_CallSiteFailure]:
+    """Validate one ``emit_divergence_capture(...)`` call against
+    the canonical pattern. Return a list of failures (empty list =
+    pass).
+
+    Failures accumulate; a single call site can fire multiple
+    properties simultaneously. The Property A short-circuit is
+    the one exception — if no enclosing guarded If exists,
+    downstream property checks reference an `if_stmt` that does
+    not exist, so the validator records the Property A failure
+    and returns.
+    """
+    failures: list[_CallSiteFailure] = []
+
+    # Property A — guarded invocation.
+    if_stmt = _enclosing_if(tree, call)
+    if if_stmt is None:
+        failures.append(_CallSiteFailure(
+            file=file, lineno=call.lineno,
+            failure_id="property_a",
+            detail=(
+                "emit_divergence_capture call is not directly "
+                "enclosed by an `if divergence_capture_enabled():` "
+                "block (Rejection 1 — gate inside helper).\n\n"
+                + _PROPERTY_A_PRELUDE
+            ),
+        ))
+        # If unguarded, Properties B/C/D and Rejections 2/4 cannot
+        # be evaluated against an if statement that does not exist.
+        return failures
+
+    # Rejection 4 — branch-state gating.
+    if not _is_canonical_guard_test(if_stmt.test):
+        failures.append(_CallSiteFailure(
+            file=file, lineno=if_stmt.lineno,
+            failure_id="rejection_4",
+            detail=(
+                "Guard's test expression is not exactly "
+                "`divergence_capture_enabled()` — gate combined "
+                "with branch state via boolean operator or "
+                "modified-call-shape.\n\n"
+                + _REJECTION_4_PRELUDE
+            ),
+        ))
+
+    # Property B — single-statement body.
+    if len(if_stmt.body) != 1:
+        failures.append(_CallSiteFailure(
+            file=file, lineno=if_stmt.lineno,
+            failure_id="property_b",
+            detail=(
+                f"Guard body contains {len(if_stmt.body)} "
+                "statements; canonical pattern requires exactly "
+                "one (the emit_divergence_capture call).\n\n"
+                + _PROPERTY_B_PRELUDE
+            ),
+        ))
+
+    # Property C — keyword-only invocation with source="runtime".
+    if call.args:
+        failures.append(_CallSiteFailure(
+            file=file, lineno=call.lineno,
+            failure_id="property_c_positional",
+            detail=(
+                f"Call has {len(call.args)} positional "
+                "argument(s); canonical pattern requires "
+                "keyword-only arguments.\n\n"
+                + _PROPERTY_C_PRELUDE
+            ),
+        ))
+    source_keyword = next(
+        (kw for kw in call.keywords if kw.arg == "source"), None,
+    )
+    if source_keyword is None:
+        failures.append(_CallSiteFailure(
+            file=file, lineno=call.lineno,
+            failure_id="property_c_source_missing",
+            detail=(
+                "Call missing required `source=` keyword.\n\n"
+                + _PROPERTY_C_PRELUDE
+            ),
+        ))
+    elif not (
+        isinstance(source_keyword.value, ast.Constant)
+        and source_keyword.value.value == "runtime"
+    ):
+        failures.append(_CallSiteFailure(
+            file=file, lineno=call.lineno,
+            failure_id="property_c_source_value",
+            detail=(
+                "Call's `source=` keyword is not the literal "
+                "string \"runtime\" — schema enum violation.\n\n"
+                + _PROPERTY_C_PRELUDE
+            ),
+        ))
+
+    # Property D — visual grammar.
+    failures.extend(
+        _validate_visual_grammar(file, source_lines, if_stmt)
+    )
+
+    # Rejection 2 — pre-finalization emission.
+    narrowing_lines = _narrowing_call_lines(enclosing_function)
+    after_emission = [
+        ln for ln in narrowing_lines if ln > if_stmt.end_lineno
+    ]
+    if after_emission:
+        failures.append(_CallSiteFailure(
+            file=file, lineno=if_stmt.lineno,
+            failure_id="rejection_2",
+            detail=(
+                f"Narrowing calls (in NARROWING_FUNCTION_NAMES) "
+                f"at line(s) {after_emission} appear after "
+                f"emission at line {if_stmt.lineno} in "
+                f"`{enclosing_function.name}`.\n\n"
+                + _REJECTION_2_PRELUDE
+            ),
+        ))
+
+    return failures
