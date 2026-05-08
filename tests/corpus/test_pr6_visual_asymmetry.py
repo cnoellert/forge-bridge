@@ -616,3 +616,265 @@ def _validate_call_site(
         ))
 
     return failures
+
+
+# ---------------------------------------------------------------------------
+# Synthetic-source helper + tests (per A.5.3.2-PR6-SPEC.md §6.2 + §6.3).
+# ---------------------------------------------------------------------------
+
+def _validate_source(source: str) -> list[_CallSiteFailure]:
+    """Parse ``source`` and run ``_validate_call_site`` on every
+    ``(enclosing_function, emit_call)`` pair surfaced by
+    ``_find_emit_call_sites``.
+
+    Used by synthetic-source rejection + acceptance tests to
+    exercise the validator without mutating production code.
+    Ownership comes from the discovery surface — the helper does
+    not need to know the function's name.
+    """
+    tree = ast.parse(source)
+    source_lines = source.splitlines()
+    failures: list[_CallSiteFailure] = []
+    for enclosing_function, call in _find_emit_call_sites(tree):
+        failures.extend(_validate_call_site(
+            file=Path("<synthetic>"),
+            source_lines=source_lines,
+            tree=tree,
+            enclosing_function=enclosing_function,
+            call=call,
+        ))
+    return failures
+
+
+def _failure_ids(failures: list[_CallSiteFailure]) -> set[str]:
+    """Return the set of distinct ``failure_id`` values in
+    ``failures``. Used by rejection tests to assert the lint fires
+    the named property/rejection without locking on count or
+    line numbers (which are incarnation-specific).
+    """
+    return {f.failure_id for f in failures}
+
+
+# ----- Rejection tests (one per failure_id) --------------------------------
+
+
+def test_lint_rejects_unguarded_emit():
+    """Property A — ``emit_divergence_capture`` called without an
+    enclosing ``if divergence_capture_enabled():`` guard. Per
+    A.5.3.2-GATE-1-SPEC.md §5.3 first prohibited pattern.
+    """
+    synthetic = (
+        "def f():\n"
+        "    emit_divergence_capture(\n"
+        '        prompt="hi", source="runtime",\n'
+        "    )\n"
+    )
+    assert "property_a" in _failure_ids(_validate_source(synthetic))
+
+
+def test_lint_rejects_branch_state_gate():
+    """Rejection 4 — guard combines ``divergence_capture_enabled()``
+    with branch state via boolean operator. Per A.5.3.2-PR5-SPEC.md
+    §4.1: capture is arbitration-aware, not branch-aware.
+    """
+    synthetic = (
+        "def f():\n"
+        "    # ── header\n"
+        "    if divergence_capture_enabled() and len(filtered) == 1:\n"
+        "        emit_divergence_capture(\n"
+        '            prompt="hi", source="runtime",\n'
+        "        )\n"
+    )
+    assert "rejection_4" in _failure_ids(_validate_source(synthetic))
+
+
+def test_lint_rejects_multi_statement_guard_body():
+    """Property B — guard body contains more than one statement.
+    Per A.5.3.2-GATE-1-SPEC.md §5.1 canonical pattern: the body
+    is exactly the ``emit_divergence_capture(...)`` call.
+    """
+    synthetic = (
+        "def f():\n"
+        "    # ── header\n"
+        "    if divergence_capture_enabled():\n"
+        "        emit_divergence_capture(\n"
+        '            prompt="hi", source="runtime",\n'
+        "        )\n"
+        "        x = 1  # second statement — Property B fires\n"
+    )
+    assert "property_b" in _failure_ids(_validate_source(synthetic))
+
+
+def test_lint_rejects_positional_args():
+    """Property C — call uses positional arguments. Per
+    A.5.3.2-GATE-1-SPEC.md §5.2 helper signature: keyword-only.
+    """
+    synthetic = (
+        "def f():\n"
+        "    # ── header\n"
+        "    if divergence_capture_enabled():\n"
+        "        emit_divergence_capture(\n"
+        '            "hi", source="runtime",\n'
+        "        )\n"
+    )
+    assert "property_c_positional" in _failure_ids(
+        _validate_source(synthetic),
+    )
+
+
+def test_lint_rejects_missing_source_keyword():
+    """Property C — call missing required ``source=`` keyword.
+    """
+    synthetic = (
+        "def f():\n"
+        "    # ── header\n"
+        "    if divergence_capture_enabled():\n"
+        "        emit_divergence_capture(\n"
+        '            prompt="hi",\n'
+        "        )\n"
+    )
+    assert "property_c_source_missing" in _failure_ids(
+        _validate_source(synthetic),
+    )
+
+
+def test_lint_rejects_wrong_source_value():
+    """Property C — ``source=`` keyword's literal value is not
+    ``"runtime"``. Per PR 3 schema enum: at this layer the call-
+    site contract is exactly ``source="runtime"``.
+    """
+    synthetic = (
+        "def f():\n"
+        "    # ── header\n"
+        "    if divergence_capture_enabled():\n"
+        "        emit_divergence_capture(\n"
+        '            prompt="hi", source="seed",\n'
+        "        )\n"
+    )
+    assert "property_c_source_value" in _failure_ids(
+        _validate_source(synthetic),
+    )
+
+
+def test_lint_rejects_two_blank_lines_above_guard():
+    """Property D.1 — 2+ blank lines between carrier comment block
+    and guard. Per A.5.3.2-PR6-FRAMING.md §4.1 D.1: the canonical
+    pattern permits 0 or 1 blank lines; 2+ is shape-eroding
+    flexibility.
+    """
+    synthetic = (
+        "def f():\n"
+        "    # ── header\n"
+        "\n"
+        "\n"
+        "    if divergence_capture_enabled():\n"
+        "        emit_divergence_capture(\n"
+        '            prompt="hi", source="runtime",\n'
+        "        )\n"
+    )
+    assert "property_d_1" in _failure_ids(_validate_source(synthetic))
+
+
+def test_lint_rejects_separator_mid_block():
+    """Property D.2 — canonical visual separator does not appear
+    on the OPENING line of the carrier comment block. Per
+    A.5.3.2-PR6-FRAMING.md §4.1 D.2: presence elsewhere is
+    insufficient.
+    """
+    synthetic = (
+        "def f():\n"
+        "    # not the separator opening\n"
+        "    # ── separator landed mid-block instead\n"
+        "    # more carrier text\n"
+        "    if divergence_capture_enabled():\n"
+        "        emit_divergence_capture(\n"
+        '            prompt="hi", source="runtime",\n'
+        "        )\n"
+    )
+    assert "property_d_2" in _failure_ids(_validate_source(synthetic))
+
+
+def test_lint_rejects_no_carrier_block():
+    """Property D — guard immediately follows code with no carrier
+    comment block. Per A.5.3.2-PR6-FRAMING.md §4.1 D: the
+    canonical grammar is separator → carrier → guard → emission.
+    """
+    synthetic = (
+        "def f():\n"
+        "    x = 1\n"
+        "    if divergence_capture_enabled():\n"
+        "        emit_divergence_capture(\n"
+        '            prompt="hi", source="runtime",\n'
+        "        )\n"
+    )
+    assert "property_d_block_missing" in _failure_ids(
+        _validate_source(synthetic),
+    )
+
+
+def test_lint_rejects_pre_finalization_emission():
+    """Rejection 2 — narrowing call appears AFTER the
+    ``emit_divergence_capture`` block within the same function.
+    Per A.5.3.2-GATE-1-SPEC.md §5.3 third prohibited pattern:
+    capture is a record OF the decision, not an observer INSIDE
+    the decision pipeline.
+
+    The protected property — "No additional narrowing operation
+    may occur downstream of finalized arbitration capture" — is
+    the truth; NARROWING_FUNCTION_NAMES is the operational
+    mechanism (per A.5.3.2-PR6-FRAMING.md §4.2 Rejection 2).
+    """
+    synthetic = (
+        "def f():\n"
+        "    # ── header\n"
+        "    if divergence_capture_enabled():\n"
+        "        emit_divergence_capture(\n"
+        '            prompt="hi", source="runtime",\n'
+        "        )\n"
+        "    filtered = filter_tools_by_message(tools, 'hi')\n"
+    )
+    assert "rejection_2" in _failure_ids(_validate_source(synthetic))
+
+
+# ----- Acceptance tests (shape-preserving flexibility) ---------------------
+
+
+def test_lint_accepts_zero_blank_lines_above_guard():
+    """Property D.1 acceptance — 0 blank lines between carrier
+    comment block and guard. Per A.5.3.2-PR6-FRAMING.md §4.1 D.1:
+    the 0-or-1 range is shape-preserving flexibility; locking
+    "exactly 1" would elevate formatting trivia into invariant
+    status.
+    """
+    synthetic = (
+        "def f():\n"
+        "    # ── header\n"
+        "    if divergence_capture_enabled():\n"
+        "        emit_divergence_capture(\n"
+        '            prompt="hi", source="runtime",\n'
+        "        )\n"
+    )
+    assert _validate_source(synthetic) == []
+
+
+def test_lint_accepts_internal_section_break():
+    """Property D.3 acceptance — internal ``── PR N specializations
+    ──`` separator appears mid-block (mirroring _step.py's actual
+    structure). The carrier block remains contiguous; the OPENING
+    separator is preserved at the block's top. Per
+    A.5.3.2-PR6-FRAMING.md §4.1 D.3: this is shape-preserving
+    flexibility, not shape-eroding.
+    """
+    synthetic = (
+        "def f():\n"
+        "    # ── Capture is emitted after arbitration finalized\n"
+        "    #\n"
+        "    #    ── PR 5 specializations ──\n"
+        "    #\n"
+        "    #    further carrier text\n"
+        "    if divergence_capture_enabled():\n"
+        "        emit_divergence_capture(\n"
+        '            prompt="hi", source="runtime",\n'
+        "        )\n"
+    )
+    assert _validate_source(synthetic) == []
