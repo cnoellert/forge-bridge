@@ -1044,3 +1044,91 @@ def test_emit_helper_does_not_internally_call_gate():
         "logic, that requires spec amendment (A.5.3.2-PR6-SPEC.md "
         "§4.3) — not silent absorption."
     )
+
+
+# ---------------------------------------------------------------------------
+# Production-tree umbrella test (per A.5.3.2-PR6-SPEC.md §6.1 test 1).
+# ---------------------------------------------------------------------------
+
+
+def test_visual_asymmetry_at_all_call_sites():
+    """Walk the production tree, discover every
+    ``emit_divergence_capture(...)`` call site, validate each
+    against the canonical pattern. Assert zero aggregated
+    failures.
+
+    This is the lint's load-bearing test. A regression here means
+    one or more call sites have eroded the canonical visual-
+    asymmetry pattern. The aggregated failure message names which
+    Properties/Rejections fired and where, so the operator can
+    route the offender per A.5.3.2-PR6-SPEC.md §8 phase-end
+    conditions.
+
+    Discovery is via ``_find_emit_call_sites`` (ownership at
+    discovery surface; framing §3.2). Future call sites added by
+    Gate 2/4 work inherit validation automatically — discovery
+    walks the tree, so a third or fourth call site is captured
+    and validated without lint modification (provided it matches
+    the canonical shape).
+
+    Per A.5.3.2-PR6-FRAMING.md §0 carrier sentences (preluded
+    here so the operator reading a CI failure encounters the
+    lint's posture before the per-call-site failures):
+
+        PR 6 is the structural backstop for the visual-asymmetry
+        pattern. The lint validates shape, not content;
+        structure, not interpretation.
+
+        The lint operates by observation, not by participation.
+        It reads source files; it does not import the corpus
+        package.
+    """
+    failures: list[_CallSiteFailure] = []
+
+    for py in _walk_production_tree():
+        try:
+            source = py.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            # A non-parseable .py file in forge_bridge/ would be a
+            # bigger problem than the lint can solve; skip rather
+            # than crash and let the broader test suite surface it.
+            continue
+        source_lines = source.splitlines()
+        for enclosing_function, call in _find_emit_call_sites(tree):
+            failures.extend(_validate_call_site(
+                file=py,
+                source_lines=source_lines,
+                tree=tree,
+                enclosing_function=enclosing_function,
+                call=call,
+            ))
+
+    assert failures == [], (
+        "Visual-asymmetry pattern violation(s) at one or more "
+        "production call sites:\n"
+        "\n"
+        "  PR 6 is the structural backstop for the visual-\n"
+        "  asymmetry pattern. The lint validates shape, not\n"
+        "  content; structure, not interpretation.\n"
+        "\n"
+        "  The lint operates by observation, not by\n"
+        "  participation. It reads source files; it does not\n"
+        "  import the corpus package.\n"
+        "\n"
+        + "\n".join(
+            f"--- {f.failure_id} at "
+            f"{f.file.relative_to(Path(forge_bridge.__file__).parent)}:"
+            f"{f.lineno}\n"
+            f"{f.detail}\n"
+            for f in failures
+        )
+        + "\n"
+        "Routing per A.5.3.2-PR6-SPEC.md §8 phase-end conditions: "
+        "(a) revert the offending change, OR (b) spec amendment "
+        "if the change is genuinely needed (the canonical "
+        "pattern is framing-locked; expansions re-open framing)."
+    )
