@@ -1132,3 +1132,80 @@ def test_visual_asymmetry_at_all_call_sites():
         "if the change is genuinely needed (the canonical "
         "pattern is framing-locked; expansions re-open framing)."
     )
+
+
+# ---------------------------------------------------------------------------
+# Lint-self meta-test (per A.5.3.2-PR6-SPEC.md §6.5.3 + §6.1 test 3).
+# ---------------------------------------------------------------------------
+
+
+def test_lint_imports_no_corpus_modules():
+    """The lint module itself does not import
+    ``forge_bridge.corpus`` in any form.
+
+    Per A.5.3.2-PR6-FRAMING.md §0 + §3.2:
+
+        The lint operates by observation, not by participation.
+        It reads source files; it does not import the corpus
+        package. The lint's own scope is the same one-directional
+        observational flow the call sites enforce.
+
+    The same principle the call sites enforce at the production
+    tree applies to the lint itself. Importing the corpus package
+    would put the lint into the same participation-creep risk
+    surface that the production allowlist + grep tests already
+    protect against — and would force the lint module to be
+    added to ``test_pr3_discipline.py::_ALLOWLIST``, eroding
+    the bounded-asymmetry's meaning.
+    """
+    lint_path = Path(__file__)
+    source = lint_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    # AST walk rather than text grep: the lint module references
+    # the strings ``"from forge_bridge.corpus"`` and
+    # ``"import forge_bridge.corpus"`` as STRING LITERALS in
+    # ``test_pr3_discipline``-style discussions (and arguably
+    # would in a future text-grep variant of this very test).
+    # Walking the AST sees only actual ``Import`` / ``ImportFrom``
+    # statements; string literals and docstrings are invisible at
+    # this layer. Matches the hybrid-AST-validates-structural-
+    # shape discipline of the production lint (§4.3): use AST
+    # where structure matters, text where visual layout matters.
+    offenders: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module == "forge_bridge.corpus" or module.startswith(
+                "forge_bridge.corpus."
+            ):
+                offenders.append(
+                    (node.lineno, f"from {module} import ..."),
+                )
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                name = alias.name
+                if name == "forge_bridge.corpus" or name.startswith(
+                    "forge_bridge.corpus."
+                ):
+                    offenders.append(
+                        (node.lineno, f"import {name}"),
+                    )
+
+    assert offenders == [], (
+        "Lint participation-creep violated: "
+        "tests/corpus/test_pr6_visual_asymmetry.py imports the "
+        "corpus package.\n"
+        "\n"
+        "Per A.5.3.2-PR6-FRAMING.md §0 + §3.2: the lint reads "
+        "source files; it does not import what it validates. "
+        "Importing the corpus package would put the lint into "
+        "the same participation-creep risk surface that the "
+        "production allowlist + grep tests already protect "
+        "against — and would force the lint module to be added "
+        "to ``test_pr3_discipline.py::_ALLOWLIST``, eroding the "
+        "bounded-asymmetry's meaning.\n"
+        "\n"
+        "Offenders:\n"
+        + "\n".join(f"  line {n}: {l}" for n, l in offenders)
+    )
