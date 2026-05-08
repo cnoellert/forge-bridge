@@ -49,14 +49,18 @@ _FORBIDDEN_NEEDLES: tuple[str, ...] = (
 # Files explicitly permitted to import forge_bridge.corpus. Each
 # entry is one named call-site integration.
 #
-# PR 4 adds the chat-handler integration. PR 5 will add
-# ``console/_step.py`` (chain-step integration). Growth is
-# reviewable at the spec layer per A.5.3.2-PR4-FRAMING.md §2.
+# PR 4 added the chat-handler integration. PR 5 adds
+# ``console/_step.py`` (chain-step integration) per
+# A.5.3.2-PR5-SPEC.md §4.2. Growth is reviewable at the spec
+# layer per A.5.3.2-PR4-FRAMING.md §2; each future PR
+# introducing a new corpus call site must explicitly amend
+# ``_ALLOWLIST`` and document the addition in its spec.
 #
 # Paths are relative to forge_bridge/ (the package root). They
 # match the rglob form below — POSIX-style separators.
 _ALLOWLIST: tuple[str, ...] = (
     "console/handlers.py",
+    "console/_step.py",
 )
 
 
