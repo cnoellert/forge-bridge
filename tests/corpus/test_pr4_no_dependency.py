@@ -97,6 +97,22 @@ _HANDLER_MODULE = "forge_bridge.console.handlers"
 # test against ordering with respect to other suite members that import
 # app at their own discretion.
 _APP_MODULE = "forge_bridge.console.app"
+# PR 5: forward-looking module deletion for the chain-step path.
+# `_step.py` is the chain-step executor (analogous to the chat
+# handler's narrowing surface). `_engine.py` is its caller; both must
+# reload under the corpus-sentinel patch so that `_step.py`'s Shape A
+# guarded import (added at PR 5 step 6) re-resolves against the
+# sentinel and installs fallback bindings. Pre-step-6 these are no-ops
+# (neither module imports corpus today); post-step-6 they exercise the
+# chain-step's no-dependency guarantee per A.5.3.2-PR5-SPEC.md §6.3
+# path 1 (the multi-step prompt parametrization). Naming both modules
+# explicitly so the chain re-resolution chain is auditable from this
+# test alone — `_engine.py` imports `execute_chain_step` from
+# `_step.py` at module-load time, so reloading `_step.py` without
+# also reloading `_engine.py` would leave the cached `_engine.py`
+# bound to the pre-reload `_step.py`, defeating the sentinel.
+_ENGINE_MODULE = "forge_bridge.console._engine"
+_STEP_MODULE = "forge_bridge.console._step"
 
 
 class _CorpusSentinel(ModuleType):
@@ -132,18 +148,51 @@ def _reset_rate_limit():
     _rate_limit._reset_for_tests()
 
 
+@pytest.mark.parametrize(
+    "prompt,expected_envelope_keys",
+    [
+        pytest.param(
+            "hi",
+            ("messages", "stop_reason", "request_id"),
+            id="single_step",
+        ),
+        pytest.param(
+            "list projects -> list shots",
+            ("status", "request_id", "chain", "error"),
+            id="multi_step_chain",
+        ),
+    ],
+)
 def test_arbitration_completes_when_corpus_unavailable(
-    monkeypatch, tmp_path,
+    monkeypatch, tmp_path, prompt, expected_envelope_keys,
 ):
-    """The chat handler must complete arbitration successfully when
-    ``forge_bridge.corpus`` is structurally absent.
+    """Arbitration must complete successfully when
+    ``forge_bridge.corpus`` is structurally absent — at BOTH the
+    chat-handler single-step surface and the chain-step multi-step
+    surface.
 
-    Asserts:
+    Per ``A.5.3.2-PR5-SPEC.md`` §6.3 path 1 (preferred): coverage of
+    the chain-step surface is parametrized into this test rather than
+    duplicated in a sibling file. The protected property —
+    *arbitration runs without corpus, period* — is one property;
+    expressing it as one parametrized test reads as one invariant.
+    The multi-step parametrization drives `_execute_chain →
+    run_chain_steps → execute_chain_step` end-to-end, exercising
+    `_step.py`'s Shape A guarded import + emission fallback (added at
+    PR 5 step 6).
+
+    Per ``A.5.3.2-PR5-FRAMING.md`` §5: no-dependency coverage at the
+    chain-step surface must be MEASURED, not inferred. The PR 4
+    single-step probe alone does not reach `_step.py`; the multi-step
+    parametrization closes that empirical gap.
+
+    Asserts (per parametrized envelope shape):
       - Status code is exactly 200.
       - Response body is JSON-parseable.
-      - Response envelope matches the success shape (``messages``,
-        ``stop_reason``, ``request_id``).
-      - No exception propagates from the corpus-import attempt.
+      - Response envelope contains all keys in
+        ``expected_envelope_keys``.
+      - No exception propagates from the corpus-import attempt at
+        EITHER call site.
     """
     # Defensive isolation: even if the chat handler accidentally
     # accesses the corpus dir during this test, route it to a
@@ -183,6 +232,17 @@ def test_arbitration_completes_when_corpus_unavailable(
     # point at the pre-reload handlers and would bypass the fallback
     # bindings that the reload below installs.
     monkeypatch.delitem(sys.modules, _APP_MODULE, raising=False)
+    # PR 5: drop the chain-step modules too. `_engine.py` imports
+    # `execute_chain_step` from `_step.py` at module-load time;
+    # reloading `_step.py` without `_engine.py` leaves the cached
+    # `_engine.py` bound to pre-reload `_step.py`, defeating the
+    # sentinel for the chain path. Pre-step-6 these delitems are
+    # no-ops (neither module imports corpus today); post-step-6
+    # they make the multi-step parametrization meaningfully exercise
+    # the Shape A guarded-import fallback in `_step.py`. Same forcing
+    # function shape as the handler reload above.
+    monkeypatch.delitem(sys.modules, _ENGINE_MODULE, raising=False)
+    monkeypatch.delitem(sys.modules, _STEP_MODULE, raising=False)
 
     # If the reimport itself raises, the no-dependency property has
     # been violated. The assertion here is: the import succeeds.
@@ -206,17 +266,37 @@ def test_arbitration_completes_when_corpus_unavailable(
     )
     app = build_console_app(api)
 
+    # Stubs for chain-path execution: _stub_call_tool and
+    # _stub_resolve_required_params drive a successful chain
+    # completion through `mcp.call_tool` and the resolver chain.
+    # These patches are inert for the single-step prompt (which
+    # reaches the LLM-router path and returns through
+    # `_stub_chat_result`) and active for the multi-step prompt
+    # (which routes through `_execute_chain → run_chain_steps →
+    # execute_chain_step` per step). One mock setup serves both
+    # parametrizations cleanly.
+    from tests.corpus._pr4_helpers import (
+        _stub_call_tool,
+        _stub_resolve_required_params,
+    )
+
     with patch(
         "forge_bridge.mcp.server.mcp.list_tools",
         new=AsyncMock(return_value=[_make_test_tool()]),
     ), patch(
+        "forge_bridge.mcp.server.mcp.call_tool",
+        new=AsyncMock(side_effect=_stub_call_tool),
+    ), patch(
         "forge_bridge.console.handlers.filter_tools_by_reachable_backends",
         side_effect=_passthrough_filter,
+    ), patch(
+        "forge_bridge.console._tool_chain.resolve_required_params",
+        side_effect=_stub_resolve_required_params,
     ):
         client = TestClient(app)
         response = client.post(
             "/api/v1/chat",
-            json={"messages": [{"role": "user", "content": "hi"}]},
+            json={"messages": [{"role": "user", "content": prompt}]},
         )
 
     # Tightened assertion (per converged review): framing §1.4
@@ -225,22 +305,26 @@ def test_arbitration_completes_when_corpus_unavailable(
     # corpus is absent would represent the exact architectural
     # collapse this test exists to prevent.
     assert response.status_code == 200, (
-        f"chat handler returned status {response.status_code} "
-        f"when forge_bridge.corpus is structurally absent; expected "
-        f"200. Per A.5.3.2-PR4-FRAMING.md §1.4, arbitration must "
-        f"complete successfully — not merely degrade gracefully — "
-        f"when capture infrastructure is unavailable. Body: "
+        f"arbitration returned status {response.status_code} "
+        f"when forge_bridge.corpus is structurally absent (prompt="
+        f"{prompt!r}); expected 200. Per A.5.3.2-PR4-FRAMING.md §1.4 "
+        f"+ A.5.3.2-PR5-FRAMING.md §5, arbitration must complete "
+        f"successfully — not merely degrade gracefully — when "
+        f"capture infrastructure is unavailable, at BOTH the "
+        f"chat-handler and chain-step surfaces. Body: "
         f"{response.text!r}"
     )
     body = response.json()
     assert isinstance(body, dict), (
-        f"chat handler response is not a JSON object: {body!r}"
+        f"arbitration response is not a JSON object: {body!r}"
     )
-    for required_key in ("messages", "stop_reason", "request_id"):
+    for required_key in expected_envelope_keys:
         assert required_key in body, (
-            f"chat handler success envelope missing required key "
-            f"{required_key!r}: {body!r}. Per A.5.3.2-PR4-FRAMING.md "
-            f"§1.4, the chat handler must produce a well-formed "
-            f"success response when forge_bridge.corpus is "
-            f"structurally absent — never a malformed envelope."
+            f"arbitration success envelope missing required key "
+            f"{required_key!r} (prompt={prompt!r}; expected_keys="
+            f"{expected_envelope_keys!r}): {body!r}. Per "
+            f"A.5.3.2-PR4-FRAMING.md §1.4 + A.5.3.2-PR5-FRAMING.md §5, "
+            f"both arbitration surfaces must produce a well-formed "
+            f"envelope when forge_bridge.corpus is structurally "
+            f"absent — never a malformed response at either surface."
         )
