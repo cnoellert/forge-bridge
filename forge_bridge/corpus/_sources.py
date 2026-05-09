@@ -9,12 +9,21 @@ been resolved.
 
 The module is structurally pure: a single frozenset constant + this
 governance docstring. No functions, no classes, no imports from any
-``forge_bridge.corpus.*`` module. The Layer 1 lint allowlist
-(``tests/corpus/test_pr3_discipline.py::_ALLOWLIST``) admits this
-file because it is leaf governance — the constant's value is the
-artifact, not the protection; the protection is the framing-level
-discipline that adding a new source class requires synchronous
-update of multiple downstream surfaces.
+``forge_bridge.corpus.*`` module. Admission into the corpus subtree
+is structural — the file lives in ``forge_bridge/corpus/``, and the
+discipline test (``tests/corpus/test_pr3_discipline.py``)
+pre-filters the ``corpus/`` subtree before consulting
+``_ALLOWLIST``; no allowlist entry is needed or appropriate.
+``_ALLOWLIST`` governs the orthogonal boundary —
+permission-to-import-corpus from non-corpus modules — which is
+unrelated to admission of files into the corpus subtree (see
+``A.5.3.2-PR7-SPEC.md`` §4.5 amendment).
+
+The protection ``_sources.py`` carries is not test-mechanical; it
+is the framing-level discipline that adding a new source class
+requires synchronous update of multiple downstream surfaces (see
+PROTECTED PROPERTY below). The constant's value is the artifact,
+not the protection.
 
 PR 7 carrier sentences (verbatim, load-bearing — see
 ``A.5.3.2-PR7-SPEC.md`` §0):
