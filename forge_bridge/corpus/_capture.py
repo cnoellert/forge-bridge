@@ -72,9 +72,11 @@ import json
 import logging
 import os
 import uuid
+from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal, Optional
 
 from forge_bridge.corpus._identity import (
     daemon_git_sha,
@@ -143,6 +145,47 @@ def divergence_capture_enabled() -> bool:
             sorted(v for v in _FALSY if v),
         )
     return False
+
+
+# ── Dispatch-provenance substrate (PR 7 §4.2.2 + §4.2.3) ───────────────────
+#
+# Inert at PR 7 Step 3 landing. The contextvar default is ``None``; the
+# resolution path inside ``emit_divergence_capture`` (Step 5) treats
+# ``None`` as the runtime default (persisted ``source="runtime"``,
+# ``fixture_id`` absent). The substrate is activated by
+# ``seed_dispatch_scope`` (Step 4) and consumed by the resolution path
+# (Step 5). PR 8's seed driver interacts via ``seed_dispatch_scope``
+# only; direct construction of ``_DispatchContext`` is structurally
+# prohibited (private name + frozen instance).
+#
+# See ``A.5.3.2-PR7-SPEC.md`` §4.2.2–§4.2.3 for the binding contract.
+
+
+@dataclass(frozen=True)
+class _DispatchContext:
+    """Dispatch-provenance payload carried via contextvar.
+
+    Private (underscore prefix) and frozen. Constructed exclusively
+    by ``seed_dispatch_scope`` (lands at Step 4); PR 8's seed driver
+    interacts with the scope helper, never with this dataclass
+    directly. Frozen to prevent accidental mutation across the yield
+    point of the context manager.
+
+    ``fixture_id`` is ``str``, not ``str | None``. The framing-time
+    correction (PR 7 framing §3 + 2026-05-08 EVE passoff §3.3) is
+    binding: making it optional broadens the contract for "future
+    flexibility" prematurely. If a use case for an absent
+    ``fixture_id`` appears, that becomes a framing decision.
+    """
+
+    source: Literal["runtime", "seed"]
+    fixture_id: str
+
+
+_dispatch_context: ContextVar[Optional[_DispatchContext]] = ContextVar(
+    "forge_bridge.corpus._capture._dispatch_context",
+    default=None,
+)
 
 
 # ── Builder ────────────────────────────────────────────────────────────────
