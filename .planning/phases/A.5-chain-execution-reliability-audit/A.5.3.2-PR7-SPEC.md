@@ -306,6 +306,13 @@ to PR 8, invisible at the operator surface.
     invokes it in PR 7's delta).
 - **Modified production module** —
   `forge_bridge/corpus/_schema.py`:
+  - **`_VALID_SOURCES` replaced by import from `_sources.py`**
+    (per §4.3 amendment 2026-05-09). The existing local
+    constant `_VALID_SOURCES = frozenset({"fixture", "runtime"})`
+    is removed; the validator consults `KNOWN_SOURCE_VALUES`
+    from `_sources.py` instead. This makes `_sources.py` the
+    single source of truth for source-class governance per
+    Gate 2 framing's lockstep contract (carrier #14).
   - `record_kind: Literal["observation", "expectation"]` field
     added to the schema record shape.
   - `KNOWN_SOURCE_VALUES`-aware validation: when `record_kind`
@@ -313,6 +320,21 @@ to PR 8, invisible at the operator surface.
     `record_kind` is `"expectation"`, `source` field is absent.
   - Schema validation surfaces existing `SchemaValidationError`
     on violations (no new exception class).
+- **Test migration** (per §4.3 amendment) —
+  `tests/corpus/_pr3_helpers.py`,
+  `tests/corpus/test_pr1_skeleton.py`,
+  `tests/corpus/test_pr2_topology.py`,
+  `tests/corpus/test_pr3_corruption_locality.py`,
+  `tests/corpus/test_pr3_failure_invisibility.py`:
+  - 11 usages of `source="fixture"` migrated to
+    `source="runtime"`. The "fixture" value was a legacy
+    test-isolation pattern from PR 1–3 era; per the
+    amendment, it is not a persisted production provenance
+    class and is removed from the schema's accepted values.
+    Migrating to `"runtime"` preserves the test intent
+    (constructing records to validate the validator) while
+    aligning with `KNOWN_SOURCE_VALUES`'s production-only
+    ontology.
 - **Modified production module** —
   `forge_bridge/corpus/reader.py`:
   - Read-time legacy-record synthesis: lines missing
@@ -357,8 +379,8 @@ This sentence resolves the question of why PR 7 has no §5
 already ships in PR 6. The lint test
 (`tests/corpus/test_pr6_visual_asymmetry.py`) runs against the
 modified `_capture.py` as a regression checkpoint at the end of
-step 5 (§6 step 5) and at PR 7 close (§7 condition 2); it
-otherwise receives no PR 7 attention.
+step 6 (§6 step 6, post-§4.3-amendment reorder) and at PR 7
+close (§7 condition 2); it otherwise receives no PR 7 attention.
 
 **Out of scope** (per framing §7 non-acquisitions):
 
@@ -842,21 +864,83 @@ member #1 (helper duplication).
 
 ### 4.3 `forge_bridge/corpus/_schema.py` (modified)
 
-Two additions:
+**Amendment 2026-05-09 (post-Step-4 grounding correction):**
+The original §4.3 was drafted assuming `_schema.py` had no
+source-class governance constant. Step 5 pre-implementation
+surface surfaced the mismatch: `_schema.py:69` already contains
+`_VALID_SOURCES = frozenset({"fixture", "runtime"})` with
+validator enforcement at line 132 (PR 6 close). The amendment
+corrects the spec before the new Step 5 (reordered from Step 6
+per §6 amendment) lands. This is the second occurrence of the
+spec-inferred-from-memory-not-file pattern in this PR; see the
+2026-05-09 feedback memory for the hardened lesson.
 
-#### 4.3.1 `record_kind` literal in the record shape
+**Architectural resolution (sub-path A — single source of
+truth):**
 
-The schema's record validator gains a `record_kind` field check.
-The current `validate_capture_record` shape (at PR 6 close)
-accepts a record dict and raises `SchemaValidationError` on
-shape violations. PR 7 extends:
+- `_VALID_SOURCES` is **removed** from `_schema.py`. The
+  validator imports `KNOWN_SOURCE_VALUES` from `_sources.py`
+  directly. `_sources.py` becomes the single authority for
+  source-class governance per Gate 2 framing's lockstep
+  contract (carrier #14).
+- The legacy `"fixture"` value is **dropped** from the schema's
+  accepted source values. `"fixture"` was a test-isolation
+  pattern from PR 1–3 era — tests constructed records directly
+  with `source="fixture"` to distinguish "test-constructed"
+  from "runtime-emitted." It is not a persisted production
+  provenance class, and carrying it in the schema's governance
+  constant pollutes the production ontology.
+- 11 test usages migrate from `source="fixture"` to
+  `source="runtime"`. The semantic of "test-constructed" is
+  preserved by the test's structural context (the test owns
+  the record-construction site); using `"runtime"` aligns the
+  source value with the production ontology while preserving
+  test intent.
+- Sub-paths B (add `"fixture"` to `KNOWN_SOURCE_VALUES`) and C
+  (keep both constants in parallel) were rejected at amendment
+  time. B permanently muddies the production ontology with a
+  test-bypass value; C creates exactly the dual-authority-
+  surface problem the §4.5 amendment just rejected.
+
+**Step ordering (per §6 amendment):**
+
+The original spec ordered Step 5 (provenance resolution) before
+Step 6 (schema validator extension). With `_VALID_SOURCES`
+governing source membership at PR 6 close, Step 5's resolution
+path would emit `source="seed"` records that the existing
+validator would reject — a hard blocker. Steps 5 and 6 are
+**reordered** in this amendment: the schema validator extension
++ `_VALID_SOURCES` replacement + test migration land FIRST (new
+Step 5, light-touch), then the resolution path lands SECOND
+(new Step 6, full three-round review with the immediate Layer 3
+lint regression checkpoint preserved).
+
+#### 4.3.1 `record_kind` literal + `KNOWN_SOURCE_VALUES`-aware source validation
+
+The schema's record validator gains:
+
+1. A new `_KNOWN_RECORD_KINDS` constant (record_kind ontology).
+2. `record_kind` field validation against the literal enum.
+3. **Replacement** of the `_VALID_SOURCES` membership check
+   with a `KNOWN_SOURCE_VALUES`-aware check that fires for
+   observation records.
+4. Expectation records reject any presence of a `source`
+   field.
+
+The original `_VALID_SOURCES` at line 69 is removed. The
+validator's existing `if record["source"] not in
+_VALID_SOURCES:` check at line 132 is replaced by the
+record-kind-aware branch below.
 
 ```python
+from forge_bridge.corpus._sources import KNOWN_SOURCE_VALUES
+
 _KNOWN_RECORD_KINDS: Final[frozenset[str]] = frozenset({"observation", "expectation"})
 
 def validate_capture_record(record: dict) -> None:
     """[existing docstring extended with record_kind contract]"""
-    # ... existing field validation ...
+    # ... existing field validation up to (but excluding) the
+    # _VALID_SOURCES check, which is removed ...
 
     record_kind = record.get("record_kind")
     if record_kind not in _KNOWN_RECORD_KINDS:
@@ -866,7 +950,6 @@ def validate_capture_record(record: dict) -> None:
         )
 
     if record_kind == "observation":
-        from forge_bridge.corpus._sources import KNOWN_SOURCE_VALUES
         source = record.get("source")
         if source not in KNOWN_SOURCE_VALUES:
             raise SchemaValidationError(
@@ -879,22 +962,25 @@ def validate_capture_record(record: dict) -> None:
                 "expectation record must not carry a 'source' field; "
                 f"found source={record['source']!r}"
             )
+
+    # ... existing nested validators (_validate_candidate_set,
+    # _validate_topology, etc.) continue unchanged ...
 ```
 
-The import of `KNOWN_SOURCE_VALUES` is **inside the function**,
-not at module top-level. The reason is **not** circular-import
-avoidance — `_sources.py` is leaf governance (per §4.1 it
-imports nothing from `forge_bridge.corpus.*`), so no cycle is
-possible at any import order. The reason is module-top-import
-minimalism: keeping `_schema.py`'s top-level import surface
-unchanged from PR 6 close preserves narrower load-time coupling,
-keeps the ontology dependency visible at its point of use
-(inside the validator branch that consumes it), and avoids
-expanding the module-top surface for a constant that only one
-function references. If a second consumer of `KNOWN_SOURCE_VALUES`
-appears inside `_schema.py` in a later phase, the import can be
-promoted to module-top then; until then, function-local is the
-correct shape.
+**Import placement update (post-amendment):** the original
+§4.3.1 specified a function-local import of
+`KNOWN_SOURCE_VALUES`. Post-amendment, the import is
+**module-top** in `_schema.py`. The previous module-top-import-
+minimalism rationale assumed no other consumer; the amendment's
+replacement of `_VALID_SOURCES` makes `KNOWN_SOURCE_VALUES` the
+canonical source-class authority for the entire `_schema.py`
+module, not just one branch. Module-top import matches its new
+status as a primary dependency. The rationale for *avoiding*
+function-local imports here is exactly the rationale that
+applies when a constant becomes a primary dependency: visibility
+at the import block, single-import-once semantics, alignment
+with the project's other module-top governance imports
+(`SCHEMA_VERSION`, `validate_capture_record`).
 
 #### 4.3.2 `_KNOWN_RECORD_KINDS` constant
 
@@ -903,8 +989,8 @@ but is **not** exported from `_schema.py`'s namespace as a
 public surface. It is consumed by the validator only. Tests
 that need to enumerate record kinds construct the set
 explicitly or import the constant via its private name — the
-constant's job is to be the validator's single source of truth,
-not a public API.
+constant's job is to be the validator's single source of truth
+for record kinds, not a public API.
 
 `_KNOWN_RECORD_KINDS` lives in `_schema.py` (not `_sources.py`)
 because it governs the schema's structural ontology, distinct
@@ -915,6 +1001,43 @@ surface); `KNOWN_SOURCE_VALUES` is governed persistence-side
 (new values imply a new provenance class). The two governance
 surfaces are physically separated to make the distinction
 visible.
+
+#### 4.3.3 Test migration (per amendment)
+
+11 test usages of `source="fixture"` migrate to
+`source="runtime"`:
+
+| File | Usages |
+|---|---|
+| `tests/corpus/_pr3_helpers.py` | 1 (default kwargs builder) |
+| `tests/corpus/test_pr1_skeleton.py` | 1 |
+| `tests/corpus/test_pr2_topology.py` | 1 |
+| `tests/corpus/test_pr3_corruption_locality.py` | 1 |
+| `tests/corpus/test_pr3_failure_invisibility.py` | 7 (via `_assert_warning_logged_once(caplog, source="fixture")`) |
+
+The migration is mechanical: every `source="fixture"` literal
+becomes `source="runtime"`. The semantic of "test-constructed
+record" is preserved by the test's structural context — the
+test owns the record-construction site; the source value
+simply names the persisted provenance class, which post-
+migration aligns with the production ontology.
+
+The `_assert_warning_logged_once` helper in
+`test_pr3_failure_invisibility.py` accepts `source` as a kwarg;
+the migration updates each call site's kwarg value, not the
+helper signature. The helper's behavior is unchanged.
+
+**Why this is a Step 5 deliverable, not a Step 6
+deliverable:** the test migration is structurally part of the
+schema validator change. After `_VALID_SOURCES` is replaced by
+`KNOWN_SOURCE_VALUES`, any test that emits `source="fixture"`
+would fail validation — landing the validator change WITHOUT
+the test migration in the same atomic commit would break the
+existing test suite. The migration and the validator change are
+co-located in Step 5 because they protect each other: the
+validator change requires the migration; the migration is
+unambiguously safe only with the validator's new shape in
+place.
 
 ### 4.4 `forge_bridge/corpus/reader.py` (modified)
 
@@ -1288,7 +1411,8 @@ against the modified `_capture.py`. Property C's literal
 check passes because call sites are unchanged. Properties A,
 B, D pass because the helper signature is unchanged at the
 external boundary. **This is the regression checkpoint at
-the end of §6 step 5 and again at PR 7 close.**
+the end of §6 step 6 (post-§4.3-amendment reorder) and again
+at PR 7 close.**
 
 **RC-2: Existing observation behavior preserved.**
 Records persisted via the modified `emit_divergence_capture`
@@ -1357,16 +1481,18 @@ one explicit elevation:
 
 - **Light-touch review** for plumbing — `_sources.py`
   governance constant, `_DispatchContext` dataclass +
-  ContextVar declaration, `seed_dispatch_scope` body, schema
-  validator extension, reader synthesis layer, Step 2
-  discipline boundary verification (per §4.5 amendment).
-- **Full three-round review** for **Step 5** (the resolution
+  ContextVar declaration, `seed_dispatch_scope` body, Step 2
+  discipline boundary verification (per §4.5 amendment),
+  Step 5 schema validator + `_VALID_SOURCES` replacement +
+  test migration (per §4.3 amendment), reader synthesis
+  layer.
+- **Full three-round review** for **Step 6** (the resolution
   path inside `emit_divergence_capture`). Even though PR 7
-  overall is plumbing-shaped, Step 5 is the architectural
+  overall is plumbing-shaped, Step 6 is the architectural
   center of PR 7: it operationalizes carrier #14, the
   declared-vs-resolved provenance separation, and the inert-
   parameter doctrine. The cadence-matches-work-depth rule
-  applies locally — Step 5 is not routine plumbing.
+  applies locally — Step 6 is not routine plumbing.
 
 Eight steps. Each step changes one authority or ontology
 boundary cleanly.
@@ -1439,8 +1565,8 @@ Add to `_capture.py`:
 - `_dispatch_context` ContextVar per §4.2.3.
 
 No behavior change yet. The substrate is inert until Step 4
-introduces the scope helper and Step 5 wires the resolution
-path. Step 3's tests:
+introduces the scope helper and Step 6 wires the resolution
+path (per §4.3 amendment reorder). Step 3's tests:
 
 - `test_dispatch_context_dataclass_is_frozen` (asserts
   `FrozenInstanceError` on attribute assignment).
@@ -1455,11 +1581,11 @@ passes; the contextvar can be imported.
 Add `seed_dispatch_scope` public context manager per §4.2.4 to
 `_capture.py`. Tests for scope-active / scope-inactive /
 exception-cleanup pass against the substrate. Resolution path
-is not yet wired (Step 5) — Step 4's tests assert the
-contextvar's value transitions only:
+is not yet wired (Step 6 per §4.3 amendment reorder) — Step 4's
+tests assert the contextvar's value transitions only:
 
 - `test_scope_inactive_persists_runtime` — gated; runs end-to-
-  end after Step 5 wires the persistence.
+  end after Step 6 wires the persistence.
 - `test_scope_resets_on_exception` — runs at Step 4 against
   the contextvar's post-block value (`_dispatch_context.get() is None`),
   not against persisted records.
@@ -1470,7 +1596,126 @@ contextvar's value transitions only:
 tests/corpus/test_pr7_dispatch_context.py -k 'scope_resets or
 nested_scope'` passes.
 
-### Step 5 — Provenance resolution **(FULL THREE-ROUND REVIEW)**
+### Step 5 — Schema validator + `_VALID_SOURCES` replacement + test migration
+
+**Reordered 2026-05-09 (per §4.3 amendment).** Originally
+drafted as Step 6 ("Schema emission"); reordered to Step 5
+because the schema validator's source-class governance must be
+aligned with `KNOWN_SOURCE_VALUES` BEFORE the resolution path
+emits records with `source="seed"` (now Step 6). Without this
+ordering, Step 6 would emit records the existing validator
+rejects — a hard blocker. The original Step 5 (provenance
+resolution) is now Step 6, retaining its FULL THREE-ROUND
+REVIEW elevation and immediate Layer 3 lint regression
+checkpoint.
+
+Three coordinated changes — atomic landing because the
+validator change requires the test migration; the test
+migration is unambiguously safe only with the validator's new
+shape in place; `emit_divergence_capture` must emit
+`record_kind="observation"` to remain valid under the new
+validator contract.
+
+**A. `_schema.py`: replace `_VALID_SOURCES` with
+`KNOWN_SOURCE_VALUES`.**
+
+- Remove `_VALID_SOURCES = frozenset({"fixture", "runtime"})`
+  at line 69.
+- Add module-top import:
+  `from forge_bridge.corpus._sources import KNOWN_SOURCE_VALUES`.
+  (Module-top, not function-local per §4.3.1 amendment —
+  `KNOWN_SOURCE_VALUES` is a primary dependency post-
+  replacement.)
+- Add `_KNOWN_RECORD_KINDS: Final[frozenset[str]] =
+  frozenset({"observation", "expectation"})` per §4.3.2.
+- Extend `validate_capture_record` per §4.3.1: replace the
+  existing `if record["source"] not in _VALID_SOURCES` check
+  (line 132) with the record-kind-aware branch (record_kind
+  enum check; observation→source∈KNOWN_SOURCE_VALUES;
+  expectation→no source field).
+
+**B. `_capture.py`: plumb `record_kind` through the builder.**
+
+- `_build_capture_record` gains `record_kind` keyword-only
+  parameter. The returned dict includes `"record_kind"`
+  carrying the parameter's value.
+- `emit_divergence_capture`'s call to `_build_capture_record`
+  passes `record_kind="observation"` (constant — observation
+  is what live arbitration emits; expectation persistence has
+  its own helper at Step 8).
+- The `fixture_id` parameter and the contextvar resolution
+  are GATED to Step 6. Step 5 emits records with
+  `source=<call-site literal>`, `record_kind="observation"`,
+  no `fixture_id`. Existing `emit_divergence_capture` call-
+  site behavior is preserved (the call-site `source="runtime"`
+  literal is still passed through unchanged at this step).
+
+**C. Test migration: 11 usages of `source="fixture"` →
+`"runtime"`.**
+
+Per §4.3.3, the migration is mechanical:
+- `tests/corpus/_pr3_helpers.py` (1 — default kwargs builder)
+- `tests/corpus/test_pr1_skeleton.py` (1)
+- `tests/corpus/test_pr2_topology.py` (1)
+- `tests/corpus/test_pr3_corruption_locality.py` (1)
+- `tests/corpus/test_pr3_failure_invisibility.py` (7)
+
+Co-located with the validator change in this atomic commit.
+The semantic of "test-constructed record" is preserved by the
+test's structural context; using `"runtime"` aligns the source
+value with the production ontology while preserving test
+intent.
+
+**Tests added at Step 5:**
+
+- `test_pr7_known_source_values.py` (3 tests, per §5.1) —
+  governance shape; protected-property docstring presence;
+  no-corpus-imports leaf-purity check. The constant is now
+  the canonical authority for source-class governance.
+- `test_pr7_record_kind_schema.py` (4 tests, per §5.1) — runs
+  against the extended validator: observation/expectation
+  round-trip; unknown record_kind rejected; observation with
+  unknown source rejected.
+
+**Light-touch review.** Plumbing-shaped: the validator change
++ builder plumb-through + test migration are mechanical. The
+load-bearing decision (single source of truth via
+`KNOWN_SOURCE_VALUES`) is locked at the §4.3 amendment;
+Step 5 implements it. Property C is unchanged at Step 5 — the
+call-site `source="runtime"` literal still propagates through
+`emit_divergence_capture` unchanged; only Step 6 introduces
+the contextvar consultation that ignores the call-site value.
+
+Verification:
+- `pytest tests/corpus/test_pr7_record_kind_schema.py` — 4
+  passed.
+- `pytest tests/corpus/test_pr7_known_source_values.py` — 3
+  passed.
+- `pytest tests/corpus/` — full suite passes; existing tests
+  pass with `source="runtime"` instead of `"fixture"`; no
+  regressions.
+- `python -c "from forge_bridge.corpus._schema import
+  validate_capture_record; ..."` — imports clean; module-top
+  import of `KNOWN_SOURCE_VALUES` works.
+
+**No mandatory regression checkpoint at Step 5.** The Layer 3
+lint passes incidentally at this step (Property C literal
+check is satisfied because call sites are unchanged; visual
+asymmetry untouched), and running it as a green-light is
+useful, but Step 5 is NOT the architectural center where
+Property C structural authority and operational provenance can
+collapse. The mandatory checkpoint is at Step 6.
+
+### Step 6 — Provenance resolution **(FULL THREE-ROUND REVIEW)**
+
+**Reordered 2026-05-09 (per §4.3 amendment).** Originally
+drafted as Step 5; reordered to Step 6 so the schema validator
+(now Step 5) accepts records with the new ontology BEFORE the
+resolution path emits `source="seed"` records. The
+architectural-center status is preserved: Step 6 is where
+Property C structural authority and operational provenance can
+collapse into each other; full three-round review applies; the
+immediate Layer 3 lint regression checkpoint is mandatory.
 
 This is the architectural center of PR 7. Wire the resolution
 path inside `emit_divergence_capture` per §4.2.5:
@@ -1478,19 +1723,23 @@ path inside `emit_divergence_capture` per §4.2.5:
 - Read `_dispatch_context.get()` at the top of the `try`
   block.
 - Compute `resolved_source` and `resolved_fixture_id`.
-- Pass both to `_build_capture_record` as new keyword-only
-  arguments.
+- Pass `resolved_source` to `_build_capture_record` (replaces
+  the call-site `source` value passed at Step 5).
+- Pass `resolved_fixture_id` to `_build_capture_record` as a
+  new keyword-only argument. (`record_kind="observation"`
+  already passes via Step 5's plumbing.)
 - Append the §4.2 binding-statement pair to
   `emit_divergence_capture`'s docstring.
 - Update `_capture.py`'s module docstring with the inherited
   carriers + binding framing clarification + the §4.2 pair.
 
-`_build_capture_record` gains two new keyword-only parameters
-(`fixture_id`, `record_kind`). `_build_capture_record` is the
-builder; it does not discover state (carrier #6); the resolution
-path passes state explicitly (carrier #3).
+`_build_capture_record` gains the `fixture_id` keyword-only
+parameter at Step 6 (`record_kind` was added at Step 5). The
+builder still does not discover state (carrier #6); the
+resolution path discovers it once and passes it explicitly
+(carrier #3).
 
-**Why Step 5 receives full review depth:** Step 5 is the only
+**Why Step 6 receives full review depth:** Step 6 is the only
 place in PR 7 that can accidentally collapse:
 - structural declaration (the call-site `source="runtime"`
   literal),
@@ -1502,12 +1751,13 @@ binding-statement pair is the carrier protecting against this;
 the test `test_call_site_source_value_is_inert` is the
 mechanical assertion.
 
-**Step 5 regression checkpoint (immediate, mandatory):**
-After Step 5 lands, run `pytest tests/corpus/test_pr6_visual_asymmetry.py`
-unchanged. The Layer 3 lint must pass against the modified
-`_capture.py`. If it fails, Step 5 has accidentally collapsed
-Property C's structural assertion; revert and re-converge
-before proceeding.
+**Step 6 regression checkpoint (immediate, mandatory):**
+After Step 6 lands, run `pytest
+tests/corpus/test_pr6_visual_asymmetry.py` unchanged. The
+Layer 3 lint must pass against the modified `_capture.py`.
+If it fails, Step 6 has accidentally collapsed Property C's
+structural assertion; revert and re-converge before
+proceeding.
 
 This regression checkpoint is the most important moment in
 PR 7's implementation. It proves Property C remains
@@ -1515,39 +1765,10 @@ structurally intact while provenance semantics evolve
 underneath it.
 
 **Full three-round review.** Verification:
-- Step 5 regression checkpoint passes.
+- Step 6 regression checkpoint passes.
 - `pytest tests/corpus/test_pr7_dispatch_context.py` passes
   (full file: scope-active, scope-inactive, inert-call-site,
   exception-reset, nested-scope, frozen-dataclass).
-
-### Step 6 — Schema emission
-
-Add to `_capture.py`:
-- `record_kind="observation"` passed to `_build_capture_record`
-  in the resolution path (§4.2.5). Already present from Step 5.
-
-Add to `_schema.py`:
-- `_KNOWN_RECORD_KINDS` constant per §4.3.2.
-- `validate_capture_record` extension per §4.3.1 — the
-  `record_kind` membership check and the
-  observation-source-membership / expectation-source-absence
-  branch.
-
-The function-local import of `KNOWN_SOURCE_VALUES` lands here
-(per §4.3.1 rationale). Module-level imports in `_schema.py`
-remain unchanged from PR 6 close.
-
-`_build_capture_record` gains `record_kind` and `fixture_id`
-parameters in its signature. Both are keyword-only. Tests:
-
-- `test_pr7_record_kind_schema.py` (4 tests) runs against the
-  extended validator.
-
-**Light-touch review.** Verification: `pytest
-tests/corpus/test_pr7_record_kind_schema.py` passes; `pytest
-tests/corpus/test_pr7_dispatch_context.py` passes (records
-emitted via `emit_divergence_capture` now carry
-`record_kind="observation"`).
 
 ### Step 7 — Reader interpretation
 
@@ -1662,20 +1883,33 @@ Confirm:
 ### Natural pause points (per framing §7 pacing clause)
 
 - **Between Step 4 and Step 5** — verifies the dispatch
-  substrate + scope surface in isolation before the
-  resolution path layers on top. A small probe (`python -c
-  "from forge_bridge.corpus._capture import seed_dispatch_scope,
-  _dispatch_context; ..."`) confirms the contextvar transitions
-  before the resolution path is invoked.
-- **Immediately after Step 5** — the regression checkpoint
+  substrate + scope surface in isolation before the schema
+  validator extension layers ontology enforcement on top. A
+  small probe (`python -c "from forge_bridge.corpus._capture
+  import seed_dispatch_scope, _dispatch_context; ..."`)
+  confirms the contextvar transitions before the new ontology
+  is enforced.
+- **Between Step 5 and Step 6** — verifies the schema
+  validator + `_VALID_SOURCES` replacement + test migration
+  ship green before the resolution path (the architectural
+  center) lands. The new validator MUST accept observation
+  records carrying `record_kind="observation"` AND
+  `source="runtime"` (the existing call-site behavior post-
+  Step-5) before Step 6 introduces source resolution that may
+  emit `source="seed"`. Without this pause the failure mode is
+  ambiguous: a Step 6 test failure could be a resolution-path
+  bug OR a schema-validator bug. The pause separates them.
+- **Immediately after Step 6** — the regression checkpoint
   (`pytest tests/corpus/test_pr6_visual_asymmetry.py`) is a
-  natural pause. If it passes, Step 5 successfully kept gate
-  separation intact and the work depth payoff is realized; if
-  it fails, the team converges before any further plumbing
-  steps stack on top.
-- **Between Step 6 and Step 7** — verifies the schema
-  validation extension passes against contemporary records
-  before legacy synthesis adds another interpretation layer.
+  natural pause AND the most important moment in PR 7's
+  implementation. If it passes, Step 6 successfully kept gate
+  separation intact and Property C structural authority is
+  preserved while operational provenance evolves underneath
+  it; if it fails, the team converges before any further
+  plumbing steps stack on top.
+- **Between Step 6 and Step 7** — verifies the resolution path
+  + Layer 3 lint regression checkpoint both pass before the
+  reader synthesis layer adds another interpretation surface.
 - **Between Step 7 and Step 8** — verifies the reader
   validation extension is operational before the new
   expectation persistence helper introduces records to read.
@@ -1728,7 +1962,7 @@ the implementation sequence in full.
   §1.3 truth-vs-mechanism distinction (informs `_sources.py`'s
   governance docstring shape per this spec §4.1); §1.1 Layer
   3 lint operational shape (regression-asserted in this spec
-  §6 step 5 + RC-1).
+  §6 step 6 + RC-1, post-§4.3-amendment reorder).
 - `A.5.3.2-PR6-SPEC.md` §0 — eleven inherited carriers + two
   PR 6 additive carriers (this spec §0).
 - `A.5.3.2-GATE-1-SPEC.md` §5.1 — visual-asymmetry pattern
@@ -1763,8 +1997,8 @@ the implementation sequence in full.
   production call site in PR 7's delta.
 - `tests/corpus/test_pr6_visual_asymmetry.py` — Layer 3 lint;
   **unchanged by PR 7**, regression-asserted in this spec
-  §6 step 5 (immediate post-Step-5 checkpoint) and §7 close
-  conditions (RC-1).
+  §6 step 6 (immediate post-Step-6 checkpoint, post-§4.3-
+  amendment reorder) and §7 close conditions (RC-1).
 - `tests/corpus/test_pr3_discipline.py::_ALLOWLIST` —
   permission-to-import-corpus boundary (NOT admission-into-
   corpus). PR 7 makes no modifications to the discipline test
@@ -1784,9 +2018,9 @@ the implementation sequence in full.
 
 Resumption from this spec opens at **Step 1** of §6
 (`_sources.py` creation). The eight steps proceed in order;
-Step 5 receives full three-round review with the immediate
-Layer-3-lint regression checkpoint; all other steps are
-light-touch.
+**Step 6** (post-§4.3-amendment reorder — was Step 5) receives
+full three-round review with the immediate Layer-3-lint
+regression checkpoint; all other steps are light-touch.
 
 If a future session opens mid-implementation, the resume
 protocol is:
@@ -1797,10 +2031,13 @@ protocol is:
    contract.
 4. Verify all preceding steps' tests still pass before
    continuing.
-5. If Step 5 has not yet had its regression checkpoint run,
-   run it before proceeding to Step 6 — the checkpoint is
+5. If Step 6 has not yet had its regression checkpoint run,
+   run it before proceeding to Step 7 — the checkpoint is
    the most important moment in PR 7's implementation and
-   must not be skipped.
+   must not be skipped. (Pre-§4.3-amendment versions of this
+   spec named Step 5 here; the architectural-center status
+   moved to Step 6 with the reorder, but the checkpoint's
+   load-bearing nature is preserved.)
 
 PR 7 spec locks here. Implementation begins at the next
 session boundary.
