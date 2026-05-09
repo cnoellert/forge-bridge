@@ -257,9 +257,12 @@ it from any production call site. The helper is governed by the
 non-participation guard in §6 step 8.
 
 **Success condition:** *"PR 7 ships `_sources.py` (new),
-modifications to `_capture.py` + `_schema.py` + `reader.py`, an
-`_ALLOWLIST` extension in `tests/corpus/test_pr3_discipline.py`
-admitting `_sources.py`, five new test modules covering the
+modifications to `_capture.py` + `_schema.py` + `reader.py`,
+verified discipline-boundary behavior against
+`tests/corpus/test_pr3_discipline.py` with `_sources.py`
+present (NO `_ALLOWLIST` extension — see §4.5 amendment for the
+admission-into-corpus vs. permission-to-import-corpus
+distinction), five new test modules covering the
 dispatch contextvar, the record_kind schema, the reader
 validation extension, the legacy-record synthesis, and the
 private expectation persistence helper. The Layer 3 lint
@@ -319,10 +322,19 @@ to PR 8, invisible at the operator surface.
     written back to the source file.
   - Module docstring extension carrying carriers #1–#14 +
     §5.5 legacy-synthesis pair.
-- **Modified test discipline file** —
+- **Verified test discipline file** (no modifications) —
   `tests/corpus/test_pr3_discipline.py`:
-  - `_ALLOWLIST` extends with `forge_bridge/corpus/_sources.py`.
-  - No other modifications.
+  - **No code changes.** Per §4.5 amendment, `_ALLOWLIST` is
+    the **permission-to-import-corpus** boundary, not the
+    **admission-into-corpus** boundary. `_sources.py` is
+    admitted into corpus by virtue of living in the `corpus/`
+    subtree (which the discipline test pre-filters before
+    consulting `_ALLOWLIST`). PR 7 introduces no corpus-internal
+    admission layer; `_ALLOWLIST` remains a boundary governing
+    imports into corpus from non-corpus modules.
+  - Step 2 (§6) verifies the discipline test passes with
+    `_sources.py` present — confirming the corpus-subtree
+    filter still behaves correctly.
 - **New test modules** (`tests/corpus/`):
   - `test_pr7_known_source_values.py` — governance shape.
   - `test_pr7_dispatch_context.py` — contextvar resolution.
@@ -463,10 +475,15 @@ MECHANISM (this file):
   set's value is the artifact, not the protection.
 
 This module does not import from any other ``forge_bridge.corpus``
-module. The set is a leaf governance constant. The Layer 1 lint
-allowlist (``tests/corpus/test_pr3_discipline.py::_ALLOWLIST``)
-admits this file because it is structurally pure: a single
-constant + governance docstring, no executable logic.
+module. The set is a leaf governance constant. Admission into
+the corpus subtree is structural (the file lives in
+``forge_bridge/corpus/``); the discipline test
+(``tests/corpus/test_pr3_discipline.py``) pre-filters the
+``corpus/`` subtree before consulting ``_ALLOWLIST``, so no
+allowlist entry is needed or appropriate. ``_ALLOWLIST`` governs
+the orthogonal boundary — non-corpus modules permitted to
+import FROM ``forge_bridge.corpus`` — which is unrelated to
+admission of files into the corpus subtree.
 
 Carrier #14 (verbatim — see Gate 2 framing §6.1):
 
@@ -487,9 +504,16 @@ from typing import Final
 KNOWN_SOURCE_VALUES: Final[frozenset[str]] = frozenset({"runtime", "seed"})
 ```
 
-The module is **30–60 lines** total (most of the volume is the
-carrier docstring). It has no functions, no classes, no imports
-from `forge_bridge.corpus.*`. Layer 1 admission is mechanical.
+The module is **~140 lines** total at Step 1 landing (commit
+`0187e9d`); the spec originally estimated 30–60 lines but the
+14 carriers + binding framing clarification + protected-property
+framing run longer than initially scoped. The shape — single
+constant + governance docstring, no executable logic — matches
+the spec exactly; only the line count diverges. It has no
+functions, no classes, no imports from `forge_bridge.corpus.*`.
+Admission into the corpus subtree is structural (filesystem
+location); `_ALLOWLIST` is not consulted for corpus-internal
+files (see §4.5 amendment).
 
 ### 4.2 `forge_bridge/corpus/_capture.py` (modified)
 
@@ -958,21 +982,103 @@ header semantics. Legacy files were written under the same
 `SCHEMA_VERSION` PR 7 ships with — the schema-version field is
 not bumped (per §2 out-of-scope #8).
 
-### 4.5 `tests/corpus/test_pr3_discipline.py::_ALLOWLIST` extension
+### 4.5 `tests/corpus/test_pr3_discipline.py` — discipline boundary verification (no code change)
 
-One entry added:
+**Amendment 2026-05-09 (post-Step-1 grounding correction):**
+The spec originally directed an `_ALLOWLIST` extension at this
+section. That direction was drafted from inference about
+`_ALLOWLIST`'s semantics, not from reading the actual test file.
+Step 1 implementation surfaced the mismatch; this amendment
+corrects it before Step 2 lands. The healthy correction
+pattern is preserved here as archaeology: spec assertions about
+existing-file structure are themselves archaeology-grade and
+must be grounded in the file, not inferred from memory.
 
-```python
-_ALLOWLIST: frozenset[str] = frozenset({
-    # [existing entries from PR 3, PR 4, PR 5, PR 6...]
-    "forge_bridge/corpus/_sources.py",  # <— PR 7
-})
-```
+**Two distinct boundaries that the original §4.5 conflated:**
 
-No other modifications to the discipline test. The Layer 1
-allowlist's job is to admit specific files into the corpus
-package; PR 7 adds one file (`_sources.py`) and admits it. The
-discipline grep itself is unchanged.
+- **Admission-into-corpus** — files admitted to live INSIDE
+  the `forge_bridge/corpus/` subtree. This boundary has no
+  enforcement test in the current discipline suite; admission
+  is structural (a file either lives in `corpus/` or it
+  doesn't). PR 7 admits `_sources.py` into corpus by virtue
+  of its location; no `_ALLOWLIST` entry is needed or
+  appropriate.
+
+- **Permission-to-import-corpus** — non-corpus files permitted
+  to import FROM `forge_bridge.corpus`. This is what the
+  existing `_ALLOWLIST` (a `tuple[str, ...]` of package-
+  relative paths) governs. The discipline test
+  (`tests/corpus/test_pr3_discipline.py`) walks the production
+  tree, **excludes the `corpus/` subtree** (lines 91–96),
+  and asserts non-corpus files outside `_ALLOWLIST` do not
+  import `forge_bridge.corpus`. PR 7 introduces no new call
+  site that imports corpus from outside corpus, so PR 7 does
+  not extend `_ALLOWLIST`.
+
+**Operational consequence for PR 7:**
+
+`_sources.py` lives at `forge_bridge/corpus/_sources.py` —
+inside the corpus subtree. The discipline test pre-filters
+the corpus subtree before consulting `_ALLOWLIST`. Therefore:
+
+1. `_sources.py` is automatically admitted into corpus by its
+   filesystem location.
+2. `_sources.py` is NOT a candidate for `_ALLOWLIST` — that
+   set governs the orthogonal boundary (non-corpus → corpus
+   imports).
+3. Step 2 (§6) ships zero code modifications to the discipline
+   test. Step 2's actual work is **verification**: run the
+   discipline test against the production tree with
+   `_sources.py` present and confirm the corpus-subtree filter
+   still behaves correctly.
+
+**Explicit non-acquisition:**
+
+> **PR 7 introduces no corpus-internal admission layer.
+> `_ALLOWLIST` remains a boundary governing imports into corpus
+> from non-corpus modules. Future contributors must not
+> "complete" a corpus-internal admission abstraction by
+> introducing a parallel `_CORPUS_INTERNAL_ALLOWLIST` or by
+> repurposing `_ALLOWLIST` to admit corpus-internal files —
+> that abstraction does not exist and was never the spec's
+> intent.**
+
+This binding statement travels into the PR 7 commit message
+body alongside the §0 carriers. It prevents future readers
+from completing the mistaken abstraction the original §4.5
+draft inadvertently sketched.
+
+**Maturity signal (process archaeology):**
+
+This correction was caught at implementation-step boundary,
+not at framing review or spec review. The earlier-in-cadence
+catch (PR 7 framing's `fixture_id: str | None` correction —
+caught at framing review) and the later-in-cadence catch
+(this §4.5 — caught at Step 2 implementation) bracket a
+spectrum of correction-cycle timing. Both surface architectural
+truth before drift; the latter is later in the cadence than
+ideal but earlier than allowing dead code or silent scope
+expansion to land. Worth holding as a candidate methodology
+contribution alongside the framing §6 cleanup-pressure-
+resistance class — see PR 7 close artifact for promotion
+review.
+
+**Step 1 docstring inheritance (corrected by Step 2):**
+
+`forge_bridge/corpus/_sources.py`'s module docstring at commit
+`0187e9d` (Step 1 landing) inherited the spec's misunderstanding:
+> The Layer 1 lint allowlist
+> (``tests/corpus/test_pr3_discipline.py::_ALLOWLIST``) admits
+> this file because it is leaf governance — ...
+
+That sentence is incorrect. Step 2's commit corrects the
+docstring to reflect the admission-vs-import distinction
+established here. The correction is part of Step 2's atomic
+landing, not a separate amendment commit, because Step 2's
+verification work and the inherited-misunderstanding fix are
+conceptually co-located: confirming the discipline boundary
+behaves correctly + correcting the docstring claim about how
+it behaves.
 
 ### 4.6 New test modules
 
@@ -1195,8 +1301,11 @@ where scope-active is structurally the same as scope-inactive
 when those tests do not open a scope).
 
 **RC-3: PR 3 discipline intact.**
-`test_pr3_discipline.py` passes with the `_sources.py` entry
-added to `_ALLOWLIST`. No other discipline checks regress.
+`test_pr3_discipline.py` passes with `_sources.py` present in
+`corpus/` (no `_ALLOWLIST` modifications — see §4.5 amendment).
+The corpus-subtree filter at lines 91–96 of the discipline test
+correctly admits `_sources.py` by structural location. No other
+discipline checks regress.
 
 **RC-4: Reader corruption-locality preserved.**
 PR 3's reader contract — malformed records skip with WARNING,
@@ -1210,8 +1319,9 @@ WARNING branch.
 - **PR 6 close baseline:** 148 corpus tests pass in forge env;
   142 in forge-bridge env (per PR 6 spec §7 step 11).
 - **PR 7 delta:** +27 new tests (this spec §5.1) + 0
-  modifications to existing tests (the `_ALLOWLIST` entry
-  doesn't add a test, it gates the existing discipline check).
+  modifications to existing tests. Per §4.5 amendment, no
+  `_ALLOWLIST` extension lands in PR 7; Step 2 is verification
+  of the existing discipline boundary, not a code change.
 - **PR 7 close target:** 175 corpus tests pass in forge env;
   169 in forge-bridge env. Same 4 pre-existing failures
   (stdio_cleanliness ×2, typer_entrypoint ×2). Chat-handler
@@ -1248,8 +1358,8 @@ one explicit elevation:
 - **Light-touch review** for plumbing — `_sources.py`
   governance constant, `_DispatchContext` dataclass +
   ContextVar declaration, `seed_dispatch_scope` body, schema
-  validator extension, reader synthesis layer, `_ALLOWLIST`
-  entry.
+  validator extension, reader synthesis layer, Step 2
+  discipline boundary verification (per §4.5 amendment).
 - **Full three-round review** for **Step 5** (the resolution
   path inside `emit_divergence_capture`). Even though PR 7
   overall is plumbing-shaped, Step 5 is the architectural
@@ -1276,18 +1386,48 @@ forge_bridge.corpus._sources import KNOWN_SOURCE_VALUES;
 print(sorted(KNOWN_SOURCE_VALUES))"` prints
 `['runtime', 'seed']`.
 
-### Step 2 — Layer 1 admission
+### Step 2 — Discipline boundary verification
 
-Extend `tests/corpus/test_pr3_discipline.py::_ALLOWLIST` per
-§4.5. The Layer 1 update lands in the same commit boundary as
-the file it admits. Per the framing's principle of one-
-authority-or-ontology-boundary-per-step: the Layer 1 admission
-boundary moves here.
+**Amended 2026-05-09 (per §4.5 amendment).** Originally drafted
+as "Layer 1 admission via `_ALLOWLIST` extension"; corrected
+when Step 1 implementation surfaced the admission-into-corpus
+vs. permission-to-import-corpus distinction.
 
-**Light-touch review.** Verification: `pytest
-tests/corpus/test_pr3_discipline.py` passes against the
-modified allowlist (the discipline check no longer flags
-`_sources.py` as unauthorized).
+No code change to the discipline test. Per §4.5 amendment,
+`_sources.py` is admitted into corpus by virtue of its
+filesystem location (the discipline test pre-filters the
+`corpus/` subtree before consulting `_ALLOWLIST`); no allowlist
+entry is appropriate. Step 2's actual work:
+
+1. Run the discipline test against the production tree with
+   `_sources.py` present and confirm the corpus-subtree filter
+   still behaves correctly (no false positive against
+   `_sources.py`; no other regressions).
+2. Correct `_sources.py`'s module docstring (the Step 1
+   landing inherited the spec's misunderstanding — see §4.5
+   amendment "Step 1 docstring inheritance" subsection). The
+   corrected docstring reflects the admission-vs-import
+   distinction; PR 7 introduces no corpus-internal admission
+   layer.
+
+The one-authority-or-ontology-boundary-per-step principle is
+preserved: Step 2 is the boundary at which the discipline
+test's actual semantics are verified against `_sources.py`'s
+presence (orthogonal to Step 1's ontology constant landing).
+The verification is itself meaningful work — it grounds the
+spec's claim about discipline behavior in the actual file
+state.
+
+**Light-touch review.** Verification:
+- `pytest tests/corpus/test_pr3_discipline.py` passes;
+  zero offenders reported.
+- `_sources.py`'s docstring no longer contains the incorrect
+  "Layer 1 lint allowlist admits this file" sentence.
+
+The atomic landing for Step 2 is a single commit touching
+`forge_bridge/corpus/_sources.py` (docstring correction only)
+and noting the discipline-test verification in the commit
+body. The discipline test file itself is unchanged.
 
 ### Step 3 — Dispatch substrate
 
@@ -1625,8 +1765,12 @@ the implementation sequence in full.
   **unchanged by PR 7**, regression-asserted in this spec
   §6 step 5 (immediate post-Step-5 checkpoint) and §7 close
   conditions (RC-1).
-- `tests/corpus/test_pr3_discipline.py::_ALLOWLIST` — Layer
-  1 admission; this spec §4.5 adds one entry (`_sources.py`).
+- `tests/corpus/test_pr3_discipline.py::_ALLOWLIST` —
+  permission-to-import-corpus boundary (NOT admission-into-
+  corpus). PR 7 makes no modifications to the discipline test
+  or `_ALLOWLIST`; see §4.5 amendment for the distinction and
+  the Step 2 verification protocol that grounds the boundary
+  semantics in the actual test file.
 - `SEED-RELIABILITY-PHASE-METHODOLOGY-V1.6+.md` — methodology
   seed; §2.3 (substrate maturity → property-preservation
   discipline) governs PR 7's spec drafting; framing §6
