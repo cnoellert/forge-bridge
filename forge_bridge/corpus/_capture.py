@@ -72,11 +72,12 @@ import json
 import logging
 import os
 import uuid
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Literal, Optional
+from typing import Any, Callable, Iterator, Literal, Optional
 
 from forge_bridge.corpus._identity import (
     daemon_git_sha,
@@ -186,6 +187,47 @@ _dispatch_context: ContextVar[Optional[_DispatchContext]] = ContextVar(
     "forge_bridge.corpus._capture._dispatch_context",
     default=None,
 )
+
+
+@contextmanager
+def seed_dispatch_scope(*, fixture_id: str) -> Iterator[None]:
+    """Activate seed-dispatch provenance for the current scope.
+
+    Within this context, capture emissions persist
+    ``source="seed"`` and the supplied ``fixture_id`` regardless
+    of the call-site ``source`` literal. Outside this context,
+    the contextvar default (``None``) yields the runtime
+    behavior unchanged.
+
+    The context manager yields no public value. ``ContextVar``
+    token handling is implementation-internal. If future
+    nested-scope introspection becomes a concrete need, that is
+    an explicit framing/spec expansion event — never
+    accidentally-carried-forward latent API surface (see
+    ``A.5.3.2-PR7-FRAMING.md`` §5.2 +
+    ``A.5.3.2-PR7-SPEC.md`` §5.2).
+
+    Args:
+        fixture_id: REQUIRED keyword-only. The seed fixture
+            identifier the dispatch is operating on. Stored in
+            the contextvar payload and persisted on every
+            observation emission that occurs while the scope is
+            active. The ``*`` keyword-only marker matches the
+            ``forge_bridge.corpus`` helper convention and
+            prevents future contributors from adding positional
+            arguments accidentally.
+
+    Yields:
+        ``None``. The caller drives the dispatch through the
+        arbitration pipeline; this scope only sets provenance.
+    """
+    token = _dispatch_context.set(
+        _DispatchContext(source="seed", fixture_id=fixture_id)
+    )
+    try:
+        yield
+    finally:
+        _dispatch_context.reset(token)
 
 
 # ── Builder ────────────────────────────────────────────────────────────────
