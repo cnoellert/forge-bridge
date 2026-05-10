@@ -186,6 +186,7 @@ from forge_bridge.corpus._identity import (
 )
 from forge_bridge.corpus._schema import (
     SCHEMA_VERSION,
+    SchemaValidationError,
     validate_capture_record,
 )
 from forge_bridge.corpus._topology import snapshot_topology
@@ -637,6 +638,144 @@ def emit_divergence_capture(
             # If even the WARNING log fails (e.g., logging subsystem
             # broken), we silently swallow. I-6 is binding: nothing
             # escapes from this function.
+            pass
+
+    return None
+
+
+# ── Expectation persistence ────────────────────────────────────────────────
+#
+# ``_persist_expectation_record`` is a sibling of ``emit_divergence_capture``,
+# not a subordinate. Both helpers persist to the same date-partitioned JSONL
+# file and share the writer-path discipline (atomic-append, bundled header
+# on first write, I-6 failure-invisibility). They are NOT refactored into a
+# shared internal writer — see ``A.5.3.2-PR7-FRAMING.md`` §6 class member #1
+# (cleanup-pressure-resistance: helper duplication is intentional).
+#
+# The asymmetry that makes the duplication intentional is the resolution
+# path. ``emit_divergence_capture`` consults ``_dispatch_context`` to derive
+# persisted ``source`` + ``fixture_id``; ``_persist_expectation_record`` does
+# not. That non-participation is the structural protection codified in the
+# helper's docstring guard — collapsing the two helpers would erode the
+# three-authority-surface partitioning Gate 2 framing establishes.
+
+
+def _persist_expectation_record(record: dict) -> None:
+    """Persist a single expectation record to the corpus.
+
+    PR 7 NON-PARTICIPATION GUARD (verbatim, load-bearing):
+
+      The narrow expectation persistence helper does not
+      participate in provenance resolution. It consults no
+      dispatch context, performs no source rewriting, and
+      carries no observational semantics.
+
+    PR 7 AUTHORITY GUARD (load-bearing):
+
+      ``_persist_expectation_record`` persists authored
+      expectation records only. ``validate_capture_record``
+      answers "is this structurally valid?"; this helper must
+      additionally answer "is this the correct truth class for
+      this authority surface?". Without an explicit
+      ``record_kind == "expectation"`` pre-check, the helper
+      would collapse authored expectation persistence and
+      generic persistence routing — eroding the three-authority-
+      surface partitioning Gate 2 framing establishes.
+
+    This helper is corpus-internal. It is consumed by PR 8's
+    ``emit_seed_expectation`` exclusively. PR 7 does not invoke
+    it from any production call site in its own delta.
+
+    Sequencing of validation (load-bearing):
+
+      1. **Authority pre-check.** ``record["record_kind"] ==
+         "expectation"``. Failure raises ``SchemaValidationError``
+         with an authority-oriented message (not value-oriented),
+         naming the helper and the truth-class violation
+         explicitly. The pre-check fires BEFORE generic
+         validation so a well-formed observation record passed
+         to this helper is rejected at the authority boundary,
+         not at a downstream structural boundary.
+      2. **Generic schema validation.**
+         ``validate_capture_record(record)``.
+      3. **Atomic-append persistence.** Same discipline as
+         ``emit_divergence_capture`` (single ``file.write(...)``
+         per emission; bundled header on file creation;
+         failure-invisibility per I-6).
+
+    The helper does NOT call ``_dispatch_context.get()``. The
+    helper does NOT inspect or mutate the ``source`` field on
+    the record (the framing locks expectation records as having
+    no ``source`` field — see ``A.5.3.2-PR7-SPEC.md`` §9.7). Any
+    future modification that introduces dispatch-context
+    consultation here violates the non-participation guard and
+    is rejected at the spec layer.
+
+    Args:
+        record: A pre-built expectation record dict. PR 8's
+            ``emit_seed_expectation`` is responsible for
+            building the record; this helper handles persistence
+            only. The record MUST carry
+            ``record_kind="expectation"``; the helper rejects
+            records that don't via the authority pre-check
+            (``SchemaValidationError`` with authority-oriented
+            error text).
+
+    Returns:
+        ``None``. Failure-invisibility per I-6: any exception
+        from the authority pre-check, schema validation,
+        serialization, or filesystem is caught and logged at
+        WARNING; nothing propagates.
+    """
+    try:
+        # ── Authority pre-check (PR 7 §4.2.6) ─────────────────────
+        # The truth-class boundary. This helper persists authored
+        # expectation records only. The pre-check answers the
+        # authority question ("correct truth class for this
+        # surface?"); ``validate_capture_record`` below answers the
+        # structural question ("structurally valid?"). Both are
+        # required; the schema validator does not enforce the
+        # authority partition because both ``observation`` and
+        # ``expectation`` are valid ``record_kind`` values.
+        record_kind = (
+            record.get("record_kind") if isinstance(record, dict) else None
+        )
+        if record_kind != "expectation":
+            raise SchemaValidationError(
+                "_persist_expectation_record persists authored "
+                "expectation records only; "
+                f"received record_kind={record_kind!r}"
+            )
+
+        validate_capture_record(record)
+
+        corpus_dir = _resolve_corpus_dir()
+        corpus_dir.mkdir(parents=True, exist_ok=True)
+
+        date_part = record["captured_at"][:10]
+        path = corpus_dir / f"capture-{date_part}.jsonl"
+
+        needs_header = not (path.exists() and path.stat().st_size > 0)
+
+        record_line = _serialize_line(record)
+        if needs_header:
+            header_line = _serialize_line(_make_header(record["captured_at"]))
+            payload = header_line + record_line
+        else:
+            payload = record_line
+
+        with path.open("a", encoding="utf-8") as f:
+            f.write(payload)
+            f.flush()
+
+    except Exception as exc:  # noqa: BLE001 — I-6 failure invisibility
+        try:
+            logger.warning(
+                "expectation persistence failed: error=%s: %s",
+                type(exc).__name__,
+                exc,
+            )
+        except Exception:  # noqa: BLE001 — even logging must not propagate
             pass
 
     return None
