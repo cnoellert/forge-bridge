@@ -34,6 +34,106 @@ property (§6.5):
   The architecture should not introduce corruption windows larger
   than the platform already imposes.
 
+PR 7 carrier sentences (verbatim, load-bearing — see
+``A.5.3.2-PR7-SPEC.md`` §0):
+
+Inherited carriers #1–#2 — risk-category shift (PR 4):
+
+  PR 4 is the controlled introduction of observational
+  side-effects into live arbitration surfaces.
+
+  The risk category has shifted from persistence-substrate risk
+  to participation-creep risk.
+
+Inherited carriers #3–#6 — integration-discipline quartet (PR 4):
+
+  The call site is the source of the three explicit inputs.
+
+  The integration layer passes truth.
+
+  The integration layer never reconstructs truth.
+
+  The builder does not discover runtime state.
+
+Inherited carrier #7 — finalized-state contract (PR 4):
+
+  Capture emission occurs only after arbitration state is
+  finalized for the current execution path. Capture records
+  completed arbitration observations, not provisional
+  intermediate state.
+
+Inherited carrier #8 — risk-inheritance + surface-geometry
+distinction (PR 5):
+
+  PR 5 is the second call site under the integration discipline
+  PR 4 established. The risk profile is inherited; the surface
+  geometry is not.
+
+Inherited carrier #9 — caller's view of deployment identity (PR 5):
+
+  The chain-step's deployment identity is the caller's view, not
+  the global daemon registry view.
+
+Inherited carrier #10 — ambiguity-as-arbitration-outcome (PR 5):
+
+  Ambiguity rejection is an arbitration outcome. Capture must
+  record it. At this surface, ``narrower_decision`` carries the
+  filtered list verbatim at narrowing finalization — including
+  zero-match and multi-match rejection paths.
+  ``pr20_condition_met`` is always False and ``collapse_occurred``
+  is False on all rejection paths. These semantics differ from
+  the chat-handler case and must not be silently overloaded.
+
+Inherited carrier #11 — measured-not-inferred coverage (PR 5):
+
+  No-dependency coverage at the chain-step surface must be
+  measured, not inferred. The existing probe drives only the
+  chat-handler single-step path; PR 5 owns the responsibility
+  to extend coverage to the chain-step path empirically.
+
+Inherited carrier #12 — structural-backstop framing (PR 6):
+
+  PR 6 is the structural backstop for the visual-asymmetry
+  pattern. The lint validates shape, not content; structure, not
+  interpretation. Carrier content is the room's job; field
+  validation is the helper signature's job; the lint validates
+  the visual asymmetry between arbitration and observation.
+
+Inherited carrier #13 — observation-not-participation framing
+(PR 6):
+
+  The lint operates by observation, not by participation. It
+  reads source files; it does not import the corpus package. The
+  lint's own scope is the same one-directional observational
+  flow the call sites enforce.
+
+Inherited carrier #14 — declared epistemic class vs. persisted
+provenance (Gate 2):
+
+  Property C governs the epistemic class declared at the
+  observation boundary. KNOWN_SOURCE_VALUES governs persisted
+  provenance classes after contextual annotation has been
+  resolved.
+
+Binding framing clarification — call-site-owned arbitration inputs
+(Gate 2):
+
+  Arbitration-state fields remain call-site-owned explicit
+  inputs. Dispatch provenance is contextual metadata derived at
+  emission time and does not participate in arbitration
+  semantics.
+
+PR 7-local binding — runtime-inert source parameter (§4.2):
+
+  The call-site source parameter is intentionally inert at
+  runtime. Its purpose is structural (Property C compliance at
+  the observation boundary), not operational (persisted
+  provenance resolution).
+
+  Future contributors must not remove the parameter or couple
+  persisted provenance resolution to the declared call-site
+  value.
+
 This module implements the runtime probe (env-var-gated) and the
 test-fixture path that emits Layer 1 records per the A.5.3.2
 instrument contract. The contract's structural invariants
@@ -287,6 +387,7 @@ def _build_capture_record(
     ambiguity_state: str,
     narrower_latency_ms: float,
     source: str,
+    fixture_id: Optional[str] = None,
     record_kind: str,
     now: Callable[[], str] | None = None,
     new_uuid: Callable[[], str] | None = None,
@@ -322,6 +423,8 @@ def _build_capture_record(
         "captured_at": _now(),
         "record_kind": record_kind,
         "source": source,
+        # Always present for structural uniformity across observation records.
+        "fixture_id": fixture_id,
         "prompt": prompt,
         "candidate_set": {
             "post_reachability": _tool_names(candidate_set_post_reachability),
@@ -437,8 +540,31 @@ def emit_divergence_capture(
     deliberately separate because they fingerprint orthogonal
     truths. This is not redundancy. It is semantic boundary
     preservation.
+
+    Per spec §4.2 (call-site inert source parameter, PR 7):
+
+      The call-site source parameter is intentionally inert at
+      runtime. Its purpose is structural (Property C compliance
+      at the observation boundary), not operational (persisted
+      provenance resolution).
+
+      Future contributors must not remove the parameter or
+      couple persisted provenance resolution to the declared
+      call-site value.
     """
     try:
+        # ── Dispatch-provenance resolution (PR 7 §4.2.5) ─────────
+        # The call-site ``source`` literal is structurally
+        # authoritative (Property C) and operationally inert. The
+        # persisted ``source`` value is contextvar-resolved.
+        ctx = _dispatch_context.get()
+        if ctx is None:
+            resolved_source = "runtime"
+            resolved_fixture_id: Optional[str] = None
+        else:
+            resolved_source = ctx.source
+            resolved_fixture_id = ctx.fixture_id
+
         record = _build_capture_record(
             prompt=prompt,
             registered_tools=registered_tools,
@@ -449,13 +575,10 @@ def emit_divergence_capture(
             collapse_occurred=collapse_occurred,
             ambiguity_state=ambiguity_state,
             narrower_latency_ms=narrower_latency_ms,
-            source=source,
-            # PR 7 Step 5 (post-§4.3 amendment): observation records are
-            # what live arbitration emits. Step 6 introduces the
-            # contextvar resolution path that may redirect ``source`` to
-            # ``"seed"`` when a seed_dispatch_scope is active; the
-            # ``record_kind`` discriminator stays ``"observation"`` for
-            # all live arbitration emissions regardless of source value.
+            source=resolved_source,
+            fixture_id=resolved_fixture_id,
+            # ``record_kind`` stays ``"observation"`` for all live
+            # arbitration emissions regardless of resolved source value.
             # Expectation records are PR 8's domain
             # (``_persist_expectation_record`` lands at Step 8).
             record_kind="observation",
