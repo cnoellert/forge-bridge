@@ -31,7 +31,7 @@ from forge_bridge.corpus._schema import (
     validate_capture_record,
 )
 
-from tests.corpus._pr3_helpers import base_writer_args, tool
+from tests.corpus._pr3_helpers import base_builder_args, tool
 
 
 # ── Schema validity ────────────────────────────────────────────────────────
@@ -39,13 +39,13 @@ from tests.corpus._pr3_helpers import base_writer_args, tool
 
 def test_builder_returns_schema_valid_record(clean_identity_caches):
     """The builder produces a record that passes schema validation."""
-    record = _build_capture_record(**base_writer_args())
+    record = _build_capture_record(**base_builder_args())
     validate_capture_record(record)  # no exception
     assert record["schema_version"] == SCHEMA_VERSION
 
 
 def test_builder_populates_required_top_level_keys(clean_identity_caches):
-    record = _build_capture_record(**base_writer_args())
+    record = _build_capture_record(**base_builder_args())
     expected = {
         "schema_version", "capture_id", "captured_at", "source",
         "prompt", "candidate_set", "topology", "identity", "narrower",
@@ -60,7 +60,7 @@ def test_builder_populates_topology_block(clean_identity_caches):
     """The topology block matches the contract §3 shape — has
     ``probed_at`` and a ``backends`` dict with the three required
     backends."""
-    record = _build_capture_record(**base_writer_args())
+    record = _build_capture_record(**base_builder_args())
     topo = record["topology"]
     assert isinstance(topo, dict)
     assert "probed_at" in topo
@@ -73,7 +73,7 @@ def test_builder_populates_topology_block(clean_identity_caches):
 
 def test_builder_populates_identity_block(clean_identity_caches):
     """The identity block contains all three hashes from PR 2."""
-    record = _build_capture_record(**base_writer_args())
+    record = _build_capture_record(**base_builder_args())
     identity = record["identity"]
     assert isinstance(identity, dict)
     for key in (
@@ -96,7 +96,7 @@ def test_builder_is_pure_no_disk_writes(clean_identity_caches, tmp_path, monkeyp
     corpus_dir = tmp_path / "corpus"
     monkeypatch.setenv("FORGE_BRIDGE_CORPUS_DIR", str(corpus_dir))
 
-    _ = _build_capture_record(**base_writer_args())
+    _ = _build_capture_record(**base_builder_args())
 
     # The directory must not exist (the builder did not create it,
     # and the writer was never called).
@@ -107,7 +107,7 @@ def test_builder_is_pure_no_network(clean_identity_caches):
     """Builder must not open network sockets. We patch
     ``socket.socket`` and assert it's never called."""
     with patch("socket.socket", wraps=socket.socket) as patched:
-        _ = _build_capture_record(**base_writer_args())
+        _ = _build_capture_record(**base_builder_args())
     assert patched.call_count == 0
 
 
@@ -120,7 +120,7 @@ def test_builder_deterministic_with_injected_clock_uuid(clean_identity_caches):
     fixed_time = "2026-05-07T14:32:11.123Z"
     fixed_uuid = "12345678-1234-1234-1234-123456789abc"
 
-    args = base_writer_args(
+    args = base_builder_args(
         now=lambda: fixed_time,
         new_uuid=lambda: fixed_uuid,
     )
@@ -171,7 +171,7 @@ def test_builder_keeps_identity_separate_from_candidate_sets(
 
     # Scenario A: flame_bridge is reachable; all flame_* tools are
     # in post_reachability.
-    args_a = base_writer_args(
+    args_a = base_builder_args(
         registered_tools=registered,
         candidate_set_post_reachability=registered,
     )
@@ -180,7 +180,7 @@ def test_builder_keeps_identity_separate_from_candidate_sets(
     # Scenario B: flame_bridge is unreachable; flame_* tools are
     # filtered out of post_reachability. ``registered_tools`` is
     # the same.
-    args_b = base_writer_args(
+    args_b = base_builder_args(
         registered_tools=registered,
         candidate_set_post_reachability=[
             tool("forge_list_staged"),
@@ -224,7 +224,7 @@ def test_builder_uses_registered_tools_not_candidate_set_for_identity(
     ]
     # registered ≠ post_reach (flame backend unreachable).
 
-    args = base_writer_args(
+    args = base_builder_args(
         registered_tools=registered,
         candidate_set_post_reachability=post_reach,
     )

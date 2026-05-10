@@ -287,6 +287,7 @@ def _build_capture_record(
     ambiguity_state: str,
     narrower_latency_ms: float,
     source: str,
+    record_kind: str,
     now: Callable[[], str] | None = None,
     new_uuid: Callable[[], str] | None = None,
 ) -> dict:
@@ -319,6 +320,7 @@ def _build_capture_record(
         "schema_version": SCHEMA_VERSION,
         "capture_id": _uuid(),
         "captured_at": _now(),
+        "record_kind": record_kind,
         "source": source,
         "prompt": prompt,
         "candidate_set": {
@@ -448,6 +450,15 @@ def emit_divergence_capture(
             ambiguity_state=ambiguity_state,
             narrower_latency_ms=narrower_latency_ms,
             source=source,
+            # PR 7 Step 5 (post-§4.3 amendment): observation records are
+            # what live arbitration emits. Step 6 introduces the
+            # contextvar resolution path that may redirect ``source`` to
+            # ``"seed"`` when a seed_dispatch_scope is active; the
+            # ``record_kind`` discriminator stays ``"observation"`` for
+            # all live arbitration emissions regardless of source value.
+            # Expectation records are PR 8's domain
+            # (``_persist_expectation_record`` lands at Step 8).
+            record_kind="observation",
         )
         validate_capture_record(record)
 

@@ -145,7 +145,11 @@ def _valid_record() -> dict:
         "schema_version": "1",
         "capture_id": "00000000-0000-0000-0000-000000000000",
         "captured_at": "2026-05-06T12:00:00Z",
-        "source": "fixture",
+        # PR 7 §4.3 amendment (2026-05-09): record_kind discriminator
+        # added; "source": "fixture" → "runtime" (fixture removed from
+        # schema's source-class governance — see KNOWN_SOURCE_VALUES).
+        "record_kind": "observation",
+        "source": "runtime",
         "prompt": "list projects",
         "candidate_set": {
             "post_reachability": ["forge_list_staged", "forge_get_staged"],

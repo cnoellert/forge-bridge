@@ -42,7 +42,19 @@ def tool(name: str, **schema_props: Any) -> MockTool:
 
 
 def base_writer_args(**overrides: Any) -> dict[str, Any]:
-    """Default-valid kwargs for the writer / builder.
+    """Default-valid kwargs for ``emit_divergence_capture`` (the
+    writer surface).
+
+    Tests passing these kwargs to the writer get a canonical record
+    emission; the writer sets ``record_kind="observation"``
+    internally (it is not in this kwarg set because
+    ``emit_divergence_capture`` does not accept ``record_kind`` —
+    only the builder does, per PR 7 §4.3 amendment).
+
+    Tests that call ``_build_capture_record`` directly should use
+    ``base_builder_args()`` instead — that helper layers on
+    ``record_kind="observation"`` so the builder's record_kind
+    keyword-only requirement is satisfied.
 
     The defaults form a coherent record that passes schema
     validation. Tests override individual keys to exercise specific
@@ -71,7 +83,35 @@ def base_writer_args(**overrides: Any) -> dict[str, Any]:
         "collapse_occurred": True,
         "ambiguity_state": "single_survivor",
         "narrower_latency_ms": 0.42,
-        "source": "fixture",
+        # Migrated 2026-05-09 per A.5.3.2-PR7-SPEC.md §4.3 amendment:
+        # "fixture" is removed from the schema's source-class
+        # governance; production ontology is {runtime, seed}. Tests
+        # constructing records via this helper now emit "runtime" as
+        # the source, preserving the test-as-construction-site
+        # distinction structurally rather than via the source field.
+        "source": "runtime",
     }
     defaults.update(overrides)
     return defaults
+
+
+def base_builder_args(**overrides: Any) -> dict[str, Any]:
+    """Default-valid kwargs for ``_build_capture_record`` (the
+    builder surface).
+
+    Layered on ``base_writer_args()`` with ``record_kind="observation"``
+    added per PR 7 §4.3 amendment. The builder requires record_kind
+    as a keyword-only parameter; the writer (``emit_divergence_capture``)
+    sets it internally and does not accept it as a kwarg. Two helpers
+    exist because the boundary is real — tests that construct records
+    via the builder directly must specify the truth class; tests that
+    go through the writer get observation semantics by definition.
+
+    Tests that need to build expectation records (PR 8 territory)
+    pass ``record_kind="expectation"`` as an override; PR 7 ships no
+    such test (expectation records aren't built until PR 8 lands the
+    seed driver).
+    """
+    args = base_writer_args(**overrides)
+    args.setdefault("record_kind", "observation")
+    return args

@@ -297,7 +297,10 @@ def _minimal_record_with_topology(topology_block: dict) -> dict:
         "schema_version": "1",
         "capture_id": "00000000-0000-0000-0000-000000000000",
         "captured_at": "2026-05-06T12:00:00Z",
-        "source": "fixture",
+        # PR 7 §4.3 amendment (2026-05-09): record_kind required;
+        # "fixture" → "runtime" per KNOWN_SOURCE_VALUES.
+        "record_kind": "observation",
+        "source": "runtime",
         "prompt": "x",
         "candidate_set": {
             "post_reachability": [],

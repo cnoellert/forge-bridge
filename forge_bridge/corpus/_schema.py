@@ -20,7 +20,9 @@ Validation strategy:
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Final
+
+from forge_bridge.corpus._sources import KNOWN_SOURCE_VALUES
 
 # Current schema version. Bumped when the record shape changes.
 # Consumers (the reader, the comparator) MUST check this before
@@ -53,11 +55,29 @@ class SchemaVersionMismatch(ValueError):
     """
 
 
-# Required top-level keys for a v1 capture record (per contract §3).
+# Universal required top-level keys for a v1 capture record. Every
+# record_kind must carry these. Per A.5.3.2-PR7-SPEC.md §4.3.1
+# (post-§4.3 amendment): ``record_kind`` is the discriminator that
+# separates observation records (live arbitration emissions) from
+# expectation records (PR 8 authored expectations). Legacy records
+# persisted before PR 7 lack ``record_kind``; the reader synthesizes
+# ``record_kind="observation"`` at read time (see reader.py + spec
+# §4.4.2), so the validator sees ``record_kind`` on every record by
+# the time it runs.
 _REQUIRED_TOP_KEYS: frozenset[str] = frozenset({
     "schema_version",
     "capture_id",
     "captured_at",
+    "record_kind",
+})
+
+# Observation-specific required keys. These were the original PR 1-3
+# canonical record shape (per contract §3). At PR 7 they become
+# observation-only because expectation records (PR 8) have a distinct
+# shape that does NOT carry ``source`` or the arbitration-state
+# fields. The validator checks these in the record_kind=="observation"
+# branch.
+_REQUIRED_OBSERVATION_KEYS: frozenset[str] = frozenset({
     "source",
     "prompt",
     "candidate_set",
@@ -66,7 +86,34 @@ _REQUIRED_TOP_KEYS: frozenset[str] = frozenset({
     "narrower",
 })
 
-_VALID_SOURCES: frozenset[str] = frozenset({"fixture", "runtime"})
+# Expectation records have no required keys beyond _REQUIRED_TOP_KEYS
+# at PR 7 close. PR 8's seed driver will define the expectation
+# record shape; required-keys-for-expectation may be added at that
+# point. The structural prohibition at PR 7 is asymmetric: observation
+# records require source ∈ KNOWN_SOURCE_VALUES; expectation records
+# MUST NOT carry source at all (per spec §9.7).
+
+# Known record_kind values. Per A.5.3.2-GATE-2-FRAMING.md §9.2,
+# record_kind is governed STRUCTURALLY: adding a new value implies a
+# new authority surface (not merely a new provenance class). Adding a
+# third record_kind requires the corresponding helper, signature, and
+# truth claim — all framing-level decisions.
+_KNOWN_RECORD_KINDS: Final[frozenset[str]] = frozenset({
+    "observation", "expectation",
+})
+
+# Source-class governance is delegated to ``KNOWN_SOURCE_VALUES`` in
+# ``forge_bridge/corpus/_sources.py`` (imported at module top). The
+# legacy ``_VALID_SOURCES = frozenset({"fixture", "runtime"})``
+# constant was removed at PR 7 Step 5 per the §4.3 spec amendment:
+# (1) "fixture" was a test-isolation pattern from PR 1-3 era, not a
+# persisted production provenance class; carrying it in the schema's
+# governance constant polluted the production ontology.
+# (2) Maintaining a parallel _VALID_SOURCES alongside KNOWN_SOURCE_VALUES
+# would violate Gate 2 framing's lockstep contract (carrier #14):
+# adding a new source value would have required updating two
+# governance surfaces, with drift inevitable.
+# Single source of truth: KNOWN_SOURCE_VALUES in _sources.py.
 
 _VALID_AMBIGUITY_STATES: frozenset[str] = frozenset({
     "single_survivor", "multi_survivor", "zero_survivor",
@@ -129,19 +176,56 @@ def validate_capture_record(record: Any) -> None:
             f"{SCHEMA_VERSION!r}"
         )
 
-    if record["source"] not in _VALID_SOURCES:
+    # ── record_kind enum (PR 7 §4.3.1, post-§4.3 amendment) ──────────────
+    # record_kind discriminates observation records (live arbitration
+    # emissions) from expectation records (PR 8 authored expectations).
+    # Adding a third value implies a new authority surface — framing-
+    # level decision per Gate 2 framing §9.2.
+    record_kind = record["record_kind"]
+    if record_kind not in _KNOWN_RECORD_KINDS:
         raise SchemaValidationError(
-            f"source must be one of {sorted(_VALID_SOURCES)}, got "
-            f"{record['source']!r}"
+            f"record_kind must be one of {sorted(_KNOWN_RECORD_KINDS)}, "
+            f"got {record_kind!r}"
         )
 
-    if not isinstance(record["prompt"], str) or not record["prompt"]:
-        raise SchemaValidationError("prompt must be a non-empty string")
+    # ── record-kind-conditional shape (PR 7 §4.3.1) ──────────────────────
+    # Observation records carry the original PR 1-3 canonical fields plus
+    # source ∈ KNOWN_SOURCE_VALUES (Gate 2 framing carrier #14).
+    # Expectation records have a distinct shape — at PR 7 the only
+    # structural requirement is "no source field"; PR 8's seed driver
+    # defines the rest.
+    if record_kind == "observation":
+        missing_obs = _REQUIRED_OBSERVATION_KEYS - record.keys()
+        if missing_obs:
+            raise SchemaValidationError(
+                f"observation record missing required keys: "
+                f"{sorted(missing_obs)}"
+            )
 
-    _validate_candidate_set(record["candidate_set"])
-    _validate_topology(record["topology"])
-    _validate_identity(record["identity"])
-    _validate_narrower(record["narrower"])
+        if record["source"] not in KNOWN_SOURCE_VALUES:
+            raise SchemaValidationError(
+                f"observation record source must be one of "
+                f"{sorted(KNOWN_SOURCE_VALUES)}, got {record['source']!r}"
+            )
+
+        if not isinstance(record["prompt"], str) or not record["prompt"]:
+            raise SchemaValidationError("prompt must be a non-empty string")
+
+        _validate_candidate_set(record["candidate_set"])
+        _validate_topology(record["topology"])
+        _validate_identity(record["identity"])
+        _validate_narrower(record["narrower"])
+
+    elif record_kind == "expectation":
+        if "source" in record:
+            raise SchemaValidationError(
+                "expectation record must not carry a 'source' field; "
+                f"found source={record['source']!r}"
+            )
+        # Expectation-specific required-keys + nested validators land
+        # with PR 8 when the seed driver defines the expectation record
+        # shape. PR 7 enforces only the "no source field" structural
+        # asymmetry.
 
 
 def _validate_candidate_set(cs: Any) -> None:

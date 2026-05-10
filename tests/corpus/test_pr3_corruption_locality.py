@@ -156,8 +156,13 @@ def test_reader_skips_schema_invalid_record(
 
     incomplete = json.dumps({
         "schema_version": SCHEMA_VERSION,
-        # Missing every other required key.
-        "source": "fixture",
+        # Missing every other required key. (Source value migrated
+        # from "fixture" to "runtime" per PR 7 §4.3 amendment; the
+        # record remains intentionally incomplete and is rejected by
+        # the validator regardless of source value — the test verifies
+        # the reader skips malformed records, which is unaffected by
+        # which specific missing-required-key triggers the failure.)
+        "source": "runtime",
     }).encode("utf-8")
     _write_corrupted_file(path, header, r1, incomplete, r3)
 

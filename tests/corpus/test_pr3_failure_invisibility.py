@@ -75,7 +75,7 @@ def test_failure_invisibility_disk_full(
             result = emit_divergence_capture(**base_writer_args())
 
     assert result is None
-    msg = _assert_warning_logged_once(caplog, source="fixture")
+    msg = _assert_warning_logged_once(caplog, source="runtime")
     assert "OSError" in msg
 
 
@@ -93,7 +93,7 @@ def test_failure_invisibility_invalid_path(
         result = emit_divergence_capture(**base_writer_args())
 
     assert result is None
-    _assert_warning_logged_once(caplog, source="fixture")
+    _assert_warning_logged_once(caplog, source="runtime")
 
 
 def test_failure_invisibility_permission_denied(
@@ -107,7 +107,7 @@ def test_failure_invisibility_permission_denied(
             result = emit_divergence_capture(**base_writer_args())
 
     assert result is None
-    msg = _assert_warning_logged_once(caplog, source="fixture")
+    msg = _assert_warning_logged_once(caplog, source="runtime")
     assert "PermissionError" in msg
 
 
@@ -133,7 +133,7 @@ def test_failure_invisibility_serialization_failure(
     json.dumps = real_dumps  # type: ignore[assignment]
 
     assert result is None
-    msg = _assert_warning_logged_once(caplog, source="fixture")
+    msg = _assert_warning_logged_once(caplog, source="runtime")
     assert "TypeError" in msg
 
 
@@ -160,7 +160,7 @@ def test_failure_invisibility_partial_write(
             result = emit_divergence_capture(**base_writer_args())
 
     assert result is None
-    msg = _assert_warning_logged_once(caplog, source="fixture")
+    msg = _assert_warning_logged_once(caplog, source="runtime")
     assert "OSError" in msg
 
 
@@ -178,7 +178,7 @@ def test_failure_invisibility_lock_contention(
             result = emit_divergence_capture(**base_writer_args())
 
     assert result is None
-    msg = _assert_warning_logged_once(caplog, source="fixture")
+    msg = _assert_warning_logged_once(caplog, source="runtime")
     assert "BlockingIOError" in msg
 
 
@@ -201,7 +201,7 @@ def test_failure_invisibility_malformed_runtime_state(
             result = emit_divergence_capture(**base_writer_args())
 
     assert result is None
-    msg = _assert_warning_logged_once(caplog, source="fixture")
+    msg = _assert_warning_logged_once(caplog, source="runtime")
     assert "SchemaValidationError" in msg
 
 
