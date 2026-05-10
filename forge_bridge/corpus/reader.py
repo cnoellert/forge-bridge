@@ -5,6 +5,106 @@ validates the header record's ``schema_version``, and yields each
 subsequent record as a parsed dict. Schema-version mismatch raises
 ``SchemaVersionMismatch`` per ``A.5.3.2-INSTRUMENT-CONTRACT.md`` §9.
 
+PR 7 carrier sentences (verbatim, load-bearing — see
+``A.5.3.2-PR7-SPEC.md`` §0):
+
+Inherited carriers #1–#2 — risk-category shift (PR 4):
+
+  PR 4 is the controlled introduction of observational
+  side-effects into live arbitration surfaces.
+
+  The risk category has shifted from persistence-substrate risk
+  to participation-creep risk.
+
+Inherited carriers #3–#6 — integration-discipline quartet (PR 4):
+
+  The call site is the source of the three explicit inputs.
+
+  The integration layer passes truth.
+
+  The integration layer never reconstructs truth.
+
+  The builder does not discover runtime state.
+
+Inherited carrier #7 — finalized-state contract (PR 4):
+
+  Capture emission occurs only after arbitration state is
+  finalized for the current execution path. Capture records
+  completed arbitration observations, not provisional
+  intermediate state.
+
+Inherited carrier #8 — risk-inheritance + surface-geometry
+distinction (PR 5):
+
+  PR 5 is the second call site under the integration discipline
+  PR 4 established. The risk profile is inherited; the surface
+  geometry is not.
+
+Inherited carrier #9 — caller's view of deployment identity (PR 5):
+
+  The chain-step's deployment identity is the caller's view, not
+  the global daemon registry view.
+
+Inherited carrier #10 — ambiguity-as-arbitration-outcome (PR 5):
+
+  Ambiguity rejection is an arbitration outcome. Capture must
+  record it. At this surface, ``narrower_decision`` carries the
+  filtered list verbatim at narrowing finalization — including
+  zero-match and multi-match rejection paths.
+  ``pr20_condition_met`` is always False and ``collapse_occurred``
+  is False on all rejection paths. These semantics differ from
+  the chat-handler case and must not be silently overloaded.
+
+Inherited carrier #11 — measured-not-inferred coverage (PR 5):
+
+  No-dependency coverage at the chain-step surface must be
+  measured, not inferred. The existing probe drives only the
+  chat-handler single-step path; PR 5 owns the responsibility
+  to extend coverage to the chain-step path empirically.
+
+Inherited carrier #12 — structural-backstop framing (PR 6):
+
+  PR 6 is the structural backstop for the visual-asymmetry
+  pattern. The lint validates shape, not content; structure, not
+  interpretation. Carrier content is the room's job; field
+  validation is the helper signature's job; the lint validates
+  the visual asymmetry between arbitration and observation.
+
+Inherited carrier #13 — observation-not-participation framing
+(PR 6):
+
+  The lint operates by observation, not by participation. It
+  reads source files; it does not import the corpus package. The
+  lint's own scope is the same one-directional observational
+  flow the call sites enforce.
+
+Inherited carrier #14 — declared epistemic class vs. persisted
+provenance (Gate 2):
+
+  Property C governs the epistemic class declared at the
+  observation boundary. KNOWN_SOURCE_VALUES governs persisted
+  provenance classes after contextual annotation has been
+  resolved.
+
+Binding framing clarification — call-site-owned arbitration inputs
+(Gate 2):
+
+  Arbitration-state fields remain call-site-owned explicit
+  inputs. Dispatch provenance is contextual metadata derived at
+  emission time and does not participate in arbitration
+  semantics.
+
+PR 7-local binding — legacy-record synthesis (§5.5):
+
+  ``record_kind`` synthesis exists solely for backward
+  compatibility with records that predate PR 7. Writers
+  introduced by PR 7 must always emit explicit ``record_kind``
+  values.
+
+  Legacy records may be interpreted through synthesized defaults
+  at read time but are not rewritten or normalized in place by
+  the reader.
+
 PR 3 carrier sentence (verbatim, load-bearing — see
 ``A.5.3.2-PR3-SPEC.md`` §9, user framing 2026-05-07):
 
@@ -175,6 +275,43 @@ def read_capture_file(path: Path) -> Iterator[dict]:
                     _format_prefix(line_text),
                 )
                 continue
+
+            # ── Legacy-record synthesis (PR 7 §4.4.2) ────────────────
+            # Records persisted before PR 7 lack BOTH ``record_kind``
+            # and ``fixture_id``. Both fields are PR 7 additions; their
+            # absence is the canonical legacy-record signal.
+            #
+            # Synthesize together when ``record_kind`` is missing:
+            #   - ``record_kind="observation"`` — pre-PR-7 records were
+            #     all observation by definition (expectation records
+            #     ship with PR 8). Per §5.5 carrier (verbatim below).
+            #   - ``fixture_id=None`` — Q3 structural-uniformity decision
+            #     (PR 7 framing §4.3 / Step 6 cleanup-pressure-resistance):
+            #     observation records always carry ``fixture_id``.
+            #     Synthesis matches the PR 7+ writer's inactive-scope
+            #     emission shape.
+            #
+            # Both syntheses apply to the in-memory dict only; the
+            # source line is never rewritten. The fixture_id synthesis
+            # is nested inside the record_kind branch (not unconditional)
+            # to preserve PR 8's design space on expectation-record shape
+            # and to avoid masking writer bugs that emit observation
+            # records without fixture_id.
+            #
+            # Carrier (verbatim, §5.5):
+            #
+            #   ``record_kind`` synthesis exists solely for backward
+            #   compatibility with records that predate PR 7. Writers
+            #   introduced by PR 7 must always emit explicit ``record_kind``
+            #   values.
+            #
+            #   Legacy records may be interpreted through synthesized
+            #   defaults at read time but are not rewritten or normalized
+            #   in place by the reader.
+            if isinstance(record, dict) and "record_kind" not in record:
+                record["record_kind"] = "observation"
+                if "fixture_id" not in record:
+                    record["fixture_id"] = None
 
             try:
                 validate_capture_record(record)
