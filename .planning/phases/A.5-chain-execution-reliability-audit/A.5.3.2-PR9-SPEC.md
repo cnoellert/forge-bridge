@@ -222,7 +222,9 @@ promotion question with corroborating evidence.
 Ship `tests/corpus/fixtures/` as a new test-resident directory
 containing `__init__.py` (empty package init) + three fixture
 modules: `fix_single_survivor.py`, `fix_multi_match.py`,
-`fix_zero_match.py`. Each fixture module exposes exactly one
+`fix_no_keyword_match.py` (renamed per §4.7 amendment 2026-05-11;
+was `fix_zero_match.py` pre-amendment). Each fixture module
+exposes exactly one
 top-level constant `FIXTURE: dict` carrying exactly the three
 PR-8-locked keys (`fixture_id`, `prompt`, `expected_narrow`).
 Each fixture module's docstring carries the 15 inherited carriers
@@ -258,7 +260,8 @@ PR 9's three operational responsibilities:
   beyond `FIXTURE`, no imports beyond `__future__` annotations
   and `typing` types if needed. Each `fixture_id` is a stable
   PR-9-anchored string (`fix-pr9-single-survivor`,
-  `fix-pr9-multi-match`, `fix-pr9-zero-match`).
+  `fix-pr9-multi-match`, `fix-pr9-no-keyword-match` — renamed
+  per §4.7 amendment).
 - **Author the integration test surface.** A new test module
   `tests/corpus/test_pr9_fixture_integration.py` with five
   named tests. Three tests drive one fixture each end-to-end
@@ -321,7 +324,8 @@ without touching production source:
   `drive_seed_fixture` surface — single function, three kwargs,
   one orchestration call — is shape-sufficient to drive three
   distinct narrowing-outcome shapes (single-survivor / multi-
-  match / zero-match) end-to-end. No additional orchestration
+  match / no-keyword-match — per §4.7 amendment) end-to-end.
+  No additional orchestration
   parameter, no additional driver function, no scope-extension
   helper surfaces at PR 9 implementation. The PR 8 framing §5.5
   (Q4) single-function-driver lock is corroborated by PR 9
@@ -357,7 +361,9 @@ Per §2 out-of-scope #8 + framing §7.1 commitment #8.
     is a test-resident namespace, not an authored API surface).
   - `fix_single_survivor.py` — single fixture module per §4.2.
   - `fix_multi_match.py` — single fixture module per §4.3.
-  - `fix_zero_match.py` — single fixture module per §4.4.
+  - `fix_no_keyword_match.py` — single fixture module per §4.4
+    (renamed per §4.7 amendment; was `fix_zero_match.py`
+    pre-amendment).
 - **New test module** —
   `tests/corpus/test_pr9_fixture_integration.py`. Houses 5
   named tests per §4.5 + §5.1:
@@ -546,7 +552,7 @@ post-PR-9 codebase).
 |---|---|---|
 | 1 | Single-survivor narrowing produces expectation + observation that don't actually compose end-to-end | Test 1 (`test_fixture_runs_end_to_end_single_survivor`) drives the fixture and asserts BOTH records persist with the correct `record_kind` + matching `fixture_id` + correct field shapes. |
 | 2 | Multi-match ambiguity-rejection narrowing produces records that overload the chat-handler semantics or fire chain-step | Test 2 (`test_fixture_runs_end_to_end_multi_match`) drives the multi-match fixture and asserts the persisted observation reflects ambiguity-rejection arbitration outcome per carrier #10 (`pr20_condition_met=False`, `collapse_occurred=False`, `narrower_decision` carries the filtered list verbatim). |
-| 3 | Zero-match narrowing produces records that silently fall through or fire chain-step | Test 3 (`test_fixture_runs_end_to_end_zero_match`) drives the zero-match fixture and asserts the persisted observation reflects zero-match arbitration outcome per carrier #10 (`narrower_decision` carries the empty list). |
+| 3 | No-keyword-match prompt produces records that fall through to LLM dispatch without exercising the PR14 full-capability fallback path | Test 3 (`test_fixture_runs_end_to_end_no_keyword_match`) drives the no-keyword-match fixture and asserts the persisted observation reflects the PR14 fallback (`narrower_decision` = full controlled reachable tool set verbatim; `pr20_condition_met=False`; `collapse_occurred=False`). Renamed per §4.7 amendment 2026-05-11 — chat-handler topology cannot produce `narrower_decision == []`; carrier #10's "zero-match" language is chain-step-specific. |
 | 4 | Fixture modules silently acquire forbidden imports, eroding fixture-data discipline | Tests A + B in `test_pr9_fixture_discipline.py` mechanically enforce: A (`test_fixture_permitted_imports_locked_at_one_symbol`) — frozenset value-lock regression; B (`test_fixture_modules_references_subset_of_permitted_imports`) — walker enforcement against the fixture directory glob. |
 | 5 | The two persisted records (expectation + observation) cannot be partitioned by `record_kind` (Gate 4 unblock dependency #1) | Test 4 (`test_observation_and_expectation_distinguishable_by_record_kind`) drives one fixture and asserts the two records have distinct `record_kind` values; the schema validator accepts both. Independent of tests 1–3 (drives its own fixture; not coupled to test ordering). |
 | 6 | The two persisted records cannot be joined by `fixture_id` (Gate 4 unblock dependency #2) | Test 5 (`test_records_join_on_fixture_id`) drives one fixture and asserts the two records share the same `fixture_id`; a `fixture_id`-keyed join over corpus reader output reunites them. Independent of tests 1–4 (drives its own fixture). |
@@ -774,65 +780,117 @@ ordering exactly (test 2 asserts list equality, not set
 equality, per carrier #10's "narrower_decision carries the
 filtered list verbatim" language).
 
-### 4.4 `tests/corpus/fixtures/fix_zero_match.py` (new)
+### 4.4 `tests/corpus/fixtures/fix_no_keyword_match.py` (new)
 
-**Path:** `tests/corpus/fixtures/fix_zero_match.py`
+**Renamed per §4.7 amendment 2026-05-11.** Was
+`fix_zero_match.py` pre-amendment. The chat-handler narrowing
+pipeline cannot produce `narrower_decision == []`; PR14's "no
+capability loss" fallback (`_tool_filter.py:320–321`) returns
+the full reachable tool set when no keyword matches. Carrier
+#10's "zero-match" language is chain-step-specific and
+explicitly warns against silent overloading at the chat-handler
+case. See §4.7 for the full amendment archaeology.
 
-**Purpose:** Single fixture exercising the zero-match ambiguity-
-rejection narrowing outcome per carrier #10. `chat_handler`'s
-arbitration on the fixture's `prompt` produces zero tool names;
-the observation record's `narrower_decision` carries the empty
-list verbatim; `pr20_condition_met=False`; `collapse_occurred=False`.
+**Path:** `tests/corpus/fixtures/fix_no_keyword_match.py`
+
+**Purpose:** Single fixture exercising the chat-handler-surface
+no-keyword-match full-capability-fallback narrowing outcome.
+`chat_handler`'s arbitration on the fixture's `prompt` produces
+zero keyword matches in `filter_tools_by_message` (PR14);
+PR14 returns the FULL controlled reachable tool set as fallback
+("no capability loss"); PR21 deterministic_narrow does NOT run
+(input is already len > 1 with no candidates removed); the
+observation record's `narrower_decision` carries the full
+reachable tool list verbatim; `pr20_condition_met=False`
+(`tools_filtered_count > 1`); `collapse_occurred=False`
+(`tools_post_pr14 == tools` so no collapse).
+
 The expectation record's `expected_narrow` declares the empty
-list — the fixture-author's claim that arbitration ought to
-produce zero survivors for the zero-match prompt.
+list `[]` — the fixture-author's **aspirational** claim that
+arbitration ought to produce zero survivors. The divergence
+between expected `[]` and observed full-list IS the
+demonstrable Gate 4 comparator-unblock proof: the system must
+be able to record both states + the comparator must be able to
+detect the divergence end-to-end.
 
 **Content shape:**
 
 Module docstring identical to §4.2 structure; fixture purpose
-paragraph specific to zero-match.
+paragraph specific to no-keyword-match.
 
 Fixture purpose paragraph (specific to this module):
 
-> This fixture exercises the zero-match ambiguity-rejection
-> narrowing outcome per carrier #10. The prompt is shape-locked
-> at single-step; the expected_narrow declares the empty list;
-> the chat_handler arbitration on this prompt is expected to
-> produce a narrowing decision carrying the empty list verbatim
-> with pr20_condition_met=False + collapse_occurred=False per
-> the zero-match ambiguity-rejection semantics. The integration
-> test
-> (test_pr9_fixture_integration.py::test_fixture_runs_end_to_end_zero_match)
+> This fixture exercises the chat-handler-surface no-keyword-
+> match full-capability-fallback narrowing outcome. The prompt
+> is shape-locked at single-step + no-keyword-match shape: the
+> prompt contains zero keywords that match any registered tool
+> name's tokens under the PR14 keyword-filter. The PR14
+> fallback returns the full reachable tool set verbatim per the
+> "no capability loss" guarantee
+> (`forge_bridge/console/_tool_filter.py:320–321`).
+>
+> The expected_narrow declares the empty list as the
+> fixture-author's aspirational claim — "no narrowing should
+> occur" expressed at the expectation surface. The divergence
+> between expected (empty) and observed (full reachable list)
+> is the demonstrable Gate 4 comparator-unblock proof.
+>
+> Per A.5.3.2-PR9-SPEC.md §4.7 amendment 2026-05-11: this
+> fixture replaces the pre-amendment fix_zero_match.py. The
+> chat-handler narrowing pipeline cannot produce
+> narrower_decision == []. Carrier #10's "zero-match" language
+> is chain-step-specific and explicitly warns against silent
+> overloading.
+>
+> The integration test
+> (test_pr9_fixture_integration.py::test_fixture_runs_end_to_end_no_keyword_match)
 > drives this fixture and asserts both records persist correctly
-> + the observation reflects the zero-match outcome.
+> + the observation reflects the PR14 full-capability-fallback
+> outcome.
 >
 > The empty-list expected_narrow is a valid expectation — it
 > expresses "expected zero-survivor narrowing for this prompt"
 > per emit_seed_expectation's contract
-> (forge_bridge/corpus/_seed.py:259–264).
+> (forge_bridge/corpus/_seed.py:259–264). The aspirational
+> claim is structurally valid; the divergence from the
+> operational observation is the load-bearing test property.
 
 **Constant shape:**
 
 ```python
 FIXTURE: dict = {
-    "fixture_id": "fix-pr9-zero-match",
-    "prompt": "<zero-match-inducing prompt text — see Step 2 implementation note>",
-    "expected_narrow": [],  # empty list — explicitly valid per emit_seed_expectation contract
+    "fixture_id": "fix-pr9-no-keyword-match",
+    "prompt": "<no-keyword-match-inducing prompt text — see Step 2 implementation note>",
+    "expected_narrow": [],  # aspirational empty-list claim — explicitly valid per emit_seed_expectation contract
 }
 ```
 
 **Step 2 implementation note:** Same selection-at-implementation-
-time discipline as §4.2 + §4.3. Binding constraints:
+time discipline as §4.2 + §4.3. Binding constraints for this
+fixture:
 
 1. **Single-step shape** — does NOT fire chain-step arbitration.
-2. **Zero-match narrowing outcome** — yields zero tool names
-   from the narrowing decision. The `expected_narrow` is the
-   empty list.
+2. **No-keyword-match shape** — the prompt's PR14-normalized
+   tokens have zero overlap with ANY registered tool name's
+   normalized tokens. PR14 returns the full reachable tool set
+   as fallback. Mechanical verification at Step 2: trace the
+   chosen prompt through `_pr14_tokens` + `filter_tools_by_message`
+   against the controlled reachable-tool set; confirm zero
+   matches.
+3. **PR21 non-collapse** — because PR14 returns the full set
+   (not a smaller subset), `tools_post_pr14 == tools`; PR21
+   only runs if `tools_filtered_count > 1` AND the deterministic
+   narrowing rules can reduce; on the no-keyword-match path
+   the rules apply but their output equals their input (max
+   overlap is 0 → "no signal, leave candidate set untouched"
+   per `_tool_filter.py` PR21 stop condition).
 
-The empty-list case is explicitly valid per
+The empty-list `expected_narrow` is explicitly valid per
 `emit_seed_expectation`'s docstring (the empty list expresses
 "expected zero-survivor narrowing for this prompt" — a valid
-expectation, not a missing field).
+expectation, not a missing field). The expectation IS
+aspirational; arbitration's actual production diverges; the
+divergence is the test's load-bearing property.
 
 ### 4.5 `tests/corpus/test_pr9_fixture_integration.py` (new)
 
@@ -841,6 +899,60 @@ expectation, not a missing field).
 **Purpose:** Five named integration tests proving end-to-end
 composition of PR 7 + PR 8 surfaces under three narrowing-
 outcome shapes + two Gate 4 unblock properties.
+
+**Monkeypatch strategy for reachable-backend stabilization (per
+§4.7 amendment 2026-05-11):**
+
+PR 9 integration tests `monkeypatch.setattr` on
+`forge_bridge.console.handlers.filter_tools_by_reachable_backends`
+to return a controlled reachable-tool set (`pr9_reachable_tools`)
+instead of the host-environment-dependent live backend
+reachability check. This is **NOT** a mock of `chat_handler`
+itself — the real chat-handler arbitration pipeline (PR14 +
+PR21) runs unmodified against the controlled tool set.
+
+Rationale:
+
+- **Mocking `chat_handler` collapses the arbitration surface
+  under test.** Test 1's purpose is to assert that arbitration
+  produced the expected single-survivor outcome end-to-end;
+  mocking `chat_handler` defeats that purpose.
+- **Constraining reachable-tool topology preserves the
+  arbitration surface while removing host-environment
+  nondeterminism.** Patching only the reachability check leaves
+  PR14 keyword-filter + PR21 deterministic-narrow operational
+  against the controlled set. The narrowing decisions tests
+  assert against ARE the real arbitration outcomes — just
+  against a deterministic input topology.
+- **Host independence.** On dev hosts where `available=False`
+  for all 57 registered tools (no Flame instance reachable),
+  unpatched chat_handler returns 503 before reaching narrowing.
+  The controlled-set patch lets integration tests pass on any
+  host regardless of backend reachability state.
+
+The `pr9_reachable_tools` fixture (`tests/corpus/conftest.py`
+contribution at Step 3 implementation time) declares the
+controlled set: a small, deterministic collection of mock tool
+objects (each with a `.name` attribute matching real registry
+naming convention — e.g., `forge_ping`, `flame_list_libraries`,
+`forge_list_projects`) such that:
+
+- The single-survivor fixture's prompt contains keyword tokens
+  uniquely matching exactly one tool name in the controlled
+  set (PR14 yields 1; PR21 doesn't run).
+- The multi-match fixture's prompt contains keyword tokens
+  matching ≥2 tool names in the controlled set; PR21 cannot
+  collapse them (different name token shapes; no domain priority
+  trigger).
+- The no-keyword-match fixture's prompt contains zero keyword
+  tokens overlapping any tool name in the controlled set; PR14
+  fallback returns the full controlled set verbatim.
+
+The controlled set's exact size + composition is locked at
+Step 3 implementation time alongside the integration test
+authoring. The §4.7 amendment 2026-05-11 surfaces this strategy
+at spec time; Step 3 lands the conftest fixture + the
+monkeypatch wiring per test.
 
 **Top-level structure:**
 
@@ -872,7 +984,7 @@ from forge_bridge.corpus.reader import read_records  # PR 7 reader surface
 # Fixture imports — one per fixture module, named explicitly:
 from tests.corpus.fixtures.fix_single_survivor import FIXTURE as FIXTURE_SINGLE_SURVIVOR
 from tests.corpus.fixtures.fix_multi_match import FIXTURE as FIXTURE_MULTI_MATCH
-from tests.corpus.fixtures.fix_zero_match import FIXTURE as FIXTURE_ZERO_MATCH
+from tests.corpus.fixtures.fix_no_keyword_match import FIXTURE as FIXTURE_NO_KEYWORD_MATCH
 
 
 def test_fixture_runs_end_to_end_single_survivor(
@@ -923,28 +1035,69 @@ def test_fixture_runs_end_to_end_multi_match(
     )
 
 
-def test_fixture_runs_end_to_end_zero_match(
+def test_fixture_runs_end_to_end_no_keyword_match(
     clean_rate_limit_state,
     tmp_corpus_dir,
+    pr9_reachable_tools,  # controlled reachable-tool set; see §4.5 monkeypatch strategy
 ):
-    """Zero-match e2e: drive fixture → assert zero-survivor observation
-    per carrier #10 (empty list verbatim, no collapse)."""
-    drive_seed_fixture(**FIXTURE_ZERO_MATCH)
+    """No-keyword-match e2e: drive fixture → assert PR14 full-capability
+    fallback observation. Renamed per §4.7 amendment 2026-05-11; was
+    test_fixture_runs_end_to_end_zero_match pre-amendment.
+
+    The chat-handler narrowing pipeline cannot produce narrower_decision ==
+    []. PR14's "no capability loss" fallback returns the full reachable
+    tool set when zero keywords match. The expectation record's
+    expected_narrow = [] is the fixture-author's aspirational claim; the
+    observation's narrower_decision = <full reachable set> is arbitration's
+    actual outcome; the divergence is the Gate 4 comparator-unblock proof.
+
+    Per Gate 2 framing §4.4 + member #7 (companion records as truth-
+    partitioning): the two records co-exist as separate authority claims.
+    The comparator (Gate 4 deliverable, NOT shipped at PR 9) joins them on
+    fixture_id + reports the divergence as a divergence-detection event.
+    """
+    drive_seed_fixture(**FIXTURE_NO_KEYWORD_MATCH)
 
     records = read_records(tmp_corpus_dir)
-    matching = [r for r in records if r.get("fixture_id") == "fix-pr9-zero-match"]
+    matching = [r for r in records if r.get("fixture_id") == "fix-pr9-no-keyword-match"]
     assert len(matching) == 2
     observation = next(r for r in matching if r["record_kind"] == "observation")
-    # Carrier #10 enforcement at zero-match: narrower_decision is the empty list;
-    # no collapse; no pr20 condition met.
-    assert observation["narrower_decision"] == []
+    expectation = next(r for r in matching if r["record_kind"] == "expectation")
+
+    # PR14 fallback enforcement: narrower_decision carries the FULL
+    # controlled reachable tool set verbatim (zero keywords matched →
+    # "no capability loss" fallback per _tool_filter.py:320-321).
+    observed_tool_names = [t.get("name") for t in observation["narrower_decision"]]
+    expected_tool_names = sorted(t.name for t in pr9_reachable_tools)
+    assert sorted(observed_tool_names) == expected_tool_names, (
+        f"narrower_decision did not match the controlled reachable set.\n"
+        f"Expected (controlled set): {expected_tool_names}\n"
+        f"Observed (narrower_decision): {sorted(observed_tool_names)}\n"
+        f"\n"
+        f"This fixture exercises the PR14 no-keyword-match full-capability "
+        f"fallback. If observed ≠ controlled set, either (a) the fixture's "
+        f"prompt accidentally matched a keyword (re-ground per §4.4 Step 2 "
+        f"implementation note), or (b) the PR14 fallback path regressed."
+    )
+
+    # Carrier #10 rejection-path semantics hold even at the chat-handler
+    # surface's fallback shape: pr20_condition_met requires
+    # tools_filtered_count == 1 (we have many); collapse_occurred requires
+    # a multi-to-one transition (we had multi-to-multi, no collapse).
     assert observation.get("pr20_condition_met") is False
     assert observation.get("collapse_occurred") is False
-    # Expectation's expected_narrow is also empty list — fixture-author's claim
-    # matches arbitration's actual outcome at zero-match. The match is
-    # archaeology-grade per Gate 2 framing §4.4 + member #7 protection.
-    expectation = next(r for r in matching if r["record_kind"] == "expectation")
-    assert expectation["expected_narrow"] == []
+
+    # The aspirational expected_narrow IS empty per §4.4 + §4.7 amendment.
+    # The divergence from observation's full-list narrower_decision IS the
+    # Gate 4 comparator-unblock proof — comparator can detect the divergence
+    # mechanically.
+    assert expectation["expected_narrow"] == [], (
+        "fixture-author's aspirational claim is the empty list — "
+        "'expected zero-survivor narrowing for this prompt' per "
+        "emit_seed_expectation's contract. The divergence between this "
+        "claim and the observation's full-list narrower_decision IS the "
+        "Gate 4 comparator-unblock proof."
+    )
 
 
 def test_observation_and_expectation_distinguishable_by_record_kind(
@@ -1315,6 +1468,192 @@ def test_fixture_modules_references_subset_of_permitted_imports():
 
 ---
 
+### 4.7 Spec amendment 2026-05-11 — fix_zero_match.py → fix_no_keyword_match.py
+
+**Surfaced at:** Step 2 grounding (PR 9 implementation arc,
+post-framing-commit `5628817`, post-spec-commit `f8ccf0f`,
+post-Step-1-commit `627b104`).
+
+**Trigger:** Empirical grounding against
+`forge_bridge/console/_tool_filter.py::filter_tools_by_message`
+(per `feedback_ground_specs_in_actual_files.md`) revealed that
+the chat-handler narrowing pipeline cannot produce
+`narrower_decision == []`. The PR14 "no capability loss"
+fallback (lines 320–321 of `_tool_filter.py`) returns the full
+reachable tool set verbatim when no keyword matches; the
+empty-list outcome is structurally unreachable at the chat-
+handler surface.
+
+**Carrier #10's own warning was the load-bearing signal the
+framing/spec missed:**
+
+> Ambiguity rejection is an arbitration outcome. Capture must
+> record it. At this surface, `narrower_decision` carries the
+> filtered list verbatim at narrowing finalization — including
+> zero-match and multi-match rejection paths. `pr20_condition_met`
+> is always False and `collapse_occurred` is False on all
+> rejection paths. **These semantics differ from the chat-
+> handler case and must not be silently overloaded.**
+
+The framing extrapolated the "zero-match" outcome from chain-
+step semantics onto the chat-handler surface; carrier #10
+explicitly warned against that silent overloading. The
+framing/spec text honored the carrier verbatim travel but
+missed the carrier's own boundary clause.
+
+**Corrected chat-handler narrowing-outcome topology:**
+
+  - **(a) Single survivor** — PR14 yields exactly 1 candidate
+    OR PR21 collapses >1 to 1. `tools_filtered_count == 1`;
+    `pr20_condition_met` MAY be True (if `< tools_available_count`);
+    `collapse_occurred` MAY be True (if `tools_post_pr14 > 1`).
+  - **(b) Multi-match ambiguity** — PR14 yields >1 candidates
+    matching the prompt's keywords; PR21 cannot collapse to 1;
+    LLM gets the survivor set. `tools_filtered_count > 1`;
+    `pr20_condition_met == False`; `collapse_occurred == False`.
+  - **(c) No-keyword-match full-capability fallback** — prompt
+    keywords match zero tools in `filter_tools_by_message`;
+    PR14 returns the full reachable set verbatim ("no capability
+    loss"). `narrower_decision == registered_tools` (full set);
+    `tools_filtered_count == tools_available_count`;
+    `pr20_condition_met == False`; `collapse_occurred == False`.
+
+**Outcome (c) is NOT zero-survivor narrowing.** The fallback
+preserves the full capability surface explicitly; the empty-
+list case at the chat-handler surface is mechanically
+unreachable.
+
+**Amendment scope applied at this commit:**
+
+1. Rename `fix_zero_match.py` → `fix_no_keyword_match.py`.
+2. Rename `fix-pr9-zero-match` → `fix-pr9-no-keyword-match`
+   (fixture_id).
+3. Rename `test_fixture_runs_end_to_end_zero_match` →
+   `test_fixture_runs_end_to_end_no_keyword_match`.
+4. Amend test 3 assertion semantics: from
+   `narrower_decision == []` to
+   `sorted(observed_tool_names) == sorted(controlled_set_names)`
+   + `pr20_condition_met == False` + `collapse_occurred == False`.
+   The fixture-author's `expected_narrow = []` remains valid
+   per `emit_seed_expectation`'s contract — it expresses the
+   aspirational claim "zero matches expected"; the divergence
+   between expected `[]` and observed full-list IS the
+   demonstrable Gate 4 comparator-unblock proof.
+5. Rewrite §4.4 entirely to articulate the no-keyword-match
+   outcome semantics + the aspirational-expectation framing.
+6. Add §4.5 "Monkeypatch strategy for reachable-backend
+   stabilization" subsection — articulates the
+   `monkeypatch.setattr` pattern for
+   `filter_tools_by_reachable_backends`. The strategy preserves
+   the real `chat_handler` arbitration surface (PR14 + PR21)
+   while removing host-environment reachability variance.
+   Mocking `chat_handler` itself is rejected explicitly —
+   would collapse the arbitration surface under test.
+7. Update framing §2, §4.1, §4.2, §5.3, §9 + spec §1, §2,
+   §3.1, §5.1, §6 Step 2 + Step 3, §7 to use the renamed file
+   + identifier + test + corrected outcome semantics.
+8. Add framing §11 amendment archaeology (mirror of this
+   spec §4.7).
+9. Preserve carrier #10's verbatim text unchanged at spec §0
+   line 133 — carrier #10 is correct as written; the
+   misapplication was at the spec layer's extrapolation, not
+   at the carrier itself.
+
+**Test count unchanged:** 7 named tests total (5 integration
++ 2 discipline); 207 forge env collected target preserved
+(200 baseline + 7 new).
+
+**Member #9 protection unchanged:** the single-symbol-gate
+Layer 2 discipline + the parallel-not-extension boundary
+remain unaffected — the amendment is about fixture semantic
+content (test 3's outcome shape) + test-time monkeypatch
+strategy, not Layer 2 discipline topology.
+
+**Three-walker partition unchanged:** PR 4 / PR 8 / PR 9
+walker ontologies are structurally distinct and survive the
+amendment unmodified.
+
+**Methodological note (per user redline at amendment
+convergence; full archaeology in Step 2 commit body):**
+
+  - **Mocking `chat_handler` would collapse the arbitration
+    surface under test.** The integration tests exist to
+    assert what the chat-handler arbitration produced;
+    mocking the handler defeats the assertion's purpose.
+  - **Constraining reachable-tool topology preserves the
+    arbitration surface while removing host-environment
+    nondeterminism.** `monkeypatch.setattr` on
+    `filter_tools_by_reachable_backends` substitutes ONLY the
+    backend-reachability check (which depends on Flame
+    instance availability + host network state). PR14 keyword-
+    filter + PR21 deterministic-narrow + the broader
+    `chat_handler` pipeline remain operational against the
+    controlled reachable set.
+  - This distinction surfaces as a methodology contribution
+    of PR 9 — separating *what is being measured* (arbitration
+    semantics) from *what is being stabilized* (host-
+    environment topology). Future reliability phases
+    consuming substrate end-to-end inherit the distinction.
+
+**Governing sentence corroborated:**
+
+> PR 9 proves topology, not infrastructure.
+
+The amendment is itself a corroboration of the governing
+sentence: the empirical grounding step (per
+`feedback_ground_specs_in_actual_files.md`) revealed that
+extrapolating an outcome ontology from chain-step semantics
+without reading `_tool_filter.py` would have committed PR 9
+to an unreachable test assertion. Topology proof requires
+grounding; the framing-extrapolated topology was not the
+operational topology. The amendment realigns the spec with
+the operational topology.
+
+**Methodology contribution — grounding-time amendment variant:**
+
+This is the **8th amendment at incarnation** across the PR 7
++ PR 8 + PR 9 reliability-phase arc:
+
+  - PR 7 contributed 2 spec amendments at drafting (§4.5).
+  - PR 8 contributed 4 spec amendments at drafting (§4.5) +
+    3 implementation-time amendments + 1 verification-time
+    amendment (Step 4.5 pattern; PR 8 close §5.2).
+  - PR 9 contributes 1 grounding-time amendment so far (this
+    amendment).
+
+The amendment cluster's hygiene discipline holds: surface
+findings as separate NO-code amendment commits that travel as
+their own archaeology, separate from the implementation work
+they enable. Per PR 7 §4.5 + PR 8 §1.3 methodology.
+
+The PR 9-specific contribution is **grounding-time amendments**
+— a new variant joining PR 8's drafting-time + implementation-
+time + verification-time variants. Surfaced when empirical
+inspection of the live code reveals an extrapolation the
+framing/spec made that the actual code surface does not honor.
+Future reliability phases should expect grounding-time
+amendments at Step 2 / Step 3 boundaries whenever the
+implementation begins consuming a previously-only-described
+substrate empirically.
+
+**Cross-references:**
+
+- `A.5.3.2-PR9-FRAMING.md` §11 (mirror amendment archaeology
+  at framing layer).
+- `forge_bridge/console/_tool_filter.py:258-327`
+  (`filter_tools_by_message` — the PR14 fallback that surfaced
+  the structural mismatch).
+- `forge_bridge/console/_tool_filter.py:382-407`
+  (`deterministic_narrow` — the PR21 collapse path that
+  combines with PR14 to define the three chat-handler
+  outcomes).
+- `feedback_ground_specs_in_actual_files.md` (the methodology
+  that surfaced the amendment).
+- Carrier #10 verbatim text at spec §0 line 133 (the
+  load-bearing warning the framing/spec missed).
+
+---
+
 ## 5. Test plan
 
 ### 5.1 Test inventory (7 named tests)
@@ -1323,7 +1662,7 @@ def test_fixture_modules_references_subset_of_permitted_imports():
 |---|---|---|---|---|
 | 1 | `test_pr9_fixture_integration.py` | `test_fixture_runs_end_to_end_single_survivor` | §3 risk #1 | Single-survivor e2e drive + record persistence assertion. |
 | 2 | `test_pr9_fixture_integration.py` | `test_fixture_runs_end_to_end_multi_match` | §3 risk #2 | Multi-match e2e + carrier #10 enforcement (`narrower_decision` verbatim filtered list, no collapse, no pr20). |
-| 3 | `test_pr9_fixture_integration.py` | `test_fixture_runs_end_to_end_zero_match` | §3 risk #3 | Zero-match e2e + carrier #10 enforcement (empty list verbatim, no collapse, no pr20). |
+| 3 | `test_pr9_fixture_integration.py` | `test_fixture_runs_end_to_end_no_keyword_match` | §3 risk #3 | No-keyword-match e2e + PR14 full-capability-fallback enforcement (narrower_decision = full controlled reachable set verbatim; pr20_condition_met=False; collapse_occurred=False). Renamed per §4.7 amendment 2026-05-11. |
 | 4 | `test_pr9_fixture_integration.py` | `test_observation_and_expectation_distinguishable_by_record_kind` | §3 risk #5 | Gate 4 unblock proof #1 — record_kind partition correctness. Independent drive of single-survivor fixture; orthogonal to tests 1–3. |
 | 5 | `test_pr9_fixture_integration.py` | `test_records_join_on_fixture_id` | §3 risk #6 | Gate 4 unblock proof #2 — fixture_id joinability. Independent drive of single-survivor fixture; orthogonal to tests 1–4. |
 | A | `test_pr9_fixture_discipline.py` | `test_fixture_permitted_imports_locked_at_one_symbol` | §3 risk #4 | Frozenset value-lock regression. Member #9 protection enforcement. |
@@ -1500,8 +1839,12 @@ single-survivor outcome).
 Create `fix_multi_match.py` per §4.3. Select a multi-step-shape-
 rejecting prompt that yields multi-match narrowing.
 
-Create `fix_zero_match.py` per §4.4. Select a single-step prompt
-that yields zero-match narrowing (no tool name matches).
+Create `fix_no_keyword_match.py` per §4.4 (renamed per §4.7
+amendment 2026-05-11; was `fix_zero_match.py` pre-amendment).
+Select a single-step prompt whose PR14-normalized tokens have
+zero overlap with ANY registered tool name's normalized tokens
+against the controlled reachable-tool set. The PR14 fallback
+returns the full controlled set verbatim ("no capability loss").
 
 Each fixture module's full module docstring is written at this
 step (the placeholder skeleton from Step 1 had only the
@@ -1514,7 +1857,17 @@ prompt selection for each fixture, including:
 - The trace verification confirming single-step shape (no
   `_step.py:233` invocation).
 - The arbitration outcome observed (single-survivor / multi-match
-  / zero-match) with the actual tool name(s) yielded.
+  / no-keyword-match — per §4.7 amendment) with the actual
+  tool name(s) yielded against the controlled reachable-tool
+  set.
+- The methodological note (per §4.7 amendment): mocking
+  `chat_handler` would collapse the arbitration surface under
+  test; constraining reachable-tool topology preserves the
+  arbitration surface while removing host-environment
+  nondeterminism. The grounding-time monkeypatch on
+  `filter_tools_by_reachable_backends` is the methodology;
+  the integration tests at Step 3 land the equivalent
+  per-test monkeypatch.
 
 This commit body documentation is archaeology-grade per
 `feedback_counts_are_archaeology_grade.md` — future contributors
@@ -1536,7 +1889,8 @@ recorded at this commit.
 ### Step 3 — Three e2e integration tests **(architectural-center #1)**
 
 Create `tests/corpus/test_pr9_fixture_integration.py` per §4.5.
-Tests 1, 2, 3 (single-survivor / multi-match / zero-match e2e).
+Tests 1, 2, 3 (single-survivor / multi-match / no-keyword-match
+e2e — per §4.7 amendment 2026-05-11).
 
 **Architectural-center #1.** This step lands the end-to-end
 composition proof. Tests 1–3 demonstrate that PR 7's substrate
@@ -1735,7 +2089,7 @@ commit before Step 5 verification lands.
 | `test_fixture_modules_references_subset_of_permitted_imports` regresses on a future PR | Hard CI failure; PR-9-LOCAL fixture-data discipline has been violated. A fixture module has acquired a forbidden corpus import. Reject at CI; review surfaces framing §6.1 (member #9) + the offender file name + the forbidden references named in the walker's assertion error. |
 | `test_fixture_runs_end_to_end_single_survivor` regresses on a future PR | Hard CI failure; PR 7 substrate or PR 8 surfaces have been touched in a way that breaks end-to-end composition under the canonical single-survivor narrowing outcome. Reject at CI; review traces back to whichever substrate or surface broke (PR 7 schema, PR 7 dispatch context, PR 8 helper, PR 8 driver, PR 8 scope). |
 | `test_fixture_runs_end_to_end_multi_match` regresses on a future PR | Hard CI failure; either the multi-match arbitration outcome path has regressed OR carrier #10's ambiguity-rejection semantics have been silently overloaded against handlers.py. Reject at CI; review surfaces carrier #10 verbatim + the surface-asymmetry distinction (chat-handler vs. chain-step). |
-| `test_fixture_runs_end_to_end_zero_match` regresses on a future PR | Hard CI failure; either the zero-match arbitration outcome path has regressed OR `emit_seed_expectation`'s empty-list-is-valid contract has been violated. Reject at CI; review surfaces carrier #10 + the empty-list validity language at `forge_bridge/corpus/_seed.py:259–264`. |
+| `test_fixture_runs_end_to_end_no_keyword_match` regresses on a future PR | Hard CI failure; either the PR14 no-keyword-match full-capability-fallback path has regressed (`_tool_filter.py:320-321`) OR the controlled reachable-tool monkeypatch wiring has drifted OR `emit_seed_expectation`'s empty-list-is-valid contract has been violated. Reject at CI; review surfaces §4.4 + §4.5 monkeypatch strategy + the empty-list validity language at `forge_bridge/corpus/_seed.py:259–264`. Test renamed per §4.7 amendment 2026-05-11. |
 | `test_observation_and_expectation_distinguishable_by_record_kind` regresses on a future PR | Hard CI failure; Gate 4 unblock dependency #1 has been violated. Either the `record_kind` discriminator has been touched (PR 7 substrate regression) OR a future PR has begun collapsing observation + expectation into a single record kind (member #7 violation). Reject at CI; review surfaces member #7 protection verbatim + Gate 2 framing §4.4 falsifiability framing. |
 | `test_records_join_on_fixture_id` regresses on a future PR | Hard CI failure; Gate 4 unblock dependency #2 has been violated. Either the `fixture_id` field is no longer being populated identically at expectation persistence + observation persistence (PR 7 or PR 8 substrate regression) OR a future PR has decoupled the two record kinds' join key. Reject at CI; review surfaces the join-key population sites (`emit_seed_expectation` at `_seed.py:296`, `handlers.py:1185` under `seed_dispatch_scope`). |
 | A future PR proposes seeding the chain-step observation surface inside PR 9's scope | Rejected at the spec layer per carrier #15 + §2 out-of-scope #1. Cross-surface expectation semantics require a dedicated framing pass BEFORE implementation proceeds. PR 9 does not draft, prefigure, or scaffold that pass. |

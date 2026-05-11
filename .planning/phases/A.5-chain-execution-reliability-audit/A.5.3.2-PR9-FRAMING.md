@@ -68,7 +68,8 @@ ship — `seed_dispatch_scope`, `_persist_expectation_record`,
 `emit_seed_expectation`, `drive_seed_fixture` — compose
 end-to-end against real arbitration with real persisted records,
 under three operational outcome shapes (single-survivor /
-multi-match / zero-match narrowing), with the resulting records
+multi-match / no-keyword-match narrowing — see §11 amendment),
+with the resulting records
 demonstrably partitionable by `record_kind` and joinable by
 `fixture_id`. The proof is mechanical (tests pass) and
 archaeological (records inspectable in the corpus JSONL file).
@@ -156,7 +157,8 @@ fixture module, invoke `drive_seed_fixture(**FIXTURE)`, and
 assert the resulting persisted records demonstrate
 `record_kind`-partitionability and `fixture_id`-joinability under
 three narrowing-outcome shapes (single-survivor, multi-match,
-zero-match). Land a new parallel Layer 2 discipline —
+no-keyword-match — see §11 amendment). Land a new parallel
+Layer 2 discipline —
 `_FIXTURE_PERMITTED_IMPORTS` frozenset + a new AST walker — that
 mechanically enforces fixture modules import only the single
 orchestration surface (`drive_seed_fixture`). PR 9 closes
@@ -327,7 +329,7 @@ tests/corpus/fixtures/
 ├── __init__.py                  (empty package init)
 ├── fix_single_survivor.py       (FIXTURE constant + module docstring)
 ├── fix_multi_match.py           (FIXTURE constant + module docstring)
-└── fix_zero_match.py            (FIXTURE constant + module docstring)
+└── fix_no_keyword_match.py      (FIXTURE constant + module docstring) — see §11 amendment
 ```
 
 **Module shape (each fixture module):**
@@ -371,7 +373,7 @@ locked at framing:
 
 - `fix-pr9-single-survivor`
 - `fix-pr9-multi-match`
-- `fix-pr9-zero-match`
+- `fix-pr9-no-keyword-match` (renamed per §11 amendment; was `fix-pr9-zero-match` pre-amendment)
 
 The `pr9` segment marks the PR of origin; PR 10+ fixtures use
 their own PR-anchored segments. The narrowing-outcome segment
@@ -398,14 +400,17 @@ names the structural test scope.
 |---|---|---|---|
 | 1 | `test_fixture_runs_end_to_end_single_survivor` | `fix-pr9-single-survivor` | Drive produces expectation + observation; both persist; both readable. |
 | 2 | `test_fixture_runs_end_to_end_multi_match` | `fix-pr9-multi-match` | Drive produces expectation + observation; observation reflects multi-match ambiguity-rejection arbitration outcome. |
-| 3 | `test_fixture_runs_end_to_end_zero_match` | `fix-pr9-zero-match` | Drive produces expectation + observation; observation reflects zero-match ambiguity-rejection arbitration outcome. |
+| 3 | `test_fixture_runs_end_to_end_no_keyword_match` | `fix-pr9-no-keyword-match` | Drive produces expectation + observation; observation reflects PR14 no-keyword-match full-capability fallback (narrower_decision = full controlled reachable tool set; `pr20_condition_met=False`; `collapse_occurred=False`). Renamed per §11 amendment — chat-handler topology cannot produce empty narrowing decision; carrier #10's "zero-match" language is chain-step-specific. |
 | 4 | `test_observation_and_expectation_distinguishable_by_record_kind` | `fix-pr9-single-survivor` | The two persisted records have distinct `record_kind` values (`"observation"` vs. `"expectation"`); the schema validator accepts both. |
 | 5 | `test_records_join_on_fixture_id` | `fix-pr9-single-survivor` | The expectation record and the observation record share the same `fixture_id`; a `fixture_id`-keyed join over the corpus reader's output reunites them. |
 
 **Why exactly 5 tests, exactly this partition:**
 
-- **Tests 1–3** cover the three narrowing-outcome shapes carrier
-  #10 names (single-survivor / multi-match / zero-match). Each is
+- **Tests 1–3** cover the three chat-handler-surface narrowing-
+  outcome shapes (single-survivor / multi-match / no-keyword-
+  match — see §11 amendment; carrier #10's "zero-match" language
+  is chain-step-specific and does not regenerate at chat-handler).
+  Each is
   its own test. No parametrization. Future contributors
   diagnosing a single-outcome regression land directly at the
   test function via grep.
@@ -440,7 +445,7 @@ The governing sentence rejects fixture-management infrastructure.
 Parametrize over fixtures IS a fixture-management abstraction —
 it programmatically iterates a fixture-set. A future contributor
 seeing `@pytest.mark.parametrize("fixture", [single_survivor,
-multi_match, zero_match])` would reasonably propose extending it
+multi_match, no_keyword_match])` would reasonably propose extending it
 to a fixture-discovery decorator that walks `tests/corpus/fixtures/`
 automatically. That extension surfaces the loader abstraction
 through the back door. Closing it at framing is structurally
@@ -633,7 +638,9 @@ the governing sentence: PR 9 proves topology, not infrastructure.
 ### 5.3 Q3 — Fixture count locked at exactly 3
 
 Three fixtures: `fix-pr9-single-survivor`, `fix-pr9-multi-match`,
-`fix-pr9-zero-match`. One per narrowing-outcome shape.
+`fix-pr9-no-keyword-match` (renamed per §11 amendment; was
+`fix-pr9-zero-match` pre-amendment). One per chat-handler-surface
+narrowing-outcome shape.
 
 **What this rejects:** fewer fixtures (1 covers happy path only
 — fails to demonstrate the carrier #10 ambiguity-rejection
@@ -1058,7 +1065,8 @@ PR 9 closes when:
 
 1. **Three fixture modules land** under `tests/corpus/fixtures/`:
    `fix_single_survivor.py`, `fix_multi_match.py`,
-   `fix_zero_match.py`. Each contains exactly one top-level
+   `fix_no_keyword_match.py` (renamed per §11 amendment; was
+   `fix_zero_match.py` pre-amendment). Each contains exactly one top-level
    `FIXTURE: dict` carrying exactly the three PR-8-locked keys.
    Each module's docstring carries the 15 inherited carriers +
    binding framing clarification per the relevance-by-file
@@ -1197,6 +1205,123 @@ Gate 2 closes when:
 - `tests/corpus/test_pr8_seed_surface.py` — PR 8 walker; PR 9
   walker generalizes the AST mechanics pattern to a directory
   glob target, but with distinct admission ontology.
+
+---
+
+## 11. Amendment 2026-05-11 — fix_zero_match.py → fix_no_keyword_match.py
+
+**Surfaced at:** Step 2 grounding (PR 9 implementation arc, post-
+framing-commit `5628817`, post-spec-commit `f8ccf0f`).
+
+**Trigger:** Empirical grounding against
+`forge_bridge/console/_tool_filter.py::filter_tools_by_message`
+revealed that the chat-handler narrowing pipeline cannot produce
+`narrower_decision == []`. The PR14 "no capability loss" fallback
+(lines 320–321) returns the full reachable tool set when no
+keyword matches; the empty-list outcome is structurally
+unreachable at the chat-handler surface.
+
+**Carrier #10's own warning was the load-bearing signal we
+missed:**
+
+> Ambiguity rejection is an arbitration outcome. Capture must
+> record it. At this surface, `narrower_decision` carries the
+> filtered list verbatim at narrowing finalization — including
+> zero-match and multi-match rejection paths. `pr20_condition_met`
+> is always False and `collapse_occurred` is False on all
+> rejection paths. **These semantics differ from the chat-handler
+> case and must not be silently overloaded.**
+
+The framing extrapolated the "zero-match" outcome from
+chain-step semantics onto the chat-handler surface; carrier #10
+explicitly warned against that silent overloading. The
+framing/spec text honored the carrier verbatim travel but missed
+the carrier's own boundary clause.
+
+**Corrected chat-handler narrowing-outcome topology:**
+
+  - **(a) Single survivor** — PR14 yields exactly 1 candidate
+    OR PR21 collapses >1 to 1.
+  - **(b) Multi-match ambiguity** — PR14 yields >1; PR21 cannot
+    collapse; LLM gets the survivor set.
+  - **(c) No-keyword-match full-capability fallback** — prompt
+    keywords match zero tools; PR14 returns the full reachable
+    set as fallback (no capability loss).
+
+**Outcome (c) is NOT zero-survivor narrowing.** The fallback
+preserves the full capability surface explicitly; the empty-list
+case at the chat-handler surface is mechanically unreachable.
+
+**Amendment scope:**
+
+1. Rename `fix_zero_match.py` → `fix_no_keyword_match.py`.
+2. Rename `fix-pr9-zero-match` → `fix-pr9-no-keyword-match`
+   (fixture_id).
+3. Rename `test_fixture_runs_end_to_end_zero_match` →
+   `test_fixture_runs_end_to_end_no_keyword_match`.
+4. Amend test 3 assertion semantics: from
+   `narrower_decision == []` to `narrower_decision = <full
+   controlled reachable tool set>` + `pr20_condition_met=False`
+   + `collapse_occurred=False`. The fixture-author's
+   `expected_narrow = []` remains valid per
+   `emit_seed_expectation`'s contract — it expresses the
+   aspirational claim "zero matches expected"; the divergence
+   between expected `[]` and observed full-list IS the
+   demonstrable Gate 4 comparator-unblock proof.
+5. Amend framing §2, §4.1, §4.2, §5.3, §9 + spec §1, §2, §3.1,
+   §4.4, §4.5, §5.1, §6 Step 2, §7 to use the renamed file +
+   identifier + test + corrected outcome semantics.
+6. Preserve carrier #10's verbatim text unchanged at spec §0 —
+   carrier #10 is correct as written; the misapplication was at
+   the spec layer's extrapolation, not at the carrier itself.
+
+**Test count unchanged:** 7 named tests total (5 integration + 2
+discipline); 207 forge env collected target preserved.
+
+**Member #9 protection unchanged:** the single-symbol-gate
+Layer 2 discipline + the parallel-not-extension boundary remain
+unaffected — the amendment is about fixture semantic content,
+not Layer 2 discipline topology.
+
+**Three-walker partition unchanged:** PR 4 / PR 8 / PR 9 walker
+ontologies are structurally distinct and survive the amendment
+unmodified.
+
+**Governing sentence corroborated:**
+
+> PR 9 proves topology, not infrastructure.
+
+The amendment is itself a corroboration of the governing
+sentence: the empirical grounding step (per
+`feedback_ground_specs_in_actual_files.md`) revealed that
+extrapolating an outcome ontology from chain-step semantics
+without reading `_tool_filter.py` would have committed PR 9 to
+an unreachable test assertion. Topology proof requires
+grounding; the framing-extrapolated topology was not the
+operational topology. The amendment realigns the spec with the
+operational topology.
+
+**Methodology contribution:**
+
+This is the **8th amendment at incarnation** across the PR 7 +
+PR 8 + PR 9 reliability-phase arc (PR 7 contributed 2 spec
+amendments; PR 8 contributed 4 spec amendments at drafting + 3
+implementation-time amendments; PR 9 contributes 1 grounding-
+time amendment so far). The amendment cluster's hygiene
+discipline holds: surface findings as NO-code amendment commits
+that travel as their own archaeology, separate from the
+implementation work they enable. Per PR 7 §4.5 + PR 8 §1.3
+methodology.
+
+The PR 9-specific contribution is **grounding-time amendments**
+— a new variant joining PR 8's drafting-time + implementation-
+time + verification-time variants. Surfaced when empirical
+inspection of the live code reveals an extrapolation the
+framing/spec made that the actual code surface does not honor.
+Future reliability phases should expect grounding-time
+amendments at Step 2 / Step 3 boundaries whenever the
+implementation begins consuming a previously-only-described
+substrate empirically.
 
 ---
 
