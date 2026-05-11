@@ -158,6 +158,24 @@ divergent expectation IS intentional and is the load-bearing
 Gate 4 unblock proof — do NOT "fix" the divergence by aligning
 ``expected_narrow`` with the observed outcome.
 
+Authored/observed divergence framing:
+
+  This fixture intentionally encodes an authored/observed
+  divergence.
+
+  The authored expectation declares:
+
+    expected_narrow = []
+
+  The observed chat-handler behavior instead preserves the full
+  reachable tool set via PR14's "no capability loss" fallback.
+
+  The divergence is intentional and operationally valuable: it
+  proves the companion-record topology can represent authored
+  expectation separately from observed arbitration outcome,
+  which is the Gate 4 comparator-unblock condition this fixture
+  exists to exercise.
+
 PR 9 governing sentence (framing-artifact-scoped):
 
   PR 9 proves topology, not infrastructure.
