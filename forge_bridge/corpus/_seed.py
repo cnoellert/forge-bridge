@@ -206,12 +206,18 @@ PR-level binding decisions this module operationalizes.
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+import uuid as _uuid_module
+
+from starlette.requests import Request
 
 from forge_bridge.corpus._capture import (
     _new_uuid,
     _now_iso_ms,
     _persist_expectation_record,
+    seed_dispatch_scope,
 )
 from forge_bridge.corpus._schema import SCHEMA_VERSION
 
@@ -367,10 +373,64 @@ async def _invoke_chat_handler_in_process(prompt: str) -> None:
         seed driver's interest is in the emission, not the
         response.
     """
-    raise NotImplementedError(
-        "_invoke_chat_handler_in_process body lands at PR 8 "
-        "Step 4 — see A.5.3.2-PR8-SPEC.md §6 Step 4 + §4.1.4."
-    )
+    # Function-scoped import preserves carrier #15's chat-handler-
+    # only scope. Module-scoped import would broaden the exception's
+    # effective scope to include test collection and any reflective
+    # import (e.g., importlib walks). DO NOT promote to module scope
+    # per A.5.3.2-PR8-SPEC.md §4.5.3 (Discovery #3 — corpus → console
+    # import direction is an exception surface, not a generalized
+    # discipline).
+    from forge_bridge.console.handlers import chat_handler
+
+    # ── Build minimal D-02 chat body ───────────────────────────────
+    # Carrier #6 preserved: the prompt + minimal protocol envelope IS
+    # the chat-handler arbitration surface. Wrapping truth in the
+    # envelope is not reconstructing arbitration truth — the envelope
+    # IS the surface being measured.
+    body = {"messages": [{"role": "user", "content": prompt}]}
+    body_bytes = json.dumps(body).encode("utf-8")
+
+    # ── Synthetic per-invocation client identity ──────────────────
+    # Each fixture invocation looks like a fresh client to
+    # chat_handler's D-13 rate-limit pre-gate. The synthetic
+    # identity is opaque to the arbitration logic (it lives only in
+    # the rate-limit cache); test isolation is maintained by the
+    # ``clean_rate_limit_state`` fixture in
+    # ``tests/corpus/conftest.py`` (see A.5.3.2-PR8-SPEC.md §4.6).
+    synthetic_client = (f"seed-{_uuid_module.uuid4().hex[:8]}", 0)
+
+    # ── Minimal ASGI HTTP scope ───────────────────────────────────
+    # The fields chat_handler reads are: request.client.host (via
+    # scope["client"]), request.json() (which consults
+    # request._body after our injection), and starlette's internal
+    # routing metadata (path, method, headers).
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/v1/chat",
+        "raw_path": b"/api/v1/chat",
+        "query_string": b"",
+        "headers": [(b"content-type", b"application/json")],
+        "client": synthetic_client,
+        "server": ("seed-driver", 0),
+        "scheme": "http",
+        "http_version": "1.1",
+    }
+
+    # ── Body injection via _body bypasses the receive() coroutine ──
+    # Starlette's Request.json() consults _body first if set, then
+    # falls back to receive(). Setting _body directly is the
+    # documented pattern for in-process invocation without an ASGI
+    # server.
+    request = Request(scope)
+    request._body = body_bytes  # type: ignore[attr-defined]
+
+    response = await chat_handler(request)
+    # JSONResponse intentionally ignored. The seed driver does not
+    # consume chat_handler's output — only the observation emission
+    # side-effect (which fires inside chat_handler before the
+    # response is built).
+    _ = response
 
 
 def drive_seed_fixture(
@@ -436,7 +496,37 @@ def drive_seed_fixture(
         interest is in the emission side-effect (the observation
         record that fires inside chat_handler), not the response.
     """
-    raise NotImplementedError(
-        "drive_seed_fixture body lands at PR 8 Step 4 — see "
-        "A.5.3.2-PR8-SPEC.md §6 Step 4 + §4.1.5."
+    # ── Step 1: Persist the authored expectation ───────────────────
+    # Orchestration-not-authoring guard (verbatim in docstring):
+    # the driver delegates expectation construction to
+    # emit_seed_expectation. It does NOT build the expectation
+    # record dict directly. Inlining the construction would
+    # collapse the helper/driver authority partitioning — one of
+    # the three PR-8-internal authority surfaces named in the
+    # module docstring's three-way authority partition section.
+    #
+    # Expectation persistence happens BEFORE the scope is entered.
+    # The expectation record carries no source field; persistence
+    # is independent of scope state.
+    emit_seed_expectation(
+        fixture_id=fixture_id,
+        prompt=prompt,
+        expected_narrow=expected_narrow,
     )
+
+    # ── Step 2: Activate seed scope + invoke chat_handler ──────────
+    # Member #7 protection (companion records as truth-
+    # partitioning): inside the scope, observation emissions
+    # (handlers.py:1185) persist source="seed" + the supplied
+    # fixture_id. The observation record produced by
+    # chat_handler's internal arbitration becomes the companion
+    # of the expectation record persisted above; Gate 4's
+    # comparator joins them on fixture_id.
+    #
+    # asyncio.run is the sync→async bridge per Path E
+    # (A.5.3.2-PR8-SPEC.md §4.5.4). It is NOT consumer-visible —
+    # drive_seed_fixture stays sync per Q4 framing lock.
+    with seed_dispatch_scope(fixture_id=fixture_id):
+        asyncio.run(_invoke_chat_handler_in_process(prompt))
+
+    return None

@@ -4,6 +4,72 @@ from __future__ import annotations
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _sync_console_package_attrs_with_sys_modules():
+    """Defensive: re-sync ``forge_bridge.console.*`` package
+    attributes with ``sys.modules`` entries at every test start.
+
+    Background — PR 8 Step 4 6th amendment-at-incarnation:
+
+    ``test_pr4_no_dependency`` uses ``importlib.import_module`` +
+    ``monkeypatch.delitem(sys.modules, ...)`` to force-reload the
+    handlers + chain-step modules. After the test's monkeypatch
+    teardown, ``sys.modules`` is restored to the ORIGINAL module
+    object, but the parent-package attributes (e.g.,
+    ``forge_bridge.console.handlers``) were updated to the NEW
+    module during the reload and are NOT restored — monkeypatch
+    only tracks the ``sys.modules`` dictionary.
+
+    This creates an asymmetry between two import resolution paths:
+
+      - ``from forge_bridge.console.handlers import chat_handler``
+        resolves via ``sys.modules`` → ORIGINAL module (restored).
+      - ``import forge_bridge.console.handlers`` (and dotted-path
+        attribute access used internally by ``monkeypatch.setattr``)
+        resolves via parent-package attribute → NEW module
+        (post-reload).
+
+    The asymmetry causes ``monkeypatch.setattr("forge_bridge.
+    console.handlers.chat_handler", sentinel)`` to patch the NEW
+    module's ``chat_handler``, while production code's function-
+    scoped ``from forge_bridge.console.handlers import
+    chat_handler`` retrieves from the ORIGINAL module — the patch
+    silently no-ops.
+
+    This autouse fixture re-syncs the package attributes with
+    ``sys.modules`` at every test start, ensuring both paths
+    agree. It is a no-op when the state is already consistent
+    (the normal case); it repairs the divergence after PR 4's
+    reload-and-restore pattern.
+
+    Affected production code: ``forge_bridge/corpus/_seed.py``'s
+    ``_invoke_chat_handler_in_process`` uses a function-scoped
+    ``from forge_bridge.console.handlers import chat_handler``
+    import per carrier #15's effective-scope protection
+    (A.5.3.2-PR8-SPEC.md §4.5.3 + §4.5.4). The function-scoped
+    placement is structurally load-bearing; this fixture protects
+    against the test-infrastructure asymmetry without forcing the
+    production code to module-scope its import.
+
+    Surfaced during PR 8 Step 4 verification (2026-05-11). The
+    autouse fixture is the minimal fix at the test infrastructure
+    layer; the production code is unchanged.
+    """
+    import sys
+
+    import forge_bridge.console
+
+    # Only re-sync modules that are loaded. If a module isn't in
+    # sys.modules, the package attribute may not exist either —
+    # nothing to sync.
+    for submodule in ("handlers", "_step", "_engine", "_rate_limit"):
+        qualified = f"forge_bridge.console.{submodule}"
+        if qualified in sys.modules:
+            setattr(forge_bridge.console, submodule, sys.modules[qualified])
+
+    yield
+
+
 @pytest.fixture
 def clean_warning_state():
     """Clear ``_warned_invalid_values`` so the test sees a fresh state.
@@ -69,3 +135,42 @@ def clean_flame_reachability_cache():
     _flame_cache.clear()
     yield
     _flame_cache.clear()
+
+
+@pytest.fixture
+def clean_rate_limit_state():
+    """Clear chat_handler's rate-limit state before and after.
+
+    PR 8 driver-invoking tests (Step 4) exercise ``chat_handler``'s
+    D-13 rate-limit pre-gate via ``drive_seed_fixture``. Without
+    isolation, consecutive tests in the same pytest process
+    accumulate rate-limit state across the synthetic per-invocation
+    client identities (the cache key is ``client_ip``; each test
+    uses a different synthetic id, but the ``_buckets`` cache
+    itself persists across tests).
+
+    The fixture invokes the handler's existing test affordance —
+    ``forge_bridge.console._rate_limit._reset_for_tests()`` —
+    on entry AND on exit, ensuring each driver-invoking test
+    exercises a clean rate-limit surface.
+
+    Implementation grounding (per A.5.3.2-PR8-SPEC.md §4.6): the
+    rate-limit module already exposed a ``_-prefixed`` test
+    affordance. Spec §4.6 named the architectural contract
+    (entry+exit isolation against the actual handler-owned cache);
+    Step 4 grounded the concrete reset surface
+    (``_reset_for_tests`` rather than direct ``_buckets``
+    manipulation). The spec-level contract binds; the
+    implementation choice is the artifact of the grounding.
+
+    Tests using this fixture: every PR 8 driver-invoking test
+    (test_driver_does_not_invoke_chain_step,
+    test_driver_emits_expectation_through_helper,
+    test_driver_opens_scope_around_chat_handler,
+    test_driver_invokes_chat_handler_in_process).
+    """
+    from forge_bridge.console._rate_limit import _reset_for_tests
+
+    _reset_for_tests()
+    yield
+    _reset_for_tests()

@@ -72,7 +72,11 @@ from typing import Any
 import pytest
 
 import forge_bridge
-from forge_bridge.corpus._seed import emit_seed_expectation
+from forge_bridge.corpus._capture import _DispatchContext, _dispatch_context
+from forge_bridge.corpus._seed import (
+    drive_seed_fixture,
+    emit_seed_expectation,
+)
 from forge_bridge.corpus._schema import (
     SCHEMA_VERSION,
     SchemaValidationError,
@@ -641,4 +645,438 @@ def test_emit_seed_expectation_failure_invisibility(
     assert "RuntimeError" in warning_msg, (
         f"Expected error type 'RuntimeError' in warning context; "
         f"got: {warning_msg!r}."
+    )
+
+
+# ── drive_seed_fixture driver — PR 8 Step 4 tests 8-11 ─────────────
+#
+# Per A.5.3.2-PR8-SPEC.md §4.1.5 + §5.1 tests 8-11: PR 8 Step 4
+# lands the driver body that operationalizes:
+#
+#   - Carrier #15 governance (chat-handler-only seeding scope) —
+#     test 8 enforces.
+#   - Orchestration-not-authoring guard (driver delegates
+#     expectation construction to emit_seed_expectation) —
+#     test 9 enforces.
+#   - Member #7 protection (companion records as truth-
+#     partitioning) — scope-around-handler structure
+#     operationalizes; test 10 verifies the dispatch context is
+#     active inside the chat_handler invocation.
+#   - Q1 lock (in-process direct invocation of chat_handler) —
+#     test 11 enforces.
+#
+# All four driver tests use the clean_rate_limit_state fixture
+# (per spec §4.6) — driver invocation triggers chat_handler's
+# D-13 rate-limit pre-gate; clean state is required for test
+# isolation.
+#
+# Patch-target architecture per Step 3 archaeological note:
+#   - emit_seed_expectation (test 9): CONSUMER namespace
+#     (forge_bridge.corpus._seed.emit_seed_expectation) —
+#     module-scoped import binds at load time.
+#   - _invoke_chat_handler_in_process (test 10): CONSUMER
+#     namespace (forge_bridge.corpus._seed._invoke_chat_handler_in_process)
+#     — defined in same module, looked up via module namespace.
+#   - chat_handler (test 11): SOURCE namespace
+#     (forge_bridge.console.handlers.chat_handler) — function-
+#     scoped import inside _invoke_chat_handler_in_process looks
+#     up at call time.
+#   - execute_chain_step (test 8): CONSUMER namespace
+#     (forge_bridge.console._engine.execute_chain_step) — module-
+#     scoped import in _engine.py binds at load time.
+
+
+def test_driver_does_not_invoke_chain_step(
+    monkeypatch: pytest.MonkeyPatch,
+    clean_rate_limit_state: None,
+) -> None:
+    """Risk #3 (carrier #15 breach) — driver does NOT invoke
+    chain-step arbitration during seeded driver execution.
+
+    Per A.5.3.2-PR8-SPEC.md §3 risk #3 + §5.1 test 8: the test
+    invokes ``drive_seed_fixture(**base_expectation_args())``
+    directly with canonical single-step fixture shapes while
+    patching the chain-step entry point with a sentinel. The
+    sentinel asserts that chain-step arbitration was not invoked
+    during those seeded driver executions.
+
+    The scope is local orchestration-boundary enforcement (the
+    test asserts what the driver does), not global suite
+    surveillance.
+
+    Carrier #15 governs (verbatim, see ``_seed.py`` module
+    docstring): chain-step seeding is explicitly deferred. The
+    test catches:
+      - Direct invocation of execute_chain_step from
+        drive_seed_fixture (regression).
+      - Modifications that bypass chat_handler and invoke
+        chain-step directly.
+
+    NOT covered at unit-test scope:
+      - Future fixtures with multi-step prompt content that go
+        through the REAL chat_handler. That coverage lives in
+        PR 9 integration tests (real fixtures + real daemon
+        state).
+
+    Patch targets:
+      - chat_handler (SOURCE) — function-scoped import in
+        _invoke_chat_handler_in_process; patching source
+        intercepts the lookup. Benign sentinel allows the driver
+        to complete without daemon state.
+      - execute_chain_step (CONSUMER in _engine.py) — module-
+        scoped import binds at load time; patching consumer
+        intercepts the lookup. Tracer detects any invocation.
+    """
+    chain_step_invocations: list[tuple[tuple, dict]] = []
+
+    async def chain_step_tracer(*args: Any, **kwargs: Any) -> None:
+        chain_step_invocations.append((args, kwargs))
+        return None
+
+    async def benign_chat_handler(request: Any) -> None:
+        # No-op: chat_handler is bypassed in this test. The
+        # driver's interest is only in the chain-step
+        # invocation detection.
+        return None
+
+    monkeypatch.setattr(
+        "forge_bridge.console.handlers.chat_handler",
+        benign_chat_handler,
+    )
+    monkeypatch.setattr(
+        "forge_bridge.console._engine.execute_chain_step",
+        chain_step_tracer,
+    )
+
+    drive_seed_fixture(**base_expectation_args())
+
+    assert chain_step_invocations == [], (
+        f"Carrier #15 violation: execute_chain_step was invoked "
+        f"during seeded driver execution.\n"
+        f"\n"
+        f"Invocations: {chain_step_invocations}\n"
+        f"\n"
+        f"Per A.5.3.2-PR8-SPEC.md §0 carrier #15: PR 8 seeds the "
+        f"chat-handler observation surface only. Chain-step "
+        f"seeding is explicitly deferred. Cross-surface "
+        f"expectation semantics require a dedicated framing pass "
+        f"before implementation proceeds."
+    )
+
+
+def test_driver_emits_expectation_through_helper(
+    monkeypatch: pytest.MonkeyPatch,
+    clean_rate_limit_state: None,
+) -> None:
+    """Risk #4 — orchestration-not-authoring guard mechanically
+    enforced.
+
+    Per A.5.3.2-PR8-SPEC.md §3 risk #4 + §5.1 test 9: the test
+    protects against orchestration-layer collapse into authored-
+    semantics authority. The driver MUST delegate expectation
+    construction to emit_seed_expectation; it MUST NOT build the
+    expectation record dict directly.
+
+    The orchestration-not-authoring guard (verbatim in
+    drive_seed_fixture's docstring): "drive_seed_fixture is an
+    orchestration surface, not an expectation-authoring surface."
+
+    Test patches emit_seed_expectation (in _seed.py's namespace —
+    CONSUMER patch; module-scoped import binds at load time);
+    invokes drive_seed_fixture(**base_expectation_args()); asserts
+    the sentinel was called exactly once with the exact 3-kwarg
+    shape (no positional args, no extra kwargs, no missing
+    kwargs).
+
+    Also patches chat_handler benignly to allow the driver to
+    complete without daemon state.
+    """
+    helper_invocations: list[tuple[tuple, dict]] = []
+
+    def helper_sentinel(*args: Any, **kwargs: Any) -> None:
+        helper_invocations.append((args, kwargs))
+
+    async def benign_chat_handler(request: Any) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "forge_bridge.corpus._seed.emit_seed_expectation",
+        helper_sentinel,
+    )
+    monkeypatch.setattr(
+        "forge_bridge.console.handlers.chat_handler",
+        benign_chat_handler,
+    )
+
+    drive_seed_fixture(**base_expectation_args())
+
+    # Exactly one invocation:
+    assert len(helper_invocations) == 1, (
+        f"Expected exactly one emit_seed_expectation invocation, "
+        f"got {len(helper_invocations)}: {helper_invocations}."
+    )
+
+    args, kwargs = helper_invocations[0]
+
+    # No positional args:
+    assert args == (), (
+        f"emit_seed_expectation must be called with keyword-only "
+        f"args; got positional args: {args}. The orchestration-"
+        f"not-authoring guard requires structural delegation via "
+        f"the 3-kwarg contract."
+    )
+
+    # Exact 3-kwarg shape:
+    expected_kwargs = base_expectation_args()
+    assert kwargs == expected_kwargs, (
+        f"emit_seed_expectation kwarg shape drift detected.\n"
+        f"Expected: {expected_kwargs!r}\n"
+        f"Got:      {kwargs!r}\n"
+        f"\n"
+        f"The driver must forward kwargs verbatim to "
+        f"emit_seed_expectation. Modifying or filtering the kwargs "
+        f"in the driver's body collapses the orchestration/"
+        f"authoring authority partition."
+    )
+
+
+def test_driver_opens_scope_around_chat_handler(
+    monkeypatch: pytest.MonkeyPatch,
+    clean_rate_limit_state: None,
+) -> None:
+    """Behavioral fill — scope ordering verified mechanically.
+
+    Per A.5.3.2-PR8-SPEC.md §5.1 test 10: the driver opens
+    seed_dispatch_scope BEFORE invoking chat_handler, and exits
+    the scope AFTER. Inside the scope, _dispatch_context.get()
+    returns a _DispatchContext with source="seed" + the
+    supplied fixture_id.
+
+    This is the operational placement of member #7 protection
+    (companion records): inside the scope, observation emissions
+    from chat_handler's internal arbitration (handlers.py:1185)
+    persist source="seed" + fixture_id. The expectation record
+    persisted before the scope (emit_seed_expectation) is the
+    companion of any observation record that fires inside the
+    scope; Gate 4's comparator joins them on fixture_id.
+
+    Patches _invoke_chat_handler_in_process with an async
+    sentinel that captures _dispatch_context.get() at invocation
+    time. The capture proves the scope is active during the
+    chat_handler call site's effective context.
+
+    After drive_seed_fixture returns, asserts
+    _dispatch_context.get() is None — the scope was correctly
+    exited.
+    """
+    captured_context: list[Any] = []
+
+    async def context_capturing_sentinel(prompt: str) -> None:
+        # Capture the dispatch context at the point where
+        # chat_handler would be invoked.
+        captured_context.append(_dispatch_context.get())
+
+    monkeypatch.setattr(
+        "forge_bridge.corpus._seed._invoke_chat_handler_in_process",
+        context_capturing_sentinel,
+    )
+
+    # Pre-condition: no scope active.
+    assert _dispatch_context.get() is None
+
+    drive_seed_fixture(**base_expectation_args())
+
+    # Post-condition: scope exited cleanly.
+    assert _dispatch_context.get() is None, (
+        "seed_dispatch_scope did not reset after drive_seed_fixture "
+        "returned. The contextvar leak could cause subsequent "
+        "emissions to falsely persist source='seed'."
+    )
+
+    # Captured context inside the scope:
+    assert len(captured_context) == 1, (
+        f"Expected one _invoke_chat_handler_in_process invocation, "
+        f"got {len(captured_context)}."
+    )
+    ctx = captured_context[0]
+    assert ctx is not None, (
+        "Dispatch context was None inside the scope. The driver "
+        "must open seed_dispatch_scope BEFORE invoking "
+        "_invoke_chat_handler_in_process."
+    )
+    assert isinstance(ctx, _DispatchContext), (
+        f"Dispatch context type mismatch: expected "
+        f"_DispatchContext, got {type(ctx).__name__}."
+    )
+    assert ctx.source == "seed", (
+        f"Dispatch context source must be 'seed' inside the scope, "
+        f"got {ctx.source!r}."
+    )
+    assert ctx.fixture_id == "fix-pr8-default", (
+        f"Dispatch context fixture_id must match the driver's "
+        f"fixture_id kwarg ('fix-pr8-default'), got "
+        f"{ctx.fixture_id!r}."
+    )
+
+
+def test_driver_invokes_chat_handler_in_process(
+    monkeypatch: pytest.MonkeyPatch,
+    clean_rate_limit_state: None,
+) -> None:
+    """Q1 lock confirmation — driver invokes chat_handler
+    in-process with the canonical D-02 body shape.
+
+    Per A.5.3.2-PR8-SPEC.md §5.1 test 11: patches
+    ``forge_bridge.console.handlers.chat_handler`` (the SOURCE
+    namespace, not the consumer/imported namespace inside
+    ``_invoke_chat_handler_in_process``) with an async sentinel;
+    invokes ``drive_seed_fixture(**base_expectation_args())``;
+    asserts the sentinel was called exactly once with a Starlette
+    Request argument carrying a JSON body whose
+    ``messages[0].content`` matches the prompt kwarg.
+
+    Patching the source namespace is structurally load-bearing:
+    the architectural contract is that the driver reaches the
+    console handler surface; tests should not couple to import
+    timing or helper-local bindings. The function-scoped import
+    inside ``_invoke_chat_handler_in_process`` looks up
+    ``chat_handler`` at call time → patching source intercepts
+    the lookup.
+
+    Patching the consumer namespace would silently succeed if the
+    helper acquired a second ``chat_handler`` reference (e.g.,
+    via a different import path), masking the boundary
+    violation.
+    """
+    captured_requests: list[Any] = []
+
+    async def chat_handler_sentinel(request: Any) -> None:
+        captured_requests.append(request)
+        return None
+
+    monkeypatch.setattr(
+        "forge_bridge.console.handlers.chat_handler",
+        chat_handler_sentinel,
+    )
+
+    drive_seed_fixture(**base_expectation_args())
+
+    # Exactly one invocation:
+    assert len(captured_requests) == 1, (
+        f"Expected exactly one chat_handler invocation, got "
+        f"{len(captured_requests)}."
+    )
+
+    request = captured_requests[0]
+
+    # The argument is a Starlette Request:
+    from starlette.requests import Request as StarletteRequest
+    assert isinstance(request, StarletteRequest), (
+        f"chat_handler must be invoked with a Starlette Request "
+        f"argument; got {type(request).__name__}."
+    )
+
+    # The request body carries the canonical D-02 shape with
+    # the driver's prompt as messages[0].content:
+    body = await_request_json(request)
+    assert isinstance(body, dict), (
+        f"Request body must be a dict, got {type(body).__name__}."
+    )
+    messages = body.get("messages")
+    assert isinstance(messages, list) and len(messages) == 1, (
+        f"Request body must carry exactly one message, got: "
+        f"{messages!r}."
+    )
+    msg = messages[0]
+    assert msg.get("role") == "user", (
+        f"Message role must be 'user', got {msg.get('role')!r}."
+    )
+    assert msg.get("content") == "list staged shots", (
+        f"Message content must match the driver's prompt kwarg "
+        f"('list staged shots' from base_expectation_args), got "
+        f"{msg.get('content')!r}."
+    )
+
+
+def await_request_json(request: Any) -> Any:
+    """Synchronously extract JSON body from an in-process Starlette
+    Request that has ``_body`` injected.
+
+    Path E (per A.5.3.2-PR8-SPEC.md §4.5.4) injects the body
+    bytes directly into ``request._body``. The driver-invoked
+    chat_handler would normally await ``request.json()``; in
+    tests, the captured Request needs JSON extraction without
+    re-entering the asyncio loop.
+
+    This helper reads ``_body`` directly (bypassing
+    ``request.json()``'s async path), deserializes via json.loads.
+    """
+    import json as _json
+    body_bytes = getattr(request, "_body", None)
+    assert body_bytes is not None, (
+        "Request._body was not set — the driver did not inject "
+        "the body bytes via Path E."
+    )
+    return _json.loads(body_bytes)
+
+
+# ── Public API drift guard — PR 8 Step 4 test 14 ─────────────────
+#
+# Per A.5.3.2-PR8-SPEC.md §3 risk #6 + §5.1 test 14: Q5 (`__all__`
+# deferral) lock enforced mechanically. Neither emit_seed_expectation
+# nor drive_seed_fixture enters forge_bridge.__all__ at PR 8.
+# Public-API promotion routes through framing review at first
+# concrete external consumer.
+
+
+def test_pr8_helpers_remain_corpus_internal() -> None:
+    """Risk #6 — `__all__` drift guard.
+
+    Per A.5.3.2-PR8-SPEC.md §3 risk #6 + §5.1 test 14: asserts
+    neither PR 8 helper enters forge_bridge.__all__; additionally
+    asserts len(forge_bridge.__all__) == 19 (the v1.4.1 baseline
+    count).
+
+    Q5 lock per framing §5.6: each __all__ entry is authority-
+    surface expansion. Silent promotion inside a cleanup PR is
+    rejected at the spec layer; the public-API decision is
+    deferred to first concrete external consumer.
+
+    Counter-asserts protect against both targeted promotion
+    (specific symbol added) and silent baseline drift (any other
+    symbol changes the count).
+    """
+    assert "emit_seed_expectation" not in forge_bridge.__all__, (
+        "Q5 (__all__ deferral) violation: emit_seed_expectation "
+        "has been promoted to forge_bridge.__all__. Per "
+        "A.5.3.2-PR8-FRAMING.md §5.6 + A.5.3.2-PR8-SPEC.md §2 "
+        "out-of-scope #4, the public-API decision is deferred to "
+        "first concrete external consumer. Revisit at framing "
+        "time, not inside an unrelated cleanup PR."
+    )
+    assert "drive_seed_fixture" not in forge_bridge.__all__, (
+        "Q5 (__all__ deferral) violation: drive_seed_fixture has "
+        "been promoted to forge_bridge.__all__. See "
+        "test_pr8_helpers_remain_corpus_internal failure message "
+        "for emit_seed_expectation; same protection applies."
+    )
+
+    # Baseline count guard — protects against silent drift in
+    # forge_bridge.__all__ membership (e.g., a different symbol
+    # gets added/removed without the explicit Q5-relevant tests
+    # firing).
+    assert len(forge_bridge.__all__) == 19, (
+        f"forge_bridge.__all__ baseline count drift detected.\n"
+        f"Expected: 19 (the v1.4.1 baseline at PR 8 spec "
+        f"drafting per A.5.3.2-PR8-SPEC.md §1 success condition).\n"
+        f"Actual:   {len(forge_bridge.__all__)}\n"
+        f"\n"
+        f"Current __all__:\n"
+        + "".join(f"  {s}\n" for s in sorted(forge_bridge.__all__))
+        + "\n"
+        f"If the count change is intentional (e.g., v1.5 public-"
+        f"API expansion), update this assertion via spec "
+        f"amendment per A.5.3.2-PR8-SPEC.md §7 phase-end "
+        f"conditions. NOT acceptable as a cleanup-PR-layer "
+        f"change."
     )
