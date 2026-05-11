@@ -346,12 +346,21 @@ read-only-interpretive authority. Land the comparator
 behavioral test module
 (`tests/corpus/test_pr10_comparator.py`) — three unit tests
 (one per PR 9 fixture) plus two authorship-preservation tests
-(mutation-invariant + sort-rejection). Extend
-`tests/corpus/test_pr3_discipline.py::_ALLOWLIST` mechanically.
-Verify the eight regression contracts hold (PR 4 walker, PR 6
+(mutation-invariant + sort-rejection). Verify the nine
+regression contracts hold (PR 3 discipline, PR 4 walker, PR 6
 Layer 3 lint, PR 7 modules, PR 8 walker, PR 9 walker, PR 9
-integration tests, public API, full corpus test count
-landing at 214 forge env / 208 forge-bridge env)."*
+integration tests, public API, full corpus test count landing
+at 214 forge env / 208 forge-bridge env)."*
+
+**Note (per §4.4 amendment 2026-05-11):** PR 10 ships **zero**
+modifications to any test discipline file. The framing §8.1 +
+spec §4.4 originally called for a one-line
+`test_pr3_discipline.py::_ALLOWLIST` extension; grounding
+against the actual test (lines 92–96) revealed the corpus
+subtree is auto-excluded before the allowlist check —
+`_compare.py` is blanket-permitted by location, no entry
+required. See §4.4 for the corrected understanding + amendment
+archaeology.
 
 **Success condition:** All seven new tests pass; all eight
 regression contracts hold; the 16 active carriers + candidate
@@ -426,11 +435,16 @@ framing-level review (see PR 10 framing §9 condition 11 +
   tests per §4.3 + §5.1:
   - 3 unit tests (one per PR 9 fixture).
   - 2 authorship-preservation tests (mutation + sort).
-- **Modified test discipline file** —
-  `tests/corpus/test_pr3_discipline.py::_ALLOWLIST`. **One
-  mechanical entry added**: `"forge_bridge/corpus/_compare.py"`.
-  Per §4.4.
 - **Verified test discipline files** (no modifications):
+  - `tests/corpus/test_pr3_discipline.py` — **no code changes**
+    per §4.4 amendment 2026-05-11. The Layer 1 discipline test
+    auto-excludes the corpus subtree (lines 92–96) before the
+    `_ALLOWLIST` check; `_compare.py` is blanket-permitted by
+    its location inside `forge_bridge/corpus/`. The framing
+    §8.1 + spec-original §4.4 calling for a "mechanical
+    allowlist extension" was a grounding-time misreading of
+    `_ALLOWLIST` semantics. The discipline test passes against
+    the post-PR-10 codebase without any modification.
   - `tests/corpus/test_pr4_participation_creep.py` — **no code
     changes.** PR 4 walker protects production-import-topology
     ontology (one-directional flow from narrowing-subsystem
@@ -2010,44 +2024,151 @@ The amendment records:
 PR 10 close §6 reports the actual count + the conditional
 trigger disposition.
 
-### 4.4 `tests/corpus/test_pr3_discipline.py::_ALLOWLIST` (mechanical extension)
+### 4.4 `tests/corpus/test_pr3_discipline.py` (no modifications — amendment 2026-05-11)
 
 **Path:** `tests/corpus/test_pr3_discipline.py`
 
-**Modification:** one-line `_ALLOWLIST` entry added.
+**Modification:** **none.** Zero lines changed. The framing
+§8.1 + spec-original §4.4 called for a one-line `_ALLOWLIST`
+extension; grounding against the actual test reveals the
+extension is unnecessary AND would be misleading.
 
-The Layer 1 production-import-discipline allowlist
-(`test_pr3_discipline.py::_ALLOWLIST`) governs which files inside
-`forge_bridge/corpus/` are permitted in the corpus package. PR 10
-ships one new file (`forge_bridge/corpus/_compare.py`); the
-allowlist extends by one entry mechanically.
+#### 4.4.1 The corrected understanding
 
-**Diff shape (locked):**
+`tests/corpus/test_pr3_discipline.py::test_zero_production_imports_outside_corpus`
+walks the production package tree (`forge_bridge/`) and asserts
+no source file imports `forge_bridge.corpus` in any form,
+EXCEPT for files matching `_ALLOWLIST`. The implementation
+auto-excludes the corpus subtree before the allowlist check:
 
 ```python
-# in _ALLOWLIST (alphabetical position after _capture.py /
-# before _identity.py):
-"forge_bridge/corpus/_compare.py",
+# from tests/corpus/test_pr3_discipline.py:90–96
+for py in package_root.rglob("*.py"):
+    # Skip the corpus package itself — it imports itself freely.
+    try:
+        py.relative_to(corpus_subtree)
+        continue
+    except ValueError:
+        pass
+    ...
+    if rel in _ALLOWLIST:
+        continue
 ```
 
-**Why this is mechanical:**
+The asymmetry is: **the corpus subtree is blanket-permitted**;
+files **outside** the corpus subtree that need to import from
+`forge_bridge.corpus` are admitted **by name** via
+`_ALLOWLIST`. The current allowlist entries
+(`console/handlers.py`, `console/_step.py`) are both outside
+the corpus subtree — they ARE the integration call sites the
+allowlist exists to govern.
 
-- Allowlist semantics unchanged: only files inside
-  `forge_bridge/corpus/` and the explicit allowlist may
-  contribute to the corpus package's import surface.
-- `_compare.py` is inside the corpus package; locality holds;
-  the entry is a one-line addition.
-- The semantics do NOT extend to the test allowlist
-  (`test_pr3_discipline.py` governs production source files
-  only; the new test modules
-  `test_pr10_comparator_discipline.py` and
-  `test_pr10_comparator.py` are NOT allowlist-governed —
-  test discipline files live under `tests/corpus/` and are
-  governed by their own static-AST disciplines per PR 4 + PR 8
-  + PR 9 + PR 10 walker pattern).
+`forge_bridge/corpus/_compare.py` is **inside** the corpus
+subtree. It is blanket-permitted by location. Adding it to
+`_ALLOWLIST` would be:
 
-**No other modifications** to `test_pr3_discipline.py`. The
-test logic itself is unchanged.
+1. **Mechanically inert** — the discipline check never reaches
+   the allowlist for corpus-subtree files (`continue` fires
+   first at the subtree-exclusion check).
+2. **Semantically misleading** — future contributors reading
+   `_ALLOWLIST` would assume `_compare.py` is an integration
+   call site like `handlers.py` / `_step.py`. The allowlist's
+   discriminating purpose (naming external integration sites)
+   would be diluted.
+3. **Counter to the read-before-spec discipline** — per
+   `feedback_ground_specs_in_actual_files`, the framing
+   inferred allowlist semantics rather than reading the test
+   implementation.
+
+#### 4.4.2 Spec amendment 2026-05-11 — `_ALLOWLIST` extension unnecessary
+
+**Surfaced at:** pre-Step-1 grounding of
+`tests/corpus/test_pr3_discipline.py` against the framing §8.1
+"mechanical extension" assumption inherited into spec-original
+§4.4.
+
+**Trigger:** empirical reading of `test_pr3_discipline.py`
+lines 92–96 revealed the corpus-subtree auto-exclusion. The
+framing's phrasing — *"only files inside `forge_bridge/corpus/`
+and the explicit allowlist may import from `forge_bridge.corpus`"*
+— is structurally correct, but the conclusion drawn
+(*"the comparator module is inside the corpus package, so
+locality holds; the allowlist extension is mechanical"*)
+contradicts itself: if locality holds, no allowlist entry is
+needed (the location alone is sufficient permission).
+
+**Earlier than PR 9's §4.7 amendment** (PR 9 caught the
+fixture-name error at Step 2 implementation; PR 10 catches the
+allowlist-semantics error pre-Step-1). The earlier catch is
+the discipline working at the right cadence — per
+`feedback_ground_specs_in_actual_files`, the read-before-draft
+rule extends to "read-before-implement" when spec drafting
+might have inferred rather than grounded.
+
+**Corrected understanding:**
+
+| Spec-original (incorrect) | Amendment (corrected) |
+|---|---|
+| One-line `_ALLOWLIST` entry added | Zero modifications to `test_pr3_discipline.py` |
+| `test_pr3_discipline.py` in "Modified test discipline file" §2 in-scope | `test_pr3_discipline.py` in "Verified test discipline files (no modifications)" §2 in-scope |
+| Step 1 atomic commit = `_compare.py` skeleton + allowlist entry | Step 1 atomic commit = `_compare.py` skeleton only |
+| Step 5 verification item 6 rationale: "the one-line allowlist extension is consumed" | Step 5 verification item 6 rationale: "passes unchanged via corpus-subtree auto-exclusion at lines 92–96" |
+| §1 real-job names "eight regression contracts" | §1 real-job names "nine regression contracts" (PR 3 discipline added to explicit list) |
+
+**Sections affected by the amendment:**
+
+- §1 real-job — sentence about extending `_ALLOWLIST`
+  removed; regression-contract count bumped 8 → 9 with PR 3
+  discipline named explicitly; amendment note added.
+- §2 in-scope — `test_pr3_discipline.py` moved from
+  "Modified test discipline file" entry to "Verified test
+  discipline files (no modifications)" list with auto-
+  exclusion rationale.
+- §4.4 — this section, rewritten in place.
+- §5.2 regression contract — "PR 3 discipline" line rewritten
+  to state "no modifications" with auto-exclusion rationale.
+- §6 Step 1 — `_ALLOWLIST` modification instruction removed;
+  atomic commit simplified to single-file (`_compare.py`
+  skeleton); verification item 1 rationale updated.
+- §6 Step 5 verification item 6 — rationale updated.
+- §8 cross-references — `_ALLOWLIST` entry updated to state
+  "not modified at PR 10."
+- Resume protocol — Step 1 instruction simplified.
+
+**Spec-amendment cadence:** registered as standalone NO-code
+commit before Step 1 lands. Matches the PR 9 §4.7 cadence
+(separate NO-code amendment commit) per
+`feedback_ground_specs_in_actual_files` discipline.
+
+**What this amendment does NOT change:**
+
+- The architectural success signal (0 production source
+  modifications outside `_compare.py`) is unaffected — PR 10
+  was always going to ship exactly one production source file
+  (`_compare.py`); the test-file modification was always test-
+  surface anyway.
+- The four-walker partition (PR 4 + PR 8 + PR 9 + PR 10) is
+  unaffected — each walker's target-set + ontology is
+  preserved.
+- The seven symbol-level decisions (§4.1.4 + §4.1.5 + §4.1.6 +
+  §4.2.2 + §4.3) are unaffected.
+- The 7-named-test count (5 comparator + 2 discipline) is
+  unaffected.
+- The cumulative test-count anchors (214 forge / 208 forge-
+  bridge at default disposition) are unaffected.
+
+**What the amendment archaeology preserves (load-bearing):**
+
+The `_ALLOWLIST` is **for files outside the corpus subtree
+that need to import FROM the corpus** — the integration call
+sites. Both current entries (`console/handlers.py`,
+`console/_step.py`) are outside the corpus subtree. A future
+PR adding a third integration call site (e.g., a future
+`tools/some_helper.py` that emits Layer 1 records under
+allowed conditions) extends `_ALLOWLIST` by one named entry
+per the PR 4 framing §2 contract. Corpus-internal modules
+(`_capture.py`, `_seed.py`, `_compare.py`, etc.) NEVER appear
+in `_ALLOWLIST` — they are blanket-permitted by location.
 
 ---
 
@@ -2081,10 +2202,13 @@ conditional = 6, plus 2 discipline = 8 total).
 
 PR 10 must NOT regress:
 
-- **PR 3 discipline** — `test_pr3_discipline.py`. **One
-  mechanical modification** (allowlist entry); the test logic
-  is unchanged. The test passes against the post-PR-10
-  codebase with one additional allowed file.
+- **PR 3 discipline** — `test_pr3_discipline.py`. **Zero
+  modifications** per §4.4 amendment 2026-05-11. The Layer 1
+  discipline test auto-excludes the corpus subtree (lines
+  92–96) before the `_ALLOWLIST` check; `_compare.py` is
+  blanket-permitted by location. The test passes against the
+  post-PR-10 codebase without any modification to the
+  allowlist or the discipline logic.
 - **PR 4 walker** — `test_pr4_participation_creep.py`. Passes
   unchanged. The parallel-not-extension Layer 2 boundary
   preserves: PR 4 walker target-set is narrowing-subsystem
@@ -2226,7 +2350,7 @@ review depth at the implementer's discretion.
 Five steps. Each step changes one authority or ontology boundary
 cleanly.
 
-### Step 1 — `_compare.py` skeleton + Layer 1 allowlist extension
+### Step 1 — `_compare.py` skeleton (single-file)
 
 Create `forge_bridge/corpus/_compare.py` with:
 
@@ -2255,13 +2379,16 @@ Create `forge_bridge/corpus/_compare.py` with:
       )
   ```
 
-Modify `tests/corpus/test_pr3_discipline.py::_ALLOWLIST` —
-add the one-line entry per §4.4.
+Per §4.4 amendment 2026-05-11, **no modification** to
+`tests/corpus/test_pr3_discipline.py::_ALLOWLIST` is required —
+`_compare.py` is blanket-permitted by its location inside the
+corpus subtree (auto-excluded at lines 92–96 of the discipline
+test before the allowlist check). Step 1 atomic commit is
+single-file.
 
-**Atomic commit:** new production module skeleton + allowlist
-extension. The two changes are mechanically coupled (the new
-file requires the allowlist entry; the allowlist entry is
-meaningful only if the file exists).
+**Atomic commit:** new production module skeleton —
+`forge_bridge/corpus/_compare.py` only. No test-file
+modifications.
 
 **Reduced review depth** acceptable — the step is mechanical;
 docstrings + signatures are the load-bearing content, and they
@@ -2269,8 +2396,9 @@ are derived directly from §4.1.
 
 **Verification:**
 
-- `pytest tests/corpus/test_pr3_discipline.py` — passes (the
-  allowlist extension is consumed by the discipline check).
+- `pytest tests/corpus/test_pr3_discipline.py` — passes
+  unchanged (corpus-subtree auto-exclusion handles `_compare.py`
+  without an allowlist entry per §4.4 amendment).
 - `python -c "from forge_bridge.corpus._compare import
   compare_records, DivergenceReport, ComparatorInputError;
   print('imports clean')"` — imports succeed.
@@ -2444,7 +2572,10 @@ sentence + any spec amendments named explicitly).
 5. **PR 4 + PR 5 integration tests:** chat-handler + chain-step
    integration tests — pass unchanged.
 6. **PR 3 discipline:** `pytest tests/corpus/test_pr3_discipline.py`
-   — passes; the one-line allowlist extension is consumed.
+   — passes unchanged. Per §4.4 amendment 2026-05-11, no
+   allowlist modification was needed — the corpus-subtree
+   auto-exclusion (lines 92–96 of the discipline test) handles
+   `_compare.py` blanket-style.
 7. **Full corpus suite:** `pytest tests/corpus/` —
    **214 collected forge env** (207 baseline + 7 PR 10 new) /
    **208 collected forge-bridge env** (201 baseline + 7 PR 10
@@ -2547,11 +2678,13 @@ close ships at PR 11, not at PR 10).
 ### Natural pause points
 
 - **Between Step 1 and Step 2** — verifies the production
-  module skeleton + allowlist extension are operational
-  before the discipline walker lands. If the skeleton fails
-  to import (e.g., docstring syntax error, TypeAlias
-  resolution failure), surface before Step 2 fires its
-  subset-enforcement against the broken file.
+  module skeleton is operational before the discipline walker
+  lands. If the skeleton fails to import (e.g., docstring
+  syntax error, TypeAlias resolution failure), surface before
+  Step 2 fires its subset-enforcement against the broken file.
+  Per §4.4 amendment 2026-05-11, no allowlist modification is
+  part of Step 1; corpus-subtree auto-exclusion handles the
+  discipline check.
 - **Between Step 2 and Step 3** — verifies the 4th walker is
   operational + the carrier travel landed verbatim in the
   walker module before the architectural-center body lands.
@@ -2697,7 +2830,13 @@ N.5 corroboration instance if mid-flight guidance surfaces.
 - `forge_bridge/corpus/_compare.py` (planned, PR 10) — the
   comparator module.
 - `tests/corpus/test_pr3_discipline.py::_ALLOWLIST` —
-  Layer 1; extends in PR 10 by one entry (mechanical, §4.4).
+  Layer 1; **not modified at PR 10** per §4.4 amendment
+  2026-05-11. The corpus-subtree auto-exclusion (lines 92–96)
+  handles `_compare.py` without an allowlist entry.
+  `_ALLOWLIST` is for integration call sites outside the
+  corpus subtree (currently `console/handlers.py` +
+  `console/_step.py`); corpus-internal modules never appear in
+  it.
 - `tests/corpus/test_pr4_participation_creep.py::_PERMITTED_CORPUS_IMPORTS`
   — Layer 2 (PR 4 walker); preserves unchanged.
 - `tests/corpus/test_pr8_seed_surface.py::_SEED_PERMITTED_IMPORTS`
@@ -2751,9 +2890,10 @@ N.5 corroboration instance if mid-flight guidance surfaces.
    201 forge-bridge env.
 
 3. **Begin Step 1.** Create `forge_bridge/corpus/_compare.py`
-   skeleton per §4.1. Modify `tests/corpus/test_pr3_discipline.py
-   ::_ALLOWLIST` per §4.4. Atomic commit. Verification per
-   §6 Step 1.
+   skeleton per §4.1. **No test-file modifications** per §4.4
+   amendment 2026-05-11 (corpus-subtree auto-exclusion handles
+   `_compare.py` without an `_ALLOWLIST` entry). Atomic commit
+   is single-file. Verification per §6 Step 1.
 
 4. **Advance through Steps 2–5 per §6.** The natural pause
    points (§6 closing prose) are checkpoint surfaces for
