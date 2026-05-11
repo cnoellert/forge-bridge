@@ -1,5 +1,13 @@
-"""Seed fixture — single-survivor narrowing outcome at the chat-
-handler observation surface.
+"""Seed fixture — no-keyword-match full-capability-fallback
+narrowing outcome at the chat-handler observation surface.
+
+Renamed per ``A.5.3.2-PR9-SPEC.md`` §4.7 amendment 2026-05-11
+(was ``fix_zero_match.py`` pre-amendment). The chat-handler
+narrowing pipeline cannot produce ``narrower_decision == []`` —
+the PR14 "no capability loss" fallback returns the full
+reachable tool set verbatim when zero keywords match. Carrier
+#10's "zero-match" language is chain-step-specific and does
+NOT regenerate at chat-handler.
 
 PR 9 carrier sentences (verbatim, load-bearing — see
 ``A.5.3.2-PR9-SPEC.md`` §0).
@@ -104,38 +112,53 @@ inputs (Gate 2):
 
 Fixture purpose:
 
-This fixture exercises the canonical single-survivor narrowing
-outcome at the chat-handler observation surface. The prompt
-``"ping forge"`` (single-step shape; does NOT fire chain-step
-arbitration) drives ``chat_handler``'s arbitration pipeline
-against the PR 9 controlled reachable-tool set (see
-``test_pr9_fixture_integration.py`` monkeypatch strategy +
-``A.5.3.2-PR9-SPEC.md`` §4.5). The pipeline yields:
+This fixture exercises the chat-handler-surface no-keyword-match
+full-capability-fallback narrowing outcome. The prompt
+``"what time is it"`` (single-step shape; does NOT fire chain-
+step arbitration) contains zero keyword tokens that match any
+tool name's tokens in the PR 9 controlled reachable-tool set.
+The pipeline yields:
 
-  - **PR14 keyword filter** returns 2 tools: ``forge_ping``
-    (exact-substring match on "ping" + token match on "forge")
-    and ``forge_list_projects`` (other-match: "forge" token
-    overlap only).
-  - **PR21 deterministic_narrow** collapses the pair to 1:
-    ``forge_ping`` wins on max-overlap (2 tokens matched —
-    "ping" + "forge" — vs. ``forge_list_projects`` matching
-    only "forge").
-  - **Observation record**: ``narrower_decision = ["forge_ping"]``;
-    ``pr20_condition_met == True`` (single survivor AND
-    ``filtered_count < available_count``); ``collapse_occurred
-    == True`` (multi-to-single transition).
-  - **Expectation record**: ``expected_narrow = ["forge_ping"]``
-    matches arbitration's actual outcome. The fixture-author's
-    claim aligns with arbitration; the Gate 4 comparator will
-    detect zero divergence on this fixture.
+  - **PR14 keyword filter** returns the FULL reachable set (4
+    tools): ``forge_ping``, ``forge_list_projects``,
+    ``flame_list_libraries``, ``flame_render_status``. PR14's
+    "no capability loss" fallback fires (``_tool_filter.py:320–321``):
+    "If nothing matches, the full ``tools`` list is returned
+    unchanged so we never lose capability."
+  - **PR21 deterministic_narrow** does not reduce: input size
+    > 1 but max-overlap is 0 ("no signal, leave the candidate
+    set untouched" per PR21 stop conditions in
+    ``_tool_filter.py``). Survivor set is unchanged.
+  - **Observation record**: ``narrower_decision`` = the full
+    controlled reachable set verbatim (4 tools, PR14 input
+    order); ``pr20_condition_met == False`` (tools_filtered_count
+    > 1); ``collapse_occurred == False`` (``tools_post_pr14 ==
+    tools`` — no multi-to-single transition).
+  - **Expectation record**: ``expected_narrow = []`` is the
+    fixture-author's **aspirational claim** ("I expect no
+    narrowing — zero survivors after keyword filtering"). The
+    chat-handler topology preserves full capability instead;
+    the divergence between aspirational ``[]`` and observed
+    full-list IS the demonstrable Gate 4 comparator-unblock
+    proof.
+
+The aspirational ``expected_narrow = []`` is structurally valid
+per ``emit_seed_expectation``'s contract
+(``forge_bridge/corpus/_seed.py:259–264``) — the empty list
+expresses "expected zero-survivor narrowing for this prompt" as
+a valid expectation, not a missing field. The divergence from
+arbitration's actual production is the test's load-bearing
+property, not a fixture authoring error.
 
 The arbitration trace recorded above is archaeology-grade per
 ``feedback_counts_are_archaeology_grade.md``. Future contributors
-diagnosing single-survivor regressions can verify against the
-trace recorded here + the Step 2 commit body.
+diagnosing no-keyword-match regressions can verify against the
+trace recorded here + the Step 2 commit body. The fixture's
+divergent expectation IS intentional and is the load-bearing
+Gate 4 unblock proof — do NOT "fix" the divergence by aligning
+``expected_narrow`` with the observed outcome.
 
-PR 9 governing sentence (framing-artifact-scoped, NOT a carrier
-at PR 9 — promotion to carrier #16 deferred):
+PR 9 governing sentence (framing-artifact-scoped):
 
   PR 9 proves topology, not infrastructure.
 
@@ -147,7 +170,7 @@ resistance class member #9 (fixture-surface-data-discipline;
 from __future__ import annotations
 
 FIXTURE: dict = {
-    "fixture_id": "fix-pr9-single-survivor",
-    "prompt": "ping forge",
-    "expected_narrow": ["forge_ping"],
+    "fixture_id": "fix-pr9-no-keyword-match",
+    "prompt": "what time is it",
+    "expected_narrow": [],
 }

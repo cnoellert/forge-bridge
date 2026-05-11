@@ -1,5 +1,5 @@
-"""Seed fixture — single-survivor narrowing outcome at the chat-
-handler observation surface.
+"""Seed fixture — multi-match ambiguity-rejection narrowing
+outcome at the chat-handler observation surface.
 
 PR 9 carrier sentences (verbatim, load-bearing — see
 ``A.5.3.2-PR9-SPEC.md`` §0).
@@ -104,38 +104,42 @@ inputs (Gate 2):
 
 Fixture purpose:
 
-This fixture exercises the canonical single-survivor narrowing
-outcome at the chat-handler observation surface. The prompt
-``"ping forge"`` (single-step shape; does NOT fire chain-step
-arbitration) drives ``chat_handler``'s arbitration pipeline
-against the PR 9 controlled reachable-tool set (see
-``test_pr9_fixture_integration.py`` monkeypatch strategy +
-``A.5.3.2-PR9-SPEC.md`` §4.5). The pipeline yields:
+This fixture exercises the multi-match ambiguity-rejection
+narrowing outcome at the chat-handler observation surface per
+carrier #10. The prompt ``"list"`` (single-step shape; does NOT
+fire chain-step arbitration) drives ``chat_handler``'s
+arbitration pipeline against the PR 9 controlled reachable-tool
+set (see ``test_pr9_fixture_integration.py`` monkeypatch
+strategy + ``A.5.3.2-PR9-SPEC.md`` §4.5). The pipeline yields:
 
-  - **PR14 keyword filter** returns 2 tools: ``forge_ping``
-    (exact-substring match on "ping" + token match on "forge")
-    and ``forge_list_projects`` (other-match: "forge" token
-    overlap only).
-  - **PR21 deterministic_narrow** collapses the pair to 1:
-    ``forge_ping`` wins on max-overlap (2 tokens matched —
-    "ping" + "forge" — vs. ``forge_list_projects`` matching
-    only "forge").
-  - **Observation record**: ``narrower_decision = ["forge_ping"]``;
-    ``pr20_condition_met == True`` (single survivor AND
-    ``filtered_count < available_count``); ``collapse_occurred
-    == True`` (multi-to-single transition).
-  - **Expectation record**: ``expected_narrow = ["forge_ping"]``
-    matches arbitration's actual outcome. The fixture-author's
-    claim aligns with arbitration; the Gate 4 comparator will
-    detect zero divergence on this fixture.
+  - **PR14 keyword filter** returns 2 tools:
+    ``forge_list_projects`` (token "list" matches) and
+    ``flame_list_libraries`` (token "list" matches). Both are
+    other-match (single-token overlap).
+  - **PR21 deterministic_narrow** cannot collapse: both tools
+    tie at max-overlap=1 ("list"); no domain-priority pair
+    fires (the closed list ``(("version", "project"),)`` does
+    not include "list"); Rule 3 raw-token tie-breaker also
+    finds no asymmetry — both tools have identical raw-token
+    overlap with the message. Survivor set is unchanged.
+  - **Observation record**: ``narrower_decision = [
+    "forge_list_projects", "flame_list_libraries"]`` verbatim
+    (PR14 input order preserved through PR21); ``pr20_condition_met
+    == False`` (tools_filtered_count > 1); ``collapse_occurred
+    == False`` (no multi-to-single transition).
+  - **Expectation record**: ``expected_narrow =
+    ["forge_list_projects", "flame_list_libraries"]`` matches
+    arbitration's actual outcome verbatim (list-equality, not
+    set-equality — carrier #10's "filtered list verbatim"
+    language requires ordering preservation). Zero divergence;
+    Gate 4 comparator will agree.
 
 The arbitration trace recorded above is archaeology-grade per
 ``feedback_counts_are_archaeology_grade.md``. Future contributors
-diagnosing single-survivor regressions can verify against the
-trace recorded here + the Step 2 commit body.
+diagnosing multi-match regressions can verify against the trace
+recorded here + the Step 2 commit body.
 
-PR 9 governing sentence (framing-artifact-scoped, NOT a carrier
-at PR 9 — promotion to carrier #16 deferred):
+PR 9 governing sentence (framing-artifact-scoped):
 
   PR 9 proves topology, not infrastructure.
 
@@ -147,7 +151,7 @@ resistance class member #9 (fixture-surface-data-discipline;
 from __future__ import annotations
 
 FIXTURE: dict = {
-    "fixture_id": "fix-pr9-single-survivor",
-    "prompt": "ping forge",
-    "expected_narrow": ["forge_ping"],
+    "fixture_id": "fix-pr9-multi-match",
+    "prompt": "list",
+    "expected_narrow": ["forge_list_projects", "flame_list_libraries"],
 }
