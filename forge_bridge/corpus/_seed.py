@@ -206,6 +206,17 @@ PR-level binding decisions this module operationalizes.
 """
 from __future__ import annotations
 
+import logging
+
+from forge_bridge.corpus._capture import (
+    _new_uuid,
+    _now_iso_ms,
+    _persist_expectation_record,
+)
+from forge_bridge.corpus._schema import SCHEMA_VERSION
+
+logger = logging.getLogger(__name__)
+
 
 def emit_seed_expectation(
     *,
@@ -262,10 +273,50 @@ def emit_seed_expectation(
         outer wrap is the belt-and-suspenders posture matching
         the corpus convention.
     """
-    raise NotImplementedError(
-        "emit_seed_expectation body lands at PR 8 Step 3 — see "
-        "A.5.3.2-PR8-SPEC.md §6 Step 3 + §4.1.3."
-    )
+    try:
+        # ── Build the authored expectation record ──────────────
+        # Universal keys (4): schema_version, capture_id,
+        # captured_at, record_kind.
+        # PR 8-required fields (3): fixture_id, prompt,
+        # expected_narrow. Locked at framing §5.3 (Q2) minimum-
+        # viable per A.5.3.2-PR8-SPEC.md §4.2.
+        #
+        # Member #8 protection (semantics-not-topology guard,
+        # verbatim in module docstring): this helper builds the
+        # record dict and delegates persistence. It does NOT
+        # call _resolve_corpus_dir, _make_header, _serialize_line,
+        # or any direct file I/O surface. Persistence topology
+        # is the PR 7 seam's authority surface; this helper owns
+        # only the authored-expectation semantics.
+        record = {
+            "schema_version": SCHEMA_VERSION,
+            "capture_id": _new_uuid(),
+            "captured_at": _now_iso_ms(),
+            "record_kind": "expectation",
+            "fixture_id": fixture_id,
+            "prompt": prompt,
+            "expected_narrow": expected_narrow,
+        }
+        _persist_expectation_record(record)
+
+    except Exception as exc:  # noqa: BLE001 — I-6 failure invisibility
+        # I-6: observation failure cannot become arbitration
+        # failure. Defense in depth — _persist_expectation_record
+        # already wraps its body in I-6 internally; this helper's
+        # outer wrap is the belt-and-suspenders posture matching
+        # the corpus convention.
+        try:
+            logger.warning(
+                "emit_seed_expectation failed: fixture_id=%r, "
+                "error=%s: %s",
+                fixture_id,
+                type(exc).__name__,
+                exc,
+            )
+        except Exception:  # noqa: BLE001 — even logging must not propagate
+            pass
+
+    return None
 
 
 async def _invoke_chat_handler_in_process(prompt: str) -> None:

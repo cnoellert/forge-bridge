@@ -110,8 +110,58 @@ def base_builder_args(**overrides: Any) -> dict[str, Any]:
     Tests that need to build expectation records (PR 8 territory)
     pass ``record_kind="expectation"`` as an override; PR 7 ships no
     such test (expectation records aren't built until PR 8 lands the
-    seed driver).
+    seed driver). PR 8 tests that exercise the authored-expectation
+    surface use ``base_expectation_args`` below — a sibling helper
+    with a structurally distinct shape (no ``source``, no
+    arbitration-state fields, no nested ``narrower`` block).
     """
     args = base_writer_args(**overrides)
     args.setdefault("record_kind", "observation")
     return args
+
+
+def base_expectation_args(**overrides: Any) -> dict[str, Any]:
+    """Default-valid kwargs for ``emit_seed_expectation`` (the
+    seed driver's authored-expectation surface, PR 8).
+
+    Tests passing these kwargs to the helper get a canonical
+    expectation emission. Tests override individual keys to
+    exercise specific behaviors (e.g.,
+    ``base_expectation_args(prompt="multi-step ...")`` for
+    parametrized prompt-shape tests).
+
+    Sibling of ``base_writer_args()`` (observation/writer surface)
+    and ``base_builder_args()`` (observation/builder surface).
+    The three-helper split mirrors the three-authority-surface
+    partitioning the corpus package establishes — observation
+    records have a different default-valid kwargs shape than
+    expectation records (no ``source``, no arbitration-state
+    fields, no nested ``narrower`` block, no ``topology`` /
+    ``identity`` / ``candidate_set`` blocks).
+
+    The defaults return ONLY the three PR 8-required kwargs the
+    helper accepts (``fixture_id``, ``prompt``,
+    ``expected_narrow``). Universal keys (``schema_version``,
+    ``capture_id``, ``captured_at``, ``record_kind``) are built
+    internally by ``emit_seed_expectation`` — they're not
+    caller-provided and therefore not in this helper's output.
+    Schema validation tests that need raw record dicts hand-craft
+    the minimum-shape records directly (see
+    ``test_pr8_seed_surface.py::_minimum_valid_expectation_record``).
+
+    The default ``prompt`` value is single-step shape —
+    exercising chat_handler with this prompt MUST NOT fire
+    chain-step arbitration (carrier #15 enforcement, PR 8 spec
+    §0). The default ``expected_narrow`` is a single tool name
+    matching the canonical single-survivor narrowing case PR 4
+    + PR 5 use throughout.
+
+    See ``A.5.3.2-PR8-SPEC.md`` §4.3 for the contract.
+    """
+    defaults: dict[str, Any] = {
+        "fixture_id": "fix-pr8-default",
+        "prompt": "list staged shots",
+        "expected_narrow": ["forge_list_staged"],
+    }
+    defaults.update(overrides)
+    return defaults

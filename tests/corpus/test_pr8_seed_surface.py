@@ -64,17 +64,21 @@ contract this module implements.
 from __future__ import annotations
 
 import ast
+import inspect
+import logging
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 import forge_bridge
+from forge_bridge.corpus._seed import emit_seed_expectation
 from forge_bridge.corpus._schema import (
     SCHEMA_VERSION,
     SchemaValidationError,
     validate_capture_record,
 )
+from tests.corpus._pr3_helpers import base_expectation_args
 
 
 # PR-8-local participation discipline — _seed.py is the corpus-
@@ -429,3 +433,212 @@ def test_expectation_record_round_trip_valid() -> None:
         expected_narrow=["forge_list_staged", "forge_get_staged"],
     )
     assert validate_capture_record(record_multi) is None
+
+
+# ── emit_seed_expectation helper — PR 8 Step 3 tests 5-7 ───────────
+#
+# Per A.5.3.2-PR8-SPEC.md §4.1.3 + §5.1 tests 5-7: PR 8 Step 3
+# lands the helper body that operationalizes cleanup-pressure-
+# resistance class member #8 (semantics-not-topology guard).
+# The helper builds the expectation record dict and delegates
+# persistence to _persist_expectation_record (the PR 7 seam).
+#
+# Risk #1 (helper-singularity smearing of member #8 surface) is
+# enforced mechanically by test 5 — signature shape IS the truth
+# claim; widening it would silently broaden the authority
+# surface.
+
+
+def test_emit_seed_expectation_signature_is_authority_pure() -> None:
+    """Risk #1 — helper signature shape IS the authored-expectation
+    truth claim.
+
+    Per A.5.3.2-PR8-SPEC.md §3 risk #1 + §5.1 test 5: asserts
+    ``inspect.signature(emit_seed_expectation)`` has exactly 3
+    keyword-only parameters (``fixture_id``, ``prompt``,
+    ``expected_narrow``), each without a default value, and the
+    return annotation is ``None``.
+
+    Widening the signature with arbitration-state fields, optional
+    kwargs, a return value, or a ``source`` parameter would erode
+    the semantics-not-topology guard (cleanup-pressure-resistance
+    class member #8). The helper begins behaving like a thin
+    observation-helper variant; authority partitioning collapses.
+
+    The signature shape IS the truth claim — verbatim PR 8-local
+    binding statement #2 (semantics-not-topology guard) lives in
+    the helper's docstring; this test is the mechanical
+    enforcement.
+    """
+    sig = inspect.signature(emit_seed_expectation)
+
+    # Exactly 3 parameters:
+    param_names = list(sig.parameters.keys())
+    assert param_names == ["fixture_id", "prompt", "expected_narrow"], (
+        f"Helper signature must have exactly 3 parameters in order "
+        f"(fixture_id, prompt, expected_narrow), got: {param_names}. "
+        f"Adding/removing/reordering parameters breaks the authored-"
+        f"expectation truth claim per A.5.3.2-PR8-SPEC.md §0 PR "
+        f"8-local binding statement #2."
+    )
+
+    # All keyword-only:
+    for name, param in sig.parameters.items():
+        assert param.kind == inspect.Parameter.KEYWORD_ONLY, (
+            f"Parameter {name!r} must be keyword-only (got kind="
+            f"{param.kind}). The keyword-only marker matches the "
+            f"corpus convention and prevents positional-argument "
+            f"acquisition."
+        )
+
+    # No defaults:
+    for name, param in sig.parameters.items():
+        assert param.default is inspect.Parameter.empty, (
+            f"Parameter {name!r} must not have a default value "
+            f"(got default={param.default!r}). Optional parameters "
+            f"would invite helper-singularity smearing per "
+            f"A.5.3.2-PR8-SPEC.md §3 risk #1."
+        )
+
+    # Return annotation is None. With `from __future__ import
+    # annotations`, the annotation is the string "None"; without
+    # it, the annotation is type(None) or None. Both forms are
+    # acceptable; widening (e.g., to a dict return) is not.
+    return_annot = sig.return_annotation
+    assert return_annot in (None, type(None), "None"), (
+        f"Return annotation must be None, got {return_annot!r}. "
+        f"Returning a value would invite consumers to depend on "
+        f"the helper's internal record dict, eroding the "
+        f"fire-and-forget I-6 contract."
+    )
+
+
+def test_emit_seed_expectation_persists_via_seam(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Behavioral fill — helper delegates persistence to the PR 7
+    seam.
+
+    Per A.5.3.2-PR8-SPEC.md §5.1 test 6: patches
+    ``_persist_expectation_record`` (in ``_seed.py``'s namespace —
+    module-scoped import bound at load time, patching consumer
+    intercepts the lookup); invokes
+    ``emit_seed_expectation(**base_expectation_args())``; asserts
+    the seam was called exactly once with a dict carrying
+    ``record_kind="expectation"``, the 3 PR 8-required fields, and
+    the 4 universal keys.
+
+    The dict shape assertion is structural, not value-exact —
+    uuid + timestamp are non-deterministic; the structural
+    requirement is "has these keys with these expected
+    types/values."
+
+    Member #8 protection: the helper delegates persistence; it
+    does NOT inline _resolve_corpus_dir, _make_header,
+    _serialize_line, or any direct file I/O.
+    """
+    captured: list[dict] = []
+
+    def sentinel(record: dict) -> None:
+        captured.append(record)
+
+    # Patch consumer namespace (where _seed.py looks up the seam at
+    # call time). Module-scoped imports bind at load time; the
+    # consumer's name table holds the original reference. Patching
+    # the source namespace would NOT intercept the call because
+    # _seed.py's binding still points to the original function
+    # object.
+    monkeypatch.setattr(
+        "forge_bridge.corpus._seed._persist_expectation_record",
+        sentinel,
+    )
+
+    emit_seed_expectation(**base_expectation_args())
+
+    assert len(captured) == 1, (
+        f"Expected exactly one seam invocation, got {len(captured)}."
+    )
+    record = captured[0]
+
+    # PR 8-required fields match base_expectation_args defaults:
+    assert record["fixture_id"] == "fix-pr8-default"
+    assert record["prompt"] == "list staged shots"
+    assert record["expected_narrow"] == ["forge_list_staged"]
+
+    # Universal keys + record_kind:
+    assert record["record_kind"] == "expectation"
+    assert record["schema_version"] == SCHEMA_VERSION
+    assert isinstance(record["capture_id"], str)
+    assert record["capture_id"], "capture_id must be non-empty"
+    assert isinstance(record["captured_at"], str)
+    assert record["captured_at"], "captured_at must be non-empty"
+
+    # No observation-record fields — member #7 protection
+    # (companion records as truth-partitioning):
+    assert "source" not in record, (
+        "Expectation records MUST NOT carry a 'source' field "
+        "(member #7 protection — truth-partitioning)."
+    )
+    assert "narrower" not in record
+    assert "candidate_set" not in record
+    assert "topology" not in record
+    assert "identity" not in record
+
+
+def test_emit_seed_expectation_failure_invisibility(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Behavioral fill — I-6 enforcement on the helper's outer
+    try/except wrapper.
+
+    Per A.5.3.2-PR8-SPEC.md §5.1 test 7: patches the seam to
+    raise ``RuntimeError``; invokes the helper; asserts the
+    helper returns ``None`` and the exception is logged at
+    WARNING level with the fixture_id + error context.
+
+    I-6 contract: observation failure cannot become arbitration
+    failure. The helper's outer try/except is defense in depth
+    on top of ``_persist_expectation_record``'s own I-6 wrap
+    (both layers preserve the fire-and-forget contract).
+    """
+    def raising_seam(record: dict) -> None:
+        raise RuntimeError("seam failure for test")
+
+    monkeypatch.setattr(
+        "forge_bridge.corpus._seed._persist_expectation_record",
+        raising_seam,
+    )
+
+    caplog.set_level(logging.WARNING, logger="forge_bridge.corpus._seed")
+
+    result = emit_seed_expectation(**base_expectation_args())
+
+    # I-6: fire-and-forget — no exception propagates, returns None.
+    assert result is None, (
+        f"Helper must return None under failure (I-6); got {result!r}."
+    )
+
+    # WARNING logged with fixture_id + error type context:
+    warning_records = [
+        r for r in caplog.records
+        if r.levelname == "WARNING"
+        and r.name == "forge_bridge.corpus._seed"
+    ]
+    assert len(warning_records) >= 1, (
+        f"Expected at least one WARNING log; got "
+        f"{[(r.levelname, r.name) for r in caplog.records]}."
+    )
+
+    warning_msg = warning_records[0].getMessage()
+    assert "emit_seed_expectation failed" in warning_msg, (
+        f"Expected 'emit_seed_expectation failed' in warning; got: "
+        f"{warning_msg!r}."
+    )
+    assert "fix-pr8-default" in warning_msg, (
+        f"Expected fixture_id 'fix-pr8-default' in warning context; "
+        f"got: {warning_msg!r}."
+    )
+    assert "RuntimeError" in warning_msg, (
+        f"Expected error type 'RuntimeError' in warning context; "
+        f"got: {warning_msg!r}."
+    )
