@@ -52,14 +52,8 @@ Carriers carried by reference from ``_seed.py``:
   - PR 8-local binding #2 — emit_seed_expectation as semantics-
     not-topology (cleanup-pressure-resistance class member #8).
 
-This module is a SKELETON at PR 8 Step 1. Only the participation
-discipline tests (tests 12 + 13 per ``A.5.3.2-PR8-SPEC.md`` §5.1)
-land at Step 1. The remaining 12 tests (4 schema + 3 helper +
-4 driver + 1 ``__all__`` drift) land at Steps 2–4 per
-``A.5.3.2-PR8-SPEC.md`` §6.
-
-See ``A.5.3.2-PR8-SPEC.md`` §4.4 + §5.1 + §6 Step 1 for the
-contract this module implements.
+See ``A.5.3.2-PR8-SPEC.md`` §4.4 + §5.1 + §6 for the contract
+this module implements.
 """
 from __future__ import annotations
 

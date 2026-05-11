@@ -16,12 +16,6 @@ direction. No other corpus module may acquire a
 ``forge_bridge.console`` import without framing-level review (see
 ``A.5.3.2-PR8-SPEC.md`` §2 out-of-scope #13).
 
-This module is a SKELETON at PR 8 Step 1. The three functions
-(``emit_seed_expectation``, ``_invoke_chat_handler_in_process``,
-``drive_seed_fixture``) carry their full docstrings + signatures
-but raise ``NotImplementedError`` at this step. Bodies land at
-Steps 3 + 4 per ``A.5.3.2-PR8-SPEC.md`` §6.
-
 PR 8 carrier sentences (verbatim, load-bearing — see
 ``A.5.3.2-PR8-SPEC.md`` §0):
 
