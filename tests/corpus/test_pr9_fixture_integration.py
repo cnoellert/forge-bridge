@@ -639,3 +639,182 @@ def test_fixture_runs_end_to_end_no_keyword_match(
         "Observation must structurally diverge from aspirational expectation "
         "on this fixture (Gate 4 comparator-unblock proof)."
     )
+
+
+# ─── Step 4 — Gate 4 unblock proof tests (architectural-center #2) ──────────
+
+
+def test_observation_and_expectation_distinguishable_by_record_kind(
+    clean_rate_limit_state: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Gate 4 unblock proof #1: record_kind partition correctness.
+
+    Per A.5.3.2-PR9-SPEC.md §4.5 + §5.1 risk #5: drives one
+    fixture (single-survivor) and asserts the two persisted
+    records have distinct ``record_kind`` values that the
+    schema validator accepts. Independent of tests 1-3 —
+    drives its own fixture, asserts a different property.
+    Decouples the comparator's partition dependency from any
+    e2e regression in tests 1-3.
+
+    Independence is structural: a future PR could break test 1
+    (e2e regression) without breaking this test, and vice
+    versa. The two failure modes are orthogonal; both must pass
+    for Gate 4 to remain unblocked.
+
+    Why this is a Gate 4 unblock proof:
+
+      Gate 4's comparator depends on ``record_kind`` discriminator
+      correctness — the comparator partitions the corpus by
+      record_kind ("observation" vs. "expectation") before
+      joining on fixture_id. If the discriminator is not
+      structurally distinct (e.g., a future PR merges the two
+      record shapes; member #7 truth-partitioning violation),
+      the comparator cannot be written against a stable
+      foundation.
+
+      This test asserts the partition mechanically WITHOUT
+      shipping the comparator (per Gate 2 framing §11.3: "Gate 2
+      ships no comparator artifact, stub or otherwise").
+    """
+    corpus_dir = _apply_pr9_patches(monkeypatch, tmp_path)
+
+    drive_seed_fixture(**FIXTURE_SINGLE_SURVIVOR)
+
+    records = _read_records(corpus_dir)
+    matching = [r for r in records if r.get("fixture_id") == "fix-pr9-single-survivor"]
+    assert len(matching) == 2, (
+        f"Expected exactly 2 records for fix-pr9-single-survivor; got {len(matching)}.\n"
+        f"All records: {records}"
+    )
+
+    # Partition by record_kind:
+    expectations = [r for r in matching if r["record_kind"] == "expectation"]
+    observations = [r for r in matching if r["record_kind"] == "observation"]
+    assert len(expectations) == 1, (
+        f"exactly one expectation record per fixture invocation; got {len(expectations)}"
+    )
+    assert len(observations) == 1, (
+        f"exactly one observation record per fixture invocation; got {len(observations)}"
+    )
+
+    # Schema validator accepts both record kinds. The expectation
+    # branch validates fixture_id + prompt + expected_narrow +
+    # rejects records carrying a source field (member #7
+    # truth-partitioning persistence-boundary guard). The
+    # observation branch validates Property C source values.
+    # Both branches must accept the records this fixture
+    # produces for the partition to be operationally valid.
+    from forge_bridge.corpus._schema import validate_capture_record
+
+    validate_capture_record(expectations[0])
+    validate_capture_record(observations[0])
+
+    # Mechanical assertion that the discriminator IS distinct:
+    # the two record_kind values must form a 2-element set under
+    # set semantics. If a future PR merges the discriminator
+    # (e.g., introduces "observation_with_expectation"
+    # composite), this test fails at the set-cardinality check.
+    record_kinds = {r["record_kind"] for r in matching}
+    assert record_kinds == {"observation", "expectation"}, (
+        f"record_kind discriminator must form the 2-element set "
+        f"{{'observation', 'expectation'}}; got {record_kinds}. "
+        f"Member #7 truth-partitioning protection requires the "
+        f"discriminator stay structurally distinct."
+    )
+
+
+def test_records_join_on_fixture_id(
+    clean_rate_limit_state: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Gate 4 unblock proof #2: fixture_id joinability.
+
+    Per A.5.3.2-PR9-SPEC.md §4.5 + §5.1 risk #6: drives one
+    fixture (single-survivor) and asserts the two persisted
+    records share the same fixture_id; a fixture_id-keyed join
+    over the corpus reader output reunites them as a pair.
+    Independent of tests 1-4 — drives its own fixture, asserts
+    a different property. Decouples the comparator's join
+    dependency from any partition regression in test 4.
+
+    Independence is structural: a future PR could break test 4
+    (partition regression) without breaking this test, and
+    vice versa. The two Gate 4 unblock proofs are orthogonal;
+    both must pass for the comparator to remain unblocked.
+
+    Why this is a Gate 4 unblock proof:
+
+      Gate 4's comparator's join key is fixture_id — the
+      comparator pairs each observation record with the
+      expectation record sharing the same fixture_id, then
+      compares the pair for divergence. If the fixture_id is
+      not populated identically at both persistence sites
+      (emit_seed_expectation at _seed.py:296 + handlers.py
+      emit_divergence_capture under seed_dispatch_scope), the
+      comparator cannot pair records mechanically.
+
+      This test asserts the join mechanically WITHOUT shipping
+      the comparator (per Gate 2 framing §11.3).
+
+    The join is built as a dict[fixture_id, dict[record_kind,
+    record]] — the same shape Gate 4's comparator will consume.
+    Asserting the shape now operationalizes the join
+    dependency.
+    """
+    corpus_dir = _apply_pr9_patches(monkeypatch, tmp_path)
+
+    drive_seed_fixture(**FIXTURE_SINGLE_SURVIVOR)
+
+    records = _read_records(corpus_dir)
+    matching = [r for r in records if r.get("fixture_id") == "fix-pr9-single-survivor"]
+    assert len(matching) == 2
+
+    # Both records share the same fixture_id mechanically. The
+    # join key is the fixture_id field, populated identically at
+    # expectation persistence (emit_seed_expectation at
+    # _seed.py:296) and observation persistence (handlers.py
+    # emit_divergence_capture under seed_dispatch_scope). If a
+    # future PR decouples the two population sites, this test
+    # fires.
+    fixture_ids = {r["fixture_id"] for r in matching}
+    assert fixture_ids == {"fix-pr9-single-survivor"}, (
+        f"both records must share the same fixture_id — Gate 4 "
+        f"comparator depends on this. Got: {fixture_ids}"
+    )
+
+    # Joinability proof: build a fixture_id-keyed dict over the
+    # corpus reader output; verify the entry for our fixture_id
+    # contains both record kinds. This mirrors the join shape
+    # Gate 4's comparator will consume.
+    by_fixture: dict[str, dict[str, dict]] = {}
+    for r in records:
+        fid = r.get("fixture_id")
+        kind = r.get("record_kind")
+        if fid is None or kind is None:
+            continue
+        by_fixture.setdefault(fid, {})[kind] = r
+
+    paired = by_fixture.get("fix-pr9-single-survivor", {})
+    assert set(paired.keys()) == {"observation", "expectation"}, (
+        f"fixture_id-keyed join did not reunite the pair.\n"
+        f"Expected keys: {{'observation', 'expectation'}}\n"
+        f"Actual keys:   {set(paired.keys())}\n"
+        f"\n"
+        f"The join shape is the Gate 4 comparator's foundational "
+        f"data structure. If the join cannot reunite the pair "
+        f"mechanically, the comparator cannot be written against "
+        f"a stable foundation."
+    )
+
+    # Additionally assert that the paired records are
+    # individually well-formed (defense in depth — if the
+    # corpus reader silently produced corrupt records, the join
+    # could succeed with malformed payloads).
+    assert paired["observation"]["fixture_id"] == "fix-pr9-single-survivor"
+    assert paired["expectation"]["fixture_id"] == "fix-pr9-single-survivor"
+    assert paired["observation"]["record_kind"] == "observation"
+    assert paired["expectation"]["record_kind"] == "expectation"
