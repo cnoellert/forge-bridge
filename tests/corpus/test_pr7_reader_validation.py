@@ -58,19 +58,30 @@ def _make_minimum_expectation_record(
     captured_at: str = "2026-05-09T12:00:00.001Z",
     capture_id: str = "expectation-test-uuid-001",
 ) -> dict:
-    """Minimum-shape valid expectation record — 4 universal keys.
+    """Minimum-shape valid expectation record.
 
-    Per PR 7 Step 5 schema work: expectation records require only
-    ``schema_version``, ``capture_id``, ``captured_at``,
-    ``record_kind``. The 6 observation-specific keys (source,
+    Per PR 7 Step 5 schema work: expectation records require the
+    universal keys (schema_version, capture_id, captured_at,
+    record_kind). The 6 observation-specific keys (source,
     prompt, candidate_set, topology, identity, narrower) are
     scoped to observation records.
+
+    Updated at PR 8 Step 2 (per A.5.3.2-PR8-SPEC.md §4.2 — the
+    schema extension landing) to include the three PR 8-required
+    fields: fixture_id, prompt, expected_narrow. The helper
+    update is the mechanical consequence of the schema extension;
+    the test bodies are unchanged.
     """
     return {
         "schema_version": SCHEMA_VERSION,
         "capture_id": capture_id,
         "captured_at": captured_at,
         "record_kind": "expectation",
+        # PR 8 Step 2 — required expectation fields per
+        # _schema.py::_REQUIRED_EXPECTATION_KEYS:
+        "fixture_id": "fix-pr7-reader",
+        "prompt": "reader validation probe",
+        "expected_narrow": ["forge_list_staged"],
     }
 
 
@@ -117,10 +128,19 @@ def test_reader_accepts_expectation_record(tmp_path):
     """Header + minimum-shape expectation record is yielded with
     ``record_kind="expectation"`` and no ``source`` field.
 
-    Expectation records carry only the 4 universal keys at PR 7
-    close (PR 8's seed driver defines the operational shape).
     The reader yields the record verbatim; no synthesis fires
-    because ``record_kind`` is already present.
+    because ``record_kind`` is already present. The test's
+    protected property: the reader does not transform expectation
+    records — it passes them through unchanged after schema
+    validation.
+
+    Updated at PR 8 Step 2: PR 7's minimum-shape was 4 universal
+    keys only; PR 8 extends with fixture_id, prompt,
+    expected_narrow per A.5.3.2-PR8-SPEC.md §4.2. The
+    ``"fixture_id" not in yielded[0]`` assertion was anchored on
+    the PR 7-era shape and is removed; the protected property
+    (reader passes records through unchanged) is preserved by
+    asserting the record dict matches the input exactly.
     """
     record = _make_minimum_expectation_record()
     path = tmp_path / "test-exp.jsonl"
@@ -131,7 +151,11 @@ def test_reader_accepts_expectation_record(tmp_path):
     assert len(yielded) == 1
     assert yielded[0]["record_kind"] == "expectation"
     assert "source" not in yielded[0]
-    assert "fixture_id" not in yielded[0]
+    # PR 8 Step 2: reader passes the record through verbatim.
+    # The PR 7-era "no fixture_id" assertion is obsolete (PR 8
+    # extends the minimum shape); the protected property is
+    # preserved by asserting the yielded record equals the input.
+    assert yielded[0] == record
 
 
 def test_reader_skips_unknown_record_kind(

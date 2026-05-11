@@ -102,6 +102,21 @@ _KNOWN_RECORD_KINDS: Final[frozenset[str]] = frozenset({
     "observation", "expectation",
 })
 
+# Expectation-specific required keys. PR 8 introduces these per
+# A.5.3.2-PR8-SPEC.md §4.2 — the first PR to construct expectation
+# records. The set is locked at framing-time minimum-viable per
+# A.5.3.2-PR8-FRAMING.md §5.3 (Q2): three fields express the
+# fixture-author's authored expectation (fixture identity, the
+# prompt being exercised, the narrowing decision the author
+# declares should result). Adding a fourth required field requires
+# framing-level review per A.5.3.2-PR8-SPEC.md §7 phase-end
+# conditions; cleanup PRs may not extend this set.
+_REQUIRED_EXPECTATION_KEYS: Final[frozenset[str]] = frozenset({
+    "fixture_id",
+    "prompt",
+    "expected_narrow",
+})
+
 # Source-class governance is delegated to ``KNOWN_SOURCE_VALUES`` in
 # ``forge_bridge/corpus/_sources.py`` (imported at module top). The
 # legacy ``_VALID_SOURCES = frozenset({"fixture", "runtime"})``
@@ -217,15 +232,58 @@ def validate_capture_record(record: Any) -> None:
         _validate_narrower(record["narrower"])
 
     elif record_kind == "expectation":
+        # ── No-source check (preserved from PR 7) ──────────────
+        # Cleanup-pressure-resistance class member #7 (truth-
+        # partitioning) — a unified record carrying both
+        # expectation and observation fields destroys
+        # falsifiability. The schema validator rejects expectation
+        # records carrying a ``source`` field at the persistence
+        # boundary. See A.5.3.2-PR8-SPEC.md §0 PR 8-local binding
+        # statement #1.
         if "source" in record:
             raise SchemaValidationError(
                 "expectation record must not carry a 'source' field; "
                 f"found source={record['source']!r}"
             )
-        # Expectation-specific required-keys + nested validators land
-        # with PR 8 when the seed driver defines the expectation record
-        # shape. PR 7 enforces only the "no source field" structural
-        # asymmetry.
+
+        # ── PR 8 required-keys check ───────────────────────────
+        # Per A.5.3.2-PR8-SPEC.md §4.2 + framing §5.3 (Q2): the
+        # minimum-viable expectation shape requires exactly three
+        # fields (fixture_id, prompt, expected_narrow) plus the
+        # universal top-level keys. Cleanup PRs adding a fourth
+        # required field route through framing review.
+        missing_exp = _REQUIRED_EXPECTATION_KEYS - record.keys()
+        if missing_exp:
+            raise SchemaValidationError(
+                f"expectation record missing required keys: "
+                f"{sorted(missing_exp)}"
+            )
+
+        # ── PR 8 per-field type validation ─────────────────────
+        # Each PR 8-required field has a per-type contract. The
+        # first failure raises (PR 1 convention — no aggregate-
+        # error mode at this layer).
+        if not isinstance(record["fixture_id"], str) or not record["fixture_id"]:
+            raise SchemaValidationError(
+                "expectation fixture_id must be a non-empty string"
+            )
+        if not isinstance(record["prompt"], str) or not record["prompt"]:
+            raise SchemaValidationError(
+                "expectation prompt must be a non-empty string"
+            )
+        if not isinstance(record["expected_narrow"], list):
+            raise SchemaValidationError(
+                "expectation expected_narrow must be a list"
+            )
+        if not all(
+            isinstance(tool, str) for tool in record["expected_narrow"]
+        ):
+            raise SchemaValidationError(
+                "expectation expected_narrow entries must be strings"
+            )
+        # The empty list is a valid expected_narrow value —
+        # expresses "expected zero-survivor narrowing for this
+        # prompt." See A.5.3.2-PR8-SPEC.md §4.2.2.
 
 
 def _validate_candidate_set(cs: Any) -> None:

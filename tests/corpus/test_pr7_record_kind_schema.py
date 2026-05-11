@@ -34,18 +34,28 @@ from tests.corpus._pr3_helpers import base_builder_args
 def _minimum_expectation_record() -> dict[str, Any]:
     """Build a minimum-shape expectation record.
 
-    Per PR 7 §4.3 amendment, expectation records require only the
+    Per PR 7 §4.3 amendment, expectation records require the
     universal top-level keys (schema_version, capture_id,
     captured_at, record_kind) and MUST NOT carry a source field.
-    PR 8's seed driver will define expectation-specific required
-    fields when the seed driver lands; PR 7 ships only the
-    structural asymmetry.
+
+    Updated at PR 8 Step 2 (per A.5.3.2-PR8-SPEC.md §4.2 — the
+    schema extension landing) to include the three PR 8-required
+    fields: fixture_id, prompt, expected_narrow. The original
+    docstring anticipated this: "PR 8's seed driver will define
+    expectation-specific required fields when the seed driver
+    lands." The helper update is the mechanical consequence of
+    the schema extension; the test bodies are unchanged.
     """
     return {
         "schema_version": "1",
         "capture_id": "00000000-0000-0000-0000-000000000000",
         "captured_at": "2026-05-09T12:00:00.000Z",
         "record_kind": "expectation",
+        # PR 8 Step 2 — required expectation fields per
+        # _schema.py::_REQUIRED_EXPECTATION_KEYS:
+        "fixture_id": "fix-pr7-minimum",
+        "prompt": "minimum-shape probe",
+        "expected_narrow": ["forge_list_staged"],
     }
 
 

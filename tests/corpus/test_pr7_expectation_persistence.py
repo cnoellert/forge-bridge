@@ -60,12 +60,19 @@ def _make_expectation_record(
 ) -> dict[str, Any]:
     """Build a minimal valid expectation record.
 
-    Per ``_schema.py`` post-PR-7-Step-5: the only structural
+    Per ``_schema.py`` post-PR-7-Step-5: the structural
     requirements for an expectation record are the universal top
     keys (``schema_version``, ``capture_id``, ``captured_at``,
     ``record_kind``) plus the prohibition on a ``source`` field.
-    PR 8's seed driver will define the operational expectation
-    shape; PR 7 ships the seam only.
+
+    Updated at PR 8 Step 2 (per ``A.5.3.2-PR8-SPEC.md`` §4.2 —
+    the schema extension landing) to include the three
+    PR 8-required fields: ``fixture_id``, ``prompt``,
+    ``expected_narrow``. The original docstring anticipated this:
+    "PR 8's seed driver will define the operational expectation
+    shape; PR 7 ships the seam only." The helper update is the
+    mechanical consequence of the schema extension; the test
+    bodies are unchanged.
 
     ``captured_at`` defaults to a fixed value so byte-identical
     persistence assertions (test 2) are deterministic. Tests that
@@ -77,6 +84,11 @@ def _make_expectation_record(
         "capture_id": capture_id or str(uuid.uuid4()),
         "captured_at": captured_at,
         "record_kind": "expectation",
+        # PR 8 Step 2 — required expectation fields per
+        # _schema.py::_REQUIRED_EXPECTATION_KEYS:
+        "fixture_id": "fix-pr7-persistence",
+        "prompt": "minimum-shape persistence probe",
+        "expected_narrow": ["forge_list_staged"],
     }
 
 

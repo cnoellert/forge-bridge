@@ -214,11 +214,18 @@ def test_mixed_legacy_and_contemporary_records(
     """
     legacy = _make_legacy_record()
     observation = _build_capture_record(**base_builder_args())
+    # Inline expectation record extended at PR 8 Step 2 per
+    # A.5.3.2-PR8-SPEC.md §4.2 — the schema validator's
+    # expectation branch now requires fixture_id, prompt, and
+    # expected_narrow alongside the universal keys.
     expectation = {
         "schema_version": SCHEMA_VERSION,
         "capture_id": "expect-uuid-mixed",
         "captured_at": "2026-05-09T12:00:00.123Z",
         "record_kind": "expectation",
+        "fixture_id": "fix-pr7-mixed",
+        "prompt": "mixed-records reader probe",
+        "expected_narrow": ["forge_list_staged"],
     }
     path = tmp_path / "test-mixed.jsonl"
     _write_jsonl(path, [_make_header(), legacy, observation, expectation])
@@ -236,8 +243,19 @@ def test_mixed_legacy_and_contemporary_records(
     assert yielded[1]["record_kind"] == "observation"
     assert yielded[1]["fixture_id"] is None
 
-    # 3. Contemporary expectation: explicit record_kind, NO fixture_id.
-    #    Mechanical guard against unconditional-synthesis regression.
+    # 3. Contemporary expectation: explicit record_kind, fixture_id
+    #    passed through verbatim (NOT synthesized to None by the
+    #    reader). Mechanical guard against unconditional-synthesis
+    #    regression — the reader must not blindly add or overwrite
+    #    fixture_id on records that carry record_kind explicitly.
+    #
+    # PR 8 Step 2 update: the test's protected property is
+    # preserved (no unconditional synthesis on contemporary
+    # records). The PR 7-era assertion "fixture_id not in
+    # yielded[2]" was anchored on the PR 7-era shape (expectation
+    # records had no fixture_id); PR 8 extends the shape per
+    # A.5.3.2-PR8-SPEC.md §4.2. The new assertion: the reader
+    # passes the explicit fixture_id through unchanged.
     assert yielded[2]["record_kind"] == "expectation"
-    assert "fixture_id" not in yielded[2]
+    assert yielded[2]["fixture_id"] == "fix-pr7-mixed"
     assert "source" not in yielded[2]

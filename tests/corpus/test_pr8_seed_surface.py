@@ -65,8 +65,16 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 import forge_bridge
+from forge_bridge.corpus._schema import (
+    SCHEMA_VERSION,
+    SchemaValidationError,
+    validate_capture_record,
+)
 
 
 # PR-8-local participation discipline — _seed.py is the corpus-
@@ -256,3 +264,168 @@ def test_seed_module_imports_match_permitted_set():
         "phase-end conditions row 'Acquiring a universal-key "
         "sibling utility to _SEED_PERMITTED_IMPORTS'."
     )
+
+
+# ── Schema validator extension — PR 8 Step 2 tests 1-4 ─────────────
+#
+# Per A.5.3.2-PR8-SPEC.md §4.2 + §5.1 tests 1-4: PR 8 extends
+# _schema.py's record_kind == "expectation" branch with the three
+# PR 8-required fields (fixture_id, prompt, expected_narrow) plus
+# per-field type validation. The existing no-source check is
+# preserved unchanged.
+#
+# These tests use hand-crafted minimum-shape expectation records
+# (not base_expectation_args — that helper returns kwargs for
+# emit_seed_expectation, which lands at Step 3). The pattern
+# mirrors PR 7's expectation-persistence tests:
+#   "Schema validation tests that need raw record dicts hand-craft
+#    the minimum-shape records directly."
+# (A.5.3.2-PR8-SPEC.md §5.4 + §0 PR-8-local binding statements.)
+
+
+def _minimum_valid_expectation_record(**overrides: Any) -> dict[str, Any]:
+    """Build a minimum-shape valid expectation record.
+
+    Returns a dict carrying the 4 universal keys (schema_version,
+    capture_id, captured_at, record_kind) + the 3 PR 8-required
+    fields (fixture_id, prompt, expected_narrow). Tests override
+    individual keys (or delete them) to exercise the validator's
+    failure modes.
+
+    This helper is local to schema tests because:
+
+    1. ``base_expectation_args`` (§4.3, lands at Step 3) returns
+       kwargs for ``emit_seed_expectation``; it does NOT return
+       universal keys.
+    2. Schema validation operates on full record dicts, not
+       kwargs. The dict needs the universal keys too.
+
+    Per A.5.3.2-PR8-SPEC.md §5.4: "Schema validation tests that
+    need raw record dicts hand-craft the minimum-shape records
+    directly (same pattern as PR 7's expectation-persistence
+    tests)."
+    """
+    record: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "capture_id": "test-capture-id",
+        "captured_at": "2026-05-10T12:00:00.000Z",
+        "record_kind": "expectation",
+        "fixture_id": "fix-001",
+        "prompt": "list staged",
+        "expected_narrow": ["forge_list_staged"],
+    }
+    record.update(overrides)
+    return record
+
+
+def test_expectation_record_rejects_observation_fields() -> None:
+    """Risk #2 — schema validator rejects expectation records
+    carrying the canonical observation-record marker (``source``
+    field).
+
+    Per A.5.3.2-PR8-SPEC.md §3 risk #2 + §5.1 test 1: the
+    unified-record shape (expectation + observation fields in one
+    record) destroys falsifiability by allowing expectation and
+    observation to co-author the same artifact. The schema
+    validator enforces the partition at the persistence boundary.
+
+    Co-named with cleanup-pressure-resistance class member #7
+    (companion records as truth-partitioning) per
+    A.5.3.2-PR8-SPEC.md §0 PR 8-local binding statement #1.
+    """
+    record = _minimum_valid_expectation_record(source="runtime")
+    with pytest.raises(SchemaValidationError, match="source"):
+        validate_capture_record(record)
+
+
+@pytest.mark.parametrize(
+    "missing_key",
+    ["fixture_id", "prompt", "expected_narrow"],
+)
+def test_expectation_record_requires_three_keys(missing_key: str) -> None:
+    """Risk #2 sibling — schema validator rejects expectation
+    records missing any of the 3 PR 8-required fields.
+
+    Per A.5.3.2-PR8-SPEC.md §3 risk #2 + §5.1 test 2 +
+    _schema.py::_REQUIRED_EXPECTATION_KEYS: the minimum-viable
+    expectation shape requires exactly three fields beyond the 4
+    universal keys. Locked at framing §5.3 (Q2) — cleanup PRs may
+    not extend this set without framing review.
+    """
+    record = _minimum_valid_expectation_record()
+    del record[missing_key]
+    with pytest.raises(
+        SchemaValidationError,
+        match="expectation record missing required keys",
+    ):
+        validate_capture_record(record)
+
+
+@pytest.mark.parametrize(
+    "field,invalid_value",
+    [
+        # fixture_id: must be a non-empty string.
+        ("fixture_id", ""),
+        ("fixture_id", 42),
+        ("fixture_id", None),
+        # prompt: must be a non-empty string.
+        ("prompt", ""),
+        ("prompt", None),
+        ("prompt", 42),
+        # expected_narrow: must be a list of strings (possibly empty).
+        ("expected_narrow", "not a list"),
+        ("expected_narrow", None),
+        ("expected_narrow", [1, 2, 3]),
+        ("expected_narrow", ["valid", 42]),
+    ],
+)
+def test_expectation_record_field_types_validated(
+    field: str, invalid_value: Any,
+) -> None:
+    """Behavioral fill — schema validator enforces per-field type
+    contracts on expectation records.
+
+    Per A.5.3.2-PR8-SPEC.md §4.2.2 + §5.1 test 3:
+
+      - fixture_id: non-empty string.
+      - prompt: non-empty string.
+      - expected_narrow: list[str] (possibly empty — the empty
+        list is valid; expresses zero-survivor narrowing).
+
+    Failure modes per the parametrize set: empty string, wrong
+    type, list-of-wrong-type, mixed-type list. Each raises
+    SchemaValidationError with a field-named message.
+    """
+    record = _minimum_valid_expectation_record(**{field: invalid_value})
+    with pytest.raises(SchemaValidationError, match=field):
+        validate_capture_record(record)
+
+
+def test_expectation_record_round_trip_valid() -> None:
+    """Behavioral fill — fully-valid expectation record passes
+    validation.
+
+    Per A.5.3.2-PR8-SPEC.md §4.2.2 + §5.1 test 4: covers the
+    happy path (4 universal keys + record_kind + 3 PR 8-required
+    fields, all with valid values).
+
+    Sub-case: empty expected_narrow list is also valid — expresses
+    "expected zero-survivor narrowing for this prompt" (a
+    meaningful Gate 4 comparator case; expectation is not
+    certainty).
+    """
+    # Standard happy path:
+    record = _minimum_valid_expectation_record()
+    assert validate_capture_record(record) is None
+
+    # Empty expected_narrow list (zero-survivor expectation):
+    record_zero_survivor = _minimum_valid_expectation_record(
+        expected_narrow=[],
+    )
+    assert validate_capture_record(record_zero_survivor) is None
+
+    # Multi-tool expected_narrow:
+    record_multi = _minimum_valid_expectation_record(
+        expected_narrow=["forge_list_staged", "forge_get_staged"],
+    )
+    assert validate_capture_record(record_multi) is None
