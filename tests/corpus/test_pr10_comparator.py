@@ -47,13 +47,13 @@ the PR-N-LOCAL non-regeneration rule
 
 Test inventory at PR 10 close (default disposition; 5 tests):
 
-  Step 3 (this commit):
+  Unit tests (one per PR 9 fixture, landed at Step 3):
     - test_compare_records_single_survivor_no_divergence
       (risk #1)
     - test_compare_records_multi_match_no_divergence (risk #2)
     - test_compare_records_no_keyword_match_divergence (risk #3)
 
-  Step 4 (next commit):
+  Authorship-preservation tests (landed at Step 4):
     - test_compare_records_does_not_mutate_inputs (risk #4 /
       PR-10-LOCAL invariant)
     - test_compare_records_does_not_sort_inputs (risk #5 / §4.2
@@ -72,6 +72,7 @@ the contract this module implements.
 """
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from forge_bridge.corpus._compare import compare_records
@@ -318,3 +319,141 @@ def test_compare_records_no_keyword_match_divergence() -> None:
         },
         "divergence": {"narrow_diverged": True},
     }
+
+
+def test_compare_records_does_not_mutate_inputs() -> None:
+    """PR-10-LOCAL binding statement
+    (A.5.3.2-PR10-SPEC.md §0):
+
+      The signature returns a new structured value; the inputs
+      are read but never modified ... Tests assert input
+      records remain byte-identical after the function returns.
+
+    Builds a single-survivor pair; takes ``copy.deepcopy(...)``
+    of both records BEFORE invoking ``compare_records``; asserts
+    both records equal their pre-invocation deepcopies AFTER
+    the function returns.
+
+    Also asserts that mutating the RETURNED report's nested
+    lists does NOT propagate back into the input records (the
+    report's contained lists are fresh allocations per
+    A.5.3.2-PR10-SPEC.md §4.1.6 implementation discipline:
+    ``list(obs_decision)`` + ``list(exp_narrow)`` produce new
+    list identities).
+
+    Risk #4 per A.5.3.2-PR10-SPEC.md §3.
+    """
+    obs = _build_observation_record(
+        fixture_id=FIX_SINGLE["fixture_id"],
+        prompt=FIX_SINGLE["prompt"],
+        narrower_decision=["forge_ping"],
+        pr20_condition_met=True,
+        collapse_occurred=True,
+        ambiguity_state="single_survivor",
+    )
+    exp = _build_expectation_record(
+        fixture_id=FIX_SINGLE["fixture_id"],
+        prompt=FIX_SINGLE["prompt"],
+        expected_narrow=["forge_ping"],
+    )
+
+    obs_pre = copy.deepcopy(obs)
+    exp_pre = copy.deepcopy(exp)
+
+    report = compare_records(obs, exp)
+
+    # Invariant: inputs byte-identical after the function returns.
+    assert obs == obs_pre, (
+        "observation_record mutated by compare_records — "
+        "PR-10-LOCAL binding statement violated"
+    )
+    assert exp == exp_pre, (
+        "expectation_record mutated by compare_records — "
+        "PR-10-LOCAL binding statement violated"
+    )
+
+    # Defense in depth: mutating the report's contained lists
+    # does NOT propagate back into input records. The report's
+    # ``expected_narrow`` and ``observed_narrow`` lists are
+    # FRESH allocations per §4.1.6 ("Report construction —
+    # fresh-allocated lists"); mutation here would alias back
+    # into inputs only if the implementation skipped the
+    # ``list(...)`` wraps.
+    report["observation"]["observed_narrow"].append("smuggled_tool")
+    report["expectation"]["expected_narrow"].clear()
+
+    assert obs == obs_pre, (
+        "observation_record mutated by report-list mutation — "
+        "report's lists must be fresh allocations per "
+        "A.5.3.2-PR10-SPEC.md §4.1.6 implementation discipline"
+    )
+    assert exp == exp_pre, (
+        "expectation_record mutated by report-list mutation — "
+        "report's lists must be fresh allocations per "
+        "A.5.3.2-PR10-SPEC.md §4.1.6 implementation discipline"
+    )
+
+
+def test_compare_records_does_not_sort_inputs() -> None:
+    """§4.2 binding behavioral commitment
+    (A.5.3.2-PR10-SPEC.md §0):
+
+      The comparator does NOT sort narrower.decision or
+      expected_narrow before comparing — order is meaningful
+      observation/expectation; reordering masks divergence.
+
+    Builds a pair where
+    ``observation_record["narrower"]["decision"]`` and
+    ``expectation_record["expected_narrow"]`` contain identical
+    multi-element lists in DIFFERENT orderings. Asserts the
+    comparator reports ``narrow_diverged=True`` (NOT False —
+    silent sorting would mask the ordering divergence).
+
+    Carrier #10 ("narrower_decision carries the filtered list
+    verbatim") makes ordering meaningful — list-equality
+    preserves it; set-equality or sorted-equality would
+    structurally mask divergence at the chat-handler
+    observation surface where PR14 input order is preserved
+    through PR21.
+
+    Risk #5 per A.5.3.2-PR10-SPEC.md §3 (sort-rejection
+    vector of the §4.2 binding behavioral commitment).
+    """
+    obs = _build_observation_record(
+        fixture_id="fix-pr10-sort-test",
+        prompt="test sort rejection",
+        narrower_decision=["tool_a", "tool_b"],
+        pr20_condition_met=False,
+        collapse_occurred=False,
+        ambiguity_state="multi_survivor",
+    )
+    exp = _build_expectation_record(
+        fixture_id="fix-pr10-sort-test",
+        prompt="test sort rejection",
+        expected_narrow=["tool_b", "tool_a"],  # SAME contents, DIFFERENT order
+    )
+
+    report = compare_records(obs, exp)
+
+    assert report["divergence"]["narrow_diverged"] is True, (
+        "compare_records silently sorted/reordered one or both "
+        "lists before comparison — §4.2 binding behavioral "
+        "commitment violated. Input ordering must be preserved "
+        "verbatim per carrier #10's 'filtered list verbatim' "
+        "requirement at the chat-handler observation surface."
+    )
+
+    # Defense in depth: assert the per-surface contributions
+    # preserve the ORIGINAL input orderings, not a sorted view.
+    assert report["observation"]["observed_narrow"] == ["tool_a", "tool_b"], (
+        "observation.observed_narrow does not preserve input "
+        "ordering — comparator silently sorted/reordered the "
+        "observation list. §4.2 binding behavioral commitment "
+        "violated."
+    )
+    assert report["expectation"]["expected_narrow"] == ["tool_b", "tool_a"], (
+        "expectation.expected_narrow does not preserve input "
+        "ordering — comparator silently sorted/reordered the "
+        "expectation list. §4.2 binding behavioral commitment "
+        "violated."
+    )
