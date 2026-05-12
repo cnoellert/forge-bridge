@@ -141,3 +141,9 @@ resistance class member #9 (fixture-surface-data-discipline;
 """
 
 from __future__ import annotations
+
+FIXTURE: dict = {
+    "fixture_id": "fix-pr13-ordering-divergence",
+    "prompt": "list",
+    "expected_narrow": ["flame_list_libraries", "forge_list_projects"],
+}

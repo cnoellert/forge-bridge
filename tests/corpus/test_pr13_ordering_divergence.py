@@ -92,3 +92,133 @@ References:
 """
 
 from __future__ import annotations
+
+import pathlib
+
+import pytest
+
+from forge_bridge.corpus._compare import compare_records
+from forge_bridge.corpus._seed import drive_seed_fixture
+
+from tests.corpus.fixtures.fix_ordering_divergence import (
+    FIXTURE as FIX_ORDERING_DIVERGENCE,
+)
+
+# Test-internal archaeology surfaces (NOT public APIs) per
+# module-docstring "Test infrastructure import discipline"
+# framing + A.5.3.2-PR13-SPEC.md §4.2.1 site 9.
+from tests.corpus.test_pr9_fixture_integration import (
+    _apply_pr9_patches,
+    _read_records,
+)
+
+
+def test_recomposition_arc_ordering_divergence(
+    clean_rate_limit_state: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Recomposition arc — ordering-divergence pure-isolation case.
+
+    Drives ``fix-pr13-ordering-divergence`` through the full
+    decomposition seam path. The fixture authors
+    ``expected_narrow`` with the SAME set but DIFFERENT
+    sequence as observed arbitration: PR 9 multi-match
+    deterministic outcome (prompt "list" produces
+    ``narrower.decision = ["forge_list_projects",
+    "flame_list_libraries"]``) vs. authored
+    ``expected_narrow = ["flame_list_libraries",
+    "forge_list_projects"]`` (positions swapped).
+
+    The comparator's compare-as-persisted discipline (PR 10
+    §4.2 binding behavioral commitment) detects the
+    ordering-only divergence as ``narrow_diverged=True`` per
+    direct list-equality at ``_compare.py:503``. Carrier #17
+    at use: the DivergenceReport's per-surface partitioning
+    preserves authorship through emission → persistence →
+    readback → join → interpretive comparison; the
+    ordering-divergence vector is identifiable at the
+    structural shape level (``expectation.expected_narrow``
+    vs. ``observation.observed_narrow`` carry distinct
+    sequences with shared membership).
+
+    Pure-isolation property at every dimension: same set,
+    different sequence; no cardinality / partial-set /
+    semantic-normalization / duplicate-handling confound.
+    PR-13-LOCAL pure-isolation discipline binding.
+    """
+    # ── Step 1 of traversal: apply PR 9 monkeypatch suite ──────
+    # Test-internal archaeology surface (NOT a public API).
+    corpus_dir = _apply_pr9_patches(monkeypatch, tmp_path)
+
+    # ── Steps 2-5 of traversal: drive fixture → emission ───────
+    # drive_seed_fixture orchestrates expectation persistence,
+    # chat_handler arbitration, observation emission. The seam
+    # traversal is explicit at the call site — no helper absorbs
+    # the arc (PR-11-LOCAL discipline at gate level per Gate 3
+    # close §3 item 10 + PR 13 framing §5.4 predicted-form 3
+    # suppression).
+    drive_seed_fixture(**FIX_ORDERING_DIVERGENCE)
+
+    # ── Step 6 of traversal: read back persisted records ───────
+    # Test-internal archaeology surface; reads every
+    # capture-*.jsonl record across the corpus dir, skipping
+    # headers.
+    records = _read_records(corpus_dir)
+
+    # ── Step 7 of traversal: partition by fixture_id + record_kind ──
+    # Gate 2 close §2.1 foundational dependencies exercised:
+    # fixture_id joinability (filter step) + record_kind
+    # partitioning (separation step). Call-site awkwardness
+    # (filter + partition explicit at the test) is acceptable
+    # evidence the decomposition boundaries held (PR-11-LOCAL
+    # discipline at gate level).
+    matching = [
+        r for r in records
+        if r.get("fixture_id") == FIX_ORDERING_DIVERGENCE["fixture_id"]
+    ]
+    assert len(matching) == 2, (
+        f"Expected exactly 2 records for "
+        f"{FIX_ORDERING_DIVERGENCE['fixture_id']!r}; got "
+        f"{len(matching)}.\nAll records: {records}"
+    )
+
+    observation = next(r for r in matching if r["record_kind"] == "observation")
+    expectation = next(r for r in matching if r["record_kind"] == "expectation")
+
+    # ── Step 8 of traversal: invoke comparator ─────────────────
+    # The interpretive-read seam. compare_records joins
+    # observation + expectation by fixture_id (Gate 2 close
+    # §2.1) and produces the DivergenceReport per carrier #17.
+    # Direct list-equality at _compare.py:503 detects the
+    # ordering-only divergence; no caller-side sort or
+    # canonicalization per PR 13 framing §5.4 predicted-form 1
+    # suppression (PR 10 §4.2 binding behavioral commitment at
+    # use).
+    report = compare_records(
+        observation_record=observation,
+        expectation_record=expectation,
+    )
+
+    # ── Step 9 of traversal: assertions on DivergenceReport ────
+    # Four-key structural assertion contract — carrier #17 at
+    # use: each authority surface's contribution structurally
+    # identifiable at the report's outer dict shape. The
+    # ordering-divergence vector surfaces at distinct list
+    # values at expectation vs. observation sub-dicts.
+    #
+    # List-equality (NOT set-equality) per PR 13 framing §5.4
+    # predicted-form 2 suppression — set-equality shortcuts
+    # mask the load-bearing ordering-divergence claim. The
+    # comparator detects the divergence; PR 13 assertions read
+    # the four-key shape at full structural fidelity.
+    assert report["fixture_id"] == FIX_ORDERING_DIVERGENCE["fixture_id"]
+    assert report["expectation"]["expected_narrow"] == [
+        "flame_list_libraries",
+        "forge_list_projects",
+    ]
+    assert report["observation"]["observed_narrow"] == [
+        "forge_list_projects",
+        "flame_list_libraries",
+    ]
+    assert report["divergence"]["narrow_diverged"] is True
