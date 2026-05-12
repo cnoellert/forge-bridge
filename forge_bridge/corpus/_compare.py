@@ -411,7 +411,113 @@ def compare_records(
             mismatch or None, missing required fields, wrong
             field types).
     """
-    raise NotImplementedError(
-        "compare_records body lands at Step 3 per "
-        "A.5.3.2-PR10-SPEC.md §6"
-    )
+    # ── Authority pre-check 1: type ──────────────────────────────
+    # Both inputs MUST be dicts. ``None`` / list / str / other
+    # types raise; the comparator's contract is dict-shaped
+    # records, not arbitrary mappings or coerced inputs.
+    if not isinstance(observation_record, dict):
+        raise ComparatorInputError(
+            f"observation_record must be a dict, got "
+            f"{type(observation_record).__name__}"
+        )
+    if not isinstance(expectation_record, dict):
+        raise ComparatorInputError(
+            f"expectation_record must be a dict, got "
+            f"{type(expectation_record).__name__}"
+        )
+
+    # ── Authority pre-check 2: record_kind ───────────────────────
+    # The authority-class boundary. Carrier #17 + the proactive
+    # scope guardrail are enforced at the parameter-name + record-
+    # kind level: ``observation_record`` MUST carry
+    # ``record_kind="observation"``; ``expectation_record`` MUST
+    # carry ``record_kind="expectation"``. Reversed-argument misuse
+    # raises here loudly, NOT silently.
+    obs_kind = observation_record.get("record_kind")
+    if obs_kind != "observation":
+        raise ComparatorInputError(
+            f"observation_record must have "
+            f"record_kind='observation'; got record_kind={obs_kind!r}"
+        )
+    exp_kind = expectation_record.get("record_kind")
+    if exp_kind != "expectation":
+        raise ComparatorInputError(
+            f"expectation_record must have "
+            f"record_kind='expectation'; got record_kind={exp_kind!r}"
+        )
+
+    # ── Authority pre-check 3: fixture_id joinability ────────────
+    # Both records MUST share a non-None ``fixture_id``. The
+    # join key is the Gate 2 close §2.1 foundational dependency —
+    # fixture_id-keyed joinability between observation +
+    # expectation records is operationally verified at PR 9 test 5;
+    # the comparator inherits the dependency as a precondition.
+    obs_fid = observation_record.get("fixture_id")
+    exp_fid = expectation_record.get("fixture_id")
+    if obs_fid is None or exp_fid is None:
+        raise ComparatorInputError(
+            f"fixture_id must be non-None on both records; got "
+            f"observation_record fixture_id={obs_fid!r}, "
+            f"expectation_record fixture_id={exp_fid!r}"
+        )
+    if obs_fid != exp_fid:
+        raise ComparatorInputError(
+            f"fixture_id mismatch: observation_record carries "
+            f"{obs_fid!r}, expectation_record carries {exp_fid!r}"
+        )
+
+    # ── Authority pre-check 4: required-field shapes ─────────────
+    # The comparator's interpretive claim depends on two specific
+    # field paths: ``observation_record["narrower"]["decision"]``
+    # (the runtime narrowing outcome) and
+    # ``expectation_record["expected_narrow"]`` (the authored
+    # expectation). Both MUST exist + be lists. Missing fields
+    # raise loudly; this is NOT a "repair" point per §4.2 binding
+    # behavioral commitment's third operational rejection.
+    narrower = observation_record.get("narrower")
+    if not isinstance(narrower, dict):
+        raise ComparatorInputError(
+            "observation_record missing required field "
+            "'narrower' (dict)"
+        )
+    obs_decision = narrower.get("decision")
+    if not isinstance(obs_decision, list):
+        raise ComparatorInputError(
+            "observation_record missing required field "
+            "'narrower.decision' (list[str])"
+        )
+    exp_narrow = expectation_record.get("expected_narrow")
+    if not isinstance(exp_narrow, list):
+        raise ComparatorInputError(
+            "expectation_record missing required field "
+            "'expected_narrow' (list[str])"
+        )
+
+    # ── Compare-as-persisted divergence computation ──────────────
+    # Direct list-equality. NO sort, NO canonicalization, NO
+    # semantic coercion. Per §4.2 binding behavioral commitment's
+    # first operational rejection (no sort) + second (no string
+    # canonicalization) + fourth (byte-for-byte structural).
+    # Carrier #10's "filtered list verbatim" requirement makes
+    # ordering meaningful — list-equality preserves it.
+    narrow_diverged = obs_decision != exp_narrow
+
+    # ── Report construction — fresh-allocated lists ──────────────
+    # Fresh list allocation per PR-10-LOCAL binding statement:
+    # mutation of the report does not propagate into the input
+    # records. ``list(...)`` is one-level copy (sufficient — the
+    # list elements are strings, immutable). The lists' content +
+    # order are preserved verbatim per §4.2 binding behavioral
+    # commitment; only the container identity is new.
+    return {
+        "fixture_id": obs_fid,
+        "expectation": {
+            "expected_narrow": list(exp_narrow),
+        },
+        "observation": {
+            "observed_narrow": list(obs_decision),
+        },
+        "divergence": {
+            "narrow_diverged": narrow_diverged,
+        },
+    }
