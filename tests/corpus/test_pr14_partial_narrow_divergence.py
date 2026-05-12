@@ -99,3 +99,154 @@ References:
 """
 
 from __future__ import annotations
+
+import pathlib
+
+import pytest
+
+from forge_bridge.corpus._compare import compare_records
+from forge_bridge.corpus._seed import drive_seed_fixture
+
+from tests.corpus.fixtures.fix_partial_narrow_divergence import (
+    FIXTURE as FIX_PARTIAL_NARROW_DIVERGENCE,
+)
+
+# Test-internal archaeology surfaces (NOT public APIs) per
+# module-docstring "Test infrastructure import discipline"
+# framing + A.5.3.2-PR14-SPEC.md §4.2.1 site 9.
+from tests.corpus.test_pr9_fixture_integration import (
+    _apply_pr9_patches,
+    _read_records,
+)
+
+
+def test_recomposition_arc_partial_narrow_divergence(
+    clean_rate_limit_state: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Recomposition arc — partial-set divergence pure-isolation case.
+
+    Drives ``fix-pr14-partial-narrow-divergence`` through the full
+    decomposition seam path. The fixture authors
+    ``expected_narrow`` with the observation's two members at
+    positions 0+1 verbatim PLUS ``forge_ping`` at position 2 as
+    the partial-set extension element (Direction A per framing
+    §5.10): PR 9 multi-match deterministic outcome (prompt
+    "list" produces ``narrower.decision = ["forge_list_projects",
+    "flame_list_libraries"]``) vs. authored ``expected_narrow =
+    ["forge_list_projects", "flame_list_libraries", "forge_ping"]``
+    (authored superset by one element at position 2).
+
+    The comparator's compare-as-persisted discipline (PR 10 §4.2
+    binding behavioral commitment) detects the partial-set
+    divergence as ``narrow_diverged=True`` per direct list-
+    equality at ``_compare.py:503`` (length asymmetry (2 vs 3)
+    + element-membership asymmetry at position 2 both contribute
+    to ``obs_decision != exp_narrow``). Carrier #17 at use: the
+    DivergenceReport's per-surface partitioning preserves
+    authorship through emission → persistence → readback → join
+    → interpretive comparison; the partial-set divergence vector
+    is identifiable at the structural shape level
+    (``expectation.expected_narrow`` has length 3;
+    ``observation.observed_narrow`` has length 2; shared elements
+    at positions 0+1 verbatim).
+
+    Pure-isolation property at every dimension: partial-set
+    only — no ordering / semantic-normalization / duplicate-
+    handling / multi-survivor-cardinality confound.
+    PR-14-LOCAL pure-isolation discipline binding.
+
+    The authored-superset direction (Direction A per framing
+    §5.10) is an affirmative architectural decision —
+    ``forge_ping`` is in the PR 9 reachable-tool set per
+    ``test_pr9_fixture_integration.py:208-213`` but shares no
+    tokens with the prompt ``"list"``; the author asserts "I
+    expected this unrelated tool to survive narrowing,"
+    producing a semantically legible authorial claim orthogonal
+    to prompt tokens. The overlap-interpretation pressure
+    vector is direction-symmetric; Direction A maximizes
+    substrate reuse + single-variable discipline preservation
+    across PR 9 / PR 13 / PR 14 (framing §4.6).
+    """
+    # ── Step 1 of traversal: apply PR 9 monkeypatch suite ──────
+    # Test-internal archaeology surface (NOT a public API).
+    corpus_dir = _apply_pr9_patches(monkeypatch, tmp_path)
+
+    # ── Steps 2-5 of traversal: drive fixture → emission ───────
+    # drive_seed_fixture orchestrates expectation persistence,
+    # chat_handler arbitration, observation emission. The seam
+    # traversal is explicit at the call site — no helper absorbs
+    # the arc (PR-11-LOCAL discipline at gate level per Gate 3
+    # close §3 item 10 + PR 14 framing §5.4 predicted-form 3
+    # suppression).
+    drive_seed_fixture(**FIX_PARTIAL_NARROW_DIVERGENCE)
+
+    # ── Step 6 of traversal: read back persisted records ───────
+    # Test-internal archaeology surface; reads every
+    # capture-*.jsonl record across the corpus dir, skipping
+    # headers.
+    records = _read_records(corpus_dir)
+
+    # ── Step 7 of traversal: partition by fixture_id + record_kind ──
+    # Gate 2 close §2.1 foundational dependencies exercised:
+    # fixture_id joinability (filter step) + record_kind
+    # partitioning (separation step). Call-site awkwardness
+    # (filter + partition explicit at the test) is acceptable
+    # evidence the decomposition boundaries held (PR-11-LOCAL
+    # discipline at gate level).
+    matching = [
+        r for r in records
+        if r.get("fixture_id") == FIX_PARTIAL_NARROW_DIVERGENCE["fixture_id"]
+    ]
+    assert len(matching) == 2, (
+        f"Expected exactly 2 records for "
+        f"{FIX_PARTIAL_NARROW_DIVERGENCE['fixture_id']!r}; got "
+        f"{len(matching)}.\nAll records: {records}"
+    )
+
+    observation = next(r for r in matching if r["record_kind"] == "observation")
+    expectation = next(r for r in matching if r["record_kind"] == "expectation")
+
+    # ── Step 8 of traversal: invoke comparator ─────────────────
+    # The interpretive-read seam. compare_records joins
+    # observation + expectation by fixture_id (Gate 2 close
+    # §2.1) and produces the DivergenceReport per carrier #17.
+    # Direct list-equality at _compare.py:503 detects the
+    # partial-set divergence (length 2 != length 3; element
+    # mismatch at position 2); no caller-side overlap
+    # interpretation per PR 14 framing §5.4 predicted-form 1
+    # suppression (PR 10 §4.2 binding behavioral commitment at
+    # use).
+    report = compare_records(
+        observation_record=observation,
+        expectation_record=expectation,
+    )
+
+    # ── Step 9 of traversal: assertions on DivergenceReport ────
+    # Four-key structural assertion contract — carrier #17 at
+    # use: each authority surface's contribution structurally
+    # identifiable at the report's outer dict shape. The
+    # partial-set divergence vector surfaces at distinct list
+    # lengths at expectation vs. observation sub-dicts (no
+    # partial_match-aware field; no overlap-aware computation;
+    # the structural shape preservation IS the partial-match
+    # disclosure per PR 14 framing §5.4 predicted-form 2
+    # suppression).
+    #
+    # Full-fidelity list assertions (NOT set-equality, NOT
+    # narrow_diverged-only) per PR 14 framing §5.4 predicted-
+    # form 1 suppression — set-equality shortcuts mask the load-
+    # bearing partial-match structural claim; narrow_diverged-
+    # only shortcuts mask the structural-shape disclosure.
+    assert report["fixture_id"] == FIX_PARTIAL_NARROW_DIVERGENCE["fixture_id"]
+    assert report["expectation"]["expected_narrow"] == [
+        "forge_list_projects",
+        "flame_list_libraries",
+        "forge_ping",
+    ]
+    assert report["observation"]["observed_narrow"] == [
+        "forge_list_projects",
+        "flame_list_libraries",
+    ]
+    assert report["divergence"]["narrow_diverged"] is True

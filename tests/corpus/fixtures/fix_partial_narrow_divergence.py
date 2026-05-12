@@ -195,3 +195,13 @@ resistance class member #9 (fixture-surface-data-discipline;
 """
 
 from __future__ import annotations
+
+FIXTURE: dict = {
+    "fixture_id": "fix-pr14-partial-narrow-divergence",
+    "prompt": "list",
+    "expected_narrow": [
+        "forge_list_projects",
+        "flame_list_libraries",
+        "forge_ping",
+    ],
+}
