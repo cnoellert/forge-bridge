@@ -52,7 +52,7 @@ Failure modes that violate this commitment get `fbridge doctor` polished in-flig
 | DIAG | Failure mode |
 |---|---|
 | DIAG-04 | [Chat returns "Response timed out"](#failure-mode-chat-returns-response-timed-out) |
-| DIAG-03 | [Chat hangs ~75 seconds, then errors](#failure-mode-chat-hangs-then-errors) *(forthcoming)* |
+| DIAG-03 | [Chat hangs ~75 seconds, then errors](#failure-mode-chat-hangs-then-errors) |
 | DIAG-01 | [Flame hook unreachable](#failure-mode-flame-hook-unreachable) *(forthcoming)* |
 | DIAG-02 | [Postgres restart or unavailable](#failure-mode-postgres-restart-or-unavailable) *(forthcoming)* |
 
@@ -155,6 +155,128 @@ That budget was calibrated for a warm `qwen2.5-coder:32b` — emits ~50 tokens p
 - `.planning/seeds/SEED-DEFAULT-MODEL-BUMP-V1.4.x.md` — full empirical archaeology and the v1.6+ trigger conditions for the model bump.
 - `forge_bridge/llm/router.py` — `_DEFAULT_LOCAL_MODEL` definition (line 113) and the `max_seconds` budget plumbing.
 - `forge_bridge/console/handlers.py:1294` — chat-handler outer 125s `asyncio.wait_for` cap.
+
+---
+
+## Failure mode: Chat hangs ~75 seconds, then errors
+
+**Maps to:** DIAG-03
+**Surfaces from:** Recipe 1 Step 8 (smoke-test), Recipe 4 Step 3, or the Artist Console chat tab — typically after a network change, an Ollama restart, or a misconfigured `FORGE_LOCAL_LLM_URL`.
+
+### Symptom
+
+A chat call hangs for ~75 seconds — no streaming output, no partial response — then returns:
+
+> **Chat error — check console for details.**
+
+HTTP 500. The Artist Console renders it as a single red error line. The chat history shows your prompt and the error; nothing in between.
+
+The ~75-second wait is the dead giveaway. DIAG-04 (cold start) waits 60-125 seconds for a *responsive* model that's just slow. DIAG-03 waits ~75 seconds because the OS gave up trying to *connect* to a host that isn't there.
+
+**This usually means Ollama is down, or the configured URL is pointing somewhere Ollama isn't — not that forge-bridge itself is broken.**
+
+### What `fbridge doctor` shows
+
+Doctor reports the LLM backend as degraded:
+
+```text
+$ fbridge doctor
+console_port            ok     bound on :9996
+instance_identity.execution_log    ok
+instance_identity.manifest_service ok
+flame_bridge            ok     reachable on :9999
+ws_server               ok     reachable on :9998
+storage_callback        ok
+llm_backend.local       warn   model=qwen2.5-coder:32b
+jsonl_parseability      ok
+daemon_state            ok
+```
+
+The key row is `llm_backend.local: warn`. forge-bridge classifies LLM backends as degraded-tolerant — the bridge keeps running for non-chat surfaces (Read API, Flame hook, Artist Console views, MCP tools) even when the LLM is unreachable. Chat is the surface that breaks first.
+
+The detail field currently reports `model=<name>` rather than the reachability state. That's a known gap (a follow-up Phase 23 commit will polish doctor to surface `reachable at <url>` vs `unreachable at <url>` directly). For now, the `warn` row plus the ~75-second hang symptom is your signal that Ollama isn't responding at the configured URL.
+
+If `llm_backend.local: ok` *and* you're seeing the symptom, this is a different failure mode — most likely DIAG-04. The ~75-second hang is structural to OS-level connect timeouts; a budget-exceeded failure on a reachable LLM doesn't look like this.
+
+### Diagnosis
+
+Three causes account for nearly all occurrences:
+
+1. **Ollama isn't running** on the host `FORGE_LOCAL_LLM_URL` points at. The daemon stopped, the box restarted, or it never started.
+2. **`FORGE_LOCAL_LLM_URL` points at the wrong host.** Studios that run Ollama on a dedicated LLM service host (so Flame can keep the workstation GPU) sometimes drift between hostnames, ports, or VPN states.
+3. **The LLM host is reachable but the port isn't.** Firewall, security group, or Ollama bound to `127.0.0.1` instead of `0.0.0.0` on a remote host.
+
+forge-bridge itself is healthy. It's faithfully waiting on a TCP connect that the OS will eventually give up on.
+
+### Recovery
+
+**Fast path (under 2 minutes):**
+
+1. **Confirm the configured URL:**
+
+    ```bash
+    grep FORGE_LOCAL_LLM_URL /etc/forge-bridge/forge-bridge.env
+    ```
+
+    Note the host and port (default is `http://localhost:11434/v1`).
+
+2. **Probe Ollama directly from the bridge host:**
+
+    ```bash
+    curl -s --max-time 5 http://YOUR-LLM-HOST:11434/api/version
+    ```
+
+    - **JSON with a `version` field returns in <1 s** → Ollama is up. The bridge env points elsewhere or the bridge daemon needs a restart to pick up an env change. Skip to step 4.
+    - **`curl: (7) Failed to connect`** → Ollama isn't listening at that host:port. Continue to step 3.
+    - **`curl: (28) timed out`** → host is unreachable (DNS, firewall, VPN). Fix the network path, then re-probe.
+
+3. **Start Ollama if it's stopped:**
+
+    - **macOS:** `open -a Ollama` (or relaunch the Ollama menu-bar app)
+    - **Linux:** `sudo systemctl start ollama`
+
+    Re-run the `curl` probe from step 2. Once it returns `version` JSON, Ollama is up.
+
+4. **Restart the bridge daemon** so the LLM client reconnects:
+
+    ```bash
+    sudo systemctl restart forge-bridge          # Linux
+    sudo launchctl kickstart -k system/com.cnoellert.forge-bridge   # macOS
+    ```
+
+    Wait ~15 seconds for the daemon to come back. Run `fbridge doctor` — `llm_backend.local` should now report `ok`.
+
+5. **Resend the chat prompt.** The first call is a cold start (30-60 s — see [Failure mode: Chat returns "Response timed out"](#failure-mode-chat-returns-response-timed-out)); the second call should land sub-10 s.
+
+### Verification
+
+You're recovered when **all three** signals hold:
+
+- `curl -s http://YOUR-LLM-HOST:11434/api/version` returns JSON with a `version` field.
+- `fbridge doctor` reports `llm_backend.local: ok`.
+- A chat call from the Artist Console returns a natural-language response (allow up to 60 s for the first call; expect sub-10 s after).
+
+### If you arrived here while following...
+
+- **Recipe 1 Step 3 (Verify Ollama reachability).** This is the install-time variant of the same probe. If `curl` to `:11434/api/version` returns a connection error, fix the network path / start the Ollama daemon, then continue Recipe 1 from Step 3.
+- **Recipe 1 Step 8 (smoke-test the surfaces).** A chat hang during the smoke test usually means Ollama wasn't running when the bridge started. Step 4 of this section's Recovery (restart the bridge) is what closes the loop.
+- **Recipe 4 Step 3 (Drive Flame from chat).** Same recovery path — Ollama needs to be reachable before chat-driven Flame automation works.
+
+### Why this happens
+
+The chat path calls `LLMRouter.complete_with_tools()` → `OllamaToolAdapter.send_turn()` → `ollama.AsyncClient` → `httpx` → the OS-level TCP connect. When the target host is unreachable on IPv4, the OS waits for the default connect timeout to expire before reporting failure — roughly 75 seconds on macOS, varying on Linux depending on `tcp_syn_retries`. No application-level connect-timeout is configured today: the lazy-construction site at `forge_bridge/llm/router.py:867-870` builds the client with default httpx transport settings.
+
+The router catches the eventual connect error and raises `LLMToolError`; the chat handler at `forge_bridge/console/handlers.py:1336` converts that to HTTP 500 and the user-facing "Chat error — check console for details" message.
+
+A 5-second application-level connect-timeout would convert this 75-second silent wait into a 5-second explicit "Ollama unreachable at `<url>`" error. The fix is in scope for v1.5 chat-reliability polish but lives outside Phase 23's documentation scope. Trigger conditions and implementation sketch are in `.planning/seeds/SEED-FAST-FAIL-LLM-CONNECT-TIMEOUT-V1.5+.md`. A broader audit of every external dependency's connect-timeout config (Postgres, Anthropic, Flame, state_ws) is captured in `SEED-EXTERNAL-DEPENDENCY-PREFLIGHT-PROBES-V1.5+.md`.
+
+### Cross-references
+
+- Recipe 1 Step 3 — install-time Ollama reachability probe (the same `curl` used here for recovery).
+- `.planning/seeds/SEED-FAST-FAIL-LLM-CONNECT-TIMEOUT-V1.5+.md` — the application-level connect-timeout fix that would convert the 75 s wait into a 5 s explicit error.
+- `.planning/seeds/SEED-EXTERNAL-DEPENDENCY-PREFLIGHT-PROBES-V1.5+.md` — broader audit of every external-dependency connect-timeout site.
+- `forge_bridge/llm/router.py:844-871` — `_get_local_native_client` lazy-construction site (no connect-timeout config today).
+- `forge_bridge/console/handlers.py:1336` — chat-handler `LLMToolError` → HTTP 500 path.
 
 ---
 
