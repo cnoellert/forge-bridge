@@ -1,51 +1,26 @@
-# forge-bridge
+# What is forge-bridge?
 
-**forge-bridge** is a protocol-agnostic communication middleware for post-production pipelines. It enables any piece of software — Flame, Maya, editorial systems, shot tracking databases, AI models, custom scripts — to communicate through a shared, semantically-rich vocabulary.
+forge-bridge is middleware for post-production pipelines — a protocol-agnostic communication bus that lets different tools speak a shared operational language. Flame, Maya, editorial systems, shot-tracking databases, AI models, and custom scripts can all connect to it. None of them needs to know anything about the others.
 
-forge-bridge is not a Flame utility. It is infrastructure. Flame is one endpoint. Everything else is another.
+forge-bridge is not a Flame utility. Flame is one endpoint. Everything else is another.
 
----
+The core idea is simple: define a canonical vocabulary once — projects, sequences, shots, versions, traits, relationships — then let each connected system map its native concepts onto that vocabulary through a thin adapter layer. Once two systems both speak bridge, they can communicate without custom point-to-point integration code.
 
-## Vision
+The five primary surfaces — Artist Console, CLI, MCP server, chat endpoint, and Flame hook — are not separate tools. They are different interaction lenses over the same operational substrate.
 
-Modern post-production involves many disparate software systems that have no native way to talk to each other. A "shot" in Flame, a "clip" in Resolve, an "entity" in ShotGrid, a "sequence" in an NLE — these are all pointing at the same real-world thing. forge-bridge holds the map and carries the messages.
+- The CLI is precise and scriptable.
+- The chat endpoint is intent-driven and conversational.
+- The Artist Console is operational and visual.
+- MCP exposes the system to external AI consumers.
+- The Flame hook embeds bridge directly into artist workflow.
 
-The core insight: define a canonical vocabulary once. Each connected system provides a thin adapter that maps its native concepts to bridge's language. After that, any two systems that both speak bridge can communicate without knowing anything about each other.
+Each surface optimizes for a different mode of interaction while operating against the same underlying model.
 
----
+## Relationship to projekt-forge
 
-## Architecture
+forge-bridge is the infrastructure layer; projekt-forge is the first first-party consumer built on top of it.
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                      forge-bridge                        │
-│                                                         │
-│   ┌─────────────┐    ┌──────────────┐    ┌──────────┐  │
-│   │  Vocabulary │    │  Dependency  │    │ Channel  │  │
-│   │   (canon.   │    │    Graph     │    │ Manager  │  │
-│   │  language)  │    │  (auto-built │    │  (sync + │  │
-│   │             │    │  from data)  │    │  events) │  │
-│   └─────────────┘    └──────────────┘    └──────────┘  │
-│                                                         │
-└──────┬──────────────────┬──────────────────┬───────────┘
-       │                  │                  │
-  ┌────┴────┐        ┌────┴────┐        ┌────┴────┐
-  │  Flame  │        │  Maya   │        │   AI /  │
-  │Endpoint │        │Endpoint │        │   LLM   │
-  └─────────┘        └─────────┘        └─────────┘
-```
-
-### Current Implementation (Phase 1)
-
-The current implementation is the **Flame endpoint** — an HTTP bridge that allows external processes to execute Python code inside a running Flame instance, and receive results back.
-
-This consists of two parts:
-
-**Flame-side hook** (`flame_hooks/forge_bridge/scripts/forge_bridge.py`)
-An HTTP server running inside Flame on port 9999. Accepts Python code via `POST /exec`, executes it on Flame's Qt main thread via `schedule_idle_event`, and returns stdout/stderr/result as JSON.
-
-**MCP client layer** (`forge_bridge/`)
-A [Model Context Protocol](https://modelcontextprotocol.io) server that wraps the bridge's HTTP interface as structured tools, making the Flame Python API accessible to LLM agents.
+projekt-forge pins specific forge-bridge versions and builds production workflows against the stable vocabulary and runtime surfaces bridge provides. The split is intentional: forge-bridge stays generic infrastructure, while consumer-specific workflow behavior lives downstream.
 
 ---
 
@@ -228,14 +203,6 @@ forge-bridge/
 - [Architecture](docs/ARCHITECTURE.md) — Design decisions and system overview  
 - [API Reference](docs/API.md) — HTTP API for the Flame bridge endpoint
 - [Writing Endpoints](docs/ENDPOINTS.md) — How to connect new software to bridge
-
----
-
-## Relationship to projekt-forge
-
-forge-bridge is extracted from [projekt-forge](https://github.com/cnoellert/projekt-forge), which is the project management frontend for Flame-based pipelines. projekt-forge creates and manages projects, folder structures, and pipeline configurations.
-
-forge-bridge is the communication infrastructure that projekt-forge and other tools connect to. It is developed and versioned independently so it can serve as a stable platform for any number of tools without being coupled to any single one.
 
 ---
 
