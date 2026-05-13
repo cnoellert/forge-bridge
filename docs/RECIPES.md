@@ -267,10 +267,10 @@ You'd reach for this recipe when you want to understand operationally what the s
 
    ```bash
    fbridge actions | grep <name>
-   fbridge run forge_manifest_read | jq '.tools[] | select(.name == "<name>")._meta'
+   fbridge run forge_manifest_read --json | jq '.result.data.tools[] | select(.name == "<name>")'
    ```
 
-   You'll see `forge-bridge/origin: synthesized`, a `code_hash`, `synthesized_at` timestamp, `version`, and `observation_count: 3` matching the threshold that triggered synthesis.
+   You'll see `origin: "synthesized"`, a `code_hash`, `synthesized_at` timestamp, `version`, and `observation_count: 3` matching the threshold that triggered synthesis. (Recipe 6 walks the full manifest-inspection surface — this step's invocation is the minimum to confirm the new tool landed.)
 
 ### Verification
 
