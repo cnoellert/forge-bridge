@@ -106,27 +106,75 @@ You're done with this recipe when **all four** of these signals are green:
 **Requirement:** RECIPES-02
 **Outcome:** Claude Desktop (or another MCP-compliant client) discovers forge-bridge's tool catalogue and can invoke `forge_*` and `flame_*` tools from inside a conversation.
 
-*(Scaffold — full text forthcoming in Phase 22.)*
-
 ### When to use this
 
 You have a healthy local forge-bridge install and want Claude Desktop (or another MCP-compliant client — Cursor, Gemini CLI) to discover bridge's tool catalogue and let an external agent operate against it.
 
+This is the most common second step after a fresh install. Once Claude Desktop sees your bridge, you can describe pipeline tasks in natural language and let Claude pick the right tools — query staged operations, read the manifest, drive synthesized tools — without leaving the conversation.
+
 ### What this recipe doesn't cover
 
-*(To be authored — anticipated: Claude Desktop usage tutorials, MCP protocol theory, and multi-client config patterns. Those live upstream in Claude Desktop's own docs and the [MCP spec](https://modelcontextprotocol.io); this recipe stays focused on wiring an already-installed bridge into an already-installed client.)*
+- **Using Claude Desktop itself.** This recipe assumes you have it installed, signed in, and know the basics of starting a conversation. Anthropic's [Claude Desktop docs](https://claude.ai/download) are the reference.
+- **MCP protocol theory.** The wiring here is the *minimum* you need to make a connection; the [MCP spec](https://modelcontextprotocol.io) is the reference for the protocol itself.
+- **Multi-client setups.** Cursor, Gemini CLI, and other MCP clients follow the same pattern — config file location and JSON key names differ. This recipe walks the Claude Desktop path; treat it as a template.
+- **Streamable-HTTP transport.** The MCP HTTP endpoint at `http://localhost:9997/mcp` is reachable, but Claude Desktop's HTTP-transport config story is still moving — stdio is the universal path and the one this recipe walks. Check Claude Desktop's current release notes for HTTP-transport syntax if you want to use that endpoint instead.
 
 ### Prerequisites
 
-*(To be authored — anticipated: completed Recipe 1; Claude Desktop installed; a decision on stdio vs. streamable-HTTP transport.)*
+- A completed [Recipe 1](#recipe-1-first-time-setup): bridge is installed, `fbridge doctor` exits 0, and the `forge` conda env contains the CLI.
+- Claude Desktop installed and signed in.
+- The **absolute path** to your `fbridge` binary inside the conda env. Find it with `which fbridge` (look for something like `/Users/you/miniconda3/envs/forge/bin/fbridge` on macOS or `/home/you/miniconda3/envs/forge/bin/fbridge` on Linux). Claude Desktop does **not** inherit your shell's `$PATH`, so an absolute path is essential.
+- About 5 minutes, including a Claude Desktop restart.
 
 ### Steps
 
-*(To be authored — anticipated: locate the Claude Desktop MCP config file; add the forge-bridge entry pointing at `fbridge mcp stdio` or the streamable-HTTP endpoint at `http://localhost:9997/mcp`; restart Claude Desktop; verify tool discovery from inside a Claude Desktop conversation.)*
+1. **Find your Claude Desktop MCP config file.** It lives at:
+   - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+   - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+   - **Linux:** `~/.config/Claude/claude_desktop_config.json`
+
+   If the file doesn't exist, create it with `{}` as the body. Claude Desktop reads it once at startup.
+
+2. **Add the forge-bridge MCP entry.** Merge this into the file, preserving any other `mcpServers` entries already there:
+
+   ```json
+   {
+     "mcpServers": {
+       "forge-bridge": {
+         "command": "/absolute/path/to/conda/envs/forge/bin/fbridge",
+         "args": ["mcp", "stdio"]
+       }
+     }
+   }
+   ```
+
+   Substitute the path from your `which fbridge` output. The `mcp stdio` subcommand starts the FastMCP stdio transport — the surface every MCP client expects.
+
+3. **Validate the JSON.** A trailing comma or a missing brace silently breaks the entire config and Claude Desktop will load with **no** MCP servers visible. Run `python -m json.tool < "$HOME/Library/Application Support/Claude/claude_desktop_config.json" > /dev/null` (substitute the right path on Linux / Windows); a clean exit means the file parses.
+
+4. **Fully quit Claude Desktop.** Cmd-Q on macOS, or "Quit Claude" from the menu — closing the window is not enough. The config is only read at startup.
+
+5. **Relaunch Claude Desktop and confirm the bridge is connected.** Open a new conversation. The MCP indicator in the chat input bar (a hammer / tools icon in recent versions) should expand to show `forge-bridge` among the connected servers, with `forge_*` and `flame_*` tools listed underneath.
 
 ### Verification
 
-*(To be authored — anticipated: Claude Desktop's tool picker lists `forge_*` and `flame_*` tools; a sanity-check tool invocation returns a structured response.)*
+You're done when **all three** signals are green:
+
+- The MCP indicator in Claude Desktop shows `forge-bridge` as connected (not "error", "disconnected", or "not running").
+- The tool list under that server includes at least `forge_list_projects`, `forge_list_shots`, `forge_manifest_read`, and `flame_ping`.
+- You can ask Claude something like "list the projects in forge-bridge" and the response shows Claude invoking `forge_list_projects` and reporting back its result (an empty list is still a valid result — what matters is that the tool ran).
+
+### Common pitfalls
+
+- **`command` resolved via `$PATH` instead of absolute path.** Claude Desktop launches the MCP command without your shell environment — `fbridge` alone usually fails to start with a silent error. Always use the absolute path from `which fbridge`.
+- **JSON syntax errors silently disable all MCP servers.** A trailing comma, a missing brace, or an extra quote breaks the entire config — not just the offending server entry. Validate with `python -m json.tool` after every edit.
+- **"Closing the window" instead of fully quitting.** macOS Claude Desktop keeps running in the background when you close the window. Cmd-Q (or "Quit Claude" from the menu) is required to reload the config.
+- **Conda env not active when running `which fbridge`.** If you forget to `conda activate forge` before running `which fbridge`, you'll get the wrong path (or no path at all). Activate the env first.
+- **Bare `python -m forge_bridge` as the command.** This worked in pre-v1.4.x configs but now prints help and exits — the canonical invocation is `fbridge mcp stdio` (or `python -m forge_bridge mcp stdio` if you prefer the package-relative form).
+
+### Next
+
+[Recipe 3: Watch a tool get synthesized](#recipe-3-watch-a-tool-get-synthesized) — with Claude Desktop wired in, the natural next step is driving workflows that trigger the learning pipeline and observing a tool promotion end-to-end.
 
 ---
 
