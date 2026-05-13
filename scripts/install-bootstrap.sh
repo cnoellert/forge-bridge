@@ -164,19 +164,51 @@ align_pg_hba() {
         return 1
     fi
 
-    # Check if already aligned — idempotency wins.
-    if grep -qE "^host[[:space:]]+all[[:space:]]+all[[:space:]]+127\.0\.0\.1/32[[:space:]]+${auth}" "$pg_hba"; then
-        echo "[forge-bridge] pg_hba already aligned to ${auth}"
+    # Ownership boundary (Phase 20.1 brief v2 §A7):
+    #   The installer owns ONLY the forge-bridge managed block in
+    #   pg_hba.conf (host all forge 127.0.0.1/32 $METHOD). It does NOT
+    #   modify generic 'host all all' lines, IPv6 rules (::1/128),
+    #   replication rules, remote-access rules, or any other pg_hba
+    #   entries. The managed block is marker-delimited so reruns
+    #   deterministically remove the prior block and append exactly
+    #   one fresh block — no other lines drift.
+    #
+    # Unix-socket-only ownership for bootstrap probes:
+    #   All Postgres probing during bootstrap (password_encryption
+    #   detection via probe_pg_auth, role/db existence checks) uses
+    #   `sudo -u postgres psql` over the LOCAL UNIX SOCKET — never
+    #   `-h localhost` — because TCP routes through the very pg_hba
+    #   surface being aligned. The unix socket uses peer auth and
+    #   bypasses pg_hba entirely, breaking the chicken-and-egg.
+
+    # Idempotency check: is the managed block already at this auth?
+    local existing
+    existing="$(awk '
+        /# BEGIN forge-bridge managed localhost auth/,/# END forge-bridge managed localhost auth/ {
+            print
+        }
+    ' "$pg_hba")"
+
+    if echo "$existing" | grep -qE "^host[[:space:]]+all[[:space:]]+forge[[:space:]]+127\.0\.0\.1/32[[:space:]]+${auth}([[:space:]]|$)"; then
+        echo "[forge-bridge] pg_hba forge-bridge managed block already aligned to ${auth}"
         return 0
     fi
 
-    echo "[forge-bridge] aligning pg_hba auth method to ${auth}"
-    # Backup (T-20.1-17), then edit lines matching the localhost rules.
+    echo "[forge-bridge] aligning pg_hba forge-bridge managed block to ${auth}"
+
+    # Backup before mutation (T-20.1-17 catch).
     sudo cp "$pg_hba" "${pg_hba}.bak.$(date +%s)"
-    sudo sed -i.tmp -E \
-        "s|^(host[[:space:]]+all[[:space:]]+all[[:space:]]+(127\.0\.0\.1/32|::1/128)[[:space:]]+).*|\1${auth}|g" \
-        "$pg_hba"
+
+    # Step 1: remove any existing managed block (deterministic on reruns).
+    sudo sed -i.tmp '/# BEGIN forge-bridge managed localhost auth/,/# END forge-bridge managed localhost auth/d' "$pg_hba"
     sudo rm -f "${pg_hba}.tmp"
+
+    # Step 2: append fresh managed block.
+    sudo tee -a "$pg_hba" >/dev/null <<HBA
+# BEGIN forge-bridge managed localhost auth
+host    all    forge    127.0.0.1/32    ${auth}
+# END forge-bridge managed localhost auth
+HBA
 
     sudo -u postgres psql -c "SELECT pg_reload_conf();" >/dev/null
 }
@@ -340,19 +372,54 @@ install_env_file() {
 
 # ── LINUX: SYSTEMD UNITS ──────────────────────────────────────────────────────
 install_linux_units() {
-    echo "[forge-bridge] installing systemd units"
-    sudo cp "${REPO_ROOT}/packaging/systemd/forge-bridge-server.service" /etc/systemd/system/
-    sudo cp "${REPO_ROOT}/packaging/systemd/forge-bridge.service" /etc/systemd/system/
-    substitute_placeholders /etc/systemd/system/forge-bridge-server.service
-    substitute_placeholders /etc/systemd/system/forge-bridge.service
-    sudo systemctl daemon-reload
-    echo "[forge-bridge] enabling + starting forge-bridge-server.service"
-    sudo systemctl enable --now forge-bridge-server.service
+    echo "[forge-bridge] installing systemd units (idempotent; diff-before-restart)"
+    local server_changed=0
+    local console_changed=0
+
+    for unit in forge-bridge-server.service forge-bridge.service; do
+        local src="${REPO_ROOT}/packaging/systemd/${unit}"
+        local dest="/etc/systemd/system/${unit}"
+        local rendered; rendered="$(mktemp)"
+        sed -e "s|__SUDO_USER__|${SUDO_USER}|g" \
+            -e "s|__CONDA_BASE__|${CONDA_BASE}|g" \
+            -e "s|__REPO_ROOT__|${REPO_ROOT}|g" \
+            "$src" > "$rendered"
+        if sudo diff -q "$rendered" "$dest" >/dev/null 2>&1; then
+            echo "[forge-bridge] ${unit} unchanged — skipping"
+        else
+            sudo cp "$rendered" "$dest"
+            echo "[forge-bridge] ${unit} installed/updated"
+            case "$unit" in
+                forge-bridge-server.service) server_changed=1 ;;
+                forge-bridge.service)        console_changed=1 ;;
+            esac
+        fi
+        rm -f "$rendered"
+    done
+
+    if [ "$server_changed" -eq 1 ] || [ "$console_changed" -eq 1 ]; then
+        sudo systemctl daemon-reload
+    fi
+
+    # Enable + start (idempotent on already-enabled-and-running units;
+    # no-op restart on rerun when content is unchanged).
+    sudo systemctl enable --now forge-bridge-server.service >/dev/null
     if [ "$MCP_ONLY" = "1" ]; then
         echo "[forge-bridge] --mcp-only — bus only; skipping forge-bridge.service start"
     else
-        echo "[forge-bridge] enabling + starting forge-bridge.service"
-        sudo systemctl enable --now forge-bridge.service
+        sudo systemctl enable --now forge-bridge.service >/dev/null
+    fi
+
+    # Restart only units whose content actually changed. Bus first to
+    # maintain forge-bridge.service Requires=forge-bridge-server.service
+    # ordering (console restart picks up freshly-restarted bus).
+    if [ "$server_changed" -eq 1 ]; then
+        echo "[forge-bridge] forge-bridge-server.service content changed — restarting"
+        sudo systemctl restart forge-bridge-server.service
+    fi
+    if [ "$console_changed" -eq 1 ] && [ "$MCP_ONLY" != "1" ]; then
+        echo "[forge-bridge] forge-bridge.service content changed — restarting"
+        sudo systemctl restart forge-bridge.service
     fi
 }
 
