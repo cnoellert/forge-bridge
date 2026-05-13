@@ -33,7 +33,7 @@ Recipes are not replacement reference material — they lean on [`INSTALL.md`](I
 |---|---|
 | RECIPES-01 | [Recipe 1: First-time setup](#recipe-1-first-time-setup) |
 | RECIPES-02 | [Recipe 2: Wire Claude Desktop to your bridge](#recipe-2-wire-claude-desktop-to-your-bridge) |
-| RECIPES-03 | [Recipe 3: Watch a tool get synthesized](#recipe-3-watch-a-tool-get-synthesized) |
+| RECIPES-03 | [Recipe 3: Observe the synthesis pipeline operate](#recipe-3-observe-the-synthesis-pipeline-operate) |
 | RECIPES-04 | [Recipe 4: Drive Flame from chat](#recipe-4-drive-flame-from-chat) |
 | RECIPES-05 | [Recipe 5: Approve a staged operation](#recipe-5-approve-a-staged-operation) |
 | RECIPES-06 | [Recipe 6: Inspect the synthesis manifest](#recipe-6-inspect-the-synthesis-manifest) |
@@ -174,32 +174,125 @@ You're done when **all three** signals are green:
 
 ### Next
 
-[Recipe 3: Watch a tool get synthesized](#recipe-3-watch-a-tool-get-synthesized) — with Claude Desktop wired in, the natural next step is driving workflows that trigger the learning pipeline and observing a tool promotion end-to-end.
+[Recipe 3: Observe the synthesis pipeline operate](#recipe-3-observe-the-synthesis-pipeline-operate) — with Claude Desktop wired in, the natural next step is making the synthesis pipeline's behavior visible end-to-end.
 
 ---
 
-## Recipe 3: Watch a tool get synthesized
+## Recipe 3: Observe the synthesis pipeline operate
 
 **Requirement:** RECIPES-03
-**Outcome:** you observe a synthesized tool's full lifecycle — from execution-log threshold crossing through LLM synthesis to a registered, callable tool — and understand the provenance recorded on it.
-
-*(Scaffold — full text forthcoming in Phase 22.)*
+**Outcome:** you can observe every stage of the synthesis pipeline on a stock install — execution log, threshold crossing, LLM generation, watcher registration, manifest publication — and you know which surfaces reveal what.
 
 ### When to use this
 
-You're using bridge in daily VFX work, the learning pipeline has observed enough repeated patterns to promote them to synthesized tools, and you want to watch a promotion happen end-to-end — from execution-log threshold crossing through LLM synthesis to a registered tool callable via MCP.
+forge-bridge ships the synthesis pipeline and the persistence substrate; a *consumer application* is responsible for recording execution patterns into that substrate. In production, [projekt-forge](https://github.com/cnoellert/projekt-forge) plays this role — its tools call `ExecutionLog.record(code, intent)` during real Flame work, and the pipeline reacts. This recipe uses a small demo driver so you can observe the pipeline directly on a stock install, without depending on a consumer.
+
+You'd reach for this recipe when you want to understand operationally what the synthesis pipeline does — which files it writes, which thresholds it watches, which logs surface which events — so that when synthesis fires during real work, you know how to read it.
+
+### What this recipe doesn't cover
+
+- **Tuning the synthesis prompt or the LLM model.** The synthesizer ships with its own system prompt and uses `qwen2.5-coder:32b` for sensitive routing. Modifying either is internal-development territory, not a daily operator workflow.
+- **Pre-synthesis hooks.** The `pre_synthesis_hook` extension point exists for consumers to inject domain context into the synthesis prompt; that's consumer-side configuration, out of scope here.
+- **Debugging failed synthesis.** When synthesis errors out (LLM unreachable, syntax error in output, safety check fails), the daemon logs a `WARNING: Synthesis failed: <reason>`. Recovery and tuning belong in `docs/TROUBLESHOOTING.md` — forthcoming under Phase 23.
 
 ### Prerequisites
 
-*(To be authored — anticipated: completed Recipe 1; Ollama reachable for synthesis; a workload that generates repeated executions in `~/.forge-bridge/executions.jsonl`; awareness of the probation system.)*
+- A completed [Recipe 1](#recipe-1-first-time-setup): bridge is installed, both daemons are running, `fbridge doctor` exits 0.
+- Ollama reachable and `qwen2.5-coder:32b` pulled. Synthesis is an LLM call; if `fbridge doctor` reports `llm_router: degraded`, fix that first.
+- The `forge` conda env active in the shell you'll run the driver from (`conda activate forge`) — the driver imports `forge_bridge` directly.
+- About 5 minutes. The first synthesis call may take 30-60s as Ollama loads the model.
 
 ### Steps
 
-*(To be authored — anticipated: tail the execution log; tail the synthesizer log; observe a promotion event in the Artist Console's manifest view; inspect the resulting synthesized tool entry; confirm the tool is callable via `fbridge run <tool_name>` or MCP.)*
+1. **Set up two observability terminals.** You'll watch the execution log and the daemon log in parallel.
+
+   ```bash
+   # Terminal A — execution log (operator-facing JSONL):
+   tail -f ~/.forge-bridge/executions.jsonl
+   ```
+
+   ```bash
+   # Terminal B — daemon log (synthesizer events surface here):
+   sudo journalctl -u forge-bridge -f         # Linux
+   tail -f /var/log/forge-bridge/console.log    # macOS
+   ```
+
+2. **Save and run the demo driver.** Save this to a temp file (e.g. `/tmp/synth_demo.py`) and run it from the `forge` env. The promotion threshold defaults to **3** observations of the same normalized pattern; override via `FORGE_PROMOTION_THRESHOLD` in `/etc/forge-bridge/forge-bridge.env`.
+
+   ```python
+   import asyncio
+   from forge_bridge.learning.execution_log import ExecutionLog, normalize_and_hash
+   from forge_bridge.learning.synthesizer import SkillSynthesizer
+
+   log, synth = ExecutionLog(), SkillSynthesizer()
+   intent = "set the project's frame rate"
+
+   # Three calls with different integer literals. AST normalization strips
+   # the literals, so all three count as observations of the SAME pattern.
+   for code in [
+       "flame.projects.current_project.frame_rate = 24",
+       "flame.projects.current_project.frame_rate = 25",
+       "flame.projects.current_project.frame_rate = 30",
+   ]:
+       promoted = log.record(code, intent=intent)
+       _, h = normalize_and_hash(code)
+       count = log.get_count(h)
+       print(f"  recorded: count={count}  promoted={promoted}")
+       if promoted:
+           path = asyncio.run(synth.synthesize(raw_code=code, intent=intent, count=count))
+           print(f"  synthesized: {path}")
+           log.mark_promoted(h)
+   ```
+
+   ```bash
+   conda activate forge
+   python /tmp/synth_demo.py
+   ```
+
+3. **Watch the lifecycle unfold.** Across the two observability terminals you should see, in order:
+   - **Terminal A (execution log):** three new JSONL rows appear, one per `record()` call. The three rows share the same `code_hash` — AST normalization at work.
+   - **Driver stdout:** `promoted=False` on the first two calls, `promoted=True` on the third. After the True, `synthesized: <path>` prints with a path under `~/.forge-bridge/synthesized/`.
+   - **Terminal B (daemon log):** the watcher picks up the new file and registers it. Expect a few seconds of lag — the watcher polls the synthesized directory at intervals.
+
+4. **Inspect the synthesized tool on disk.**
+
+   ```bash
+   ls -la ~/.forge-bridge/synthesized/
+   head -40 ~/.forge-bridge/synthesized/<name>.py
+   ```
+
+   The file is a Python module with a single decorated function — that's what the watcher registers as an MCP tool.
+
+5. **Confirm the tool is registered and inspect its provenance.**
+
+   ```bash
+   fbridge actions | grep <name>
+   fbridge run forge_manifest_read | jq '.tools[] | select(.name == "<name>")._meta'
+   ```
+
+   You'll see `forge-bridge/origin: synthesized`, a `code_hash`, `synthesized_at` timestamp, `version`, and `observation_count: 3` matching the threshold that triggered synthesis.
 
 ### Verification
 
-*(To be authored — anticipated: a new entry in `forge://manifest/synthesis`; `fbridge actions` lists the new tool; an invocation returns a sane result.)*
+You're done when **all five** signals are green:
+
+- `~/.forge-bridge/executions.jsonl` grew by exactly 3 rows (one per driver call).
+- The driver printed `promoted=True` on the 3rd call and `synthesized: <path>` after it.
+- A new `<name>.py` file exists under `~/.forge-bridge/synthesized/`.
+- The daemon log shows `INFO: Synthesized tool written: <path>`.
+- `fbridge actions` lists the new tool, and its manifest provenance fields are populated as above.
+
+### Common pitfalls
+
+- **Ollama unreachable when the driver runs.** Synthesis silently skips with `WARNING: LLM unavailable — skipping synthesis` in the daemon log. The three JSONL rows still get written and the threshold-cross still fires, but no tool file gets created. Fix Ollama reachability first (`curl http://YOUR-LLM-HOST:11434/api/version`).
+- **Re-running the driver without changing the pattern.** Once a hash is marked promoted, the same hash won't re-promote — the third call returns `False` and no new synthesis fires. To re-run the demo against a fresh pattern, change the demo code beyond literal substitution (e.g., assign `start_frame` instead of `frame_rate`) so it normalizes to a different hash. Wiping `~/.forge-bridge/executions.jsonl` works too but destroys all history.
+- **Driver fails with `ImportError: forge_bridge`.** The `forge` conda env isn't active in your shell. Run `conda activate forge` and retry.
+- **Tool doesn't appear in `fbridge actions` immediately.** The registry watcher polls the synthesized directory rather than using filesystem-notification events on every platform. Wait a few seconds and retry.
+- **Reading the wrong synthesizer log on macOS.** macOS daemon logs go to `/var/log/forge-bridge/console.log`, not `journalctl`. If Terminal B shows no synthesizer events, you may be reading the wrong stream.
+
+### Next
+
+[Recipe 4: Drive Flame from chat](#recipe-4-drive-flame-from-chat) — once you can read the synthesis pipeline, the next step is driving it organically through the chat endpoint instead of a direct driver script.
 
 ---
 
