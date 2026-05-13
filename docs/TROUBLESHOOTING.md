@@ -53,10 +53,10 @@ Failure modes that violate this commitment get `fbridge doctor` polished in-flig
 |---|---|
 | DIAG-04 | [Chat returns "Response timed out"](#failure-mode-chat-returns-response-timed-out) |
 | DIAG-03 | [Chat hangs ~75 seconds, then errors](#failure-mode-chat-hangs-then-errors) |
-| DIAG-01 | [Flame hook unreachable](#failure-mode-flame-hook-unreachable) *(forthcoming)* |
+| DIAG-01 | [Flame hook unreachable](#failure-mode-flame-hook-unreachable) |
 | DIAG-02 | [Postgres restart or unavailable](#failure-mode-postgres-restart-or-unavailable) |
 
-Sections marked *forthcoming* will land in subsequent Phase 23 commits. Recipe 1's pointer at "TROUBLESHOOTING.md — forthcoming under Phase 23" becomes accurate as each section ships.
+These four failure modes are the v1.5 ROADMAP DIAG-01..04 coverage; the order in the table follows recovery frequency (chat-side issues are the most common), not requirement numbering.
 
 ---
 
@@ -444,4 +444,132 @@ The doctor row's classification deserves a note. `postgres: fail` in the health 
 
 ---
 
-*More failure modes land in subsequent Phase 23 commits.*
+## Failure mode: Flame hook unreachable
+
+**Maps to:** DIAG-01
+**Surfaces from:** Recipe 4 (drive Flame from chat), Recipe 1 Step 5 (install Flame hook), Recipe 1 Step 8 (smoke-test), or `fbridge flame ping`.
+
+### Symptom
+
+You try to drive Flame from chat (Recipe 4) and one of three things happens:
+
+1. **`forge_*` Flame tools aren't offered to the LLM.** The chat answers about Flame but says it doesn't have access to Flame tools right now. Claude Desktop's tool catalogue is missing the `flame_*` entries that should appear.
+2. **`fbridge flame ping` returns connection refused** (or non-zero exit with a network error).
+3. **A direct `curl http://localhost:9999/status` returns connection refused** — the Flame hook's HTTP server isn't bound.
+
+In every variant, the rest of the bridge keeps working: chat answers about non-Flame topics, `forge_list_staged` still queries staged operations, the Artist Console UI renders, synthesis observations keep recording to JSONL.
+
+**This usually means Flame is closed, asleep, or its hook never loaded — not that forge-bridge itself is broken.** The Flame integration surface is unavailable; the bridge's other surfaces are not.
+
+### What `fbridge doctor` shows
+
+Doctor reports the Flame bridge as degraded:
+
+```text
+$ fbridge doctor
+console_port            ok     bound on :9996
+instance_identity.execution_log    ok
+instance_identity.manifest_service ok
+flame_bridge            warn   ConnectError
+ws_server               ok     reachable on :9998
+storage_callback        ok
+postgres                ok     reachable; SELECT 1 succeeded
+llm_backend.local       ok     reachable; model=qwen2.5-coder:32b
+jsonl_parseability      ok
+daemon_state            ok
+```
+
+The key row is `flame_bridge: warn`. The detail field names the failure shape:
+
+- `ConnectError` — nothing is listening on `:9999`. Flame is closed, the hook never loaded, or the workstation is asleep.
+- `TimeoutError` or similar — `:9999` accepts connections but the hook hangs. Rare; usually means Flame is mid-launch or the hook thread is wedged.
+- `http 5xx` — hook is up but reporting an error.
+
+The Phase 07.1 graceful-degradation contract is intentional here: the bridge classifies `flame_bridge` as a degraded-tolerant subsystem because the daemon must stay operational for every non-Flame surface (chat, synthesis, manifests, staged ops, console UI) when Flame happens to be closed. Same architectural philosophy as `postgres` and `llm_backend.local` — `warn`, not `fail`, because operational survivability is not at stake.
+
+If `flame_bridge: ok`, this is not the failure mode you're hitting.
+
+### Diagnosis
+
+Verify Flame-side state before suspecting bridge-side problems. The likely causes, in order of operator frequency:
+
+1. **Flame isn't running.** Most common — the operator closed Flame, the workstation rebooted, or Flame has never been launched in this session.
+2. **The Flame hook isn't loaded.** `./scripts/install-flame-hook.sh` was never run, or it was run for a different Flame version than the one currently launched.
+3. **The workstation is asleep or screen-locked.** macOS App Nap or Linux suspend can pause the hook's HTTP listener even though Flame appears running.
+4. **Port mismatch.** `FORGE_BRIDGE_PORT` was overridden in the Flame hook env to something other than `9999`, or another process bound `:9999` first.
+5. **Local firewall.** Rare on operator workstations; only matters when Flame and the bridge daemon are on different hosts (unusual configuration).
+
+forge-bridge itself is healthy. The Flame integration surface is what's offline.
+
+### Recovery
+
+**Fast path (under 2 minutes):**
+
+1. **Is Flame actually running?** Check the dock, menu bar, or task list. If it's not running, launch it. The hook auto-starts on Flame launch (per `flame_hooks/forge_bridge/scripts/forge_bridge.py:332` — `app_initialized`).
+
+2. **Is the hook reachable?**
+
+    ```bash
+    curl -s --max-time 3 http://localhost:9999/status
+    ```
+
+    - **JSON with `"status":"running"` and `"flame_available":true`** → hook is up; the bridge daemon may need a connection-pool reset. Skip to Step 4.
+    - **JSON with `"flame_available":false`** → hook is up but Flame's Python namespace doesn't have the application context yet. Open or relaunch a Flame project; the hook needs an active Flame app context. Re-curl to confirm `flame_available:true`.
+    - **`curl: (7) Failed to connect`** → hook isn't listening. Continue to Step 3.
+    - **`curl: (28) timed out`** → hook is wedged. Quit and relaunch Flame.
+
+3. **Is the hook installed?** If the previous step returned connection refused even with Flame running, the hook isn't loaded:
+
+    ```bash
+    ls ~/Library/Preferences/Autodesk/flame/python/forge_bridge/  # macOS
+    ls ~/.config/Autodesk/flame/python/forge_bridge/              # Linux (path varies)
+    ```
+
+    No directory → run `./scripts/install-flame-hook.sh` (from the forge-bridge repo). Then **relaunch Flame**. Hooks are only loaded at Flame startup; an already-running Flame won't pick up a freshly-installed hook.
+
+4. **Restart the bridge daemon** so its reachability cache refreshes:
+
+    ```bash
+    sudo systemctl restart forge-bridge          # Linux
+    sudo launchctl kickstart -k system/com.cnoellert.forge-bridge   # macOS
+    ```
+
+    Wait ~15 seconds for the daemon to come back. Run `fbridge doctor` — `flame_bridge` should now report `ok`.
+
+5. **Retry the chat / Claude Desktop call that failed.** The `forge_*` Flame tools should now be in the catalogue and invokable.
+
+### Verification
+
+You're recovered when **all four** signals hold:
+
+- `curl -s http://localhost:9999/status` returns JSON with `"flame_available":true`.
+- `fbridge doctor` reports `flame_bridge: ok`.
+- `fbridge flame ping` exits 0 with a success line.
+- Recipe 4 Step 3 works end-to-end — a chat-driven Flame tool call returns a non-error response.
+
+### If you arrived here while following...
+
+- **Recipe 4 (Drive Flame from chat).** This is the most psychologically expensive arrival path — you were mid-workflow trying to orchestrate Flame and the call failed. The bridge is not broken; Flame's integration surface is unavailable. Once `fbridge doctor` reports `flame_bridge: ok`, return to Recipe 4 Step 3 and re-issue the prompt. The same chat session is fine; you don't need to start over.
+- **Recipe 1 Step 5 (Install the Flame hook).** This is the install-time variant. If `./scripts/install-flame-hook.sh` ran successfully but the hook is still unreachable, you almost certainly need to **relaunch Flame** — hooks are loaded only at Flame startup, not dynamically.
+- **Recipe 1 Step 8 (Smoke-test the surfaces).** Connection refused on `:9999` during smoke-test is the same recovery path; the bootstrap doesn't auto-start Flame for you.
+- **Recipe 5 (Approve a staged operation).** Staged operations that proxy a Flame call (rename, set start frames, publish shots) will fail at the execute step when Flame is unreachable. The staging itself (proposed → approved) works without Flame; only the execution step needs it.
+
+### Why this happens
+
+The Flame hook is a separate process lifecycle from the bridge daemon. The hook lives inside Flame's address space — it auto-starts when Flame's `app_initialized` callback fires (`flame_hooks/forge_bridge/scripts/forge_bridge.py:332`) and dies when Flame quits. The bridge daemon has no way to start Flame on the operator's behalf and intentionally doesn't try; Flame is the operator's primary application, not the bridge's.
+
+Phase 07.1 hardened the graceful-degradation contract for exactly this case. Pre-07.1, an unreachable Flame hook could prevent the daemon from starting cleanly. Post-07.1, the daemon classifies `flame_bridge` as a degraded-tolerant subsystem at startup — it comes up cleanly, reports `flame_bridge: warn` at doctor, and filters Flame-dependent MCP tools out of the catalogue (`forge_bridge/console/_tool_filter.py:149`) so the chat path doesn't offer tools that will fail.
+
+The doctor row's classification is the same operational-survivability invariant that `postgres` and `llm_backend.local` honor: **doctor severity reflects what's usable, not what's impaired.** Surfacing `flame_bridge: fail` would imply the bridge is broken, when in reality only the DCC-orchestration surface is offline. The four-row degraded-tolerant set — `flame_bridge`, `ws_server`, `storage_callback`, `postgres`, `llm_backend.*` — collectively renders forge-bridge's middleware architecture at the doctor surface: layered subsystems that can degrade independently, each preserving its own truth without dragging the others down.
+
+### Cross-references
+
+- Recipe 4 (Drive Flame from chat) — the workflow this section's symptom most often blocks.
+- Recipe 1 Step 5 (install Flame hook) — install-time path; relaunch-Flame requirement noted here too.
+- `flame_hooks/forge_bridge/scripts/forge_bridge.py` — the hook source (the thing that runs inside Flame on `:9999`).
+- `flame_hooks/forge_bridge/scripts/forge_bridge.py:332` — `app_initialized` callback (where the hook auto-starts).
+- `forge_bridge/console/_tool_filter.py:149` — `filter_tools_by_reachable_backends` (the catalog-filtering machinery that hides Flame tools when the hook is unreachable).
+- `forge_bridge/bridge.py:112` — `execute()` (the HTTP client that makes the actual `POST /exec` calls).
+- Phase 07.1 close artifacts in `.planning/phases/07.1-startup-bridge-graceful-degradation-hotfix-deployment-uat/` — the graceful-degradation contract origin.
+
+---
