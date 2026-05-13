@@ -120,33 +120,163 @@ the chat handler falls back to the LLM, and the chain executor
 
 ## Issue 2 (A.5.3.2) — Over-eager collapse on multi-intent prompts
 
-### Status: DEFERRED until LLM reachability returns
+### What real usage exposed
 
-The over-eager collapse cannot be diagnosed in isolation. The narrower's
-choice has to be compared against what the LLM would have picked given
-the same prompt and tool list, and that comparison's reference is not
-available against an unreachable LLM. With localhost Ollama now wired
-in (`/etc/forge-bridge/forge-bridge.env` switched to
-`http://localhost:11434/v1`), the comparison becomes possible — but
-A.5.3.2 was deferred per the A.5 STATUS.md sharpened-scope decision.
+Once localhost Ollama was wired in (`/etc/forge-bridge/forge-bridge.env`
+pointing at `http://localhost:11434/v1`), the question A.5.3.2 had been
+deferred for became answerable: did the narrower's confident
+single-tool selection actually agree with what the LLM would have
+selected, given the unfiltered candidate set?
 
-This entry will be written when A.5.3.2 lands, following the same
-shape as the A.5.3.1 entry above (what real usage exposed; why the
-collapse was wrong; why architecture review didn't reveal it; what
-diagnostic evidence drove the fix; what landed).
+Testing with real prompts showed three shapes of divergence:
 
-### Anticipated diagnostic structure (preview)
+- **Most prompts.** The narrower and the LLM agreed. The deterministic
+  confidence gate was doing its job. This is the population that
+  matters — most of the time, the narrower is right.
+- **Some prompts.** They diverged in shape rather than magnitude. The
+  narrower picked tool A; the LLM picked tools A and B (a multi-step
+  plan). The narrower hadn't picked a "wrong" tool — it had collapsed
+  a multi-intent prompt into single-intent execution. The user got
+  something useful, but less than they asked for.
+- **A few prompts.** The narrower confidently picked one tool, and the
+  LLM declined to use tools at all (it answered the prompt
+  conversationally). On those, the narrower was about to execute a
+  tool the user never wanted. This is the strongest hijacking shape,
+  even though it's rare.
 
-A small wrapper around `complete_with_tools` to capture both signals
-side-by-side will likely be the right instrument:
+No single prompt was definitively wrong. The pattern was distributional.
 
-- the narrower's tool selection (deterministic, observable now)
-- the LLM's tool selection given the unfiltered candidate list
-  (model-dependent, observable when LLM is up)
+### Why this was harder than Issue 1
 
-When the two diverge on a multi-intent prompt, the narrower is
-over-collapsing. The instrument is similar in spirit to the A.6 timing
-probe but at the selection layer rather than the timing layer.
+Issue 1 (A.5.3.1) was tractable: one prompt, one wrong tool, four
+rules to trace through, one verb-guard fix. Issue 2 wasn't.
+
+The narrower wasn't catastrophically broken — it was right most of
+the time and wrong-but-recoverable some of the time. There was no
+single rule to flip or single tool to deprioritize. The defect — to
+the extent there was one — lived in the **shape of divergence between
+two arbitration paths**, not in either path alone.
+
+You can't fix that with a code change to the narrower. You can only
+fix it by first measuring it.
+
+### Why architecture review didn't reveal this
+
+The Methodological note below applies fully here: the narrower's
+failure modes are visible only at the seam between subsystems, not
+inside any one. Issue 1 was the seam between the reachability filter
+and the narrower. Issue 2 is the seam between the narrower and the
+LLM.
+
+Architecture review can verify that the narrower stays deterministic
+and the LLM stays a planner. That separation is clean. What review
+can't verify is what happens at their seam under distributional
+pressure — what fraction of prompts collapse confidently when they
+shouldn't, what fraction escalate when they could have collapsed
+correctly, what fraction land in territory where neither path is
+clearly right.
+
+That information lives in the prompts themselves, run against both
+arbitration paths, with each divergence classified. Architecture
+review doesn't have that data. Only running real prompts through both
+paths does.
+
+### What diagnostic evidence drove the work
+
+A.5.3.2 turned out to need a comparison instrument, not a code change.
+The instrument captures both signals side-by-side for every prompt:
+the narrower's tool selection (deterministic) and the LLM's tool
+selection (model-dependent, observable now that the LLM is up).
+
+The instrument lives at test time, not at runtime. Production prompts
+are not side-channeled through the LLM for comparison — that would be
+the wrong cost shape. The instrument is the diagnostic substrate: a
+structured corpus of (prompt, narrower selection, LLM selection,
+classification) tuples that future Layer 2 work can extend, query,
+and run regressions against.
+
+Building this substrate surfaced what the original framing had
+anticipated: **most divergences fall into a small number of
+operationally distinct shapes**. The classification taxonomy:
+
+- `SAME_TOOL` — narrower and LLM agree; deterministic wins; PR20 is
+  doing its job.
+- `DIFFERENT_TOOL` — both pick a tool, but different ones; the
+  canonical hijacking case.
+- `MULTI_TOOL` — LLM picks a multi-step plan; narrower collapses to
+  one step; over-eager collapse case.
+- `LLM_DECLINED` — LLM answers conversationally; narrower would have
+  hijacked; the strongest hijacking signal.
+- `AMBIGUOUS` — none of the above can be cleanly determined. The
+  bucket exists so we don't shoehorn records into categories that
+  don't fit; forcing a fit would corrupt the analysis.
+
+The classification was the unlock. Once divergences have shapes, you
+can ask "is the narrower mostly correct?" with an actual answer.
+
+It was. Across the divergence corpus the substrate exercises, the
+narrower turned out to be operationally well-behaved. Specific cases
+got addressed inline as they surfaced; no narrower rewrite was needed.
+
+### What landed
+
+The substrate, not a single fix:
+
+- **Comparison instrument contract** —
+  `.planning/phases/A.5-chain-execution-reliability-audit/A.5.3.2-INSTRUMENT-CONTRACT.md`
+  defines what the instrument captures, with an explicit exclusions
+  section so diagnostic scope doesn't grow by accretion.
+- **Divergence corpus + fixture substrate** — 17 active fixture
+  carriers exercise the comparator under three divergence vectors
+  (cardinality, ordering, multi-survivor cardinality); 220 forge env
+  tests collect against the corpus + instrument substrate.
+- **Boundary discipline preserved** — the narrower is still a
+  deterministic confidence gate; the LLM is still a planner. No
+  heuristics were added that blur the line. The original phase
+  framing's anti-pattern list ("just one more heuristic," "implicit
+  confidence floors," "conversational interpretation in the narrower")
+  stayed binding throughout.
+- **`forge_bridge.__all__` preserved at 19 symbols** across six PRs
+  without modification. The substrate did its job without leaking
+  pressure into the public API.
+
+Any future work that touches arbitration between deterministic and
+planner paths inherits this instrument as the diagnostic surface. New
+divergence shapes get added to the corpus rather than discovered in
+production.
+
+The phase-arc archaeology — gates, PRs, methodology evolution — lives
+in `.planning/phases/A.5-chain-execution-reliability-audit/A.5.3.2-PHASE-CLOSE.md`
+for anyone wanting the internal detail of how this work was
+structured. This entry is the operator-readable view.
+
+### Follow-ups (NOT this phase)
+
+- **Layer 2 ↔ Layer 3 seam questions.** Four open ontological
+  questions about how arbitration interacts with user-facing surfaces
+  (foundry, Ask, schematic). These belong to whichever future phase
+  first touches a Layer 3 surface; trying to answer them here would
+  be premature.
+- **Candidate methodologies awaiting a third corroboration.** Two
+  patterns observed across two PRs each (parallel-not-regenerative
+  fixture handling; direction selection rationale at
+  direction-symmetric pressure). Both wait for a third independent
+  instance in future work before promoting to named methodologies.
+  Preserved as candidates, not as latent pressure to manufacture
+  corroboration.
+- **PR 12 — the unfilled numbered slot.** A conditional
+  helper-extraction question that the phase preserved as numbered but
+  didn't deliver. Numerical pressure (the threshold for the
+  abstraction) was met; qualitative pressure ("preserving the
+  decomposition becomes harder than abstracting it") never surfaced
+  across four PRs of opportunity. Under that absence, deferral is the
+  honest disposition. Re-evaluable at a future gate if qualitative
+  pressure surfaces.
+
+These aren't open issues. They're **deferred candidates preserved as
+governance acts** — the project's way of saying "we considered this,
+we didn't have enough evidence to land it, and we don't want to
+manufacture evidence to land it prematurely."
 
 ---
 
