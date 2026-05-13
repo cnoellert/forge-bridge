@@ -38,19 +38,19 @@ The Artist Console is the operational dashboard. When something feels off and yo
 
 ### CLI
 
-A command-line tool named `forge-bridge` that reads the same `:9996` API the Artist Console consumes. Subcommands cover tool listings, execution history, manifest inspection, health checks, and a post-install diagnostic.
+A command-line tool named `fbridge` that reads the same `:9996` API the Artist Console consumes. Subcommands cover tool listings, execution history, manifest inspection, health checks, and a post-install diagnostic.
 
 **Who reaches for it:** Operators, scripters, and anyone composing bridge state into larger pipelines. The CLI is precise, scriptable, and machine-readable — every command supports a `--json` flag that short-circuits the human-friendly Rich output and returns raw JSON suitable for piping into `jq`, other commands, or test harnesses.
 
 ```
-forge-bridge console doctor          # post-install diagnostic
-forge-bridge console tools --json    # tool registry as JSON
-forge-bridge console health          # daemon and dependency health
+fbridge doctor            # post-install diagnostic
+fbridge actions --json    # tool registry as JSON
+fbridge console health    # daemon and dependency health
 ```
 
-(Illustrative — see `forge-bridge --help` for the full surface area.)
+(Illustrative — see `fbridge --help` for the full surface area.)
 
-**Learn more:** `forge-bridge --help` is self-documenting; the post-install diagnostic is the first command worth running.
+**Learn more:** `fbridge --help` is self-documenting; the post-install diagnostic is the first command worth running.
 
 ### MCP server
 

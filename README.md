@@ -38,7 +38,7 @@ Shipped at **v1.4.1** (2026-04-30). 19 phases across 6 milestones. Active milest
 | Tool provenance in MCP `_meta` (PROV-01..06) | ✅ Shipped (v1.2.0) |
 | StoragePersistence Protocol + SQL mirror | ✅ Shipped (v1.3.0) |
 | Artist Console / Web UI (`:9996/ui/`) | ✅ Shipped (v1.3.1, Phases 10/10.1) |
-| CLI `forge-bridge console tools \| execs \| manifest \| health \| doctor` | ✅ Shipped (v1.3.1, Phase 11) |
+| CLI `fbridge console tools \| execs \| manifest \| health \| doctor` | ✅ Shipped (v1.3.1, Phase 11) |
 | Staged-operations platform (`/api/v1/staged`, MCP tools, lifecycle) | ✅ Shipped (v1.4, FB-A + FB-B) |
 | LLMRouter agentic tool-call loop (`complete_with_tools()`) | ✅ Shipped (v1.4, FB-C) |
 | Chat endpoint (`POST /api/v1/chat`) | ✅ Shipped (v1.4, FB-D + 16.1 + 16.2) |
@@ -142,7 +142,7 @@ Five surfaces should be reachable after install:
 curl -s http://localhost:9999/status        # JSON with "flame_available": true
 
 # 2. MCP server CLI
-forge-bridge --help
+fbridge --help
 
 # 3. Artist Console Web UI
 curl -fsS http://localhost:9996/ui/ -o /dev/null -w "%{http_code}\n"   # 200
@@ -153,8 +153,10 @@ curl -s -X POST http://localhost:9996/api/v1/chat \
   -d '{"messages":[{"role":"user","content":"hello"}]}'
 
 # 5. Post-install diagnostic (covers JSONL log, sidecar dirs, port reachability, disk)
-forge-bridge console doctor
+fbridge doctor
 ```
+
+`forge-bridge` is preserved as a back-compat alias for `fbridge` — both resolve to the same Typer app. New docs use `fbridge`.
 
 `ANTHROPIC_API_KEY` is **optional** — chat hardcodes `sensitive=True`, which routes through local Ollama. The key is only needed for `sensitive=False` cloud routing.
 
