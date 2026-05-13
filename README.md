@@ -31,14 +31,14 @@ Shipped at **v1.4.1** (2026-04-30). 19 phases across 6 milestones. Active milest
 | Component | Status |
 |-----------|--------|
 | Flame HTTP bridge (`:9999`) | ✅ Shipped (v1.0) |
-| MCP server (`python -m forge_bridge`, stdio) | ✅ Shipped (v1.0; expanded through v1.4) |
+| MCP server (`fbridge mcp stdio` / `fbridge mcp http`) | ✅ Shipped (v1.0; expanded through v1.4) |
 | Canonical vocabulary layer (`forge_bridge/core/`) | ✅ Shipped (v1.0) |
 | Postgres persistence + migrations | ✅ Shipped (v1.0) |
 | Async/sync WebSocket clients | ✅ Shipped (v1.0) |
 | Tool provenance in MCP `_meta` (PROV-01..06) | ✅ Shipped (v1.2.0) |
 | StoragePersistence Protocol + SQL mirror | ✅ Shipped (v1.3.0) |
 | Artist Console / Web UI (`:9996/ui/`) | ✅ Shipped (v1.3.1, Phases 10/10.1) |
-| CLI `fbridge console tools \| execs \| manifest \| health \| doctor` | ✅ Shipped (v1.3.1, Phase 11) |
+| CLI `fbridge` — top-level commands + `console` / `mcp` / `flame` groups | ✅ Shipped (v1.3.1 Phase 11; expanded through v1.4) |
 | Staged-operations platform (`/api/v1/staged`, MCP tools, lifecycle) | ✅ Shipped (v1.4, FB-A + FB-B) |
 | LLMRouter agentic tool-call loop (`complete_with_tools()`) | ✅ Shipped (v1.4, FB-C) |
 | Chat endpoint (`POST /api/v1/chat`) | ✅ Shipped (v1.4, FB-D + 16.1 + 16.2) |
