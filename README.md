@@ -142,25 +142,21 @@ pip install -e ".[dev,llm]"
 
 `[dev]` adds pytest + ruff. `[llm]` adds `openai`, `anthropic`, `ollama`. Bare `pip install -e .` skips both extras and silently breaks the chat endpoint and tool synthesis.
 
-### Run the MCP server
+### Bring up forge-bridge
 
-The same process boots the MCP server (stdio for Claude Desktop / Claude Code), the Artist Console Web UI on `:9996`, and the `/api/v1/chat` endpoint:
-
-```bash
-# Daily local launch — uses FORGE_DB_URL, FORGE_LOCAL_LLM_URL, FORGE_BRIDGE_HOST defaults
-python -m forge_bridge
-
-# Headless host where stdin closes immediately (deploy hosts, ssh-detached sessions):
-tail -f /dev/null | python -m forge_bridge
-```
-
-Flame target host override (the bridge defaults to `127.0.0.1:9999`):
+forge-bridge runs as two long-lived daemons — a WebSocket bus on `:9998` and the MCP + Artist Console process co-hosted on `:9996` (with MCP HTTP on `:9997`). Both are managed by systemd (Linux) or launchd (macOS). The bootstrap script installs the units, bootstraps Postgres, installs the env file at `/etc/forge-bridge/forge-bridge.env`, and starts both daemons in dependency order:
 
 ```bash
-FORGE_BRIDGE_HOST=192.168.1.100 python -m forge_bridge
+sudo ./scripts/install-bootstrap.sh
 ```
 
-See `docs/INSTALL.md` for the full env-var reference and the canonical operator-workstation install path.
+The script is idempotent — re-runs are no-ops on unchanged substrate. Pass `--no-postgres` to point at an existing remote DB, `--mcp-only` to skip the Console daemon, or `--non-interactive` to skip the `FORGE_LOCAL_LLM_URL` prompt. Full flag matrix: `sudo ./scripts/install-bootstrap.sh --help`.
+
+See [`docs/INSTALL.md`](docs/INSTALL.md) for the canonical operator-workstation install path — pre-reqs, env-file editing, custom Postgres credentials, lifecycle commands, troubleshooting.
+
+**Claude Desktop / stdio MCP clients:** use `python -m forge_bridge mcp stdio` as the launch-process command. Claude Desktop spawns the process per-invocation and feeds tool calls over stdin/stdout. The systemd/launchd daemon path above is for streamable-HTTP MCP clients (URL: `http://localhost:9997/mcp`).
+
+**`python -m forge_bridge` alone** (no subcommand) prints help and exits 0 — it does **not** start any services. Use the `mcp stdio` / `mcp http` subcommands to start the MCP server, or the bootstrap script above for the supervised daemon path.
 
 ### Test the connection
 
