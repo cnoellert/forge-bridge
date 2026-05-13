@@ -1,6 +1,6 @@
 # Getting Started with forge-bridge
 
-This document orients new users to forge-bridge's mental model and the five surfaces through which you interact with it. It is not an install guide (see [`docs/INSTALL.md`](INSTALL.md)) and it is not a workflow recipe (see `docs/RECIPES.md` — forthcoming). It is the map you read before either.
+This document orients new users to forge-bridge's mental model and the five surfaces through which you interact with it. It is not an install guide (see [`docs/INSTALL.md`](INSTALL.md)) and it is not a workflow recipe (see [`docs/RECIPES.md`](RECIPES.md)). It is the map you read before either.
 
 ---
 
@@ -98,7 +98,7 @@ A short orientation, depending on what brought you here:
 
 - **Integrating a new tool or building an adapter** → MCP server + [`docs/VOCABULARY.md`](VOCABULARY.md). Understand the canonical model first, then expose your tool's native concepts through MCP.
 - **Operating the system day-to-day** → CLI + [`docs/INSTALL.md`](INSTALL.md). The CLI is the operator surface; INSTALL.md covers daemons, lifecycle, and troubleshooting.
-- **Building workflows or monitoring state** → Artist Console + `docs/RECIPES.md` (forthcoming). The console is the operational dashboard; recipes will document the daily workflows that compose its surfaces.
+- **Building workflows or monitoring state** → Artist Console + [`docs/RECIPES.md`](RECIPES.md). The console is the operational dashboard; recipes document the daily workflows that compose its surfaces.
 - **Embedding inside a DCC** → Flame hook + [`docs/API.md`](API.md). The hook pattern is what makes Flame an endpoint; the same pattern is how future 2D/3D DCC and editorial endpoints will plug in.
 
 ---
@@ -110,9 +110,9 @@ A short orientation, depending on what brought you here:
 | Install forge-bridge on a workstation | [`docs/INSTALL.md`](INSTALL.md) |
 | Learn the canonical vocabulary in detail | [`docs/VOCABULARY.md`](VOCABULARY.md) |
 | Understand architectural decisions and tradeoffs | [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) |
-| Run daily workflows (recipes) | `docs/RECIPES.md` — forthcoming (Phase 22) |
+| Run daily workflows (recipes) | [`docs/RECIPES.md`](RECIPES.md) |
 
-Phase 22 of the v1.5 Legibility milestone is the recipes layer: step-by-step workflows for first-time setup, Claude Desktop wiring, watching tool synthesis, chat-driven Flame automation, staged-ops approval, and manifest inspection. Until that lands, the README's Quick Start section is the closest thing to a working recipe.
+The recipes layer is authored under Phase 22 of v1.5 Legibility — [`docs/RECIPES.md`](RECIPES.md) ships the scaffold and the first recipe today; the remaining five fill in as Phase 22 progresses.
 
 ---
 
