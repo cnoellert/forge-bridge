@@ -54,7 +54,7 @@ Failure modes that violate this commitment get `fbridge doctor` polished in-flig
 | DIAG-04 | [Chat returns "Response timed out"](#failure-mode-chat-returns-response-timed-out) |
 | DIAG-03 | [Chat hangs ~75 seconds, then errors](#failure-mode-chat-hangs-then-errors) |
 | DIAG-01 | [Flame hook unreachable](#failure-mode-flame-hook-unreachable) *(forthcoming)* |
-| DIAG-02 | [Postgres restart or unavailable](#failure-mode-postgres-restart-or-unavailable) *(forthcoming)* |
+| DIAG-02 | [Postgres restart or unavailable](#failure-mode-postgres-restart-or-unavailable) |
 
 Sections marked *forthcoming* will land in subsequent Phase 23 commits. Recipe 1's pointer at "TROUBLESHOOTING.md — forthcoming under Phase 23" becomes accurate as each section ships.
 
@@ -277,6 +277,150 @@ A 5-second application-level connect-timeout would convert this 75-second silent
 - `.planning/seeds/SEED-EXTERNAL-DEPENDENCY-PREFLIGHT-PROBES-V1.5+.md` — broader audit of every external-dependency connect-timeout site.
 - `forge_bridge/llm/router.py:844-871` — `_get_local_native_client` lazy-construction site (no connect-timeout config today).
 - `forge_bridge/console/handlers.py:1336` — chat-handler `LLMToolError` → HTTP 500 path.
+
+---
+
+## Failure mode: Postgres restart or unavailable
+
+**Maps to:** DIAG-02
+**Surfaces from:** Recipe 5 Step 1 (list staged operations), Claude Desktop or chat-driven `forge_list_staged` / `forge_get_staged` / `forge_approve_staged` / `forge_reject_staged` calls, or any staged-ops or dependency-graph query.
+
+### Symptom
+
+Staged-ops MCP tools return errors that name an asyncpg or SQLAlchemy exception class:
+
+> Tool error: ConnectionRefusedError
+> Tool error: OperationalError: could not connect to server
+
+Other surfaces stay alive:
+
+- Artist Console UI renders; tools / execs / health views work.
+- Chat answers normally for prompts that don't touch staged-ops tools.
+- Synthesis pipeline keeps recording observations to JSONL.
+- Flame hook on `:9999` executes code as usual.
+- `fbridge doctor` itself runs and reports most rows as `ok`.
+
+**The bridge is degraded, not dead.** forge-bridge's storage architecture is **JSONL-authoritative + SQL-mirror** — the JSONL execution log at `~/.forge-bridge/executions.jsonl` is the source of truth, and Postgres is a mirror of it. When the mirror is unreachable, the source-of-truth path keeps running. The surfaces that DO break are the ones that read from SQL directly (staged operations on the `staged_operation` table, dependency-graph queries).
+
+### What `fbridge doctor` shows
+
+Doctor today doesn't probe Postgres reachability directly:
+
+```text
+$ fbridge doctor
+console_port            ok     bound on :9996
+instance_identity.execution_log    ok
+instance_identity.manifest_service ok
+flame_bridge            ok     reachable on :9999
+ws_server               ok     reachable on :9998
+storage_callback        ok     callback attached
+llm_backend.local       ok
+jsonl_parseability      ok
+daemon_state            ok
+```
+
+The `storage_callback: ok` row reports whether a SQL-mirror callback is **registered** on the execution log, not whether **Postgres is reachable**. That's a known gap (a follow-up Phase 23 commit will polish doctor to add a Postgres reachability probe).
+
+For now, the diagnostic signal is the combination: staged-ops tools fail with asyncpg or SQLAlchemy exception names AND `storage_callback: ok` → Postgres is unreachable but the bridge is otherwise healthy.
+
+If staged-ops tools succeed normally, this is not the failure mode you're hitting.
+
+### Diagnosis
+
+The "degraded vs dead" distinction is what makes recovery feel safe here. The bridge keeps working for most surfaces during a Postgres outage:
+
+| Surface | Behavior when Postgres is down |
+|---|---|
+| Synthesis pipeline | Works — JSONL log is authoritative |
+| Watcher / probation | Works — filesystem-based |
+| Artist Console UI | Renders; non-SQL views work |
+| Chat (non-staged-ops paths) | Works |
+| Flame hook | Works — independent of SQL |
+| Staged operations (list / get / approve / reject) | **Fail — require SQL session** |
+| Dependency-graph queries | **Fail — require SQL session** |
+| SQL-mirror writes from synthesis | Fail silently; JSONL writes already succeeded |
+
+Two common causes:
+
+1. **Postgres daemon stopped or crashed.** The OS service exited; nothing is bound to the configured port.
+2. **`FORGE_DB_URL` points at a Postgres that's unreachable.** Network change, firewall, VPN, or a remote Postgres host that restarted.
+
+forge-bridge itself is healthy. The SQL mirror is what's offline.
+
+### Recovery
+
+**Fast path (under 2 minutes):**
+
+1. **Verify Postgres is actually down:**
+
+    ```bash
+    pg_isready -h YOUR-PG-HOST -p 5432
+    ```
+
+    - `accepting connections` → Postgres is up. The bridge daemon may need a connection-pool reset. Skip to Step 4.
+    - `no response` / `rejecting connections` → continue to Step 2.
+
+2. **Confirm the bridge env points at the right Postgres:**
+
+    ```bash
+    grep FORGE_DB_URL /etc/forge-bridge/forge-bridge.env
+    ```
+
+    Default is `postgresql+asyncpg://forge:forge@localhost:5432/forge_bridge`. If this points at a remote host, that's where Postgres must be running.
+
+3. **Start or restart Postgres:**
+
+    - **Linux (systemd):** `sudo systemctl restart postgresql` (substitute the actual unit name — `postgresql-16`, etc.).
+    - **macOS (Homebrew):** `brew services restart postgresql@16`.
+    - **Flame host with Autodesk-bundled Postgres:** see INSTALL.md Step 3a — the bootstrap script's Postgres detection logic identifies the right binary.
+
+    Re-run `pg_isready` until it reports `accepting connections`.
+
+4. **Restart the bridge daemon** to reset its connection pool:
+
+    ```bash
+    sudo systemctl restart forge-bridge          # Linux
+    sudo launchctl kickstart -k system/com.cnoellert.forge-bridge   # macOS
+    ```
+
+5. **Retry the staged-ops call that failed.** It should now succeed.
+
+### Verification
+
+You're recovered when **all three** signals hold:
+
+- `pg_isready -h YOUR-PG-HOST -p 5432` reports `accepting connections`.
+- `forge_list_staged` (from chat, Claude Desktop, or `fbridge run forge_list_staged`) returns successfully — an empty list is a healthy response on a freshly-bootstrapped install.
+- The staged-ops surface from Recipe 5 Step 1 works end-to-end.
+
+### If you arrived here while following...
+
+- **Recipe 5 Step 1 (List the staged operations).** This is the most common arrival path — staged-ops are the surface that's most sensitive to a Postgres outage. Once `forge_list_staged` returns successfully, return to Recipe 5 Step 2.
+- **Recipe 3 (Observe the synthesis pipeline).** Surprising-but-correct: Recipe 3 *won't* surface this failure mode. The synthesis pipeline writes JSONL (authoritative path) and the watcher reads from filesystem — neither touches Postgres on the hot path. SQL-mirror writes fail silently in the background until Postgres returns, but the synthesis observation has already been recorded canonically.
+- **Recipe 1 Step 4 (Bootstrap script).** If the bootstrap script itself failed because Postgres wouldn't accept connections, this section's recovery path (verify reachability, start Postgres, re-run) applies before re-attempting the bootstrap.
+
+### Why this happens
+
+forge-bridge's storage layer is built on a deliberate split:
+
+- **JSONL is canonical.** The execution log at `~/.forge-bridge/executions.jsonl` is the source of truth for every observation the bridge records. Nothing else takes its place; nothing else can.
+- **SQL is a mirror.** Postgres persistence is wired in as a storage callback on the `ExecutionLog`. When the callback fires successfully, the same observation is mirrored to the `execution` table; when the callback fails, the failure is logged and the JSONL write already succeeded — the source of truth is preserved.
+
+This architecture is intentional. The bridge stays usable as a synthesis substrate and Flame coordinator during Postgres outages — only the surfaces that require SQL queries (staged operations on the `staged_operation` table, dependency-graph queries) actually fail. This is the **substrate/consumer** pattern from Recipes 3 and 5 manifesting at the failure-mode level: the substrate stays operational; only the consumer-facing surfaces break.
+
+Postgres-dependent surfaces fail per-request, not at daemon startup. The bridge daemon does NOT refuse to start when Postgres is unreachable — it comes up cleanly and surfaces the failure when an operator triggers a SQL-touching code path. That's why `fbridge doctor` reports the daemon as healthy even mid-outage: from the daemon's perspective, it is.
+
+The doctor blind spot — `storage_callback: ok` reporting whether the callback is **registered** rather than whether Postgres is **reachable** — is a known gap. A follow-up Phase 23 commit will add a Postgres reachability probe (likely as a `postgres` row) so this failure mode shows up directly in doctor output. Until then, recognize the symptom shape (staged-ops tool errors with asyncpg/SQLAlchemy exception classes) as the diagnostic.
+
+### Cross-references
+
+- Recipe 5 (Approve a staged operation) — the workflow this section's symptom most often blocks.
+- Recipe 3 (Observe the synthesis pipeline) — the workflow that explicitly does NOT break under this failure mode, by architectural design.
+- `CLAUDE.md` "Postgres persistence layer" + "Learning pipeline" + "Staged operations platform" subsystem bullets — substrate/consumer architectural framing.
+- `.planning/seeds/SEED-EXTERNAL-DEPENDENCY-PREFLIGHT-PROBES-V1.5+.md` — broader audit of every external-dependency probe site (Postgres included).
+- `forge_bridge/store/session.py:40` — `DEFAULT_DB_URL` definition.
+- `forge_bridge/console/read_api.py:463-475` — `storage_callback` row derivation today (the registered-vs-reachable gap).
+- `docs/INSTALL.md` Step 3a — Postgres bootstrap path on Flame-bundled installs.
 
 ---
 
