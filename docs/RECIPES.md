@@ -150,7 +150,7 @@ This is the most common second step after a fresh install. Once Claude Desktop s
 
    Substitute the path from your `which fbridge` output. The `mcp stdio` subcommand starts the FastMCP stdio transport — the surface every MCP client expects.
 
-3. **Validate the JSON.** A trailing comma or a missing brace silently breaks the entire config and Claude Desktop will load with **no** MCP servers visible. Run `python -m json.tool < "$HOME/Library/Application Support/Claude/claude_desktop_config.json" > /dev/null` (substitute the right path on Linux / Windows); a clean exit means the file parses.
+3. **Validate the JSON.** A trailing comma or a missing brace silently breaks the entire config and Claude Desktop will load with **no** MCP servers visible. Run `python -m json.tool "<path-to-config>"` against the file you just edited (use the path from Step 1; keep the quotes to survive the space in the macOS path). If it prints the formatted JSON, the file parses; if it prints `Expecting ...` with a line/column, fix the indicated syntax error and retry.
 
 4. **Fully quit Claude Desktop.** Cmd-Q on macOS, or "Quit Claude" from the menu — closing the window is not enough. The config is only read at startup.
 
