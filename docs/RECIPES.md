@@ -381,26 +381,130 @@ You're done when **all four** signals are green:
 ## Recipe 5: Approve a staged operation
 
 **Requirement:** RECIPES-05
-**Outcome:** a proposed operation reviewed, decided, and executed (or rejected) end-to-end through the `proposed → approved → executed/rejected/failed` state machine, with the audit trail intact.
-**Prerequisite:** a working Flame workstation (assist-01 or equivalent — see Recipe 1 Track A).
-
-*(Scaffold — full text forthcoming in Phase 22.)*
+**Outcome:** a destructive operation proposed → reviewed → decided through the `proposed → approved/rejected` state machine, with the audit trail intact and authority gated at the human review step.
+**Prerequisite:** bridge install per Recipe 1; canonical topology **portofino** (see Topology note below).
 
 ### When to use this
 
-An LLM agent or downstream consumer has proposed a destructive operation (rename, replace media, set start frames, publish) that's been parked in the staged-operation table for human review. You want to inspect the proposal, decide whether to approve or reject it, and let the proposer execute against its domain.
+You want to understand how the bridge enforces human authority over destructive operations. Read-only state queries (Recipe 4) flow through chat directly; destructive operations (rename, replace media, set start frames, publish) park in the **staged-operation state machine** until a human inspects and decides. The bridge does not bypass this — by design, the only path from "agent wants to do something destructive" to "Flame actually does it" runs through human approval.
+
+This is the **observable authority boundary**. Recipe 6 taught you how to audit the *artifacts* the bridge produces; this recipe teaches you how to audit (and decide on) the *actions* it proposes.
+
+### What this recipe doesn't cover
+
+- **The propose-side tools.** Like the synthesis pipeline (Recipe 3), bridge ships the staged-ops **substrate** — the state machine table, the approval/rejection tools, the audit log — but a *consumer application* provides the propose-side tools that put proposals INTO the table. In production, projekt-forge exposes `forge_stage_rename`, `forge_stage_publish_shots`, `forge_stage_set_startframes` and similar via its own MCP server. forge-bridge alone ships only `forge_list_staged` / `forge_get_staged` / `forge_approve_staged` / `forge_reject_staged` — the approval surface. This recipe uses a tiny demo driver to mint a proposal directly, mirroring Recipe 3's pattern.
+- **Downstream execution after approval.** Approval is bookkeeping; the proposer subscribes to `staged.approved` events and executes against its own domain. Without a consumer wired, an approved op sits at `approved` indefinitely — the state machine itself works correctly, but no Flame mutation happens. The recipe's demonstrable scope stops at the approval event; production behavior includes the downstream execution.
+- **Multi-host distributed deployment.** Single-host portofino topology assumed (see Topology note below).
 
 ### Prerequisites
 
-*(To be authored — anticipated: completed Recipe 1; at least one staged operation in `proposed` state; familiarity with the FB-A `proposed → approved → executed/rejected/failed` state machine.)*
+- A completed [Recipe 1](#recipe-1-first-time-setup): bridge is installed, both daemons are running, `fbridge doctor` exits 0.
+- [Recipe 4](#recipe-4-drive-flame-from-chat) and [Recipe 6](#recipe-6-inspect-the-synthesis-manifest) recommended for vocabulary continuity (chat-loop framing + JSON inspection patterns).
+- The `forge` conda env active in the shell you'll run the driver from (`conda activate forge`).
+- About 5 minutes.
+
+**Topology note:** Same as Recipe 4 — converged **portofino** topology is canonical (LLM + bridge + Flame on one host); distributed `assist-01` + `flame-01` deployments work the same with network-aware command substitutions.
 
 ### Steps
 
-*(To be authored — anticipated: list staged ops via `fbridge run forge_list_staged` or the manifest view; inspect a single proposal via `forge_get_staged`; approve via `forge_approve_staged` or reject via `forge_reject_staged`; observe the state transition; confirm the proposer's downstream execution.)*
+1. **Save and run the demo driver to mint a staged proposal.** Save this to `/tmp/staged_demo.py` and run it from the `forge` env. The driver inserts a row into the `staged_operation` table with `status='proposed'` and emits a `staged.proposed` audit event:
+
+   ```python
+   import asyncio
+   from forge_bridge.store.session import get_session
+   from forge_bridge.store.staged_operations import StagedOpRepo
+
+   async def main():
+       async with get_session() as session:
+           repo = StagedOpRepo(session)
+           op = await repo.propose(
+               operation="flame.rename_shot",
+               proposer="RECIPE-05-DEMO",
+               parameters={
+                   "shot_name": "DEMO_010",
+                   "new_name": "DEMO_010_v2",
+               },
+           )
+           print(f"proposed: id={op.id} operation={op.operation} status={op.status}")
+
+   asyncio.run(main())
+   ```
+
+   ```bash
+   conda activate forge
+   python /tmp/staged_demo.py
+   ```
+
+   Note the printed `id` — you'll use it in subsequent steps. (`StagedOpRepo.propose()` is the only sanctioned construction path; in production the propose-side MCP tools wrap this same call.)
+
+2. **List all staged proposals.** Confirm your proposal landed and see the queue shape:
+
+   ```bash
+   fbridge run forge_list_staged --json | jq '.result.data'
+   ```
+
+   You'll see an array of operations, each with `id`, `operation` (e.g. `"flame.rename_shot"`), `status` (`"proposed"`), `proposer`, `parameters`, `proposed_at`, and other audit-trail fields.
+
+3. **Inspect the proposal in detail.** Use the `id` from Step 1:
+
+   ```bash
+   fbridge run forge_get_staged --json --kwarg op_id=<ID> | jq '.result.data'
+   ```
+
+   The full record shows the exact parameters the proposer wants the consumer to execute. **This is the audit point** — you see exactly what would happen on approval, before anything happens.
+
+4. **Decide: approve or reject.**
+
+   ```bash
+   # Approve:
+   fbridge run forge_approve_staged --json --kwarg op_id=<ID> --kwarg approver=cnoellert
+
+   # Or reject:
+   fbridge run forge_reject_staged --json --kwarg op_id=<ID> --kwarg actor=cnoellert
+   ```
+
+   The `approver` / `actor` kwarg is the human identity making the decision — required non-empty per FB-A. (Caller-identity migration is `SEED-AUTH-V1.5`, deferred to v1.6+; for now it's an honor-system string.)
+
+5. **Confirm the state transition.** Re-list the staged ops:
+
+   ```bash
+   fbridge run forge_list_staged --json | jq '.result.data[] | {id, operation, status}'
+   ```
+
+   For an approved op, the status is now `"approved"` — the state machine moved cleanly. In production with a consumer wired, the proposer would receive a `staged.approved` event and execute against its own domain, transitioning the state again to `executed` or `failed`. On a stock install without a consumer, status stays at `approved` — that's the substrate-without-producer signal (see [Recipe 3](#recipe-3-observe-the-synthesis-pipeline-operate)'s framework/consumer framing for the same pattern).
+
+6. **Audit the full event trail.** Every state transition is logged with actor identity and timestamp:
+
+   ```bash
+   fbridge run forge_get_events --json | jq '.result.data'
+   ```
+
+   For your proposal you'll see `staged.proposed` followed by `staged.approved` (or `staged.rejected`), each with timestamps and the actor identity from Steps 1 and 4. This is the complete audit log for the operation — exactly what an after-the-fact compliance or debugging pass would consume.
 
 ### Verification
 
-*(To be authored — anticipated: the staged op moves to `approved`; the proposer subscribes, executes, and the op terminates in `executed` or `failed`; the audit trail is intact in `forge_get_events`.)*
+You're done when **all five** signals are green:
+
+- A proposal landed in `proposed` state (visible via `forge_list_staged`).
+- You inspected the full payload and understood exactly what would happen on approval.
+- Your decision (approve or reject) flipped the state correctly to `approved` / `rejected`.
+- The event log shows the transition with your actor identity.
+- You understand that downstream execution (the `approved → executed` transition) requires a consumer subscribed to `staged.approved` events — bridge ships the approval surface; the consumer ships the executor.
+
+The fifth signal is the trust-and-authority story made operational: every destructive operation produced an inspectable proposal, every decision was logged with an identifier, and *nothing executed without a human in the loop*.
+
+### Common pitfalls
+
+- **Demo driver fails with `ImportError`.** The `forge` conda env isn't active in your shell. `conda activate forge` and retry.
+- **Approval fails with "actor required".** The `approver` / `actor` kwarg must be non-empty per FB-A. Don't omit it.
+- **Proposal stays at `approved` indefinitely.** This is **expected behavior** without a consumer wired (substrate/consumer split — see Recipe 3 framing). In production with projekt-forge subscribed, you'd see `approved → executed` happen seconds after approval. On a stock install, the recipe's demonstrable scope stops at the approval event itself.
+- **Re-running the demo driver creates duplicate proposals.** Each `propose()` call inserts a new row. To clean up between runs, either reject the demo proposals (so they don't clutter the queue) or query/delete from the database directly (advanced — beyond recipe scope).
+
+### Next
+
+The recipes form a loop: first-time setup → wiring → synthesis pipeline observability → manifest inspection → chat-driven workflows → authority over destructive operations. With Recipe 5 complete you've walked the full operator surface of the bridge.
+
+For diagnostic / recovery workflows when things break — Flame crashes, Postgres restarts, Ollama hangs, the chat budget exceeds — see `docs/TROUBLESHOOTING.md` (forthcoming under Phase 23 of v1.5).
 
 ---
 
