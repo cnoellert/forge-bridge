@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Legibility
-status: executing
-stopped_at: Phase 20.1 context gathered
-last_updated: "2026-05-02T02:38:45.215Z"
-last_activity: 2026-05-02 -- Phase 20.1 execution started
+status: phase_closed
+stopped_at: Phase 20.1 closed (walk-validated at flame-01; INSTALL-01 ship-blocker met)
+last_updated: "2026-05-12T03:30:00.000Z"
+last_activity: 2026-05-12 -- Phase 20.1 closed; v1.5 Phase 21 (Surface map + concept docs) next pending
 progress:
   total_phases: 1
   completed_phases: 1
@@ -21,26 +21,26 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-30 at v1.5 milestone open)
 
 **Project core value:** forge-bridge is the single canonical pip-installable middleware (`pip install forge-bridge`) — protocol-agnostic communication bus with a canonical vocabulary that any endpoint (Flame, Maya, editorial, LLM agents) connects to.
-**Current focus:** Phase 20.1 — install-bootstrap-script-systemd-daemon-v1-5-ship-blocker
+**Current focus:** Phase 20.1 closed 2026-05-12 (INSTALL-01 v1.5 ship-blocker met; walk-validated at flame-01). v1.5 Phase 21 (Surface map + concept docs) is next pending architectural successor; v1.6+ Layer 2 consumer integration sits parallel.
 
 ## Current Position
 
-Phase: 20.1 (install-bootstrap-script-systemd-daemon-v1-5-ship-blocker) — EXECUTING
-Plan: 1 of 7
-Status: Executing Phase 20.1
-Milestone: v1.5 Legibility (opened 2026-04-30)
-Last activity: 2026-05-02 -- Phase 20.1 execution started
+Phase: 20.1 (install-bootstrap-script-systemd-daemon-v1-5-ship-blocker) — **CLOSED 2026-05-12** (walk-validated at flame-01; INSTALL-01 v1.5 ship-blocker met)
+Plan: 7 of 7 (all closed pre-session); this session added 3 in-tree commits (`e1037d7` + `d2895ad` + `242996b`) for convergence-pass refactor + README parity + three D-04 walk-surfaced fixes
+Status: Phase 20.1 closed; v1.5 Phase 21 (Surface map + concept docs) next pending
+Milestone: v1.5 Legibility (opened 2026-04-30; Phase 20 + 20.1 closed; Phases 21 / 22 / 23 pending)
+Last activity: 2026-05-12 -- Phase 20.1 closed; clean walk pass at flame-01 (6 surfaces green, 4 expected warnings, idempotency contract held under rerun)
 
 **v1.4.x closed 2026-04-30** — patch milestone shipped at tag `v1.4.1`. 9/9 requirements (MODEL-01..02, HARNESS-01..03, POLISH-01..04) closed across 3 phases (17, 18, 19); audit `passed`; 7/7 cross-phase integration wires verified; public `__all__` byte-identical to v1.4 close (19 symbols).
 
 **v1.5 scope** — Legibility milestone, no LOC target, no API surface change expected:
 
-- **Phase 20** (next) — Reality audit + canonical install. Walk a fresh install end-to-end on a clean machine; fix gaps as they surface. Output: `docs/INSTALL.md`, refreshed `README.md` install section, refreshed `CLAUDE.md` ground-truth section, `install-flame-hook.sh` default pinned to `v1.4.1`. Maps: INSTALL-01..04 + DOCS-02.
+- **Phase 20 + 20.1** (CLOSED 2026-05-12) — Reality audit + canonical install. Walk a fresh install end-to-end on a clean machine; fix gaps as they surface. Output: `docs/INSTALL.md`, refreshed `README.md` install section, refreshed `CLAUDE.md` ground-truth section, `install-flame-hook.sh` default pinned to `v1.4.1`. Maps: INSTALL-01..04 + DOCS-02.
 - **Phase 21** (pending) — Surface map + concept docs. Document the five user-facing surfaces (Web UI on `:9996/ui/`, CLI `forge-bridge`, `/api/v1/chat` HTTP, MCP server `python -m forge_bridge`, Flame hook on `:9999`) plus projekt-forge relationship. Output: `docs/GETTING-STARTED.md` + rewritten README "What This Is" section. Maps: DOCS-01, DOCS-03, DOCS-04.
 - **Phase 22** (pending) — Daily workflow recipes. Step-by-step recipes for ~6 daily tasks (first-time setup, Claude Desktop wiring, watching tool synthesis, chat-driven Flame automation, staged-ops approval, manifest inspection). Output: `docs/RECIPES.md` (or directory). Maps: RECIPES-01..06.
 - **Phase 23** (pending) — Diagnostics + recovery. Document common failure modes (Flame crash, Postgres restart, Ollama hang, qwen3 cold-start `LLMLoopBudgetExceeded`) and recovery paths; polish `forge doctor` if it surfaces gaps during recipe writing. Output: `docs/TROUBLESHOOTING.md`. Maps: DIAG-01..05.
 
-**Next action:** Run `/gsd-plan-phase 20` to generate the execution plan for Phase 20.
+**Next action:** Phase 20.1 closed. When v1.5 work resumes: `/gsd-plan-phase 21` to generate the execution plan for Phase 21 (Surface map + concept docs; DOCS-01 + DOCS-03 + DOCS-04). Parallel track: v1.6+ Layer 2 consumer integration per A.5.3.2 terminal cursor.
 
 **Key constraints (binding for v1.5):**
 
@@ -93,6 +93,8 @@ Last activity: 2026-05-02 -- Phase 20.1 execution started
 - Phase 16.2 inserted after Phase 16.1: Bug D — chat tool-call loop renders raw JSON instead of executing tools and synthesizing answer (URGENT) — surfaced in Phase 16.1 fresh-operator UAT on assist-01 2026-04-28; v1.4 milestone close blocked until Bug D fixed and CHAT-04 fresh-operator UAT records PASS. Investigation scope: LLMRouter agentic loop, chat handler tool dispatch, UI rendering, plus strengthen Strategy B chat E2E assertion to reject tool-call-only responses.
 - v1.5 roadmap formalized 2026-04-30 by gsd-roadmapper: 4 phases (20-23), 19 requirements across 4 categories (DOCS/INSTALL/RECIPES/DIAG). Phase numbering continues from v1.4.x (last shipped phase 19). Phase 20 is a forcing function — INSTALL.md must pass fresh-machine UAT before the milestone ships. DOCS-02 assigned to Phase 20 (not Phase 21) because the install audit walk-through discovers the CLAUDE.md ground-truth gaps.
 - Phase 20.1 inserted after Phase 20 on 2026-05-01: Install Bootstrap Script + Systemd Daemon (v1.5 ship blocker) (URGENT) — Phase 20 Track A author-walked UAT surfaced 13 gaps confirming `docs/INSTALL.md` as prose is not shippable to artists. Architecture works (cross-host LLM via assist-01 Ollama validated end-to-end); install procedure does not. 20.1 spine: two systemd units (`forge-bridge-server.service` for `:9998` bus, `forge-bridge.service` for `:9996` MCP+Console with `Requires=` ordering), `scripts/install-bootstrap.sh` (Postgres bootstrap + pg_hba alignment + role+db + alembic + units install), `/etc/forge-bridge/forge-bridge.env` (system env file with `EnvironmentFile=`), INSTALL.md reshape collapsing Steps 3/5/6 to script + edit + systemctl. Primary acceptance criterion: a Flame artist with no Linux/Postgres knowledge can complete the install. Validation requires actual non-author UAT, not author-walked-with-deviation. Capture: `.planning/phases/20-reality-audit-canonical-install/20-PHASE-20.1-CANDIDATE.md`.
+
+- Phase 20.1 CLOSED 2026-05-12 — INSTALL-01 v1.5 ship-blocker requirement met. flame-01 walk against `242996b` rerun pass clean: 6 real surfaces green (mcp / console / ws_server / daemon_state / llm_backend.local / flame_bridge); 4 expected warnings (storage_callback degraded-tolerant / llm_backend.cloud Anthropic not configured / jsonl_parseability first-run / sidecar+probation_dir first-run). Idempotency contract held under rerun (pg_hba already aligned via marker-managed block; both units unchanged via diff-before-restart; env file preserved; "could not change directory" warnings suppressed via psql_as_postgres wrapper; doctor invocation succeeded via 15s wait-for-:9996 loop). Session contribution: 3 commits — `e1037d7` refactor(20.1) pg_hba marker-managed + diff-before-restart (convergence-pass per brief v2 §A7 + §C; preserves 447-line operational archaeology per `feedback_brief_examples_as_behavioral_reference_shapes`) + `d2895ad` docs(20.1) README Quick Start fix (parity with INSTALL.md Step 6c) + `242996b` fix(20.1) three D-04 walk-surfaced gaps (psql wrapper + env_just_created flag + :9996 wait loop). D-04 in-flight discipline operationalized cleanly (walk-surfaced gaps fixed as separate commit, no amendment of upstream commits). No close artifact in `.planning/phases/...` — operator-confirmed: commit chain + brief v2 + walk transcript carry the archaeology.
 
 ### Decisions
 
@@ -175,6 +177,6 @@ None. Roadmap formalized; ready to plan Phase 20.
 
 ## Session Continuity
 
-Last session: 2026-05-01T22:15:14.402Z
-Stopped at: Phase 20.1 context gathered
-Resume file: .planning/phases/20.1-install-bootstrap-script-systemd-daemon-v1-5-ship-blocker/20.1-CONTEXT.md
+Last session: 2026-05-12T03:30:00.000Z
+Stopped at: Phase 20.1 closed (walk-validated at flame-01; INSTALL-01 met)
+Resume reference: out-of-tree memory cursor `project_state_2026_05_12_phase_20_1_closed_walk_validated.md` (TERMINAL marker; preserves walk-validated state archaeology). Parallel-track terminal: `project_state_2026_05_12_a_5_3_2_phase_closed_pushed.md` (V1.6+ Layer 2 scope; sibling not predecessor).
