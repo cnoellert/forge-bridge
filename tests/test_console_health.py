@@ -37,7 +37,7 @@ async def test_health_body_has_d14_shape(real_log, ms, monkeypatch):
     assert set(body.keys()) >= {"status", "ts", "version", "services", "instance_identity"}
     expected_services = {
         "mcp", "flame_bridge", "ws_server", "llm_backends",
-        "watcher", "storage_callback", "console_port",
+        "watcher", "storage_callback", "postgres", "console_port",
     }
     assert set(body["services"].keys()) >= expected_services
     assert set(body["instance_identity"].keys()) >= {"execution_log", "manifest_service"}
@@ -265,3 +265,172 @@ async def test_health_llm_backend_detail_says_unreachable_when_down(real_log, ms
     assert local["status"] == "fail"
     assert local["detail"].startswith("unreachable;")
     assert "qwen2.5-coder:32b" in local["detail"]
+
+
+# -- Postgres reachability probe (Phase 23 Commit B) ----------------------
+#
+# The `postgres` row answers "is the SQL backend reachable and queryable?"
+# It is intentionally orthogonal to `storage_callback`, which answers "is
+# the SQL-mirror callback wired into the execution log?" The two together
+# form a 4-state truth table that renders the substrate/consumer split
+# directly in the doctor output:
+#
+#   storage_callback  postgres  Operational meaning
+#   ────────────────  ────────  ────────────────────────────────
+#   ok                ok        Full SQL mirror operational
+#   ok                fail      Mirror configured, backend down — JSONL still authoritative
+#   absent            ok        Substrate ready, no consumer wired
+#   absent            fail      Substrate dormant AND backend down
+#
+# Tests below pin the row's semantic guarantees deterministically (mocked
+# get_session) rather than relying on a live Postgres in test env — what
+# we validate here is classification + detail wording + timeout shape, not
+# Postgres itself.
+
+
+class _StubSession:
+    """Async-session stand-in for _check_postgres semantic tests."""
+
+    def __init__(self, *, raise_exc=None):
+        self._raise = raise_exc
+
+    async def execute(self, stmt):
+        if self._raise is not None:
+            raise self._raise
+        return None
+
+
+class _StubSessionCM:
+    """Async context manager that yields _StubSession; mirrors get_session()."""
+
+    def __init__(self, **kwargs):
+        self._session = _StubSession(**kwargs)
+
+    async def __aenter__(self):
+        return self._session
+
+    async def __aexit__(self, *args):
+        return False
+
+
+def _make_stub_get_session(**kwargs):
+    """Return a stub get_session that yields _StubSession with the given config."""
+    def stub(*args, **kw):
+        return _StubSessionCM(**kwargs)
+    return stub
+
+
+async def test_health_postgres_ok_when_select_succeeds(real_log, ms, monkeypatch):
+    """`postgres: ok` when SELECT 1 succeeds; detail names the proven
+    query explicitly ("SELECT 1 succeeded") so operators and future
+    contributors can read WHAT was proven, not just THAT something was."""
+    register_canonical_singletons(real_log, ms)
+    monkeypatch.setattr("forge_bridge.mcp.server._server_started", True, raising=False)
+    monkeypatch.setattr(
+        "forge_bridge.store.session.get_session",
+        _make_stub_get_session(),
+    )
+    api = ConsoleReadAPI(execution_log=real_log, manifest_service=ms)
+    body = await api.get_health()
+    pg = body["services"]["postgres"]
+    assert pg["status"] == "ok"
+    assert pg["detail"].startswith("reachable;")
+    assert "SELECT 1 succeeded" in pg["detail"]
+
+
+async def test_health_postgres_fail_surfaces_exception_class_name(real_log, ms, monkeypatch):
+    """When the probe raises a connection error, detail surfaces the
+    exception class name (not str(exc)) per T-11-01 / LRN-05 credential-
+    leak rule. The exception's str() — which may carry host info, paths,
+    or credentials — must NOT appear in the operator-visible detail."""
+    register_canonical_singletons(real_log, ms)
+    monkeypatch.setattr("forge_bridge.mcp.server._server_started", True, raising=False)
+    monkeypatch.setattr(
+        "forge_bridge.store.session.get_session",
+        _make_stub_get_session(
+            raise_exc=ConnectionRefusedError("port 5432 on internal-host"),
+        ),
+    )
+    api = ConsoleReadAPI(execution_log=real_log, manifest_service=ms)
+    body = await api.get_health()
+    pg = body["services"]["postgres"]
+    assert pg["status"] == "fail"
+    assert pg["detail"].startswith("unreachable:")
+    assert "ConnectionRefusedError" in pg["detail"]
+    # Credential-leak rule: the exception's str() must NOT propagate.
+    assert "port 5432 on internal-host" not in pg["detail"]
+    assert "internal-host" not in pg["detail"]
+
+
+async def test_health_postgres_fail_timeout_wording_is_explicit(real_log, ms, monkeypatch):
+    """Detail names "TimeoutError after 2.0s" verbatim — the timeout
+    bound is operator-meaningful context. Doctor severity philosophy:
+    bounded probe, deterministic downgrade, psychologically responsive
+    even during degradation. A generic "TimeoutError" detail would
+    leave operators wondering 'is this still running?' — the explicit
+    bound says 'doctor gave up, that's the contract, look elsewhere'."""
+    register_canonical_singletons(real_log, ms)
+    monkeypatch.setattr("forge_bridge.mcp.server._server_started", True, raising=False)
+    monkeypatch.setattr(
+        "forge_bridge.store.session.get_session",
+        _make_stub_get_session(raise_exc=asyncio.TimeoutError()),
+    )
+    api = ConsoleReadAPI(execution_log=real_log, manifest_service=ms)
+    body = await api.get_health()
+    pg = body["services"]["postgres"]
+    assert pg["status"] == "fail"
+    assert pg["detail"] == "unreachable: TimeoutError after 2.0s"
+
+
+async def test_health_postgres_is_orthogonal_to_storage_callback(real_log, ms, monkeypatch):
+    """The two rows answer independent questions. `storage_callback`
+    describes integration topology (is the mirror callback wired?);
+    `postgres` describes backend availability (is SQL reachable?).
+    Their states vary independently — toggling one doesn't change the
+    other. This test pins the architectural orthogonality directly:
+    holding postgres state constant (fail) while flipping storage_callback
+    from absent to ok must NOT change the postgres row."""
+    register_canonical_singletons(real_log, ms)
+    monkeypatch.setattr("forge_bridge.mcp.server._server_started", True, raising=False)
+    monkeypatch.setattr(
+        "forge_bridge.store.session.get_session",
+        _make_stub_get_session(raise_exc=ConnectionRefusedError()),
+    )
+    api = ConsoleReadAPI(execution_log=real_log, manifest_service=ms)
+
+    # State 1: storage_callback absent + postgres fail
+    body = await api.get_health()
+    assert body["services"]["storage_callback"]["status"] == "absent"
+    assert body["services"]["postgres"]["status"] == "fail"
+
+    # State 2: storage_callback registered + postgres fail (orthogonal)
+    def _cb(record):
+        return None
+    real_log.set_storage_callback(_cb)
+    body = await api.get_health()
+    assert body["services"]["storage_callback"]["status"] == "ok"
+    assert body["services"]["postgres"]["status"] == "fail"
+
+
+async def test_health_postgres_fail_flips_overall_to_degraded_not_fail(real_log, ms, monkeypatch):
+    """Phase 23 Commit B invariant: doctor severity reflects operational
+    survivability, not subsystem impairment. When Postgres is unreachable,
+    the bridge stays substantially operational (JSONL authoritative; SQL
+    mirror only); overall health status must aggregate to `degraded`,
+    NOT `fail`. Surfacing `fail` at the aggregate would contradict the
+    substrate/consumer architectural truth that DIAG-02 teaches."""
+    register_canonical_singletons(real_log, ms)
+    monkeypatch.setattr("forge_bridge.mcp.server._server_started", True, raising=False)
+    monkeypatch.setattr(
+        "forge_bridge.store.session.get_session",
+        _make_stub_get_session(raise_exc=ConnectionRefusedError()),
+    )
+    api = ConsoleReadAPI(execution_log=real_log, manifest_service=ms)
+    body = await api.get_health()
+    assert body["services"]["postgres"]["status"] == "fail"
+    # Critical-failures aggregation must NOT count this as fail
+    assert body["status"] != "fail", (
+        "postgres fail must NOT escalate to overall fail — bridge stays "
+        "operationally usable during Postgres outages by architectural design"
+    )
+    assert body["status"] == "degraded"

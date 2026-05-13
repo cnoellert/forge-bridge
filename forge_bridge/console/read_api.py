@@ -298,8 +298,15 @@ class ConsoleReadAPI:
         Aggregation (D-15):
           - ok: all services ok AND instance_identity matches.
           - degraded: any non-critical fails (llm_backends, storage_callback,
-            flame_bridge, ws_server).
+            flame_bridge, ws_server, postgres).
           - fail: any critical fails (mcp, watcher, instance_identity).
+
+        Phase 23 invariant — doctor severity reflects operational survivability,
+        not subsystem impairment. `postgres` joins the degraded-tolerant set
+        because the bridge stays substantially operational during Postgres
+        outages (JSONL log is authoritative; SQL is a mirror). Surfacing
+        `postgres: fail` at the doctor surface would contradict the
+        substrate/consumer architectural truth that DIAG-02 teaches.
         """
         import httpx
 
@@ -381,6 +388,65 @@ class ConsoleReadAPI:
                     ),
                 })
             return backends
+
+        async def _check_postgres() -> dict:
+            """Probe SQL persistence backend reachability via SELECT 1.
+
+            Phase 23 Commit B (DIAG-02 doctor-coverage parity).
+
+            Semantic contract: "is the SQL backend reachable and trivially
+            queryable via the daemon's actual get_session() factory, within
+            a bounded 2.0s timeout?" This is the same code path every
+            SQL-touching surface uses at request time — staged operations,
+            dependency-graph queries, manifest reads. If SELECT 1 succeeds
+            here, those surfaces should also succeed (modulo migration
+            drift, which is a separate failure mode).
+
+            Orthogonal to storage_callback. The two rows together form a
+            4-state truth table:
+
+              storage_callback  postgres  Operational meaning
+              ────────────────  ────────  ────────────────────────────────
+              ok                ok        Full SQL mirror operational
+              ok                fail      Mirror configured, backend down —
+                                           writes fail, JSONL still authoritative
+              absent            ok        Substrate ready, no consumer wired
+                                           (Track B / stock install)
+              absent            fail      Substrate dormant AND backend down —
+                                           non-SQL surfaces still operational
+
+            The doctor.py degraded-tolerant mapping converts `postgres: fail`
+            in this body to `postgres: warn` at the doctor row, preserving
+            the invariant: doctor severity reflects operational survivability,
+            not subsystem impairment.
+
+            Detail field surfaces the failure shape:
+              - ok:   "reachable; SELECT 1 succeeded"
+              - fail: "unreachable: TimeoutError after 2.0s"  (probe budget exceeded)
+                      "unreachable: ConnectionRefusedError"   (backend down)
+                      "unreachable: <ExceptionClassName>"     (other)
+
+            Exception detail uses class name only per T-11-01 / LRN-05
+            (credential-leak rule): str(exc) may include host/path info.
+            """
+            from forge_bridge.store.session import get_session
+            from sqlalchemy import text
+            try:
+                async def _probe():
+                    async with get_session() as session:
+                        await session.execute(text("SELECT 1"))
+                await asyncio.wait_for(_probe(), timeout=2.0)
+                return {"status": "ok", "detail": "reachable; SELECT 1 succeeded"}
+            except asyncio.TimeoutError:
+                return {
+                    "status": "fail",
+                    "detail": "unreachable: TimeoutError after 2.0s",
+                }
+            except Exception as exc:  # noqa: BLE001
+                return {
+                    "status": "fail",
+                    "detail": f"unreachable: {type(exc).__name__}",
+                }
 
         def _check_mcp() -> dict:
             # Import here to avoid circular -- mcp.server imports from us indirectly
@@ -517,11 +583,16 @@ class ConsoleReadAPI:
                 },
             }
 
-        # Fan out the async checks in parallel (bounded per D-17)
+        # Fan out the async checks in parallel (bounded per D-17). postgres
+        # joins the gather rather than running sequentially after it — the
+        # 2.0s worst-case overlaps with the other I/O probes instead of
+        # adding to total handler latency. This matters most during outage
+        # recovery, when doctor must remain psychologically responsive.
         results = await asyncio.gather(
             _check_flame_bridge(),
             _check_ws_server(),
             _check_llm_backends(),
+            _check_postgres(),
             return_exceptions=True,
         )
         flame_bridge = (
@@ -534,6 +605,10 @@ class ConsoleReadAPI:
         )
         llm_backends = (
             results[2] if not isinstance(results[2], BaseException) else []
+        )
+        postgres = (
+            results[3] if not isinstance(results[3], BaseException)
+            else {"status": "fail", "detail": type(results[3]).__name__}
         )
 
         mcp = _check_mcp()
@@ -551,6 +626,7 @@ class ConsoleReadAPI:
             "llm_backends": llm_backends,
             "watcher": watcher,
             "storage_callback": storage_callback,
+            "postgres": postgres,  # Phase 23 Commit B
             "console_port": console_port,
         }
 
@@ -570,6 +646,11 @@ class ConsoleReadAPI:
             # operators see the forge_* tool failure mode without having to
             # invoke a tool to discover it.
             or bridge_client["status"] == "fail"
+            # Phase 23 Commit B: postgres fail is degraded-tolerant — the
+            # bridge stays substantially operational during a Postgres
+            # outage (JSONL is authoritative; SQL is a mirror). Flipping
+            # overall status to "degraded" is the correct severity.
+            or postgres["status"] == "fail"
         )
         if critical_failures:
             status = "fail"

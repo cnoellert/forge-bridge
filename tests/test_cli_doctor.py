@@ -86,6 +86,7 @@ HEALTHY = {
             "ws_server": {"status": "ok", "detail": ""},
             "llm_backends": [],
             "storage_callback": {"status": "absent", "detail": ""},
+            "postgres": {"status": "ok", "detail": "reachable; SELECT 1 succeeded"},
         },
         "instance_identity": {
             "execution_log": {"id_match": True, "detail": ""},
@@ -141,6 +142,39 @@ def test_non_critical_warn_exit_0(monkeypatch, tmp_path):
         env={"FORGE_CONSOLE_PORT": "9996", "HOME": str(tmp_path)},
     )
     assert result.exit_code == 0
+
+
+def test_postgres_fail_maps_to_warn_and_exit_0(monkeypatch, tmp_path):
+    """Phase 23 Commit B: postgres fail in health body → postgres warn at
+    doctor row → exit 0. The degraded-tolerant classification is the
+    operational-survivability invariant rendered at the CLI surface:
+    operators see the row reporting a degraded subsystem, but doctor
+    does not treat the bridge as unusable. Surfacing this as exit 1
+    would contradict the substrate/consumer architectural truth that
+    DIAG-02 teaches (JSONL authoritative; SQL is a mirror)."""
+    _setup_writable_dirs(tmp_path, monkeypatch)
+    (tmp_path / ".forge-bridge" / "executions.jsonl").write_text("")
+    body = _make_bad_health(
+        postgres={"status": "fail", "detail": "unreachable: ConnectionRefusedError"},
+    )
+    # Aggregate status should also be degraded, not fail
+    body["data"]["status"] = "degraded"
+    _mock_transport(monkeypatch, lambda r: httpx.Response(200, json=body))
+    result = runner.invoke(
+        _make_app(), ["doctor"],
+        env={"FORGE_CONSOLE_PORT": "9996", "HOME": str(tmp_path)},
+    )
+    # Exit 0 because postgres is degraded-tolerant (warn, not fail).
+    # This is the primary semantic guarantee — degraded-tolerant
+    # classification preserves operator confidence that the bridge is
+    # still usable, not broken.
+    assert result.exit_code == 0
+    # postgres row appears in output (Rich may truncate the detail field
+    # in narrow terminals — the detail's faithful passthrough is tested
+    # at the read_api layer by test_console_health.py and is NOT a
+    # CLI-rendering concern).
+    assert "postgres" in result.output
+    assert "warn" in result.output
 
 
 def test_unreachable_exit_2(monkeypatch, tmp_path):

@@ -161,8 +161,14 @@ def _health_to_checks(data: dict) -> list[dict]:
             if ok
             else "ensure _lifespan owns the canonical singleton (Phase 9 API-04)",
         })
-    # Degraded-tolerant: flame_bridge, ws_server, storage_callback → warn
-    for svc_name in ("flame_bridge", "ws_server", "storage_callback"):
+    # Degraded-tolerant: flame_bridge, ws_server, storage_callback, postgres → warn
+    # Phase 23 Commit B invariant: doctor severity reflects operational
+    # survivability, not subsystem impairment. `postgres` joins this set
+    # because the bridge stays substantially operational during a Postgres
+    # outage (JSONL log is authoritative; SQL is a mirror). The substrate/
+    # consumer architectural truth that DIAG-02 teaches would be inverted
+    # if `postgres: fail` were surfaced as `fail` rather than `warn`.
+    for svc_name in ("flame_bridge", "ws_server", "storage_callback", "postgres"):
         info = services.get(svc_name, {}) or {}
         raw = info.get("status", "absent")
         if raw == "ok":

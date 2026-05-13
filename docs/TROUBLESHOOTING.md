@@ -314,16 +314,36 @@ instance_identity.manifest_service ok
 flame_bridge            ok     reachable on :9999
 ws_server               ok     reachable on :9998
 storage_callback        ok     callback attached
-llm_backend.local       ok
-jsonl_parseability      ok
+postgres                warn   unreachable: ConnectionRefusedError
+llm_backend.local       ok     reachable; model=qwen2.5-coder:32b
+jsonl_parseability      ok     100 line(s) tail-parsed cleanly
 daemon_state            ok
 ```
 
-The `storage_callback: ok` row reports whether a SQL-mirror callback is **registered** on the execution log, not whether **Postgres is reachable**. That's a known gap (a follow-up Phase 23 commit will polish doctor to add a Postgres reachability probe).
+The key row is `postgres: warn`. Detail names the failure shape:
 
-For now, the diagnostic signal is the combination: staged-ops tools fail with asyncpg or SQLAlchemy exception names AND `storage_callback: ok` → Postgres is unreachable but the bridge is otherwise healthy.
+- `unreachable: ConnectionRefusedError` — Postgres process is down or not bound to the configured port.
+- `unreachable: TimeoutError after 2.0s` — host reachable but the query hung past doctor's bounded probe budget.
+- `unreachable: <other class name>` — auth failure, protocol error, etc.
 
-If staged-ops tools succeed normally, this is not the failure mode you're hitting.
+Doctor probes Postgres reachability directly by opening an async session via the daemon's actual `get_session()` factory and running `SELECT 1` within a 2.0-second bound. The bound is aggressive deliberately — doctor must remain psychologically responsive during a Postgres outage; an unbounded probe would invert the trust the doctor surface is trying to establish.
+
+#### `storage_callback` and `postgres` are orthogonal
+
+These two rows answer independent questions. `storage_callback` reports **integration topology** (is the SQL-mirror callback wired into the execution log?). `postgres` reports **backend availability** (is the SQL backend reachable and queryable?). Their states vary independently:
+
+| `storage_callback` | `postgres` | Operational meaning |
+|---|---|---|
+| `ok` | `ok` | Full SQL mirror operational |
+| `ok` | `warn` | Mirror configured, backend down — writes fail, JSONL still authoritative |
+| `absent` | `ok` | Substrate ready, no consumer wired (Track B / stock install) |
+| `absent` | `warn` | Substrate dormant AND backend down — non-SQL surfaces still operational |
+
+This 4-state table is the substrate/consumer split rendered directly in the doctor output. `storage_callback: absent` is a normal, healthy state on a stock install — the bridge ships the synthesis substrate; consumers (projekt-forge in production) wire the SQL mirror callback when they need it. Don't read `absent` as suspicious.
+
+The `postgres` row is classified **degraded-tolerant**: when the probe fails, doctor surfaces `warn` (not `fail`) because the bridge stays substantially operational during a Postgres outage. The aggregate health status flips to `degraded`, not `fail`. This is the operational-survivability invariant — doctor severity reflects what's usable, not what's impaired.
+
+If staged-ops tools succeed normally and `postgres: ok`, this is not the failure mode you're hitting.
 
 ### Diagnosis
 
@@ -408,9 +428,9 @@ forge-bridge's storage layer is built on a deliberate split:
 
 This architecture is intentional. The bridge stays usable as a synthesis substrate and Flame coordinator during Postgres outages — only the surfaces that require SQL queries (staged operations on the `staged_operation` table, dependency-graph queries) actually fail. This is the **substrate/consumer** pattern from Recipes 3 and 5 manifesting at the failure-mode level: the substrate stays operational; only the consumer-facing surfaces break.
 
-Postgres-dependent surfaces fail per-request, not at daemon startup. The bridge daemon does NOT refuse to start when Postgres is unreachable — it comes up cleanly and surfaces the failure when an operator triggers a SQL-touching code path. That's why `fbridge doctor` reports the daemon as healthy even mid-outage: from the daemon's perspective, it is.
+Postgres-dependent surfaces fail per-request, not at daemon startup. The bridge daemon does NOT refuse to start when Postgres is unreachable — it comes up cleanly and surfaces the failure when an operator triggers a SQL-touching code path. The `postgres` doctor row makes this visible at the orientation layer: an operator running `fbridge doctor` sees `postgres: warn` immediately, without having to invoke a SQL-touching tool to discover the outage.
 
-The doctor blind spot — `storage_callback: ok` reporting whether the callback is **registered** rather than whether Postgres is **reachable** — is a known gap. A follow-up Phase 23 commit will add a Postgres reachability probe (likely as a `postgres` row) so this failure mode shows up directly in doctor output. Until then, recognize the symptom shape (staged-ops tool errors with asyncpg/SQLAlchemy exception classes) as the diagnostic.
+The doctor row's classification deserves a note. `postgres: fail` in the health body downgrades to `postgres: warn` at the doctor surface. Future contributors will eventually ask "why isn't postgres surfaced as fail?" — the answer is the operational-survivability invariant: doctor severity reflects what's usable, not what's impaired. Surfacing `fail` at the orientation layer would contradict the substrate/consumer architectural truth this section teaches. The aggregate health status flips to `degraded` (correct) rather than `fail` (would be wrong).
 
 ### Cross-references
 
