@@ -292,7 +292,7 @@ You're done when **all five** signals are green:
 
 ### Next
 
-[Recipe 4: Drive Flame from chat](#recipe-4-drive-flame-from-chat) — once you can read the synthesis pipeline, the next step is driving it organically through the chat endpoint instead of a direct driver script.
+[Recipe 6: Inspect the synthesis manifest](#recipe-6-inspect-the-synthesis-manifest) — once you've watched the synthesis pipeline fire, the natural next step is auditing the artifact it produced. Inspectability is where operator trust starts; recipe numbering follows the requirement IDs, but the readable traversal jumps to 6 here.
 
 ---
 
@@ -351,25 +351,109 @@ An LLM agent or downstream consumer has proposed a destructive operation (rename
 ## Recipe 6: Inspect the synthesis manifest
 
 **Requirement:** RECIPES-06
-**Outcome:** a clear picture of which tools are currently registered, where they came from, and how their provenance reconciles with the execution log.
-
-*(Scaffold — full text forthcoming in Phase 22.)*
+**Outcome:** you can audit any tool in the bridge's registry — its origin (builtin vs synthesized), provenance fields, and how its `observation_count` reconciles against the execution log.
 
 ### When to use this
 
-You want to audit what tools currently exist in bridge's synthesis manifest, where they came from (observation-count, code-hash, when they were synthesized), and whether any have been quarantined or promoted recently. The manifest is bridge's tool catalogue — inspecting it is the entry point for debugging "why is this tool here?" and "why isn't this tool here?".
+You want to know what tools the bridge currently exposes, where each one came from, and — for synthesized tools — what evidence trail produced them. The manifest is the bridge's tool catalogue; inspecting it is the entry point for "what's available?", "where did this come from?", and "can I trust this synthesized tool?"
+
+Manifest visibility is also where the bridge's "AI but inspectable" story lives. Every synthesized tool carries a `code_hash`, an `observation_count`, a timestamp, and a copy of the original observed code on disk — operators reading the manifest can reconstruct exactly why each synthesized tool exists, without trusting the LLM as a black box. Recipe 3 generated such a tool; this recipe walks the inspection surface for it.
+
+### What this recipe doesn't cover
+
+- **Modifying or removing tools from the manifest.** Tool lifecycle (add / quarantine / remove) is consumer-side concern; the manifest is read-mostly from the operator surface.
+- **Quarantine and probation recovery.** When a synthesized tool fails repeatedly, the probation system quarantines it; recovery and tuning belong in `docs/TROUBLESHOOTING.md` — forthcoming under Phase 23.
+- **Multi-machine manifest replication.** v1.4.x is single-operator-workstation scope; cross-machine manifest sync is v1.6+.
 
 ### Prerequisites
 
-*(To be authored — anticipated: completed Recipe 1; awareness of the `_meta.forge-bridge/*` provenance fields; access to the Artist Console manifest view or `fbridge` CLI.)*
+- A completed [Recipe 1](#recipe-1-first-time-setup): bridge is installed, both daemons are running, `fbridge doctor` exits 0.
+- **Strongly recommended:** complete [Recipe 3](#recipe-3-observe-the-synthesis-pipeline-operate) first so there's a synthesized tool to inspect. Without a consumer feeding the substrate (or the Recipe 3 demo driver), the manifest will contain only builtin tools — still inspectable, but the trust-building `observation_count` / `code_hash` story has no synthesized example to anchor on.
+- `jq` installed (or equivalent JSON tool) for slicing the manifest output.
+- About 5 minutes.
 
 ### Steps
 
-*(To be authored — anticipated: open the manifest view in the Artist Console; or `fbridge run forge_manifest_read`; or read the resource directly via `forge://manifest/synthesis`; cross-reference observation counts with the execution log; inspect provenance metadata on individual tools.)*
+1. **Get the canonical tool list.** This is the registry view — every tool the bridge will hand to an MCP client.
+
+   ```bash
+   fbridge actions
+   ```
+
+   Tools you'll see: `forge_*` (project / shot / version / manifest / staged), `flame_*` (Flame API operations), and any synthesized tools registered by the watcher (typically `synth_<intent_slug>`).
+
+2. **Pull the full manifest as JSON.** This is the source-of-truth structured view — every tool with its provenance fields.
+
+   ```bash
+   fbridge run forge_manifest_read --json | jq '.result.data'
+   ```
+
+   You'll see the envelope: `{"tools": [...], "count": N, "schema_version": "1"}`. Each tool entry has flat fields — `name`, `origin`, `namespace`, `synthesized_at`, `code_hash`, `version`, `observation_count`, `tags`, `meta`, `available`.
+
+3. **Group tools by origin.** This separates first-party (`origin: "builtin"`) from synthesized (`origin: "synthesized"`) — the first audit axis.
+
+   ```bash
+   fbridge run forge_manifest_read --json | \
+     jq '.result.data.tools | group_by(.origin) | map({origin: .[0].origin, count: length, names: map(.name)})'
+   ```
+
+   Builtin tools ship with the package and update with `pip install`. Synthesized tools were produced by the learning pipeline against an observed pattern (see Recipe 3 for the lifecycle).
+
+4. **Inspect a single synthesized tool's provenance.** Pick a synthesized tool (e.g. one from Recipe 3) and read its full ToolRecord:
+
+   ```bash
+   fbridge run forge_manifest_read --json | \
+     jq '.result.data.tools[] | select(.origin == "synthesized") | {name, code_hash, synthesized_at, version, observation_count}'
+   ```
+
+   The four fields together form the audit signal: *when* it was created, *what* pattern hash produced it, *how many* observations crossed the threshold, and *which* synthesizer version was active.
+
+5. **Reconcile `observation_count` against the execution log.** The trust check: the tool says it was synthesized from N observations; the log should confirm exactly N matching rows.
+
+   ```bash
+   # Substitute the code_hash from Step 4:
+   grep '"code_hash": "<hash>"' ~/.forge-bridge/executions.jsonl | wc -l
+   ```
+
+   The count should equal `observation_count` from Step 4, plus exactly one `"promoted": true` marker row from `mark_promoted()` (see Recipe 3 Step 2). If the numbers don't match, something is off — re-run `fbridge doctor` and check the daemon log for storage-callback errors.
+
+6. **Read the synthesized tool's source on disk.** The manifest points at provenance; the source file IS the artifact you're trusting.
+
+   ```bash
+   head -40 ~/.forge-bridge/synthesized/<name>.py
+   ```
+
+   This is the file the watcher registered, and what `bridge.execute()` will run when an MCP client calls the tool. Reading the source closes the audit loop: you can see exactly what the LLM produced, against exactly which pattern, from exactly which observations.
+
+7. **Open the Artist Console manifest view.** Same data, visual surface.
+
+   ```bash
+   open http://localhost:9996/ui/   # macOS — or point any browser at the URL
+   ```
+
+   The manifest view shows the same tools grouped by origin, with sortable provenance columns. Useful when you want to scan many tools at once rather than slice a single one.
 
 ### Verification
 
-*(To be authored — anticipated: manifest contents reconcile with `fbridge actions`; provenance fields match expected origins; quarantined tools are visibly distinguished from promoted ones.)*
+You're done when you can answer **all four** of these questions for any synthesized tool in your manifest:
+
+- **What is its origin and namespace?** (`origin: "synthesized"`, `namespace: "synth"` for synthesized tools.)
+- **When was it created, and by which synthesizer version?** (`synthesized_at` + `version`.)
+- **What observation pattern produced it?** (`code_hash` — and you can find the matching rows in `executions.jsonl` via the same hash.)
+- **How many observations crossed the threshold?** (`observation_count`, reconciling with the log count from Step 5.)
+
+If all four are crisp, the synthesized tool is fully inspectable — you've closed the loop from observation through synthesis to registered artifact, and you're not trusting the LLM blindly.
+
+### Common pitfalls
+
+- **Empty or builtin-only manifest.** If you skipped Recipe 3, the synthesis pipeline hasn't fired and the manifest has no synthesized entries to audit. That's expected behavior on a stock install — see the substrate/consumer note in `CLAUDE.md` for the architectural reason. Either run Recipe 3 to seed a synthesized tool, or wire a consumer (projekt-forge in production) that records executions organically.
+- **jq path errors.** The output envelope is `{ok, action, result: {data: {...}}}`; manifest data lives at `.result.data`. Mixing up `.data` (envelope's inner data) with `.result` (CLI's top-level result wrapper) is the most common slice error.
+- **Watcher polling lag.** A freshly-synthesized tool may not appear in `fbridge actions` or the manifest immediately — the watcher polls the synthesized directory at intervals. Wait a few seconds and retry.
+- **Manifest count vs `fbridge actions` count drift.** `fbridge actions` includes runtime-only tools (some shim aliases); the synthesis manifest only carries tools the watcher registered from disk. Small drift is normal; large drift means something's missing on one surface — inspect both to locate the gap.
+
+### Next
+
+[Recipe 4: Drive Flame from chat](#recipe-4-drive-flame-from-chat) — with the manifest inspection surface understood, the next step is exercising the bridge through chat-driven operational workflows. Inspectability now established makes staged-ops legitimacy (Recipe 5) feasible afterward.
 
 ---
 
