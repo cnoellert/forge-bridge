@@ -299,26 +299,82 @@ You're done when **all five** signals are green:
 ## Recipe 4: Drive Flame from chat
 
 **Requirement:** RECIPES-04
-**Outcome:** a multi-step Flame pipeline task completed conversationally through the chat endpoint, with the result reflected in Flame's UI and the tool-call sequence visible in the chat transcript.
-**Prerequisite:** a working Flame workstation (assist-01 or equivalent — see Recipe 1 Track A).
-
-*(Scaffold — full text forthcoming in Phase 22.)*
+**Outcome:** you can drive Flame state queries through the chat endpoint conversationally — phrase a question in natural language, watch the agent pick the right Flame tool, see the structured result, and read a synthesized answer.
+**Prerequisite:** Flame running with the hook installed; canonical topology **portofino** (see Topology note below).
 
 ### When to use this
 
-You're at a Flame workstation, you have a multi-step pipeline task that would normally require a sequence of MCP tool calls, and you want to drive it conversationally through the chat endpoint — letting the agentic tool-call loop choose tools, observe results, and synthesize an answer for you.
+You want to ask the bridge questions about Flame state in natural language — "what's on my desktop?", "what project am I in?", "list the libraries in this project" — and let the agentic tool-call loop pick the right tool, execute it, and synthesize a natural-language answer. This is the entry point for chat-driven workflows: a human-readable query in, a human-readable answer out, with every intermediate tool call visible in the transcript.
+
+This recipe is read-heavy and deliberately stays clear of destructive operations. Recipe 5 covers the *authority* shape — what happens when chat proposes a destructive operation and a human has to approve before it executes.
+
+### What this recipe doesn't cover
+
+- **Destructive operations through chat.** Anything that mutates Flame state (rename, replace media, set start frames, publish) routes through the staged-operation state machine in v1.4+ — covered in [Recipe 5](#recipe-5-approve-a-staged-operation). Chat proposes; humans decide.
+- **Multi-host distributed deployment.** This recipe uses the converged single-host topology (see Topology note below). Splitting LLM, bridge, and Flame across hosts changes operator commands (URLs, log paths) but not the chat-loop behavior — that's a future advanced recipe or Phase 23 troubleshooting concern, not this recipe's job.
+- **Tool prompt or system-prompt tuning.** The chat endpoint ships with `LLMRouter` defaults; modifying them is internal-development territory.
 
 ### Prerequisites
 
-*(To be authored — anticipated: completed Recipe 1 Track A; Flame running with the hook on `:9999`; chat endpoint healthy in `fbridge doctor`; an example pipeline task to drive — e.g., "rename shots 010 through 015 to use the new convention".)*
+- A completed [Recipe 1](#recipe-1-first-time-setup): bridge is installed, both daemons are running, `fbridge doctor` exits 0.
+- A completed [Recipe 3](#recipe-3-observe-the-synthesis-pipeline-operate) is **strongly recommended** — knowing how to read the synthesis pipeline makes the chat-loop tool selection legible.
+- **Flame running with the hook installed on the bridge host.** `flame_ping` should return `flame_available: true`.
+- About 5 minutes. First chat call may take 30-60s for Ollama cold start.
+
+**Topology note:** This recipe uses the **portofino** topology — LLM + bridge + Flame on a single host. In larger studio deployments these surfaces live on separate machines (e.g. `assist-01` for the LLM runtime, `flame-01` for Flame, with bridge services routing between them). The chat-loop behavior is identical across topologies; commands referencing `localhost` would need network-aware substitutions in distributed setups. Authoring against the converged topology keeps operator focus on workflow, authority, and orchestration rather than distributed-infra debugging.
 
 ### Steps
 
-*(To be authored — anticipated: open the Artist Console chat tab or `POST /api/v1/chat` directly; phrase the intent; observe the tool-call loop in the chat panel transcript; verify the result inside Flame's UI.)*
+1. **Confirm Flame is reachable.** From the bridge host:
+
+   ```bash
+   fbridge run flame_ping --json | jq '.result'
+   # → expected: {"flame_available": true, ...}
+   ```
+
+   If `flame_available` is `false`, relaunch Flame (the hook auto-starts on launch) before proceeding.
+
+2. **Open the Artist Console chat panel.** Point a browser at `http://localhost:9996/ui/` and click the chat tab. (You can also POST directly to `http://localhost:9996/api/v1/chat`; the chat tab is the easiest visual surface for this recipe.)
+
+3. **Ask a Flame state question.** Type a natural-language query:
+
+   ```
+   What's on my Flame desktop right now?
+   ```
+
+   The agent should pick the `flame_list_desktop` tool, call it, observe the result, and synthesize a natural-language answer.
+
+4. **Read the tool-call trace.** The chat panel shows the agent's intermediate steps — each tool call (e.g. `flame_list_desktop({})`), each tool result (the structured response from Flame), and the final assistant message. **Every tool call is visible.** This is the observable-authority story: nothing happens behind the scenes.
+
+5. **Verify against Flame's UI.** Switch to Flame and look at the actual desktop. The reels, clips, and groups the agent reported should match what you see directly.
+
+6. **(Optional) Try a multi-step question.** Ask something that requires more than one tool call:
+
+   ```
+   What project am I in, and what libraries does it contain?
+   ```
+
+   Watch the agent call `flame_get_project`, observe the result, then call `flame_list_libraries`, observe that result, then synthesize. The trace shows the full sequence.
 
 ### Verification
 
-*(To be authored — anticipated: chat response references the tools actually called; the operation is visible in Flame; execution-log entries match the chat transcript.)*
+You're done when **all four** signals are green:
+
+- The chat response is a natural-language answer (not raw JSON, not an error).
+- The trace shows at least one `flame_*` tool call with a structured result.
+- The result matches what you see in Flame's UI directly.
+- The chat call returned in under 60s (cold Ollama may push the first call to 60s; subsequent calls are sub-10s).
+
+### Common pitfalls
+
+- **Flame hook unreachable.** If `flame_ping` returns `flame_available: false`, Flame either isn't running or the hook didn't load. Relaunch Flame and confirm the hook starts its HTTP server on `:9999` (check Flame's stdout).
+- **`LLMLoopBudgetExceeded` on cold start.** Almost always a model-choice problem — the chat endpoint hardcodes `sensitive=True` and routes through local Ollama. If you swapped the model to `qwen3:32b`, thinking-mode token verbosity blows the 60s wall-clock budget. Revert to `qwen2.5-coder:32b`.
+- **Agent responds with raw JSON instead of executing.** This was Phase 16.2's Bug D — the LLM emitting tool-call shapes in the `content` field instead of the structured `tool_calls` field. The `OllamaToolAdapter` salvages it now; if you see raw JSON tool-call shapes in the response, file a bug.
+- **Asking a destructive question through chat.** Chat won't directly execute destructive operations — those route through staged ops. If you ask "rename shot ABC to XYZ", expect the agent to create a staged proposal and ask you to approve it via [Recipe 5](#recipe-5-approve-a-staged-operation).
+
+### Next
+
+[Recipe 5: Approve a staged operation](#recipe-5-approve-a-staged-operation) — chat drives state queries directly; destructive operations go through the staged-ops state machine for human approval. Authority before execution.
 
 ---
 
