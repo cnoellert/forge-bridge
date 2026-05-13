@@ -35,8 +35,10 @@ Shipped at v1.4.1 (2026-04-30). 19 phases across 6 milestones (v1.0 → v1.4.x).
    - Installed via `./scripts/install-flame-hook.sh`
 
 2. **MCP server** (`forge_bridge/mcp/server.py`)
-   - Model Context Protocol server (FastMCP, stdio default)
-   - Entry point: `python -m forge_bridge` (wired through `forge_bridge/__main__.py`)
+   - Model Context Protocol server (FastMCP, streamable-HTTP for daemon mode, stdio for Claude Desktop / Code)
+   - Daily launch: `fbridge up` (managed background daemon — starts `mcp_http` with co-hosted Console on `:9996` + `state_ws` on `:9998` in dependency order) or `fbridge mcp http` (direct foreground). For supervised systemd / launchd, `sudo ./scripts/install-bootstrap.sh`.
+   - Claude Desktop / stdio MCP clients: `fbridge mcp stdio` (or `python -m forge_bridge mcp stdio`).
+   - **Bare `python -m forge_bridge` now prints help and exits 0** — it does NOT start any services. Use the `mcp stdio` / `mcp http` subcommands.
    - Co-hosts the Artist Console + chat endpoint on `:9996` via lifespan
    - Tools: project, timeline, batch, publish, utility — plus staged-ops tools (`forge_list_staged`, `forge_get_staged`, `forge_approve_staged`, `forge_reject_staged`), manifest tools (`forge_manifest_read`, `forge_tools_read`), and any LLM-synthesized tools registered by the learning pipeline
    - Resources: `forge://manifest/synthesis`, `forge://staged/pending`, `forge://llm/health`
@@ -48,10 +50,12 @@ Shipped at v1.4.1 (2026-04-30). 19 phases across 6 milestones (v1.0 → v1.4.x).
    - LOGIK-PROJEKT amber-on-dark palette (UI-SPEC.md design contract)
    - Co-hosted with the MCP server on `:9996` via lifespan (NOT FastMCP `custom_route`)
 
-4. **CLI `forge-bridge`** (`forge_bridge/__main__.py` + `forge_bridge/cli/`) — Phase 11
-   - Typer + Rich, sync `httpx` consumer of the `:9996` Read API
-   - Subcommands: `forge-bridge console tools | execs | manifest | health | doctor`
-   - `--json` short-circuits Rich (P-01 stdout purity)
+4. **CLI `fbridge` / `forge-bridge`** (`forge_bridge/cli/main.py` is the Typer front door; `__main__.py` is a thin delegate to it) — Phase 11, expanded through v1.4.x
+   - Both `fbridge` (canonical short name) and `forge-bridge` (back-compat alias) resolve to `forge_bridge.cli.main:app` (see `pyproject.toml` `[project.scripts]`)
+   - Typer + Rich, sync `httpx` consumer of the `:9996` Read API for read commands; direct calls to the runtime manager / chain engine for write commands
+   - Top-level subcommands: `doctor` (runtime doctor — covers Console, MCP, Flame, State WS), `actions` (browse registered tools), `chat` (exercise the chat endpoint), `exec` (deterministic chain engine via `/api/v1/exec`, no LLM), `run` (execute a registered tool by exact name), `up` / `down` / `status` (managed background daemon lifecycle)
+   - Subgroups: `console` (legacy Phase-11 Read API browser: `tools | execs | manifest | health | doctor`), `mcp` (`stdio | http`), `flame` (`ping`)
+   - `--json` short-circuits Rich on every command (P-01 stdout purity)
    - Locked exit codes: 0=ok, 1=fail, 2=unreachable
 
 5. **Chat endpoint** (`forge_bridge/console/handlers.py:chat_handler`) — Phase 16/16.1/16.2
@@ -94,7 +98,7 @@ forge-bridge/
 │
 ├── forge_bridge/                ← Python package
 │   ├── __init__.py             ← Public __all__ (19 symbols)
-│   ├── __main__.py             ← Typer app: `forge-bridge` CLI + `python -m forge_bridge` MCP entry
+│   ├── __main__.py             ← Thin delegate to `forge_bridge.cli.main:app` (bare invocation prints help and exits)
 │   ├── bridge.py               ← HTTP client to Flame bridge (`bridge.execute()` etc.)
 │   ├── cli/                    ← Typer + Rich subcommands (tools, execs, manifest, health, doctor)
 │   ├── client/                 ← Async/sync WS clients
@@ -168,10 +172,9 @@ Full spec: `docs/VOCABULARY.md`
 
 ## Relationship to projekt-forge
 
-- projekt-forge: project management + pipeline orchestration frontend for Flame
-- forge-bridge: the communication infrastructure everything connects to
+forge-bridge is the infrastructure layer; projekt-forge is the first first-party consumer built on top of it.
 
-forge-bridge was extracted from projekt-forge when it became clear it needed to be a standalone platform.
+projekt-forge pins specific forge-bridge versions and builds production workflows against the stable vocabulary and runtime surfaces bridge provides. The split is intentional: forge-bridge stays generic infrastructure, while consumer-specific workflow behavior lives downstream.
 
 projekt-forge repo: https://github.com/cnoellert/projekt-forge
 
@@ -196,10 +199,12 @@ pip install -e ".[dev,llm]"
 # 4. Run migrations (defaults to forge:forge@localhost:5432/forge_bridge — set FORGE_DB_URL to override)
 alembic upgrade head
 
-# 5. Run the MCP server + co-hosted Web UI + chat endpoint on :9996
-python -m forge_bridge
-# On a headless host where stdin closes immediately:
-tail -f /dev/null | python -m forge_bridge
+# 5. Bring up the bridge runtime (mcp_http + co-hosted Console on :9996, state_ws on :9998)
+# Option A: ad-hoc managed background daemons (good for dev / single workstation)
+fbridge up
+# Option B: supervised systemd / launchd daemons (operator-workstation path)
+sudo ./scripts/install-bootstrap.sh
+# Note: bare `python -m forge_bridge` prints help and exits 0 — it does NOT start any services.
 
 # 6. Smoke-test the surfaces
 curl -fsS http://localhost:9996/ui/ -o /dev/null -w "%{http_code}\n"   # Web UI → 200
