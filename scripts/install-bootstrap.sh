@@ -145,14 +145,25 @@ substitute_placeholders() {
 
 # ── POSTGRES BOOTSTRAP — Linux (Pattern 3 verbatim) ──────────────────────────
 
+psql_as_postgres() {
+    # Wrapper for `sudo -u postgres psql` that suppresses the harmless
+    # but noisy "could not change directory" warnings emitted when sudo's
+    # target user can't chdir to the calling user's $PWD (Rocky $HOME is
+    # 0700, so postgres can't enter /home/$SUDO_USER). cd to /tmp first
+    # — /tmp is world-readable so postgres can always chdir there. The
+    # passthrough form preserves caller-supplied stdin/stdout/stderr
+    # redirects and quoted arguments.
+    sudo -u postgres bash -c 'cd /tmp && psql "$@"' -- "$@"
+}
+
 probe_pg_auth() {
     # Print the cluster's password_encryption: 'md5' or 'scram-sha-256'.
-    sudo -u postgres psql -tAc "SHOW password_encryption;" 2>/dev/null | tr -d ' '
+    psql_as_postgres -tAc "SHOW password_encryption;" 2>/dev/null | tr -d ' '
 }
 
 resolve_pg_hba() {
     # Resolve pg_hba.conf path from the cluster itself — varies by version + install method.
-    sudo -u postgres psql -tAc "SHOW hba_file;" 2>/dev/null | tr -d ' '
+    psql_as_postgres -tAc "SHOW hba_file;" 2>/dev/null | tr -d ' '
 }
 
 align_pg_hba() {
@@ -210,7 +221,7 @@ host    all    forge    127.0.0.1/32    ${auth}
 # END forge-bridge managed localhost auth
 HBA
 
-    sudo -u postgres psql -c "SELECT pg_reload_conf();" >/dev/null
+    psql_as_postgres -c "SELECT pg_reload_conf();" >/dev/null
 }
 
 bootstrap_pg() {
@@ -259,16 +270,16 @@ bootstrap_pg() {
     align_pg_hba "$auth"
 
     # 4. Idempotent role + db creation (CREATE USER forge WITH PASSWORD 'forge').
-    if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='forge'" | grep -q 1; then
+    if ! psql_as_postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='forge'" | grep -q 1; then
         echo "[forge-bridge] creating Postgres role 'forge'"
-        sudo -u postgres psql -c "CREATE USER forge WITH PASSWORD 'forge';"
+        psql_as_postgres -c "CREATE USER forge WITH PASSWORD 'forge';"
     else
         echo "[forge-bridge] Postgres role 'forge' already exists"
     fi
 
-    if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='forge_bridge'" | grep -q 1; then
+    if ! psql_as_postgres -tAc "SELECT 1 FROM pg_database WHERE datname='forge_bridge'" | grep -q 1; then
         echo "[forge-bridge] creating database 'forge_bridge'"
-        sudo -u postgres psql -c "CREATE DATABASE forge_bridge OWNER forge;"
+        psql_as_postgres -c "CREATE DATABASE forge_bridge OWNER forge;"
     else
         echo "[forge-bridge] database 'forge_bridge' already exists"
     fi
@@ -355,9 +366,11 @@ prompt_for_llm_url() {
 install_env_file() {
     echo "[forge-bridge] installing env file at /etc/forge-bridge/forge-bridge.env"
     sudo mkdir -p /etc/forge-bridge
+    local env_just_created=0
     if [ ! -f /etc/forge-bridge/forge-bridge.env ]; then
         sudo cp "${REPO_ROOT}/packaging/forge-bridge.env.example" /etc/forge-bridge/forge-bridge.env
         echo "[forge-bridge] installed /etc/forge-bridge/forge-bridge.env from template"
+        env_just_created=1
     else
         echo "[forge-bridge] /etc/forge-bridge/forge-bridge.env already exists — preserving operator edits"
     fi
@@ -367,7 +380,13 @@ install_env_file() {
     SUDO_USER_GROUP=$(id -gn "$SUDO_USER" 2>/dev/null || echo "$SUDO_USER")
     sudo chown "root:${SUDO_USER_GROUP}" /etc/forge-bridge/forge-bridge.env
     sudo chmod 0640 /etc/forge-bridge/forge-bridge.env
-    prompt_for_llm_url
+    # Gap 2 fix — only prompt for the LLM URL on FIRST install. Re-runs
+    # preserve operator edits, so re-prompting them is both annoying and
+    # bug-shaped: an operator who edited the URL and reruns would have
+    # their value overwritten by the prompt default on bare Enter.
+    if [ "$env_just_created" = "1" ]; then
+        prompt_for_llm_url
+    fi
 }
 
 # ── LINUX: SYSTEMD UNITS ──────────────────────────────────────────────────────
@@ -494,6 +513,28 @@ case "$OS" in
         install_macos_units
         ;;
 esac
+
+# Gap 3 fix — wait for forge-bridge.service to bind :9996 before invoking
+# doctor. systemctl restart returns when the process is launched, not when
+# uvicorn has bound the port; FastMCP lifespan startup adds another ~1-3s.
+# Without the wait, doctor races the daemon and reports FAIL even though
+# the service comes up cleanly seconds later. Matches the pg_isready
+# pattern style (for-loop + final assert + journalctl hint on timeout).
+if [ "$MCP_ONLY" != "1" ]; then
+    echo "[forge-bridge] waiting for forge-bridge console on :9996"
+    for i in $(seq 1 15); do
+        if nc -z localhost 9996 2>/dev/null; then
+            echo "[forge-bridge] :9996 reachable"
+            break
+        fi
+        sleep 1
+    done
+    if ! nc -z localhost 9996 2>/dev/null; then
+        echo "[forge-bridge] ERROR: forge-bridge.service did not bind :9996 within 15s" >&2
+        echo "[forge-bridge] check: journalctl -u forge-bridge -n 30" >&2
+        exit 1
+    fi
+fi
 
 verify_doctor
 
