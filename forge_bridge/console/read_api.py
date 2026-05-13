@@ -361,13 +361,24 @@ class ConsoleReadAPI:
                     "detail": type(exc).__name__,
                 }]
             # router.ahealth_check returns {local, cloud, local_model, cloud_model}
+            # Detail field surfaces the reachability state explicitly — the
+            # health-status field is the boolean truth, but operators read the
+            # detail string when orienting from `fbridge doctor` output. Saying
+            # "reachable" / "unreachable" up front maps directly to recovery
+            # cognition: "is this subsystem usable right now?" Model name stays
+            # in the detail because it's the second-most-useful diagnostic
+            # (DIAG-04 cold-start guidance turns on whether qwen3 is configured).
             backends = []
             for key in ("local", "cloud"):
                 val = status.get(key)
+                model = status.get(key + "_model", "")
                 backends.append({
                     "name": key,
                     "status": "ok" if val else "fail",
-                    "detail": f"model={status.get(key + '_model', '')}",
+                    "detail": (
+                        f"reachable; model={model}" if val
+                        else f"unreachable; model={model}"
+                    ),
                 })
             return backends
 

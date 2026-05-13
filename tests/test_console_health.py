@@ -199,3 +199,69 @@ async def test_health_llm_backends_empty_when_no_router(real_log, ms, monkeypatc
     api = ConsoleReadAPI(execution_log=real_log, manifest_service=ms, llm_router=None)
     body = await api.get_health()
     assert body["services"]["llm_backends"] == []
+
+
+class _StubRouter:
+    """Minimal LLMRouter stand-in for health-check assertions.
+
+    Phase 23 Commit A: pins the operator-visible reachability framing in
+    services.llm_backends[*].detail. Two states matter for the operator
+    reading `fbridge doctor` output:
+
+      - ok    → "reachable; model={name}"
+      - fail  → "unreachable; model={name}"
+
+    Stub returns the dict shape ConsoleReadAPI._check_llm_backends parses
+    (mirrors router.ahealth_check's contract: local/cloud booleans plus
+    *_model strings).
+    """
+
+    def __init__(self, status):
+        self._status = status
+
+    async def ahealth_check(self):
+        return self._status
+
+
+async def test_health_llm_backend_detail_says_reachable_when_ok(real_log, ms, monkeypatch):
+    """services.llm_backends[*].detail leads with `reachable;` when the
+    backend is up. Operators reading the doctor row should see the
+    reachability state in the first token — not buried behind the model
+    name. Phase 23 DIAG-03 doctor-coverage parity."""
+    register_canonical_singletons(real_log, ms)
+    monkeypatch.setattr("forge_bridge.mcp.server._server_started", True, raising=False)
+    router = _StubRouter({
+        "local": True, "cloud": False,
+        "local_model": "qwen2.5-coder:32b",
+        "cloud_model": "claude-sonnet-4-6",
+    })
+    api = ConsoleReadAPI(execution_log=real_log, manifest_service=ms, llm_router=router)
+    body = await api.get_health()
+    backends = body["services"]["llm_backends"]
+    local = next(b for b in backends if b["name"] == "local")
+    assert local["status"] == "ok"
+    assert local["detail"].startswith("reachable;")
+    assert "qwen2.5-coder:32b" in local["detail"]
+
+
+async def test_health_llm_backend_detail_says_unreachable_when_down(real_log, ms, monkeypatch):
+    """services.llm_backends[*].detail leads with `unreachable;` when the
+    backend is down — the same model field carries through so operators
+    can still see which model was configured. This is the DIAG-03
+    observability gap closure: without this framing the row reported
+    `model=<name>` whether reachable or not, leaving operators no way
+    to read reachability state from the doctor output alone."""
+    register_canonical_singletons(real_log, ms)
+    monkeypatch.setattr("forge_bridge.mcp.server._server_started", True, raising=False)
+    router = _StubRouter({
+        "local": False, "cloud": False,
+        "local_model": "qwen2.5-coder:32b",
+        "cloud_model": "claude-sonnet-4-6",
+    })
+    api = ConsoleReadAPI(execution_log=real_log, manifest_service=ms, llm_router=router)
+    body = await api.get_health()
+    backends = body["services"]["llm_backends"]
+    local = next(b for b in backends if b["name"] == "local")
+    assert local["status"] == "fail"
+    assert local["detail"].startswith("unreachable;")
+    assert "qwen2.5-coder:32b" in local["detail"]
