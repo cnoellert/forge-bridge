@@ -644,7 +644,20 @@ class OllamaToolAdapter:
 
     @staticmethod
     def _compile_tools(tools: list[Any]) -> list[dict]:
-        """Translate to Ollama function-wrapped form (research §3.1)."""
+        """Translate to Ollama function-wrapped form (research §3.1).
+
+        Phase 24.1: tools are sorted alphabetically by name before
+        compilation. Ollama's KV cache hits on prefix-stable
+        ``{system, tools}`` blocks; any nondeterministic ordering from
+        upstream filter chains (reachability flips, set-iteration leaks,
+        PR14 narrowing variance, etc.) would bust the cache on every
+        request. Sorting at the compilation boundary makes the order
+        canonical regardless of what the filter chain produced —
+        single-point stabilization at the substrate boundary. See
+        ``.planning/COLD-START-INVESTIGATION.md`` recommendation #1
+        tactic 1: ~3.5s per-call savings after the first when the
+        prefix stays cache-resident.
+        """
         return [
             {
                 "type": "function",
@@ -654,7 +667,7 @@ class OllamaToolAdapter:
                     "parameters": tool.inputSchema,
                 },
             }
-            for tool in tools
+            for tool in sorted(tools, key=lambda t: t.name)
         ]
 
     async def send_turn(self, state: dict) -> _TurnResponse:
