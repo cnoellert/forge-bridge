@@ -15,8 +15,18 @@ async def get_project() -> str:
     """Flame: get the currently-open Flame project (name, paths, OCIO, version).
 
     Reads from the running Autodesk Flame session via its Python API.
-    Returns workspace name, library count, media storage paths, and the
-    Flame version. Always safe to call (read-only).
+    Returns workspace name, library count, media storage paths, Flame
+    version, and the active OCIO config. Always safe to call (read-only).
+
+    OCIO fields:
+      ocio_config            — resolved absolute path of the active config
+                                (symlinks dereferenced), or null if none
+      ocio_config_symlink    — symlink target if config.ocio is a symlink
+                                to one of Flame's bundled presets (lets
+                                you identify which preset is active)
+      ocio_custom_overlay    — path to project_custom_config.ocio if
+                                present (per-project colorspace overrides
+                                that merge over the base config)
 
     Use this tool ONLY when:
     - the user asks about the *currently-open Flame project* on the host
@@ -32,10 +42,23 @@ async def get_project() -> str:
     a running Flame session on the host.
     """
     data = await bridge.execute_json("""
-        import flame, json
+        import flame, json, os
         proj = flame.project.current_project
         ws = proj.current_workspace
         user = flame.users.current_user
+
+        # OCIO config lives at {setups}/colour_mgmt/config.ocio. Flame writes
+        # it as a symlink to a bundled preset or as a real file for a custom
+        # config. project_custom_config.ocio (if present) holds per-project
+        # colorspace overrides that merge over the base config.
+        cm_dir = os.path.join(proj.setups_folder, 'colour_mgmt')
+        cfg_path = os.path.join(cm_dir, 'config.ocio')
+        custom_path = os.path.join(cm_dir, 'project_custom_config.ocio')
+
+        ocio_config = os.path.realpath(cfg_path) if os.path.exists(cfg_path) else None
+        ocio_symlink = os.readlink(cfg_path) if os.path.islink(cfg_path) else None
+        ocio_custom = custom_path if os.path.exists(custom_path) else None
+
         info = {
             'project_name': proj.project_name,
             'nickname': str(proj.nickname.get_value()) if hasattr(proj.nickname, 'get_value') else str(proj.nickname),
@@ -52,6 +75,9 @@ async def get_project() -> str:
             'user': str(user.name),
             'user_nickname': str(user.nickname),
             'context_variables': proj.get_context_variables(),
+            'ocio_config': ocio_config,
+            'ocio_config_symlink': ocio_symlink,
+            'ocio_custom_overlay': ocio_custom,
         }
         print(json.dumps(info))
     """)
