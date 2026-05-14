@@ -52,6 +52,21 @@ def test_execute_python_input_schema_has_required_fields():
 # ── Docstring contract (23.1 worked examples must survive cleanup) ───────
 
 
+# ── Canonical regression query (load-bearing operational test) ────────────
+#
+# Phase 23.1 post-walk repositioning identified this query as load-bearing
+# for the entire chat-convergence story — it tests semantic retrieval, tool
+# ranking, introspection escalation, runtime convergence, and graph
+# completeness in one sentence. If forge-bridge can't answer it naturally,
+# the graph-native runtime story is not yet operationally believable.
+#
+# Pinned as a constant so future regression work has a stable reference.
+# v1.6+ should promote this to a fixtures module or CI smoke path; see
+# SEED-CANONICAL-FLAME-INTROSPECTION-QUERY-V1.6+.md.
+
+CANONICAL_FLAME_INTROSPECTION_QUERY = "What are the clips on Reel 1"
+
+
 def test_docstring_contains_three_worked_examples():
     """If a future docstring cleanup drops examples, the LLM loses pattern-
     match material and chat regresses to pre-23.1 unusability. Pin all
@@ -62,22 +77,95 @@ def test_docstring_contains_three_worked_examples():
     assert "Example 3" in doc
 
 
+def test_docstring_teaches_canonical_positioning_not_escape_hatch():
+    """Post-walk repositioning (23.1, in-flight per D-20): the docstring's
+    opening must position this tool as the canonical Flame introspection
+    surface, NOT as a generic escape hatch / dangerous code execution
+    primitive. The model reads the opening as positioning; without canonical-
+    surface framing it treats this tool as a last-resort fallback rather
+    than the right answer to Flame state questions.
+
+    Specifically pins:
+      - The 'universal Flame introspection and automation surface' framing
+      - The 'canonical answer' positioning relative to dedicated flame_* tools
+      - The 'reflective surface of Flame itself' generalization
+    """
+    doc = execute_python.__doc__ or ""
+    # Canonical positioning, not escape-hatch language.
+    assert "universal Flame introspection and automation surface" in doc, (
+        "lost canonical-surface positioning; the model will read this tool "
+        "as escape-hatch-shaped and skip it for introspection queries"
+    )
+    assert "canonical answer" in doc.lower(), (
+        "lost the 'for everything else, this is the canonical answer' framing"
+    )
+    assert "reflective surface of Flame itself" in doc, (
+        "lost the introspection-generalization sentence"
+    )
+
+
 def test_docstring_teaches_when_to_use_and_when_not_to():
     """The structured guidance is what the LLM reads to pick this tool
-    over the narrow flame_* tools. Pin the headers so the structure
-    survives downstream edits."""
+    over the narrow flame_* tools. Post-walk repositioning replaced
+    'Use this tool when' with an escalation rule that teaches when to
+    reach for this tool vs the narrow flame_* surface. Both forms are
+    acceptable; what's NOT acceptable is dropping the escalation rule
+    entirely."""
     doc = execute_python.__doc__ or ""
-    assert "Use this tool when:" in doc
+    # The escalation rule — load-bearing for tool selection.
+    assert "no dedicated flame_* tool directly exposes" in doc, (
+        "lost the escalation rule that teaches the model when to escalate "
+        "to this tool from narrow flame_* tools"
+    )
     assert "Do NOT use this tool when:" in doc
 
 
-def test_docstring_includes_reel_clips_dogfood_example():
-    """The query that motivated 23.1 — 'What are the clips on Reel 1' —
-    is Example 1. If that example gets dropped or renamed, the LLM may
-    fail to pattern-match the exact dogfood case again."""
+def test_docstring_includes_canonical_use_case_section():
+    """Post-walk: domain-shaped use cases (reel inspection, clip enumeration,
+    timeline traversal, batch graph traversal, sequence inspection) bridge
+    operator domain vocabulary to tool affordance. Without these, the
+    PR14-passes-all-tools fallback still leaves the model unable to map
+    domain queries to this tool."""
+    doc = execute_python.__doc__ or ""
+    assert "Canonical use cases:" in doc
+    # The five load-bearing domain anchors. If any goes missing, the
+    # corresponding domain query may regress.
+    for anchor in (
+        "reel inspection",
+        "clip enumeration",
+        "timeline traversal",
+        "batch graph traversal",
+        "sequence inspection",
+    ):
+        assert anchor in doc, (
+            f"lost canonical use-case anchor: {anchor!r} — the LLM may "
+            f"fail to map the corresponding operator query to this tool"
+        )
+
+
+def test_docstring_pins_canonical_regression_query_verbatim():
+    """The exact phrase 'Reel 1' from the dogfood-23.1-walk query must
+    appear in Example 1. This is the operational regression-pin: if the
+    canonical query string drifts out of the docstring, the LLM may stop
+    pattern-matching against the exact form artists use."""
+    doc = execute_python.__doc__ or ""
+    # 'Reel 1' — the literal name format in the canonical query.
+    assert "Reel 1" in doc
+    # The "list clip names" framing — surfaces the noun "clip names" the
+    # operator uses, bridging operator domain → tool example.
+    assert "list clip names" in doc.lower()
+
+
+def test_canonical_regression_query_constant_is_stable():
+    """The constant should hold the exact query string used in the
+    Phase 23.1 author-walk. v1.6+ may promote this to a shared fixtures
+    module; until then, this is the single source of truth."""
+    assert CANONICAL_FLAME_INTROSPECTION_QUERY == "What are the clips on Reel 1"
+    # The constant's domain terms should also appear in the docstring,
+    # so the canonical query and the docstring co-evolve.
     doc = execute_python.__doc__ or ""
     assert "Reel 1" in doc
-    assert "list clip names" in doc.lower()
+    assert "clip" in doc.lower()
 
 
 # ── Response-shape invariants (wraps bridge.execute correctly) ───────────

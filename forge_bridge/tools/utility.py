@@ -28,39 +28,48 @@ class ExecutePythonInput(BaseModel):
 
 
 async def execute_python(params: ExecutePythonInput) -> str:
-    """Flame: execute arbitrary Python code inside the running Flame session.
+    """Flame: the universal Flame introspection and automation surface.
 
-    The escape hatch for any Flame introspection or operation that no
-    narrow flame_* tool covers. The `flame` module is pre-imported in the
-    bridge namespace. Print results to stdout — wrap with `json.dumps(...)`
-    for structured returns, or plain `print(...)` for human-readable text.
+    When a dedicated flame_* tool covers your need (flame_get_project,
+    flame_list_desktop, flame_list_libraries, flame_context, etc.), prefer
+    it — those tools are typed, validated, and cheaper. For everything
+    else, this is the canonical answer.
 
-    Returns a JSON object with stdout, stderr, result, and (if execution
-    raised) error + traceback. The model should read stdout for the
-    answer to its query; error/traceback indicate the snippet itself failed.
+    Use this tool whenever you need to inspect or manipulate Flame state
+    and no dedicated flame_* tool directly exposes the required
+    information. This is the escalation path when narrow tools either
+    don't exist for your question or return adjacent-but-insufficient
+    data (e.g. flame_list_desktop returns reel clip *counts* but the
+    user wants clip *names* — reach here with a one-liner). It is the
+    reflective surface of Flame itself: anything the Flame Python API
+    can answer, this tool can answer.
 
-    Use this tool when:
-    - the user asks about Flame session state that no narrow flame_* tool
-      surfaces (e.g. clip names on a specific reel, segment counts per
-      sequence, batch node enumeration, custom selector queries)
-    - the narrow tools return adjacent-but-insufficient data (e.g.
-      flame_list_desktop returns reel clip *counts* but the user wants
-      clip *names* — reach for flame_execute_python with a one-liner)
-    - composing a small ad-hoc query across multiple Flame entities
+    Canonical use cases:
+    - reel inspection (clip names, sequence enumeration, reel-group structure)
+    - clip enumeration (per-reel, per-library, per-folder contents by name)
+    - timeline traversal (sequence segments with start/end frames, track
+      structure, segment metadata, version layers)
+    - batch graph traversal (batch group node enumeration, node attribute
+      inspection, write-file output paths)
+    - sequence inspection (segment counts, frame ranges, layer structure)
+    - selection queries (what is the artist currently looking at)
+    - any state question that doesn't map to a narrow flame_* tool
 
     Do NOT use this tool when:
-    - a narrow flame_* tool exists for the exact question (prefer
-      flame_get_project, flame_list_desktop, flame_context, etc. — they're
-      typed, validated, and cheaper)
-    - the user is asking about pipeline-registry state (use forge_* tools)
+    - a narrow flame_* tool exists for the exact question — those are
+      typed and validated; prefer them
+    - the user is asking about pipeline-registry state — use forge_* tools
     - the operation is a destructive mutation that should route through
-      staged-ops approval (don't bypass the approval gate)
+      staged-ops approval — don't bypass the approval gate
 
-    The `main_thread` parameter defaults to False (read-only safe). Set
-    main_thread=True ONLY for write operations (set_value, create, delete,
-    rename) that require Flame's Qt main thread.
+    The `flame` module is pre-imported in the bridge namespace. Print
+    results to stdout — wrap with `json.dumps(...)` for structured returns,
+    or plain `print(...)` for human-readable text. Returns a JSON object
+    with stdout, stderr, result, and (if execution raised) error +
+    traceback. Read stdout for the answer to your query; error/traceback
+    indicate the snippet itself failed.
 
-    Example 1 — list clip names on a named reel (read-only, structured):
+    Example 1 — list clip names on a named reel (canonical introspection):
 
         code = '''
             import flame, json
@@ -81,31 +90,48 @@ async def execute_python(params: ExecutePythonInput) -> str:
                 ]
                 print(json.dumps({"reel": "Reel 1", "clips": clips}))
         '''
-        # main_thread=False (default)
 
-    Example 2 — print current Flame version + OCIO config (read-only, plain):
+    Example 2 — enumerate nodes in the current Batch group (graph traversal):
 
         code = '''
-            import flame, os
-            proj = flame.project.current_project
-            cfg = os.path.join(proj.setups_folder, "colour_mgmt", "config.ocio")
-            print("Flame version:", flame.get_version())
-            print("OCIO config:", os.path.realpath(cfg) if os.path.exists(cfg) else "(none)")
+            import flame, json
+            bg = flame.batch
+            nodes = []
+            for n in bg.nodes:
+                nodes.append({
+                    "name": str(n.name),
+                    "type": n.type,
+                })
+            print(json.dumps({"batch_group": str(bg.name), "nodes": nodes}))
         '''
-        # main_thread=False (default)
 
-    Example 3 — rename a single segment (mutation, main_thread=True required):
+    Example 3 — list timeline segments with frame ranges (sequence inspection):
 
         code = '''
-            import flame
+            import flame, json
             seq = flame.project.current_project.current_workspace.desktop.reel_groups[0].reels[0].sequences[0]
-            seg = seq.versions[0].tracks[0].segments[0]
-            seg.name = "shot_010_v01"
+            segments = []
+            for v in seq.versions:
+                for t in v.tracks:
+                    for seg in t.segments:
+                        segments.append({
+                            "name": str(seg.name),
+                            "start": seg.record_in.frame if hasattr(seg.record_in, "frame") else None,
+                            "end": seg.record_out.frame if hasattr(seg.record_out, "frame") else None,
+                        })
+            print(json.dumps({"sequence": str(seq.name), "segments": segments}))
         '''
-        # main_thread=True  ← required for set_value / mutation
 
-    ⚠️ Use with care — Flame-side exceptions return as `error` + `traceback`
-    in the response, not raised; check the response shape before assuming
+    Mutation note. The `main_thread` parameter defaults to False (read-only
+    safe — the canonical use cases above all run on the worker thread).
+    Set main_thread=True ONLY for write operations (set_value, create,
+    delete, rename) that require Flame's Qt main thread. For destructive
+    mutations, prefer routing through the staged-ops platform
+    (forge_stage_*) so the operator has an approval surface; this tool is
+    primarily a discovery interface, not a mutation primitive.
+
+    ⚠️ Flame-side exceptions return as `error` + `traceback` in the
+    response, not raised — check the response shape before assuming
     success. Bad Python (infinite loops, runaway resource use) can hang
     Flame's main thread when main_thread=True.
     """
