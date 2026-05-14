@@ -562,6 +562,19 @@ def register_builtins(mcp: FastMCP) -> None:
             },
         )
 
+        # Escape-hatch: arbitrary Flame Python when no narrow flame_* tool fits.
+        # readOnlyHint=False because the tool CAN mutate state (main_thread=True
+        # path); honesty wins over docstring intent.
+        register_tool(
+            mcp, flame_utility.execute_python,
+            name="flame_execute_python",
+            source="builtin",
+            annotations={
+                "title": "Execute arbitrary Python inside Flame — escape hatch for any uncovered query",
+                "readOnlyHint": False,
+            },
+        )
+
         # ── Timeline ─────────────────────────────────────────────
 
         register_tool(
