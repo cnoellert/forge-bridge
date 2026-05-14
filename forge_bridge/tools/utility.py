@@ -178,9 +178,14 @@ async def execute_python(code: str, main_thread: bool = False) -> str:
     started = time.monotonic()
     status = "unknown"
     graph_id = new_graph_id()
+    # node_kind is substrate-level runtime semantics, NOT MCP-tool-name.
+    # The Flame hook executes Python; that's the substrate kind. A future
+    # `flame_run_batch` MCP tool would emit `node_kind="batch_run"`; a future
+    # `maya_execute_python` would still emit `node_kind="python"` because
+    # the substrate is the same. Closed enumeration per v1.6-FRAMING.md §4.
     emit_event(
         graph_id=graph_id,
-        node_kind="flame_execute_python",
+        node_kind="python",
         status="started",
         payload={
             "code_hash": code_hash,
@@ -219,7 +224,7 @@ async def execute_python(code: str, main_thread: bool = False) -> str:
         )
         emit_event(
             graph_id=graph_id,
-            node_kind="flame_execute_python",
+            node_kind="python",
             status=status,
             payload={
                 "code_hash": code_hash,

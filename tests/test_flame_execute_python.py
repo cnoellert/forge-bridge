@@ -555,7 +555,9 @@ async def test_execute_python_emits_started_event_at_entry(monkeypatch, tmp_path
     assert len(records) >= 1
     started_evt = records[0]
     assert started_evt["status"] == "started"
-    assert started_evt["node_kind"] == "flame_execute_python"
+    # node_kind is substrate-level (Python execution against Flame), NOT
+    # MCP tool name. See utility.py entry-emit comment + v1.6-FRAMING.md §4.
+    assert started_evt["node_kind"] == "python"
     assert started_evt["payload"]["main_thread"] is False
     assert started_evt["payload"]["code_len"] == len("print('hi')")
     assert len(started_evt["payload"]["code_hash"]) == 16
@@ -573,7 +575,7 @@ async def test_execute_python_emits_ok_terminal_event_on_success(monkeypatch, tm
     assert len(records) == 2
     terminal = records[1]
     assert terminal["status"] == "ok"
-    assert terminal["node_kind"] == "flame_execute_python"
+    assert terminal["node_kind"] == "python"
     assert isinstance(terminal["payload"]["elapsed_ms"], int)
     assert terminal["payload"]["elapsed_ms"] >= 0
 
