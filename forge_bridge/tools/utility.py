@@ -1,10 +1,15 @@
 """Utility tools — raw execution, shortcuts, system info."""
 
+import hashlib
 import json
+import logging
+import time
 
 from pydantic import BaseModel, Field
 
 from forge_bridge import bridge
+
+logger = logging.getLogger(__name__)
 
 
 # ── Tool: flame_execute_python ──────────────────────────────────────────
@@ -135,16 +140,44 @@ async def execute_python(params: ExecutePythonInput) -> str:
     success. Bad Python (infinite loops, runaway resource use) can hang
     Flame's main thread when main_thread=True.
     """
-    resp = await bridge.execute(params.code, main_thread=params.main_thread)
-    result = {
-        "stdout": resp.stdout,
-        "stderr": resp.stderr,
-        "result": resp.result,
-    }
-    if resp.error:
-        result["error"] = resp.error
-        result["traceback"] = resp.traceback
-    return json.dumps(result, indent=2)
+    # Phase 23.1 observability: every invocation logs code_hash + main_thread
+    # + elapsed + status + code_len so post-walk diagnostics can correlate
+    # per-call behavior without re-running the failure. SEED-FLAME-EXEC-
+    # OBSERVABILITY-V1.6+ captures the richer instrumentation arc (queue-
+    # wait timing, hook-side per-stage breakdown) that requires hook-
+    # protocol cooperation and so belongs in v1.6's observability phase.
+    code_hash = hashlib.sha256(params.code.encode("utf-8")).hexdigest()[:16]
+    started = time.monotonic()
+    status = "unknown"
+    try:
+        resp = await bridge.execute(params.code, main_thread=params.main_thread)
+        result = {
+            "stdout": resp.stdout,
+            "stderr": resp.stderr,
+            "result": resp.result,
+        }
+        if resp.error:
+            result["error"] = resp.error
+            result["traceback"] = resp.traceback
+            status = "flame_error"  # Flame-side Python raised; tool surface returned cleanly
+        else:
+            status = "ok"
+        return json.dumps(result, indent=2)
+    except Exception:
+        # Transport-layer failure — bridge.execute raised (BridgeConnectionError
+        # for refused/timeout/comm-error). This is what the router sees as
+        # `status=tool_error` in its iteration log. Capturing here means
+        # operators can correlate the model-side `tool_error` event with the
+        # tool-side cause without cross-referencing two log streams.
+        status = "transport_error"
+        raise
+    finally:
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        logger.info(
+            "flame_execute_python code_hash=%s main_thread=%s "
+            "elapsed_ms=%d status=%s code_len=%d",
+            code_hash, params.main_thread, elapsed_ms, status, len(params.code),
+        )
 
 
 # ── Tool: flame_execute_shortcut ────────────────────────────────────────

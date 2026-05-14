@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from forge_bridge import bridge
 from forge_bridge.tools import utility
 from forge_bridge.tools.utility import ExecutePythonInput, execute_python
 
@@ -301,3 +302,145 @@ def test_flame_execute_python_source_is_builtin():
         # registration code paths are independently tested in
         # tests/test_mcp_registry.py.
         pytest.skip("FastMCP tool meta not directly accessible in this version")
+
+
+# ── Phase 23.1 observability instrumentation ─────────────────────────────
+#
+# Every invocation logs code_hash + main_thread + elapsed_ms + status +
+# code_len so post-walk diagnostics correlate per-call behavior without
+# re-running the failure. SEED-FLAME-EXEC-OBSERVABILITY-V1.6+ captures the
+# richer instrumentation (queue-wait timing, hook-side per-stage breakdown)
+# deferred to v1.6's observability phase because it requires hook protocol
+# cooperation.
+
+
+@pytest.mark.asyncio
+async def test_execute_python_logs_invocation_telemetry(caplog):
+    """Each call emits a structured log record with the five Phase 23.1
+    observability fields. Test pins the exact field set so a future log-
+    format refactor cannot silently drop instrumentation operators rely on."""
+    import logging
+    fake = _FakeBridgeResponse(stdout="hello\n", stderr="", result=None)
+    with caplog.at_level(logging.INFO, logger="forge_bridge.tools.utility"):
+        with patch.object(utility.bridge, "execute", new=AsyncMock(return_value=fake)):
+            await execute_python(ExecutePythonInput(code="print('hello')"))
+
+    # Find the flame_execute_python log line.
+    invocation_logs = [
+        r for r in caplog.records
+        if r.name == "forge_bridge.tools.utility"
+        and "flame_execute_python" in r.message
+    ]
+    assert len(invocation_logs) == 1, (
+        f"expected exactly one flame_execute_python invocation log; "
+        f"got {len(invocation_logs)} (records: {[r.message for r in caplog.records]})"
+    )
+    msg = invocation_logs[0].message
+    # The five load-bearing observability fields.
+    assert "code_hash=" in msg
+    assert "main_thread=" in msg
+    assert "elapsed_ms=" in msg
+    assert "status=" in msg
+    assert "code_len=" in msg
+
+
+@pytest.mark.asyncio
+async def test_execute_python_logs_status_ok_on_clean_success(caplog):
+    """status=ok when bridge returns no error."""
+    import logging
+    fake = _FakeBridgeResponse(stdout="hello\n", stderr="", result=None)
+    with caplog.at_level(logging.INFO, logger="forge_bridge.tools.utility"):
+        with patch.object(utility.bridge, "execute", new=AsyncMock(return_value=fake)):
+            await execute_python(ExecutePythonInput(code="print('hello')"))
+    msg = next(
+        r.message for r in caplog.records
+        if "flame_execute_python" in r.message
+    )
+    assert "status=ok" in msg
+
+
+@pytest.mark.asyncio
+async def test_execute_python_logs_status_flame_error_on_flame_exception(caplog):
+    """status=flame_error when Flame-side Python raised — the tool returns
+    cleanly (error in JSON envelope) but the model should see this as a
+    distinct status from a clean run."""
+    import logging
+    fake = _FakeBridgeResponse(
+        stdout="", stderr="",
+        result=None,
+        error="NameError: name 'flam' is not defined",
+        traceback="Traceback (most recent call last):\n  ...",
+    )
+    with caplog.at_level(logging.INFO, logger="forge_bridge.tools.utility"):
+        with patch.object(utility.bridge, "execute", new=AsyncMock(return_value=fake)):
+            await execute_python(ExecutePythonInput(code="flam.foo()"))
+    msg = next(
+        r.message for r in caplog.records
+        if "flame_execute_python" in r.message
+    )
+    assert "status=flame_error" in msg
+
+
+@pytest.mark.asyncio
+async def test_execute_python_logs_status_transport_error_on_bridge_exception(caplog):
+    """status=transport_error when bridge.execute raises. This is what the
+    chat router surfaces as `status=tool_error` in its per-iteration log —
+    the 23.1 instrumentation lets operators correlate that event with the
+    tool-side cause without cross-referencing two log streams."""
+    import logging
+    mock = AsyncMock(side_effect=bridge.BridgeConnectionError("transport boom"))
+    with caplog.at_level(logging.INFO, logger="forge_bridge.tools.utility"):
+        with patch.object(utility.bridge, "execute", new=mock):
+            with pytest.raises(bridge.BridgeConnectionError):
+                await execute_python(ExecutePythonInput(code="anything"))
+    msg = next(
+        r.message for r in caplog.records
+        if "flame_execute_python" in r.message
+    )
+    assert "status=transport_error" in msg
+
+
+@pytest.mark.asyncio
+async def test_execute_python_logs_main_thread_flag_value(caplog):
+    """The main_thread flag value flows through to the log so operators can
+    spot 'model is defaulting to main_thread=True on reads' patterns."""
+    import logging
+    fake = _FakeBridgeResponse(stdout="ok", stderr="", result=None)
+    with caplog.at_level(logging.INFO, logger="forge_bridge.tools.utility"):
+        with patch.object(utility.bridge, "execute", new=AsyncMock(return_value=fake)):
+            await execute_python(ExecutePythonInput(code="x=1", main_thread=True))
+    msg = next(
+        r.message for r in caplog.records
+        if "flame_execute_python" in r.message
+    )
+    assert "main_thread=True" in msg
+
+
+@pytest.mark.asyncio
+async def test_execute_python_code_hash_is_deterministic_per_snippet(caplog):
+    """Same snippet → same hash. Different snippets → different hashes.
+    Lets operators group log lines by snippet identity across runs."""
+    import logging
+    fake = _FakeBridgeResponse(stdout="ok", stderr="", result=None)
+    snippet_a = "print('a')"
+    snippet_b = "print('b')"
+    with caplog.at_level(logging.INFO, logger="forge_bridge.tools.utility"):
+        with patch.object(utility.bridge, "execute", new=AsyncMock(return_value=fake)):
+            await execute_python(ExecutePythonInput(code=snippet_a))
+            await execute_python(ExecutePythonInput(code=snippet_a))
+            await execute_python(ExecutePythonInput(code=snippet_b))
+
+    hashes = []
+    for r in caplog.records:
+        if "flame_execute_python" in r.message:
+            # Extract code_hash=<16chars> from message
+            for token in r.message.split():
+                if token.startswith("code_hash="):
+                    hashes.append(token.split("=", 1)[1])
+    assert len(hashes) == 3
+    assert hashes[0] == hashes[1], "same snippet should produce same hash"
+    assert hashes[0] != hashes[2], "different snippets should produce different hashes"
+    # Hash is 16-char hex (sha256 prefix).
+    for h in hashes:
+        assert len(h) == 16
+        int(h, 16)  # raises if non-hex
