@@ -1758,3 +1758,102 @@ def test_pr15_no_regression_pr14_keys_present_alongside_tool_enforced():
     for key in ("retry_count", "retry_skipped", "final_status", "attempts",
                 "tools_available", "tools_filtered", "tool_enforced"):
         assert key in summary
+
+
+# ── Phase 23.1: budget-exhaustion message + backend-health fix hint ─────────
+
+
+def test_23_1_multi_attempt_message_names_budget_exhaustion_not_threshold():
+    """Two httpx timeouts → composed message names 'budget exhausted', not
+    'LLM request timed out after Ns'. Pre-23.1 the user saw the latter and
+    read the N as a hard threshold; the former is the truth."""
+    outcomes = [httpx.TimeoutException("t1"), httpx.TimeoutException("t2")]
+    with _patch_client(outcomes):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=1, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    assert result.ok is False
+    assert result.error_kind == "timeout"
+    assert "budget exhausted" in result.error_message
+    assert "attempt 1" in result.error_message
+    assert "attempt 2" in result.error_message
+    # Default fix hint when no 5xx in chain.
+    assert "increase --timeout" in result.fix
+
+
+def test_23_1_504_then_timeout_emits_backend_health_fix_hint():
+    """The user's actual scenario: server returns 504, retry runs out of
+    budget. Pre-23.1 the fix hint said 'increase --timeout', which was
+    misleading — the *backend* was slow, not the client. 23.1 routes
+    5xx-driven timeouts to a backend-health hint."""
+    _504_body = {"error": {"message": "Response timed out — try a simpler question."}}
+    outcomes = [_Resp(504, _504_body), httpx.TimeoutException("retry budget gone")]
+    with _patch_client(outcomes):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=1, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    assert result.ok is False
+    assert result.error_kind == "timeout"
+    # Composed message names both attempts.
+    assert "attempt 1 returned HTTP 504" in result.error_message
+    assert "attempt 2 timed out" in result.error_message
+    # Server-provided text from the 504 body is preserved as context.
+    assert "try a simpler question" in result.error_message
+    # Fix hint reflects backend reality, not client tuning.
+    assert "LLM backend returned a server error" in result.fix
+    assert "Ollama or cloud" in result.fix
+
+
+def test_23_1_per_attempt_streaming_message_is_attempt_scoped():
+    """The streaming reporter line during the loop says 'attempt N timed
+    out after Ms', not 'LLM request timed out'. Per-attempt scope makes
+    the final composed message at exhaustion non-contradictory."""
+    msgs: list[str] = []
+    outcomes = [httpx.TimeoutException("t1"), _Resp(200, {"response": "ok"})]
+    with _patch_client(outcomes):
+        cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=1, backoff_seconds=0,
+            reporter=msgs.append, sleep=lambda _s: None,
+        )
+    # The first attempt's per-attempt streaming line is attempt-scoped.
+    assert any("attempt 1 timed out" in m for m in msgs)
+    # No "LLM request timed out" leaks at the streaming layer.
+    assert not any("LLM request timed out" in m for m in msgs)
+
+
+def test_23_1_single_attempt_timeout_keeps_existing_shape():
+    """Back-compat: a single TimeoutException with retries=0 still emits
+    the simple 'LLM request timed out after Ns' shape — no composition
+    artifact when there's only one attempt to compose."""
+    with _patch_client([httpx.TimeoutException("t1")]):
+        result = cw.call_with_retry(
+            "http://x/y", {}, timeout=5.0, retries=0, backoff_seconds=0,
+            sleep=lambda _s: None,
+        )
+    assert result.ok is False
+    assert result.error_kind == "timeout"
+    assert "LLM request timed out" in result.error_message
+    assert "budget exhausted" not in result.error_message
+
+
+def test_23_1_render_exhaustion_pure_helper():
+    """Direct unit test for the helper — independent of the wrapper loop."""
+    events = [
+        {"kind": "attempt", "attempt": 1, "duration": 120.0,
+         "result": "timeout", "status_code": 504},
+        {"kind": "attempt", "attempt": 2, "duration": 8.6,
+         "result": "timeout", "status_code": None},
+    ]
+    msg, fix = cw._render_exhaustion(
+        events, timeout=130.0, total_elapsed=130.0,
+        fallback_message="attempt 2 timed out after 8.6s",
+        kind="timeout",
+    )
+    assert "budget exhausted after 130.0s total" in msg
+    assert "(timeout 130s)" in msg
+    assert "attempt 1 returned HTTP 504 after 120.0s" in msg
+    assert "attempt 2 timed out after 8.6s" in msg
+    assert fix is not None
+    assert "LLM backend returned a server error" in fix

@@ -288,7 +288,10 @@ def call_with_retry(
                 "tool_calls": None, "tool_duration": None,
             })
             last_kind = "timeout"
-            last_message = f"LLM request timed out after {elapsed:.1f}s"
+            # Per-attempt message — keep terse and attempt-scoped so the
+            # final composed message at exhaustion can carry the whole story
+            # without contradicting the streaming progress output.
+            last_message = f"attempt {attempt} timed out after {elapsed:.1f}s"
             _report(reporter, last_message)
             continue
         except (httpx.ConnectError, httpx.RemoteProtocolError) as exc:
@@ -377,6 +380,11 @@ def call_with_retry(
                     "result": "timeout",
                     "status_code": response.status_code,
                     "tool_calls": None, "tool_duration": None,
+                    # Phase 23.1 — carry the server-provided body text on the
+                    # event so _render_exhaustion can recover it across
+                    # subsequent retries that don't carry their own body
+                    # (e.g. httpx timeout on the retry that ate the budget).
+                    "server_message": server_msg,
                 })
                 last_kind = "timeout"
                 last_message = (
@@ -466,12 +474,26 @@ def call_with_retry(
     # Exhausted retries / budget on retryable errors (timeouts, 5xx, 429,
     # slow connection drops). Report actual attempts fired, not the configured
     # total — important when the budget cap stops us before we use all retries.
+    #
+    # Phase 23.1 — compose the message and fix-hint from per-attempt events
+    # rather than passing the last attempt's terse line through verbatim. The
+    # pre-23.1 shape rendered "LLM request timed out after 8.6s" even when
+    # the real failure was "server returned 504 after ~120s, retry got 8.6s
+    # leftover budget" — which read to operators as a hard 8.6s threshold.
+    composed_message, composed_fix = _render_exhaustion(
+        events,
+        timeout=timeout,
+        total_elapsed=now() - start,
+        fallback_message=last_message,
+        kind=last_kind or "timeout",
+    )
     return _emit_failure(
         url, last_kind or "timeout",
-        last_message or f"LLM request timed out after {timeout:.1f}s",
+        composed_message,
         attempts=max(attempts_made, 1), start=start, timeline=timeline,
         events=events, now=now, count_toward_breaker=True,
         retry_skipped=retry_skipped,
+        fix=composed_fix,
     )
 
 
@@ -479,6 +501,110 @@ def call_with_retry(
 def _report(reporter: Callable[[str], None] | None, message: str) -> None:
     if reporter is not None:
         reporter(message)
+
+
+def _render_exhaustion(
+    events: list[dict[str, Any]],
+    *,
+    timeout: float,
+    total_elapsed: float,
+    fallback_message: str | None,
+    kind: str,
+) -> tuple[str, str | None]:
+    """Compose a truthful failure message + fix hint from per-attempt events.
+
+    Phase 23.1 introduced this so the user-visible message at retry exhaustion
+    names *what actually happened* across attempts rather than echoing the
+    last attempt's terse line. The events list already carries duration,
+    status_code, and result per attempt; this helper just renders them.
+
+    Returns (message, fix_hint). When fix_hint is non-None it overrides the
+    default ``_FIX_HINTS[kind]`` mapping at the emit site (e.g., 5xx-driven
+    timeouts get a backend-health hint rather than the generic
+    "increase --timeout" hint).
+    """
+    attempts = [e for e in events if isinstance(e, dict) and e.get("kind") == "attempt"]
+    if not attempts:
+        # Pathological — shouldn't happen, but stay safe.
+        return (
+            fallback_message or f"LLM request failed after {total_elapsed:.1f}s",
+            None,
+        )
+
+    # A 5xx anywhere in the chain means the backend itself rejected/exhausted;
+    # the fix hint should reflect backend health, not client timeout tuning.
+    had_5xx = any(
+        isinstance(e.get("status_code"), int) and 500 <= e["status_code"] < 600
+        for e in attempts
+    )
+    backend_fix = (
+        "the LLM backend returned a server error (5xx); check that the LLM "
+        "(Ollama or cloud) is healthy and not stuck on a slow query — "
+        "`forge-bridge doctor` shows backend status."
+    )
+
+    # Carry server-provided context forward. Operators rely on backend-
+    # supplied text (e.g. "try a simpler question or fewer tools") for
+    # context the structural attempt summary cannot convey. Source priority:
+    #   1. Most recent attempt event with a non-empty `server_message`
+    #      (set at 5xx storage sites — survives across subsequent retries
+    #      that don't carry their own body, e.g. httpx timeout on retry).
+    #   2. `fallback_message` if it doesn't look like our own per-attempt
+    #      rendering ("attempt N timed out after Ms").
+    server_text: str | None = None
+    for ev in reversed(attempts):
+        candidate = ev.get("server_message")
+        if isinstance(candidate, str) and candidate.strip():
+            server_text = candidate.strip()
+            break
+    if server_text is None and fallback_message and not fallback_message.startswith("attempt "):
+        server_text = fallback_message.strip() or None
+
+    if len(attempts) == 1:
+        last = attempts[0]
+        dur = float(last.get("duration", 0.0) or 0.0)
+        status = last.get("status_code")
+        result = last.get("result")
+        if result == "timeout" and isinstance(status, int):
+            base = (
+                f"the LLM backend returned HTTP {status} after {dur:.1f}s "
+                f"(client budget {timeout:.0f}s; backend exhausted its own internal limit)"
+            )
+            return (f"{base} — server: {server_text}" if server_text else base, backend_fix)
+        if result == "timeout":
+            return (f"LLM request timed out after {dur:.1f}s", None)
+        if result == "error" and isinstance(status, int):
+            base = f"LLM backend returned HTTP {status} after {dur:.1f}s"
+            return (
+                f"{base} — server: {server_text}" if server_text else base,
+                backend_fix if 500 <= status < 600 else None,
+            )
+        return (fallback_message or f"LLM request failed after {dur:.1f}s", None)
+
+    # Multi-attempt — name the sequence honestly so "8.6s" doesn't read
+    # as a threshold.
+    summaries: list[str] = []
+    for i, ev in enumerate(attempts, 1):
+        dur = float(ev.get("duration", 0.0) or 0.0)
+        status = ev.get("status_code")
+        result = ev.get("result")
+        if result == "timeout" and isinstance(status, int):
+            summaries.append(f"attempt {i} returned HTTP {status} after {dur:.1f}s")
+        elif result == "timeout":
+            summaries.append(f"attempt {i} timed out after {dur:.1f}s")
+        elif result == "error" and isinstance(status, int):
+            summaries.append(f"attempt {i} HTTP {status} after {dur:.1f}s")
+        elif result == "error":
+            summaries.append(f"attempt {i} errored after {dur:.1f}s")
+        else:
+            summaries.append(f"attempt {i} {result or 'unknown'} after {dur:.1f}s")
+    composed = (
+        f"budget exhausted after {total_elapsed:.1f}s total "
+        f"(timeout {timeout:.0f}s): " + "; ".join(summaries)
+    )
+    if server_text:
+        composed = f"{composed} — server: {server_text}"
+    return (composed, backend_fix if had_5xx else None)
 
 
 def _fail(
@@ -491,6 +617,7 @@ def _fail(
     events: list[dict[str, Any]],
     retry_skipped: bool,
     now: Callable[[], float] = time.monotonic,
+    fix: str | None = None,
 ) -> CallResult:
     total_elapsed = now() - start
     trace = _build_trace(
@@ -500,7 +627,7 @@ def _fail(
     return CallResult(
         ok=False, data=None,
         error_kind=kind, error_message=message,
-        fix=_FIX_HINTS.get(kind),
+        fix=fix if fix is not None else _FIX_HINTS.get(kind),
         attempts=attempts,
         elapsed_seconds=total_elapsed,
         timeline=timeline,
@@ -520,13 +647,20 @@ def _emit_failure(
     retry_skipped: bool,
     now: Callable[[], float] = time.monotonic,
     count_toward_breaker: bool,
+    fix: str | None = None,
 ) -> CallResult:
-    """Build a failure CallResult and (optionally) record a breaker tick."""
+    """Build a failure CallResult and (optionally) record a breaker tick.
+
+    The optional ``fix`` parameter overrides the default ``_FIX_HINTS[kind]``
+    mapping. Phase 23.1 added it so the exhaustion path can pass a backend-
+    health hint when a 5xx response was observed, instead of the generic
+    "increase --timeout" hint that mislead operators pre-23.1.
+    """
     if count_toward_breaker:
         _record_breaker_failure(url, now=now)
     return _fail(kind, message, attempts=attempts, start=start,
                  timeline=timeline, events=events,
-                 retry_skipped=retry_skipped, now=now)
+                 retry_skipped=retry_skipped, now=now, fix=fix)
 
 
 def _build_trace(
