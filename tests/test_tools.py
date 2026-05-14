@@ -237,15 +237,29 @@ def test_run_flame_list_libraries_explicit_args_still_work(monkeypatch):
 
 
 def test_utility_models():
-    """Verify utility.py Pydantic models exist for all parameterized functions."""
+    """Verify utility.py Pydantic models exist for all parameterized functions.
+
+    Phase 23.1 in-flight exception: `execute_python` deliberately takes flat
+    kwargs (`code: str, main_thread: bool`) instead of a BaseModel wrapper.
+    FastMCP introspects the function signature; a BaseModel-wrapped signature
+    generates a NESTED JSON schema (`{"params": {"code": "..."}}`) that the
+    chat model could not generate, causing 100% silent dispatch failure pre-
+    23.1-in-flight. Flat signature → flat schema → model can call the tool.
+    See `SEED-FLAT-SIGNATURE-AUDIT-V1.6+` for the wider convention review.
+    """
     from pydantic import BaseModel
 
     from forge_bridge.tools import utility
+
+    # 23.1 carve-out — see docstring above for rationale.
+    _FLAT_SIGNATURE_EXCEPTIONS = {"execute_python"}
 
     import inspect
     for name, fn in inspect.getmembers(utility, inspect.isfunction):
         # Skip functions imported from other modules
         if getattr(fn, "__module__", None) != utility.__name__:
+            continue
+        if name in _FLAT_SIGNATURE_EXCEPTIONS:
             continue
         sig = inspect.signature(fn)
         params = list(sig.parameters.values())
@@ -297,10 +311,21 @@ def test_pydantic_coverage():
     modules = [timeline, batch, publish, project, utility, reconform, switch_grade]
     failures = []
 
+    # Phase 23.1 in-flight: `flame_execute_python` deliberately uses flat
+    # kwargs (code: str, main_thread: bool) because a BaseModel wrapper
+    # generates a nested JSON schema FastMCP exposes to the LLM, and the
+    # chat model could not produce the nested shape. Flat signature ⇒ flat
+    # schema ⇒ model can call. The wider convention question — should
+    # other tools also flatten? — is intentionally deferred to
+    # `SEED-FLAT-SIGNATURE-AUDIT-V1.6+`.
+    _FLAT_SIGNATURE_EXCEPTIONS = {"execute_python"}
+
     for mod in modules:
         # Resolve string annotations (from __future__ import annotations) per module
         for name, fn in inspect.getmembers(mod, inspect.isfunction):
             if name.startswith("_"):
+                continue
+            if name in _FLAT_SIGNATURE_EXCEPTIONS:
                 continue
             # Skip functions imported from other modules (e.g. Field from pydantic)
             if getattr(fn, "__module__", None) != mod.__name__:

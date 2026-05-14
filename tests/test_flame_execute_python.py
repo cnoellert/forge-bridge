@@ -32,13 +32,32 @@ from forge_bridge.tools.utility import ExecutePythonInput, execute_python
 
 
 def test_execute_python_callable_and_async():
-    """The function exists, takes ExecutePythonInput, returns str."""
+    """Post-23.1-in-flight: the function takes flat kwargs (code, main_thread),
+    NOT a wrapped ExecutePythonInput. FastMCP introspects the signature to
+    generate the MCP JSON schema; a flat signature → flat schema → model
+    can generate the args correctly."""
     import inspect
     assert inspect.iscoroutinefunction(execute_python)
+    sig = inspect.signature(execute_python)
+    params = list(sig.parameters.values())
+    # Must be FLAT — direct `code` + `main_thread` kwargs, no wrapper.
+    assert [p.name for p in params] == ["code", "main_thread"], (
+        f"signature is not flat — got {[p.name for p in params]}. "
+        f"FastMCP will generate a nested JSON schema and the chat model "
+        f"will fail to call this tool (Phase 23.1 in-flight gap fix)."
+    )
+    # `code` is required (no default); `main_thread` has a False default.
+    code_param = sig.parameters["code"]
+    main_thread_param = sig.parameters["main_thread"]
+    assert code_param.default is inspect.Parameter.empty
+    assert main_thread_param.default is False
 
 
-def test_execute_python_input_schema_has_required_fields():
-    """ExecutePythonInput carries `code` (str) and `main_thread` (bool, default False)."""
+def test_execute_python_input_back_compat_model_still_exists():
+    """ExecutePythonInput is retained post-23.1-in-flight for direct-Python
+    callers that constructed it pre-23.1, but it is NO LONGER the function
+    signature. Schema-shape assertions on the back-compat model — preserved
+    so the back-compat surface doesn't accidentally drift."""
     schema = ExecutePythonInput.model_json_schema()
     assert "code" in schema["properties"]
     assert "main_thread" in schema["properties"]
@@ -47,6 +66,66 @@ def test_execute_python_input_schema_has_required_fields():
     # `code` is required; `main_thread` has a default → not required.
     required = schema.get("required", [])
     assert "code" in required
+    assert "main_thread" not in required
+
+
+def test_flame_execute_python_mcp_schema_is_flat_not_nested():
+    """LOAD-BEARING 23.1 invariant. FastMCP introspects the function
+    signature to build the JSON schema the LLM sees. Pre-23.1-in-flight,
+    the signature was `execute_python(params: ExecutePythonInput)` which
+    generated a NESTED schema requiring `{"params": {"code": "..."}}`.
+    The chat model consistently generated the flat `{"code": "..."}`
+    shape and pydantic-validation failed at MCP dispatch BEFORE the
+    function body ran — every chat tool_error event was a silent
+    schema-mismatch failure with zero tool-wrapper log records.
+
+    The flat signature generates a flat schema. This test pins that
+    invariant — if a future refactor re-wraps the signature, the model
+    will silently fail again. Catch it here, not in production.
+    """
+    import json
+
+    from mcp.server.fastmcp import FastMCP
+
+    from forge_bridge.mcp.registry import register_builtins
+
+    mcp = FastMCP("test")
+    register_builtins(mcp)
+    tool = mcp._tool_manager._tools["flame_execute_python"]
+
+    # FastMCP exposes the schema as `parameters` on the Tool object.
+    # Walk the candidate attrs and pick whichever is non-None.
+    schema = None
+    for attr in ("parameters", "input_schema", "inputSchema"):
+        candidate = getattr(tool, attr, None)
+        if candidate:
+            schema = candidate if isinstance(candidate, dict) else (
+                candidate() if callable(candidate) else None
+            )
+            break
+    assert schema is not None, "could not extract MCP schema from FastMCP tool"
+
+    properties = schema.get("properties", {})
+    required = schema.get("required", [])
+
+    # FLAT — direct `code` + `main_thread` keys at the top level, NOT a
+    # nested `params` wrapper.
+    assert "code" in properties, (
+        f"MCP schema MUST expose `code` as a top-level property; got: "
+        f"{json.dumps(properties, indent=2)}"
+    )
+    assert "main_thread" in properties, (
+        f"MCP schema MUST expose `main_thread` as a top-level property; "
+        f"got: {json.dumps(properties, indent=2)}"
+    )
+    assert "params" not in properties, (
+        f"REGRESSION: MCP schema has a nested `params` wrapper. The "
+        f"function signature was probably refactored back to "
+        f"`execute_python(params: ExecutePythonInput)`. Revert to flat "
+        f"kwargs — see Phase 23.1 in-flight gap-fix archaeology."
+    )
+    assert "code" in required, "code must be required at the top level"
+    # main_thread has a default, so should NOT be required.
     assert "main_thread" not in required
 
 
@@ -188,7 +267,7 @@ async def test_execute_python_returns_json_with_stdout_stderr_result():
     import json
     fake = _FakeBridgeResponse(stdout="hello\n", stderr="", result=None)
     with patch.object(utility.bridge, "execute", new=AsyncMock(return_value=fake)):
-        out = await execute_python(ExecutePythonInput(code="print('hello')"))
+        out = await execute_python(code="print('hello')")
     parsed = json.loads(out)
     assert parsed["stdout"] == "hello\n"
     assert parsed["stderr"] == ""
@@ -210,7 +289,7 @@ async def test_execute_python_includes_error_and_traceback_on_flame_exception():
         traceback="Traceback (most recent call last):\n  ...",
     )
     with patch.object(utility.bridge, "execute", new=AsyncMock(return_value=fake)):
-        out = await execute_python(ExecutePythonInput(code="flam.foo()"))
+        out = await execute_python(code="flam.foo()")
     parsed = json.loads(out)
     assert parsed["error"] == "NameError: name 'flam' is not defined"
     assert "Traceback" in parsed["traceback"]
@@ -223,7 +302,7 @@ async def test_execute_python_passes_main_thread_param_through():
     fake = _FakeBridgeResponse(stdout="ok", stderr="", result=None)
     mock = AsyncMock(return_value=fake)
     with patch.object(utility.bridge, "execute", new=mock):
-        await execute_python(ExecutePythonInput(code="x=1", main_thread=True))
+        await execute_python(code="x=1", main_thread=True)
     # Bridge.execute called with main_thread=True (kwarg, not positional).
     assert mock.call_args.kwargs.get("main_thread") is True
 
@@ -234,7 +313,7 @@ async def test_execute_python_default_main_thread_is_false():
     fake = _FakeBridgeResponse(stdout="ok", stderr="", result=None)
     mock = AsyncMock(return_value=fake)
     with patch.object(utility.bridge, "execute", new=mock):
-        await execute_python(ExecutePythonInput(code="x=1"))
+        await execute_python(code="x=1")
     assert mock.call_args.kwargs.get("main_thread") is False
 
 
@@ -323,7 +402,7 @@ async def test_execute_python_logs_invocation_telemetry(caplog):
     fake = _FakeBridgeResponse(stdout="hello\n", stderr="", result=None)
     with caplog.at_level(logging.INFO, logger="forge_bridge.tools.utility"):
         with patch.object(utility.bridge, "execute", new=AsyncMock(return_value=fake)):
-            await execute_python(ExecutePythonInput(code="print('hello')"))
+            await execute_python(code="print('hello')")
 
     # Find the flame_execute_python log line.
     invocation_logs = [
@@ -351,7 +430,7 @@ async def test_execute_python_logs_status_ok_on_clean_success(caplog):
     fake = _FakeBridgeResponse(stdout="hello\n", stderr="", result=None)
     with caplog.at_level(logging.INFO, logger="forge_bridge.tools.utility"):
         with patch.object(utility.bridge, "execute", new=AsyncMock(return_value=fake)):
-            await execute_python(ExecutePythonInput(code="print('hello')"))
+            await execute_python(code="print('hello')")
     msg = next(
         r.message for r in caplog.records
         if "flame_execute_python" in r.message
@@ -373,7 +452,7 @@ async def test_execute_python_logs_status_flame_error_on_flame_exception(caplog)
     )
     with caplog.at_level(logging.INFO, logger="forge_bridge.tools.utility"):
         with patch.object(utility.bridge, "execute", new=AsyncMock(return_value=fake)):
-            await execute_python(ExecutePythonInput(code="flam.foo()"))
+            await execute_python(code="flam.foo()")
     msg = next(
         r.message for r in caplog.records
         if "flame_execute_python" in r.message
@@ -392,7 +471,7 @@ async def test_execute_python_logs_status_transport_error_on_bridge_exception(ca
     with caplog.at_level(logging.INFO, logger="forge_bridge.tools.utility"):
         with patch.object(utility.bridge, "execute", new=mock):
             with pytest.raises(bridge.BridgeConnectionError):
-                await execute_python(ExecutePythonInput(code="anything"))
+                await execute_python(code="anything")
     msg = next(
         r.message for r in caplog.records
         if "flame_execute_python" in r.message
@@ -408,7 +487,7 @@ async def test_execute_python_logs_main_thread_flag_value(caplog):
     fake = _FakeBridgeResponse(stdout="ok", stderr="", result=None)
     with caplog.at_level(logging.INFO, logger="forge_bridge.tools.utility"):
         with patch.object(utility.bridge, "execute", new=AsyncMock(return_value=fake)):
-            await execute_python(ExecutePythonInput(code="x=1", main_thread=True))
+            await execute_python(code="x=1", main_thread=True)
     msg = next(
         r.message for r in caplog.records
         if "flame_execute_python" in r.message
@@ -426,9 +505,9 @@ async def test_execute_python_code_hash_is_deterministic_per_snippet(caplog):
     snippet_b = "print('b')"
     with caplog.at_level(logging.INFO, logger="forge_bridge.tools.utility"):
         with patch.object(utility.bridge, "execute", new=AsyncMock(return_value=fake)):
-            await execute_python(ExecutePythonInput(code=snippet_a))
-            await execute_python(ExecutePythonInput(code=snippet_a))
-            await execute_python(ExecutePythonInput(code=snippet_b))
+            await execute_python(code=snippet_a)
+            await execute_python(code=snippet_a)
+            await execute_python(code=snippet_b)
 
     hashes = []
     for r in caplog.records:

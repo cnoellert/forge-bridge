@@ -13,10 +13,29 @@ logger = logging.getLogger(__name__)
 
 
 # ── Tool: flame_execute_python ──────────────────────────────────────────
+#
+# Phase 23.1 in-flight gap-fix (D-20): the function previously took a
+# single `params: ExecutePythonInput` pydantic BaseModel argument. FastMCP
+# introspected that and generated a JSON schema requiring
+# {"params": {"code": "...", "main_thread": false}} — a nested wrapped
+# shape. The chat model consistently generated the flat
+# {"code": "...", "main_thread": false} shape, so pydantic validation
+# failed at MCP-dispatch BEFORE the function body ran. Zero tool-wrapper
+# log lines fired despite the router's per-iter log showing
+# `tool=flame_execute_python` — the function was named but never invoked.
+#
+# Flattening the signature to direct kwargs makes FastMCP generate a flat
+# JSON schema matching what the model naturally produces. The
+# `ExecutePythonInput` BaseModel is retained for back-compat callers
+# (direct Python use, the v1.0 invocation shape) but is no longer the
+# function signature.
 
 
 class ExecutePythonInput(BaseModel):
-    """Input for raw Python execution."""
+    """Back-compat input model — retained for direct-Python callers that
+    constructed an ExecutePythonInput pre-23.1. The MCP-registered
+    function signature is now flat (code: str, main_thread: bool); MCP
+    callers should use direct kwargs, not this wrapper."""
 
     code: str = Field(
         ...,
@@ -32,7 +51,7 @@ class ExecutePythonInput(BaseModel):
     )
 
 
-async def execute_python(params: ExecutePythonInput) -> str:
+async def execute_python(code: str, main_thread: bool = False) -> str:
     """Flame: the universal Flame introspection and automation surface.
 
     When a dedicated flame_* tool covers your need (flame_get_project,
@@ -146,11 +165,11 @@ async def execute_python(params: ExecutePythonInput) -> str:
     # OBSERVABILITY-V1.6+ captures the richer instrumentation arc (queue-
     # wait timing, hook-side per-stage breakdown) that requires hook-
     # protocol cooperation and so belongs in v1.6's observability phase.
-    code_hash = hashlib.sha256(params.code.encode("utf-8")).hexdigest()[:16]
+    code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()[:16]
     started = time.monotonic()
     status = "unknown"
     try:
-        resp = await bridge.execute(params.code, main_thread=params.main_thread)
+        resp = await bridge.execute(code, main_thread=main_thread)
         result = {
             "stdout": resp.stdout,
             "stderr": resp.stderr,
@@ -176,7 +195,7 @@ async def execute_python(params: ExecutePythonInput) -> str:
         logger.info(
             "flame_execute_python code_hash=%s main_thread=%s "
             "elapsed_ms=%d status=%s code_len=%d",
-            code_hash, params.main_thread, elapsed_ms, status, len(params.code),
+            code_hash, main_thread, elapsed_ms, status, len(code),
         )
 
 
