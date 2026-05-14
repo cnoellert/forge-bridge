@@ -523,3 +523,138 @@ async def test_execute_python_code_hash_is_deterministic_per_snippet(caplog):
     for h in hashes:
         assert len(h) == 16
         int(h, 16)  # raises if non-hex
+
+
+# ── Phase 24 Commit 2: graph-event emission ─────────────────────────────
+#
+# Two events emit per execute_python call: `started` at entry, terminal
+# status at exit (`ok` / `flame_error` / `transport_error`). Records land
+# in ~/.forge-bridge/graphs/<graph_id>.jsonl (FORGE_GRAPH_DIR override
+# honored by the substrate). The Phase 23.1 stderr structured log line
+# stays unchanged — these tests verify the additional JSONL substrate,
+# not a replacement.
+
+
+def _read_jsonl_records(jsonl_path):
+    import json
+    return [json.loads(line) for line in jsonl_path.read_text().splitlines()]
+
+
+@pytest.mark.asyncio
+async def test_execute_python_emits_started_event_at_entry(monkeypatch, tmp_path):
+    """Entry-side emit: status='started', payload carries code_hash +
+    main_thread + code_len so post-walk diagnostics can correlate per-
+    attempt records even if the call never completes."""
+    monkeypatch.setenv("FORGE_GRAPH_DIR", str(tmp_path))
+    fake = _FakeBridgeResponse(stdout="ok", stderr="", result=None)
+    with patch.object(utility.bridge, "execute", new=AsyncMock(return_value=fake)):
+        await execute_python(code="print('hi')")
+    files = list(tmp_path.glob("*.jsonl"))
+    assert len(files) == 1, "exactly one graph file per call (one-graph-per-call at this phase)"
+    records = _read_jsonl_records(files[0])
+    assert len(records) >= 1
+    started_evt = records[0]
+    assert started_evt["status"] == "started"
+    assert started_evt["node_kind"] == "flame_execute_python"
+    assert started_evt["payload"]["main_thread"] is False
+    assert started_evt["payload"]["code_len"] == len("print('hi')")
+    assert len(started_evt["payload"]["code_hash"]) == 16
+
+
+@pytest.mark.asyncio
+async def test_execute_python_emits_ok_terminal_event_on_success(monkeypatch, tmp_path):
+    """Success path: terminal event has status='ok' and elapsed_ms in payload."""
+    monkeypatch.setenv("FORGE_GRAPH_DIR", str(tmp_path))
+    fake = _FakeBridgeResponse(stdout="x", stderr="", result=None)
+    with patch.object(utility.bridge, "execute", new=AsyncMock(return_value=fake)):
+        await execute_python(code="print('x')")
+    files = list(tmp_path.glob("*.jsonl"))
+    records = _read_jsonl_records(files[0])
+    assert len(records) == 2
+    terminal = records[1]
+    assert terminal["status"] == "ok"
+    assert terminal["node_kind"] == "flame_execute_python"
+    assert isinstance(terminal["payload"]["elapsed_ms"], int)
+    assert terminal["payload"]["elapsed_ms"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_execute_python_emits_flame_error_terminal_on_flame_exception(
+    monkeypatch, tmp_path,
+):
+    """Flame-side Python raised but transport returned cleanly:
+    terminal status='flame_error' (matches Phase 23.1 stderr-log convention)."""
+    monkeypatch.setenv("FORGE_GRAPH_DIR", str(tmp_path))
+    fake = _FakeBridgeResponse(
+        stdout="", stderr="", result=None,
+        error="NameError: bad", traceback="Traceback...",
+    )
+    with patch.object(utility.bridge, "execute", new=AsyncMock(return_value=fake)):
+        await execute_python(code="bad()")
+    files = list(tmp_path.glob("*.jsonl"))
+    records = _read_jsonl_records(files[0])
+    assert len(records) == 2
+    assert records[1]["status"] == "flame_error"
+
+
+@pytest.mark.asyncio
+async def test_execute_python_emits_transport_error_terminal_on_bridge_raise(
+    monkeypatch, tmp_path,
+):
+    """Transport-layer failure (bridge.execute raised): terminal status=
+    'transport_error'. The tool surface re-raises so the MCP/CLI consumer
+    still sees the failure — the graph event is observability AROUND that
+    failure, not a substitute for it."""
+    monkeypatch.setenv("FORGE_GRAPH_DIR", str(tmp_path))
+
+    class _BadConnection(Exception):
+        pass
+
+    with patch.object(
+        utility.bridge, "execute",
+        new=AsyncMock(side_effect=_BadConnection("refused")),
+    ):
+        with pytest.raises(_BadConnection):
+            await execute_python(code="x=1")
+    files = list(tmp_path.glob("*.jsonl"))
+    records = _read_jsonl_records(files[0])
+    assert len(records) == 2
+    assert records[0]["status"] == "started"
+    assert records[1]["status"] == "transport_error"
+
+
+@pytest.mark.asyncio
+async def test_execute_python_started_and_terminal_share_graph_id(monkeypatch, tmp_path):
+    """Both events emit to the same graph_id (one graph per call at this
+    phase). The JSONL file is therefore named for the shared graph_id."""
+    monkeypatch.setenv("FORGE_GRAPH_DIR", str(tmp_path))
+    fake = _FakeBridgeResponse(stdout="x", stderr="", result=None)
+    with patch.object(utility.bridge, "execute", new=AsyncMock(return_value=fake)):
+        await execute_python(code="print('x')")
+    files = list(tmp_path.glob("*.jsonl"))
+    assert len(files) == 1
+    records = _read_jsonl_records(files[0])
+    gid = records[0]["graph_id"]
+    assert records[1]["graph_id"] == gid
+    assert files[0].name == f"{gid}.jsonl"
+    # Distinct event_ids within the shared graph.
+    assert records[0]["event_id"] != records[1]["event_id"]
+
+
+@pytest.mark.asyncio
+async def test_execute_python_distinct_calls_emit_to_distinct_graph_files(
+    monkeypatch, tmp_path,
+):
+    """Each call gets its own graph_id at this phase (chat-session graph
+    propagation lands in a later commit). Two successful calls → two
+    JSONL files, two graph_ids."""
+    monkeypatch.setenv("FORGE_GRAPH_DIR", str(tmp_path))
+    fake = _FakeBridgeResponse(stdout="x", stderr="", result=None)
+    with patch.object(utility.bridge, "execute", new=AsyncMock(return_value=fake)):
+        await execute_python(code="print('a')")
+        await execute_python(code="print('b')")
+    files = sorted(tmp_path.glob("*.jsonl"))
+    assert len(files) == 2
+    gid_a = _read_jsonl_records(files[0])[0]["graph_id"]
+    gid_b = _read_jsonl_records(files[1])[0]["graph_id"]
+    assert gid_a != gid_b

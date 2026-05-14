@@ -14,6 +14,21 @@ import pytest
 from forge_bridge.bridge import BridgeResponse
 
 
+@pytest.fixture(autouse=True)
+def _isolate_forge_graph_dir(monkeypatch, tmp_path):
+    """Phase 24 — redirect FORGE_GRAPH_DIR to a per-test tmp directory for
+    every test. Any code path that reaches forge_bridge.runtime.graph_emit
+    (currently: flame_execute_python) emits JSONL to the per-test tmp
+    location instead of polluting ~/.forge-bridge/graphs/.
+
+    Tests that need a specific FORGE_GRAPH_DIR location simply call
+    monkeypatch.setenv("FORGE_GRAPH_DIR", str(custom_path)) — pytest
+    fixture overriding lets the explicit setenv win over this autouse
+    default. Tests that never touch the graph_emit surface are unaffected.
+    """
+    monkeypatch.setenv("FORGE_GRAPH_DIR", str(tmp_path / "forge_graphs"))
+
+
 @pytest.fixture
 def monkeypatch_bridge(monkeypatch):
     """Patch forge_bridge.bridge.execute to return a predictable BridgeResponse.

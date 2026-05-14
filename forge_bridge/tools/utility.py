@@ -8,6 +8,7 @@ import time
 from pydantic import BaseModel, Field
 
 from forge_bridge import bridge
+from forge_bridge.runtime.graph_emit import emit_event, new_graph_id
 
 logger = logging.getLogger(__name__)
 
@@ -165,9 +166,28 @@ async def execute_python(code: str, main_thread: bool = False) -> str:
     # OBSERVABILITY-V1.6+ captures the richer instrumentation arc (queue-
     # wait timing, hook-side per-stage breakdown) that requires hook-
     # protocol cooperation and so belongs in v1.6's observability phase.
+    #
+    # Phase 24 Commit 2 — alongside the structured stderr log, emit two
+    # graph events per invocation (`started` at entry, terminal status at
+    # exit) into ~/.forge-bridge/graphs/<graph_id>.jsonl. Each call is
+    # its own one-graph for now; chat-session graph propagation lands in
+    # a later commit. The structured log line above stays unchanged —
+    # operators read it in real time; the JSONL events are the
+    # observability artifact for replay + non-author audit.
     code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()[:16]
     started = time.monotonic()
     status = "unknown"
+    graph_id = new_graph_id()
+    emit_event(
+        graph_id=graph_id,
+        node_kind="flame_execute_python",
+        status="started",
+        payload={
+            "code_hash": code_hash,
+            "main_thread": main_thread,
+            "code_len": len(code),
+        },
+    )
     try:
         resp = await bridge.execute(code, main_thread=main_thread)
         result = {
@@ -196,6 +216,17 @@ async def execute_python(code: str, main_thread: bool = False) -> str:
             "flame_execute_python code_hash=%s main_thread=%s "
             "elapsed_ms=%d status=%s code_len=%d",
             code_hash, main_thread, elapsed_ms, status, len(code),
+        )
+        emit_event(
+            graph_id=graph_id,
+            node_kind="flame_execute_python",
+            status=status,
+            payload={
+                "code_hash": code_hash,
+                "main_thread": main_thread,
+                "elapsed_ms": elapsed_ms,
+                "code_len": len(code),
+            },
         )
 
 
