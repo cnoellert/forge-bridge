@@ -86,4 +86,5 @@ asyncio_mode = "auto"
 pythonpath = ["."]
 markers = [
     "integration: marks tests that spawn subprocesses or require live network services (deselect with -m 'not integration')",
+    "atomicity: marks the v1.6 Q8 POSIX append-atomicity verification test (run on both flame-01 and portofino)",
 ]
