@@ -434,3 +434,125 @@ async def test_health_postgres_fail_flips_overall_to_degraded_not_fail(real_log,
         "operationally usable during Postgres outages by architectural design"
     )
     assert body["status"] == "degraded"
+
+
+# -- Phase 24.2: flame_bridge 4-state row taxonomy (Console mirror) ----------
+#
+# Console's _check_flame_bridge now calls forge_bridge.tools.utility.ping
+# directly (in-process), mirroring the daemon-routed probe the CLI doctor
+# uses cross-process via POST /api/v1/exec text="flame_ping". Both surfaces
+# exercise bridge.execute_json() from the daemon's process env.
+#
+# Phase 24.2 invariant: the health surface reflects daemon-observed dispatch
+# truth, not independently reconstructed local truth. For Console (in-process
+# with daemon), divergence-detection is structurally rare but kept for
+# invariant-consistency with the CLI doctor row taxonomy.
+
+import json  # noqa: E402 — Phase 24.2 helper for flame_ping body builds
+
+
+def _ping_body(*, connected, bridge_url=None, error=None):
+    """Build a json-encoded flame_ping body string, matching utility.ping."""
+    body = {"connected": connected}
+    if bridge_url is not None:
+        body["bridge_url"] = bridge_url
+    if connected:
+        body.update({
+            "version": "2026.0.0",
+            "project": "test_project",
+            "current_tab": "Conform",
+        })
+    if error:
+        body["error"] = error
+    return json.dumps(body)
+
+
+async def test_health_flame_bridge_ok_when_ping_convergent(real_log, ms, monkeypatch):
+    """OK state: utility.ping returns connected=true + matching bridge_url."""
+    register_canonical_singletons(real_log, ms)
+    monkeypatch.setattr("forge_bridge.mcp.server._server_started", True, raising=False)
+    api = ConsoleReadAPI(execution_log=real_log, manifest_service=ms)
+
+    async def _stub_ping():
+        return _ping_body(connected=True, bridge_url=api._flame_bridge_url)
+    monkeypatch.setattr("forge_bridge.tools.utility.ping", _stub_ping)
+
+    body = await api.get_health()
+    flame = body["services"]["flame_bridge"]
+    assert flame["status"] == "ok"
+    assert flame["url"] == api._flame_bridge_url
+    assert flame["detail"] == "running"
+
+
+async def test_health_flame_bridge_warn_when_ping_url_diverges(real_log, ms, monkeypatch):
+    """WARN state surfaced via status=fail + detail naming the divergence.
+
+    Console aggregates non-critical fails to `degraded` at the overall
+    status level; the row's detail field carries the operator-actionable
+    divergence diagnosis. Status remains binary (ok/fail) at the Console
+    row shape per pre-24.2 schema; the WARN semantic is encoded in detail.
+    """
+    register_canonical_singletons(real_log, ms)
+    monkeypatch.setattr("forge_bridge.mcp.server._server_started", True, raising=False)
+    api = ConsoleReadAPI(execution_log=real_log, manifest_service=ms)
+
+    divergent_url = "http://127.0.0.1:9998"
+    assert divergent_url != api._flame_bridge_url, "test setup invariant"
+
+    async def _stub_ping():
+        return _ping_body(connected=True, bridge_url=divergent_url)
+    monkeypatch.setattr("forge_bridge.tools.utility.ping", _stub_ping)
+
+    body = await api.get_health()
+    flame = body["services"]["flame_bridge"]
+    assert flame["status"] == "fail"
+    assert "dispatch target mismatch" in flame["detail"]
+    assert f"daemon={divergent_url}" in flame["detail"]
+    assert f"console={api._flame_bridge_url}" in flame["detail"]
+    assert flame["url"] == divergent_url  # daemon-effective is authoritative
+
+
+async def test_health_flame_bridge_fail_when_ping_reports_disconnected(real_log, ms, monkeypatch):
+    """FAIL state: URLs agree but daemon reports Flame unreachable."""
+    register_canonical_singletons(real_log, ms)
+    monkeypatch.setattr("forge_bridge.mcp.server._server_started", True, raising=False)
+    api = ConsoleReadAPI(execution_log=real_log, manifest_service=ms)
+
+    async def _stub_ping():
+        return _ping_body(
+            connected=False,
+            bridge_url=api._flame_bridge_url,
+            error="ConnectError",
+        )
+    monkeypatch.setattr("forge_bridge.tools.utility.ping", _stub_ping)
+
+    body = await api.get_health()
+    flame = body["services"]["flame_bridge"]
+    assert flame["status"] == "fail"
+    assert "flame disconnected" in flame["detail"]
+    assert "ConnectError" in flame["detail"]
+    assert flame["url"] == api._flame_bridge_url
+
+
+async def test_health_flame_bridge_unknown_when_ping_raises(real_log, ms, monkeypatch):
+    """UNKNOWN state: in-process flame_ping call itself failed.
+
+    Could happen if Flame hook is unreachable from the daemon's bridge
+    client, hook returns 5xx, etc. Doctor never falls back to a re-derived
+    local probe — daemon truth or no truth. Console reports `status=fail`
+    with the exception class named in detail.
+    """
+    register_canonical_singletons(real_log, ms)
+    monkeypatch.setattr("forge_bridge.mcp.server._server_started", True, raising=False)
+    api = ConsoleReadAPI(execution_log=real_log, manifest_service=ms)
+
+    async def _stub_ping():
+        raise RuntimeError("bridge unreachable")
+    monkeypatch.setattr("forge_bridge.tools.utility.ping", _stub_ping)
+
+    body = await api.get_health()
+    flame = body["services"]["flame_bridge"]
+    assert flame["status"] == "fail"
+    assert "in-process flame_ping failed" in flame["detail"]
+    assert "RuntimeError" in flame["detail"]
+    assert flame["url"] == api._flame_bridge_url

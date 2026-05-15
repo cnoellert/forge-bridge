@@ -29,10 +29,15 @@ class _Resp:
 
 
 class _Client:
-    """Routes httpx.Client.get(url) to a per-URL handler dict."""
+    """Routes httpx.Client.get/.post to per-URL handler dicts.
 
-    def __init__(self, *, handlers, **_kwargs):
+    Phase 24.2: `_check_flame_bridge` now POSTs to ``:9996/api/v1/exec``
+    instead of GETting ``:9999/status``; the test fake supports both verbs.
+    """
+
+    def __init__(self, *, handlers, post_handlers=None, **_kwargs):
         self._handlers = handlers
+        self._post_handlers = post_handlers or {}
 
     def __enter__(self):
         return self
@@ -48,10 +53,70 @@ class _Client:
                 return handler
         raise httpx.ConnectError(f"no handler for {url}")
 
+    def post(self, url, *, json=None, **_kwargs):
+        for prefix, handler in self._post_handlers.items():
+            if url.startswith(prefix):
+                if isinstance(handler, BaseException):
+                    raise handler
+                if callable(handler):
+                    return handler(json)
+                return handler
+        raise httpx.ConnectError(f"no POST handler for {url}")
 
-def _patch_world(handlers, *, tcp_open: set[tuple[str, int]] | None = None):
+
+def _flame_ping_envelope(
+    *,
+    connected: bool = True,
+    bridge_url: str | None = None,
+    error: str | None = None,
+) -> _Resp:
+    """Build a PR31 envelope wrapping a flame_ping result body.
+
+    Mirrors ``forge_bridge/console/_engine.py:run_chain_steps`` success shape
+    and ``forge_bridge/tools/utility.py:ping`` body shape.
+    """
+    body: dict = {"connected": connected}
+    if bridge_url is not None:
+        body["bridge_url"] = bridge_url
+    if connected:
+        body.update({
+            "version": "2026.0.0",
+            "project": "test_project",
+            "current_tab": "Conform",
+        })
+    if error:
+        body["error"] = error
+    return _Resp(200, {
+        "status": "success",
+        "request_id": "test-rid",
+        "chain": [{"step": "flame_ping", "result": body}],
+        "error": None,
+    })
+
+
+def _default_post_handlers() -> dict:
+    """Default Phase 24.2 POST handlers — convergent flame_ping at exec URL.
+
+    Test cases that exercise WARN/FAIL/UNKNOWN states override this.
+    """
+    return {
+        config.console_url() + "/api/v1/exec": _flame_ping_envelope(
+            connected=True,
+            bridge_url=config.flame_bridge_url(),
+        ),
+    }
+
+
+def _patch_world(
+    handlers,
+    *,
+    tcp_open: set[tuple[str, int]] | None = None,
+    post_handlers: dict | None = None,
+):
     """Patch httpx.Client and socket.create_connection together."""
     open_pairs = tcp_open or set()
+    if post_handlers is None:
+        post_handlers = _default_post_handlers()
 
     def _fake_create_connection(addr, timeout=None):
         if tuple(addr) in open_pairs:
@@ -63,7 +128,9 @@ def _patch_world(handlers, *, tcp_open: set[tuple[str, int]] | None = None):
         raise OSError("refused")
 
     return (
-        patch("httpx.Client", lambda **kw: _Client(handlers=handlers, **kw)),
+        patch("httpx.Client", lambda **kw: _Client(
+            handlers=handlers, post_handlers=post_handlers, **kw
+        )),
         patch("socket.create_connection", _fake_create_connection),
     )
 
@@ -152,23 +219,180 @@ def test_human_mode_failure_surfaces_first_fix():
     assert "Suggested next action" in result.output
 
 
-def test_flame_bridge_running_but_no_flame_module():
+# ── Phase 24.2: flame_bridge 4-state row taxonomy ──────────────────────────
+#
+# Replaces the pre-24.2 single failure-mode test below. Doctor now POSTs to
+# the daemon's /api/v1/exec endpoint with text="flame_ping", parses the PR31
+# envelope, extracts the daemon's effective bridge_url from the flame_ping
+# body, and renders one of four row states:
+#
+#   OK convergent  — daemon reachable, connected=true, daemon's bridge_url
+#                    matches doctor's re-derived config.flame_bridge_url()
+#   WARN divergent — daemon reachable, daemon's bridge_url disagrees with
+#                    doctor's (config-context divergence between operator
+#                    shell env and daemon process env)
+#   FAIL disconn.  — daemon reachable, daemon reports connected=false
+#   UNKNOWN unreach— can't reach :9996; defers to mcp_http row
+#
+# The architectural invariant: doctor never falls back to a re-derived local
+# probe under degradation. Daemon truth or no truth.
+
+
+def test_flame_bridge_ok_convergent():
+    """OK state: daemon reachable, connected, URLs converge."""
     handlers = {
         config.console_url() + "/api/v1/health": _Resp(200, {"status": "ok"}),
-        config.flame_bridge_url() + "/status": _Resp(200, {"flame_available": False}),
     }
     tcp_open = {
         (config.MCP_HTTP_HOST, config.MCP_HTTP_PORT),
         (config.STATE_WS_HOST, config.STATE_WS_PORT),
     }
+    # Default post_handlers fires _flame_ping_envelope(connected=True,
+    # bridge_url=config.flame_bridge_url()) — convergent by construction.
     p1, p2 = _patch_world(handlers, tcp_open=tcp_open)
+    with p1, p2:
+        result = runner.invoke(app, ["doctor", "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output.strip())
+    flame = next(c for c in payload["checks"] if c["name"] == "flame_bridge")
+    assert flame["ok"] is True
+    assert "running" in flame["status"]
+    assert flame["url"] == config.flame_bridge_url()
+    assert flame["fix"] == ""
+
+
+def test_flame_bridge_warn_divergent():
+    """WARN state: daemon's bridge_url disagrees with doctor's re-derived URL.
+
+    Reproduces the portofino misconfig — FORGE_BRIDGE_PORT=9998 in launchd
+    env aims the daemon's bridge client at state_ws while doctor (operator
+    shell env) keeps the 9999 default. Doctor reports the divergence
+    explicitly with the daemon-effective URL as authoritative.
+    """
+    handlers = {
+        config.console_url() + "/api/v1/health": _Resp(200, {"status": "ok"}),
+    }
+    tcp_open = {
+        (config.MCP_HTTP_HOST, config.MCP_HTTP_PORT),
+        (config.STATE_WS_HOST, config.STATE_WS_PORT),
+    }
+    # Simulate daemon reporting a different bridge_url than doctor expects.
+    divergent_url = "http://127.0.0.1:9998"
+    post_handlers = {
+        config.console_url() + "/api/v1/exec": _flame_ping_envelope(
+            connected=True,
+            bridge_url=divergent_url,
+        ),
+    }
+    p1, p2 = _patch_world(handlers, tcp_open=tcp_open, post_handlers=post_handlers)
     with p1, p2:
         result = runner.invoke(app, ["doctor", "--json"])
     assert result.exit_code == 1
     payload = json.loads(result.output.strip())
     flame = next(c for c in payload["checks"] if c["name"] == "flame_bridge")
     assert flame["ok"] is False
-    assert "no flame module" in flame["status"]
+    assert "dispatch target mismatch" in flame["status"]
+    assert f"daemon={divergent_url}" in flame["status"]
+    assert f"shell={config.flame_bridge_url()}" in flame["status"]
+    # Daemon-effective URL is authoritative per §6.4 truth-authority discipline.
+    assert flame["url"] == divergent_url
+    assert "FORGE_BRIDGE_HOST/PORT" in flame["fix"]
+    assert "TROUBLESHOOTING.md" in flame["fix"]
+
+
+def test_flame_bridge_fail_daemon_says_disconnected():
+    """FAIL state: daemon reachable, URLs agree, Flame is unreachable."""
+    handlers = {
+        config.console_url() + "/api/v1/health": _Resp(200, {"status": "ok"}),
+    }
+    tcp_open = {
+        (config.MCP_HTTP_HOST, config.MCP_HTTP_PORT),
+        (config.STATE_WS_HOST, config.STATE_WS_PORT),
+    }
+    post_handlers = {
+        config.console_url() + "/api/v1/exec": _flame_ping_envelope(
+            connected=False,
+            bridge_url=config.flame_bridge_url(),
+            error="ConnectError",
+        ),
+    }
+    p1, p2 = _patch_world(handlers, tcp_open=tcp_open, post_handlers=post_handlers)
+    with p1, p2:
+        result = runner.invoke(app, ["doctor", "--json"])
+    assert result.exit_code == 1
+    payload = json.loads(result.output.strip())
+    flame = next(c for c in payload["checks"] if c["name"] == "flame_bridge")
+    assert flame["ok"] is False
+    assert "flame disconnected" in flame["status"]
+    assert "ConnectError" in flame["status"]
+    # URL reported is daemon-effective (which matches shell here)
+    assert flame["url"] == config.flame_bridge_url()
+    assert "install-flame-hook.sh" in flame["fix"]
+
+
+def test_flame_bridge_unknown_daemon_unreachable():
+    """UNKNOWN state: daemon unreachable; defers to mcp_http row."""
+    handlers = {
+        config.console_url() + "/api/v1/health": _Resp(200, {"status": "ok"}),
+    }
+    tcp_open = {
+        (config.MCP_HTTP_HOST, config.MCP_HTTP_PORT),
+        (config.STATE_WS_HOST, config.STATE_WS_PORT),
+    }
+    # Daemon /api/v1/exec is unreachable — simulate via httpx.ConnectError.
+    post_handlers = {
+        config.console_url() + "/api/v1/exec": httpx.ConnectError("refused"),
+    }
+    p1, p2 = _patch_world(handlers, tcp_open=tcp_open, post_handlers=post_handlers)
+    with p1, p2:
+        result = runner.invoke(app, ["doctor", "--json"])
+    assert result.exit_code == 1
+    payload = json.loads(result.output.strip())
+    flame = next(c for c in payload["checks"] if c["name"] == "flame_bridge")
+    assert flame["ok"] is False
+    assert "unknown" in flame["status"].lower()
+    assert "daemon unreachable" in flame["status"]
+    # Falls back to shell_url for display — daemon truth unavailable.
+    assert flame["url"] == config.flame_bridge_url()
+    assert "mcp_http" in flame["fix"]
+
+
+def test_flame_bridge_fail_daemon_envelope_error():
+    """FAIL state: daemon returned a PR31 error envelope (chain step failed).
+
+    Could happen if flame_ping tool isn't registered, chain parser rejects
+    the input, etc. Doctor reports the error code in status + the message
+    in fix.
+    """
+    handlers = {
+        config.console_url() + "/api/v1/health": _Resp(200, {"status": "ok"}),
+    }
+    tcp_open = {
+        (config.MCP_HTTP_HOST, config.MCP_HTTP_PORT),
+        (config.STATE_WS_HOST, config.STATE_WS_PORT),
+    }
+    post_handlers = {
+        config.console_url() + "/api/v1/exec": _Resp(200, {
+            "status": "error",
+            "request_id": "test-rid",
+            "chain": [],
+            "error": {
+                "code": "TOOL_NOT_FOUND",
+                "message": "flame_ping is not registered",
+                "step_index": 0,
+                "original_error": None,
+            },
+        }),
+    }
+    p1, p2 = _patch_world(handlers, tcp_open=tcp_open, post_handlers=post_handlers)
+    with p1, p2:
+        result = runner.invoke(app, ["doctor", "--json"])
+    assert result.exit_code == 1
+    payload = json.loads(result.output.strip())
+    flame = next(c for c in payload["checks"] if c["name"] == "flame_bridge")
+    assert flame["ok"] is False
+    assert "TOOL_NOT_FOUND" in flame["status"]
+    assert "flame_ping is not registered" in flame["fix"]
 
 
 def test_runtime_doctor_uses_config_urls(monkeypatch):
