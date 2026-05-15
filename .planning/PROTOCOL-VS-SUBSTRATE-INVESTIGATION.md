@@ -132,14 +132,25 @@ Anti-scope for the next investigation (binding until protocol-layer evidence sur
 - Canonical regression fixture (Commit 3): **operational**. The fixture works against mocked execution; the measurement shows the chat path doesn't reach the substrate even when the fixture's exact query is sent.
 - Chat-path structured invocation: **broken on production routing**. 0 of 5 canonical-shape calls produced a structured tool call. The semantic-vs-protocol boundary identified above is the next architectural surface.
 
-## Appendix — what to investigate the canonical regression query against next time
+## Appendix — log-path resolution for the next measurement run
 
 The measurement bundle's `09-mcp-log.txt` captured *stale* log entries (the launchd-managed `mcp_http` writes to a different log path than the `fbridge` managed-daemon code expected). The actual measurement-window log entries from request_ids `3c83fd51`, `b70e6c78`, `e1ac8ce7`, `4d3f0ed7`, `ed44ead4` are not in the captured tail.
 
-Resolve before next measurement run:
+**Resolved log-path matrix** (audited against `forge_bridge/runtime/manager.py:42-60` and `packaging/launchd/*.plist`):
 
-- Identify the launchd-managed `mcp_http` log destination on portofino (likely `/var/log/com.forge-bridge.mcp_http.{out,err}.log` or `~/Library/Logs/com.forge-bridge/*`)
-- Update the measurement block's log-path candidate list to include it
+| Management path | mcp_http daemon log | state_ws daemon log |
+|---|---|---|
+| `fbridge up` managed daemon | `~/.forge-bridge/logs/mcp_http.log` | `~/.forge-bridge/logs/state_ws.log` |
+| macOS launchd (operator workstation) | `/var/log/forge-bridge/console.log` | `/var/log/forge-bridge/server.log` |
+| Linux systemd (operator workstation) | `journalctl -u forge-bridge` | `journalctl -u forge-bridge-server` |
+
+**Naming asymmetry worth noting:** the `:9996` daemon co-hosts the Artist Console + the MCP HTTP server in one process. `runtime/manager.py` calls it `mcp_http`; the launchd plist and the install-bootstrap user-facing prose call the same process `console`. Both refer to the same `forge_bridge mcp http` invocation.
+
+Portofino runs the launchd-managed path (operator workstation), so the missing log lines are in **`/var/log/forge-bridge/console.log`** — *not* the artifact's earlier guess of `/var/log/com.forge-bridge.mcp_http.{out,err}.log` or `~/Library/Logs/com.forge-bridge/*`. The earlier `~/Library/Logs/*` guess was generic-macOS-shape, but bridge uses a UNIX-style `/var/log/forge-bridge/` directory (`scripts/install-bootstrap.sh:455-459` creates it and chowns it to `$SUDO_USER`).
+
+Before next measurement run:
+
+- Update the measurement block's log-path candidate list to include `/var/log/forge-bridge/console.log` (and `/var/log/forge-bridge/server.log` if state_ws routing trace is also wanted)
 - Re-run the canonical sequence with the correct log capture so the per-iter router log lines (prompt_tokens, completion_tokens, tool field) are available for protocol-path analysis
 
 This is methodology-debt, not architectural-debt. The empirical conclusions above stand on the response bodies + timing + graph-emission absence, all of which the bundle captured cleanly.
