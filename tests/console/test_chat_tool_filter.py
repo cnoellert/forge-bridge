@@ -201,14 +201,23 @@ async def test_probe_cache_hits_within_ttl():
 
 @pytest.mark.asyncio
 async def test_probe_cache_expires_after_ttl():
-    """After TTL expires, a second call re-probes the backend."""
+    """After TTL expires, a second call re-probes the backend.
+
+    Value-agnostic: the test scales with whatever ``_PROBE_CACHE_TTL_SEC``
+    is set to. What's pinned is the semantic — probe count rises from 1
+    to 2 when the monotonic clock advances past the cache window. The
+    literal TTL value can evolve without churning this test."""
     import forge_bridge.console._tool_filter as _tool_filter
 
     probe_mock = AsyncMock(return_value=True)
     tools = [_make_tool("forge_list_projects")]
 
-    # First call — populates cache
-    call_times = [0.0, 10.0, 10.0]  # First at t=0, then advance past TTL
+    # Advance the mocked monotonic clock to a value strictly past the
+    # current TTL window so the second call must reprobe. Reading the
+    # constant rather than hardcoding scales the test with the module.
+    ttl = _tool_filter._PROBE_CACHE_TTL_SEC
+    past_ttl = ttl + 1.0
+    call_times = [0.0, past_ttl, past_ttl]
     call_idx = [0]
 
     def fake_monotonic():
@@ -220,11 +229,48 @@ async def test_probe_cache_expires_after_ttl():
          patch("forge_bridge.console._tool_filter.time") as mock_time:
         mock_time.monotonic.side_effect = fake_monotonic
         await _tool_filter.filter_tools_by_reachable_backends(tools)
-        # Second call — time has advanced past TTL (5s), cache should be expired
+        # Second call — time has advanced past TTL; cache must be re-probed.
         await _tool_filter.filter_tools_by_reachable_backends(tools)
 
     assert probe_mock.call_count == 2, (
-        f"Expected 2 probe calls (cache expired), got {probe_mock.call_count}"
+        f"Expected 2 probe calls (cache expired past TTL={ttl}s), got "
+        f"{probe_mock.call_count}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_probe_cache_reuses_within_ttl_under_mocked_clock():
+    """Companion to the expires-after-ttl test: under a mocked monotonic
+    clock that advances strictly LESS than the TTL between two filter
+    calls, the cache must be reused (probe count == 1). Pins the
+    cache-reuse half of the same semantic boundary the expiry test
+    pins from the other side — together they document the cache
+    lifecycle without referencing literal TTL values."""
+    import forge_bridge.console._tool_filter as _tool_filter
+
+    probe_mock = AsyncMock(return_value=True)
+    tools = [_make_tool("forge_list_projects")]
+
+    ttl = _tool_filter._PROBE_CACHE_TTL_SEC
+    # Advance to half-TTL between calls — strictly within the cache window.
+    within_ttl = ttl / 2.0
+    call_times = [0.0, within_ttl, within_ttl]
+    call_idx = [0]
+
+    def fake_monotonic():
+        idx = min(call_idx[0], len(call_times) - 1)
+        call_idx[0] += 1
+        return call_times[idx]
+
+    with patch.object(_tool_filter, "_probe_backend", new=probe_mock), \
+         patch("forge_bridge.console._tool_filter.time") as mock_time:
+        mock_time.monotonic.side_effect = fake_monotonic
+        await _tool_filter.filter_tools_by_reachable_backends(tools)
+        await _tool_filter.filter_tools_by_reachable_backends(tools)
+
+    assert probe_mock.call_count == 1, (
+        f"Expected 1 probe call (cache hit within TTL={ttl}s window), got "
+        f"{probe_mock.call_count}"
     )
 
 

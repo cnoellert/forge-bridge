@@ -29,16 +29,22 @@ BACKEND CLASSIFICATION (NOT prefix-based — see in-process exception list):
 
 3. synth_* tools — ALWAYS reachable (synthesizer runs in-process).
 
-Cache: 5-second monotonic cache keyed by backend identity. Single asyncio.Lock
-(async-native — the critical section awaits the probe). Single probe
-per backend per cache window even under concurrent chat requests.
+Cache: monotonic-clock cache keyed by backend identity, with a TTL
+chosen to reduce hot-path tool-topology churn across conversational
+interactions. Reachability state is intentionally cached across
+conversational timescales — Flame availability is operationally stable
+relative to adjacent chat turns, so a longer TTL materially improves
+runtime stability without meaningfully harming operator correctness.
+Single asyncio.Lock (async-native — the critical section awaits the
+probe). Single probe per backend per cache window even under concurrent
+chat requests.
 
 Security note (T-16.1-01): _BACKENDS is hardcoded to 127.0.0.1:9999.
 Host/port are NOT user-controllable — no SSRF surface.
 
-DoS mitigation (T-16.1-05): 5s monotonic-clock cache + asyncio.Lock serialization
-→ at most 1 probe per 5s per backend regardless of request rate. Probe timeout
-capped at 1.5s.
+DoS mitigation (T-16.1-05): monotonic-clock cache + asyncio.Lock
+serialization → at most 1 probe per cache-TTL window per backend
+regardless of request rate. Probe timeout capped at 1.5s.
 """
 
 from __future__ import annotations
@@ -81,7 +87,21 @@ _BACKENDS: tuple[tuple[str, str, int], ...] = (
 )
 
 _PROBE_TIMEOUT_SEC: float = 1.5
-_PROBE_CACHE_TTL_SEC: float = 5.0
+
+# Reachability state is intentionally cached across conversational
+# timescales to avoid hot-path tool-topology churn. Flame availability
+# is operationally stable relative to adjacent chat turns, so a longer
+# TTL materially improves runtime stability without meaningfully harming
+# operator correctness.
+#
+# Architectural note: the original sub-10s value reflected infrastructure-
+# freshness semantics (forge doctor snappiness). Chat optimizes for
+# conversational-continuity semantics — a different operational timescale.
+# `forge doctor` tolerates the longer TTL fine because it is interactive-
+# on-demand, not hot-path. Stale-positive risk is operationally acceptable
+# at this timescale; stale-negative risk already exists under current
+# transient-failure shapes.
+_PROBE_CACHE_TTL_SEC: float = 60.0
 
 # Module state — guarded by `_cache_lock`.
 # backend_label -> (reachable: bool, expires_at_monotonic: float)
