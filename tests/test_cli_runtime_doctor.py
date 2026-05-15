@@ -86,11 +86,14 @@ def test_json_shape_all_ok():
     payload = json.loads(result.output.strip())
     assert payload["ok"] is True
     names = [c["name"] for c in payload["checks"]]
-    assert names == ["console", "mcp_http", "flame_bridge", "state_ws"]
+    assert names == ["console", "mcp_http", "flame_bridge", "state_ws", "graph_store"]
     for c in payload["checks"]:
         assert set(c.keys()) >= {"name", "ok", "status", "url", "fix"}
         assert c["ok"] is True
-        assert c["fix"] == ""
+        # graph_store fix is non-empty on unexercised substrate (loaded chip);
+        # all other rows have empty fix when ok.
+        if c["name"] != "graph_store":
+            assert c["fix"] == ""
 
 
 def test_json_shape_console_down_sets_ok_false_and_fix():
@@ -187,3 +190,93 @@ def test_runtime_doctor_uses_config_urls(monkeypatch):
     payload = json.loads(result.output.strip())
     console = next(c for c in payload["checks"] if c["name"] == "console")
     assert console["url"] == custom_console
+
+
+# ── graph_store row (Q18) ─────────────────────────────────────────────────
+
+
+def _graph_store_world():
+    """Default _patch_world for graph_store tests — every non-graph row ok."""
+    handlers = {
+        config.console_url() + "/api/v1/health": _Resp(200, {"status": "ok"}),
+        config.flame_bridge_url() + "/status": _Resp(200, {"flame_available": True}),
+    }
+    tcp_open = {
+        (config.MCP_HTTP_HOST, config.MCP_HTTP_PORT),
+        (config.STATE_WS_HOST, config.STATE_WS_PORT),
+    }
+    return _patch_world(handlers, tcp_open=tcp_open)
+
+
+def _doctor_graph_row(result_output: str) -> dict:
+    payload = json.loads(result_output.strip())
+    return next(c for c in payload["checks"] if c["name"] == "graph_store")
+
+
+def test_graph_store_missing_dir_is_loaded_not_failed(tmp_path, monkeypatch):
+    # autouse fixture already points FORGE_GRAPH_DIR at tmp_path/forge_graphs
+    # which won't exist until something writes to it.
+    p1, p2 = _graph_store_world()
+    with p1, p2:
+        result = runner.invoke(app, ["doctor", "--json"])
+    row = _doctor_graph_row(result.output)
+    assert row["ok"] is True
+    assert row["chip"] == "loaded"
+    assert "not yet created" in row["status"]
+    assert row["fix"]  # non-empty teaching
+
+
+def test_graph_store_empty_dir_is_loaded(tmp_path, monkeypatch):
+    target = tmp_path / "graphs"
+    target.mkdir()
+    monkeypatch.setenv("FORGE_GRAPH_DIR", str(target))
+    p1, p2 = _graph_store_world()
+    with p1, p2:
+        result = runner.invoke(app, ["doctor", "--json"])
+    row = _doctor_graph_row(result.output)
+    assert row["ok"] is True
+    assert row["chip"] == "loaded"
+    assert "no graphs recorded" in row["status"]
+
+
+def test_graph_store_populated_parseable_is_ok(tmp_path, monkeypatch):
+    target = tmp_path / "graphs"
+    monkeypatch.setenv("FORGE_GRAPH_DIR", str(target))
+    from forge_bridge.runtime.graph_emit import emit_event, new_graph_id
+
+    gid = new_graph_id()
+    emit_event(graph_id=gid, node_kind="python", status="started")
+    emit_event(graph_id=gid, node_kind="python", status="completed")
+
+    p1, p2 = _graph_store_world()
+    with p1, p2:
+        result = runner.invoke(app, ["doctor", "--json"])
+    row = _doctor_graph_row(result.output)
+    assert row["ok"] is True
+    assert row["chip"] == "ok"
+    assert "1 graphs" in row["status"]
+    assert "2026-" in row["status"] or "last " in row["status"]
+
+
+def test_graph_store_newest_unparseable_is_fail(tmp_path, monkeypatch):
+    target = tmp_path / "graphs"
+    target.mkdir()
+    monkeypatch.setenv("FORGE_GRAPH_DIR", str(target))
+    # Newest file is structurally unparseable (no valid JSONL lines).
+    (target / "bad0000000000000000000000000000.jsonl").write_text(
+        "not json\nstill not json\n"
+    )
+    p1, p2 = _graph_store_world()
+    with p1, p2:
+        result = runner.invoke(app, ["doctor", "--json"])
+    row = _doctor_graph_row(result.output)
+    assert row["ok"] is False
+    assert row["chip"] == "fail"
+    assert "unparseable" in row["status"]
+
+
+def test_graph_store_appears_in_human_output(tmp_path):
+    p1, p2 = _graph_store_world()
+    with p1, p2:
+        result = runner.invoke(app, ["doctor"])
+    assert "graph_store" in result.output

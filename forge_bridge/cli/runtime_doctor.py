@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import socket
 import sys
+from pathlib import Path
 from typing import Annotated, Any
 
 import httpx
@@ -23,6 +24,7 @@ from rich.table import Table
 
 from forge_bridge import config
 from forge_bridge.cli.render import HEADER_STYLE, TOOLS_BOX, make_console, status_chip
+from forge_bridge.runtime.graph_emit import graph_dir
 
 _HTTP_TIMEOUT = 1.5
 _TCP_TIMEOUT = 1.0
@@ -44,6 +46,7 @@ def runtime_doctor_cmd(
         _check_mcp_http(),
         _check_flame_bridge(),
         _check_state_ws(),
+        _check_graph_store(),
     ]
     overall_ok = all(c["ok"] for c in checks)
 
@@ -183,6 +186,125 @@ def _check_state_ws() -> dict[str, Any]:
     }
 
 
+def _check_graph_store() -> dict[str, Any]:
+    """Probe the Phase 24 JSONL graph store substrate.
+
+    Tri-state per ``v1.6-WRITERS-ROOM-CONVERGENCE.md`` Q18 operator framing:
+
+    - ``ok`` (chip ``ok``): directory exists, files present, newest is parseable.
+      Substrate is installed AND exercised.
+    - ``ok`` (chip ``loaded``): directory missing OR empty. Substrate installed
+      but not yet exercised — normal on fresh install. Preserves the
+      operational distinction operator framed at convergence (substrate
+      installed != substrate exercised).
+    - ``fail`` (chip ``fail``): directory present but unreadable, or newest
+      file contains zero parseable records (structural error).
+
+    Scope discipline per operator direction:
+    no event counts, no topology reconstruction, no analytics, no retention
+    logic, no summaries. Status / dir / file count / newest timestamp /
+    parseability verdict. That's it. Doctor teaches existence + health;
+    ``fbridge graph list/show`` is the browser.
+    """
+    target = graph_dir()
+    url = str(target)
+
+    if not target.exists():
+        return {
+            "name": "graph_store",
+            "ok": True,
+            "chip": "loaded",
+            "status": "not yet created (no graphs recorded)",
+            "url": url,
+            "fix": "the graph store gets created at first emit — "
+                   "try `fbridge chat \"what is running\"` to exercise it",
+        }
+
+    try:
+        files = sorted(
+            target.glob("*.jsonl"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError as exc:
+        return {
+            "name": "graph_store",
+            "ok": False,
+            "chip": "fail",
+            "status": f"directory unreadable ({type(exc).__name__})",
+            "url": url,
+            "fix": f"check permissions on {target}",
+        }
+
+    if not files:
+        return {
+            "name": "graph_store",
+            "ok": True,
+            "chip": "loaded",
+            "status": "no graphs recorded",
+            "url": url,
+            "fix": "the graph store exists but is empty — "
+                   "try `fbridge chat \"what is running\"` to exercise it",
+        }
+
+    newest = files[0]
+    parseable, newest_timestamp = _sample_parseability(newest)
+    file_count = len(files)
+
+    if not parseable:
+        return {
+            "name": "graph_store",
+            "ok": False,
+            "chip": "fail",
+            "status": (
+                f"{file_count} graphs, newest unparseable ({newest.name})"
+            ),
+            "url": url,
+            "fix": f"newest graph file contains no parseable records — "
+                   f"inspect {newest}",
+        }
+
+    return {
+        "name": "graph_store",
+        "ok": True,
+        "chip": "ok",
+        "status": (
+            f"{file_count} graphs, last {newest_timestamp or '<no timestamp>'}"
+        ),
+        "url": url,
+        "fix": "",
+    }
+
+
+def _sample_parseability(path: Path) -> tuple[bool, str]:
+    """Return (any_record_parseable, newest_record_timestamp_or_empty).
+
+    Read-only sample of one file. We do NOT enumerate every record — that's
+    fbridge graph show's job. Doctor just asks: does at least one record in
+    the newest file parse, and what's its timestamp?
+    """
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            last_timestamp = ""
+            any_parsed = False
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(rec, dict):
+                    any_parsed = True
+                    ts = rec.get("timestamp")
+                    if isinstance(ts, str) and ts:
+                        last_timestamp = ts
+            return any_parsed, last_timestamp
+    except OSError:
+        return False, ""
+
+
 def _tcp_reachable(host: str, port: int) -> bool:
     try:
         with socket.create_connection((host, port), timeout=_TCP_TIMEOUT):
@@ -205,9 +327,13 @@ def _render_human(
     table.add_column("Status")
     table.add_column("URL")
     for c in checks:
+        # Rows may override the chip keyword to express tri-state (e.g.
+        # graph_store: ok+loaded when substrate installed but unexercised).
+        # JSON envelope keeps ok=bool for back-compat; chip is presentation-only.
+        chip_keyword = c.get("chip") or ("ok" if c["ok"] else "fail")
         table.add_row(
             c["name"],
-            status_chip("ok" if c["ok"] else "fail"),
+            status_chip(chip_keyword),
             f"{c['status']}  {c['url']}",
         )
     console.print(table)
