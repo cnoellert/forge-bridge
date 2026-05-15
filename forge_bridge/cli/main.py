@@ -21,6 +21,7 @@ from forge_bridge.cli import chat as _chat
 from forge_bridge.cli import doctor as _doctor
 from forge_bridge.cli import exec as _exec
 from forge_bridge.cli import execs as _execs
+from forge_bridge.cli import graph as _graph
 from forge_bridge.cli import health as _health
 from forge_bridge.cli import manifest as _manifest
 from forge_bridge.cli import run as _run
@@ -372,6 +373,35 @@ def mcp_http(
 ) -> None:
     from forge_bridge.mcp.server import main as mcp_main
     mcp_main(transport="streamable-http", port=port)
+
+
+# ── graph group: read-only debug surface over the JSONL graph store ───────
+graph_app = typer.Typer(
+    name="graph",
+    help=(
+        "Inspect the Phase 24 proto-node JSONL graph store (default "
+        "~/.forge-bridge/graphs/). Read-only debug surface — for product "
+        "rendering / replay / promotion, see v1.6+ phases."
+    ),
+    no_args_is_help=True,
+)
+graph_app.command(
+    "list",
+    help=(
+        "List recent graph sessions — one row per per-graph JSONL file, "
+        "newest first by file mtime."
+    ),
+    epilog=_graph._GRAPH_LIST_EPILOG,
+)(_graph.graph_list_cmd)
+graph_app.command(
+    "show",
+    help=(
+        "Dump every event record in one graph's JSONL file. Accepts a full "
+        "graph_id or any unique prefix."
+    ),
+    epilog=_graph._GRAPH_SHOW_EPILOG,
+)(_graph.graph_show_cmd)
+app.add_typer(graph_app, name="graph")
 
 
 # ── flame group: thin ping ────────────────────────────────────────────────
