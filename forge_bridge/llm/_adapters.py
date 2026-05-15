@@ -23,6 +23,7 @@ Per FB-C D-35: token accounting normalized to (prompt_tokens, completion_tokens)
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -721,6 +722,14 @@ class OllamaToolAdapter:
                 arguments=dict(args) if args else {},
             ))
 
+        # Phase 24.1-followup: protocol-path observability — capture pre-salvage
+        # state so the log line below can distinguish (a) model never emitted
+        # structured tool_calls vs (b) bridge dropped them during parsing.
+        # See .planning/PROTOCOL-VS-SUBSTRATE-INVESTIGATION.md §"What this
+        # artifact opens" for the failure shape this instrumentation targets.
+        original_text = text
+        salvage_fired = False
+
         # Phase 16.2 Bug D salvage (D-03): qwen2.5-coder:32b sometimes emits
         # the tool call as JSON-shaped text in message.content instead of in
         # the structured tool_calls field. When the structured field is empty
@@ -737,6 +746,7 @@ class OllamaToolAdapter:
                 salvaged = replace(salvaged, ref=f"{len(tool_calls)}:{salvaged.tool_name}")
                 tool_calls.append(salvaged)
                 text = ""  # consumed — don't double-emit as terminal content (re-Bug-D risk)
+                salvage_fired = True
 
         # POLISH-04: strip qwen2.5-coder chat-template noise tail (HUMAN-UAT.md:106-107).
         # Runs AFTER salvage so the salvage path sees the full original text; if
@@ -749,6 +759,33 @@ class OllamaToolAdapter:
         else:
             prompt_tokens = getattr(response, "prompt_eval_count", 0) or 0
             completion_tokens = getattr(response, "eval_count", 0) or 0
+
+        # Phase 24.1-followup: protocol-path observability — emit structured log
+        # line per ollama.chat() turn so canonical-regression-query measurement
+        # runs can distinguish protocol-layer failure shapes. raw_tool_calls
+        # captures what Ollama returned in the structured field; salvage_fired
+        # captures whether Bug-D-shape text salvage produced a tool call.
+        # content_hash + content_prefix allow cross-call comparison of model
+        # fabrications without bloating logs. Lives under :9996 daemon logging:
+        # /var/log/forge-bridge/console.log (launchd) or ~/.forge-bridge/logs/
+        # mcp_http.log (fbridge up managed daemon).
+        content_hash = (
+            hashlib.sha256(original_text.encode("utf-8")).hexdigest()[:8]
+            if original_text else "-"
+        )
+        logger.info(
+            "ollama-turn prompt_tokens=%d completion_tokens=%d raw_tool_calls=%d "
+            "parsed_tool_calls=%d salvage_fired=%s content_len=%d content_hash=%s "
+            "content_prefix=%r",
+            prompt_tokens,
+            completion_tokens,
+            len(raw_tool_calls),
+            len(tool_calls),
+            str(salvage_fired).lower(),
+            len(original_text),
+            content_hash,
+            original_text[:120],
+        )
 
         return _TurnResponse(
             text=text,

@@ -10,6 +10,7 @@ Coverage map:
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from unittest.mock import AsyncMock, MagicMock
 
@@ -548,3 +549,129 @@ class TestOllamaToolAdapterChatTemplateTailStrip:
             f"POLISH-04: clean prose without chat-template tokens must pass "
             f"through unchanged; got resp.text={resp.text!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 24.1-followup — protocol-path observability log line
+# ---------------------------------------------------------------------------
+
+
+class TestOllamaToolAdapterProtocolPathLogging:
+    """Phase 24.1-followup: protocol-path observability per
+    .planning/PROTOCOL-VS-SUBSTRATE-INVESTIGATION.md §"What this artifact opens".
+
+    Pinning the structured `ollama-turn` log line shape so measurement runs can
+    grep + parse it without regex hell. The line answers the binary question
+    "did the model emit ANY structured tool_calls?" — distinguishing
+    protocol-layer failures (raw_tool_calls=0 AND salvage_fired=false) from
+    bridge-side parse drops (raw_tool_calls>0 AND parsed_tool_calls<raw).
+    """
+
+    @pytest.mark.asyncio
+    async def test_log_line_emitted_on_structured_tool_calls(self, caplog):
+        client = MagicMock()
+        client.chat = AsyncMock(return_value=_fake_response_dict(
+            content="",
+            tool_calls=[
+                {"type": "function", "function": {"name": "forge_list", "arguments": {"k": "v"}}},
+            ],
+            prompt_eval_count=1850,
+            eval_count=12,
+        ))
+        adapter = OllamaToolAdapter(client, "qwen2.5-coder:32b")
+        state = adapter.init_state(prompt="hi", system="s", tools=[], temperature=0.1)
+        with caplog.at_level(logging.INFO, logger="forge_bridge.llm._adapters"):
+            await adapter.send_turn(state)
+
+        matching = [r for r in caplog.records if r.message.startswith("ollama-turn ")]
+        assert len(matching) == 1, (
+            f"expected exactly one 'ollama-turn' log line; got {len(matching)}: "
+            f"{[r.message for r in caplog.records]!r}"
+        )
+        msg = matching[0].message
+        assert "prompt_tokens=1850" in msg
+        assert "completion_tokens=12" in msg
+        assert "raw_tool_calls=1" in msg
+        assert "parsed_tool_calls=1" in msg
+        assert "salvage_fired=false" in msg
+        # Structured tool call → empty content → content_hash sentinel "-"
+        assert "content_len=0" in msg
+        assert "content_hash=-" in msg
+
+    @pytest.mark.asyncio
+    async def test_log_line_emitted_on_salvage_fired(self, caplog):
+        """Bug-D-shape input: structured tool_calls empty + content matches the
+        salvaged JSON shape. The log line must report salvage_fired=true and
+        capture the pre-salvage content_len + content_hash + content_prefix so
+        post-mortem analysis sees what the model actually emitted.
+        """
+        client = MagicMock()
+        client.chat = AsyncMock(return_value=_fake_response_dict(
+            content=_OLLAMA_BUG_D_RESPONSE_CONTENT,
+            tool_calls=None,  # Bug D shape: structured field empty
+            prompt_eval_count=1800,
+            eval_count=25,
+        ))
+        adapter = OllamaToolAdapter(client, "qwen2.5-coder:32b")
+        state = adapter.init_state(prompt="hi", system="s", tools=[], temperature=0.1)
+        with caplog.at_level(logging.INFO, logger="forge_bridge.llm._adapters"):
+            await adapter.send_turn(state)
+
+        matching = [r for r in caplog.records if r.message.startswith("ollama-turn ")]
+        assert len(matching) == 1
+        msg = matching[0].message
+        assert "raw_tool_calls=0" in msg, (
+            "Bug D shape: Ollama returned 0 structured tool_calls; salvage "
+            "produces a parsed call from message.content"
+        )
+        assert "parsed_tool_calls=1" in msg, (
+            "salvage path appended one _ToolCall — parsed count must reflect it"
+        )
+        assert "salvage_fired=true" in msg
+        # Pre-salvage content length captured (text was mutated to "" by salvage)
+        expected_len = len(_OLLAMA_BUG_D_RESPONSE_CONTENT)
+        assert f"content_len={expected_len}" in msg
+        # content_hash is sha256[:8] of the pre-salvage content — deterministic
+        expected_hash = hashlib.sha256(
+            _OLLAMA_BUG_D_RESPONSE_CONTENT.encode("utf-8")
+        ).hexdigest()[:8]
+        assert f"content_hash={expected_hash}" in msg
+
+    @pytest.mark.asyncio
+    async def test_log_line_emitted_on_protocol_failure_shape(self, caplog):
+        """The canonical regression failure shape from the 2026-05-14
+        measurement bundle: model emits Python-method-call syntax as text
+        (e.g. ``flame.get_current_time()``), structured tool_calls empty,
+        salvage cannot extract it (not the JSON shape Bug D salvages).
+        This is the protocol-layer failure the investigation artifact targets.
+        The log line must surface raw_tool_calls=0 AND salvage_fired=false —
+        the diagnostic signature future measurement runs grep for.
+        """
+        fabrication = 'flame.get_current_time()'
+        client = MagicMock()
+        client.chat = AsyncMock(return_value=_fake_response_dict(
+            content=fabrication,
+            tool_calls=None,
+            prompt_eval_count=1850,
+            eval_count=8,
+        ))
+        adapter = OllamaToolAdapter(client, "qwen2.5-coder:32b")
+        state = adapter.init_state(prompt="hi", system="s", tools=[], temperature=0.1)
+        with caplog.at_level(logging.INFO, logger="forge_bridge.llm._adapters"):
+            resp = await adapter.send_turn(state)
+
+        # Sanity: response IS the failure shape — terminal text with no calls.
+        assert resp.tool_calls == []
+        assert resp.text == fabrication
+
+        matching = [r for r in caplog.records if r.message.startswith("ollama-turn ")]
+        assert len(matching) == 1
+        msg = matching[0].message
+        # The diagnostic signature: model produced text-shaped fabrication
+        # AND salvage couldn't extract anything — protocol-layer failure.
+        assert "raw_tool_calls=0" in msg
+        assert "parsed_tool_calls=0" in msg
+        assert "salvage_fired=false" in msg
+        assert f"content_len={len(fabrication)}" in msg
+        # content_prefix preserves the fabrication shape for grep
+        assert repr(fabrication) in msg
