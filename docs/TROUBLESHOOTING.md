@@ -573,3 +573,159 @@ The doctor row's classification is the same operational-survivability invariant 
 - Phase 07.1 close artifacts in `.planning/phases/07.1-startup-bridge-graceful-degradation-hotfix-deployment-uat/` — the graceful-degradation contract origin.
 
 ---
+
+## Failure mode: `flame_bridge` dispatch target mismatch (config-context divergence)
+
+**Maps to:** Phase 24.2 architectural correction.
+**Surfaces from:** `fbridge doctor` reporting `flame_bridge: dispatch target mismatch — daemon=... shell=...`, OR a chat call producing `flame_execute_python` invocations that all fail with `status=transport_error` despite the Flame hook being reachable from your shell.
+
+### Symptom
+
+You hit one of two presentations:
+
+1. **Doctor row is explicit.** `fbridge doctor` produces a row like:
+
+    ```text
+    flame_bridge   fail   dispatch target mismatch — daemon=http://127.0.0.1:9998 shell=http://127.0.0.1:9999
+    ```
+
+    Both URLs appear; the row tells you the daemon and your shell disagree about where the Flame hook lives.
+
+2. **Chat appears to converge but every Flame call fails fast.** The model picks `flame_execute_python` (or a `flame_*` tool), the call returns in ~10–15ms with a transport error, and the model retries against the same misrouted target. `fbridge doctor` may or may not surface the divergence depending on the order in which the daemon was reconfigured — but the divergence is structurally what's wrong.
+
+A direct probe of the Flame hook from your shell succeeds:
+
+```bash
+$ curl -s http://localhost:9999/status
+{"status":"running","flame_available":true,...}
+```
+
+So Flame and its hook are fine. So is the bridge daemon itself (Console renders, chat replies, `fbridge doctor` produces output). What's wrong is **the daemon's view of where the Flame hook is** disagrees with **your shell's view**.
+
+### What `fbridge doctor` shows
+
+Post Phase 24.2, the `flame_bridge` row exercises a daemon-routed dispatch probe rather than a passive `:9999/status` GET — doctor POSTs to the running daemon's `/api/v1/exec` and asks it to call `flame_ping`. The daemon's response echoes its own effective `bridge.BRIDGE_URL`. Doctor compares that against the URL it would compute itself from your shell env.
+
+When they agree, you see:
+
+```text
+flame_bridge   ok     running (daemon dispatches http://127.0.0.1:9999)
+```
+
+When they disagree, you see the divergence rendered explicitly:
+
+```text
+flame_bridge   fail   dispatch target mismatch — daemon=http://127.0.0.1:9998 shell=http://127.0.0.1:9999
+               → FORGE_BRIDGE_HOST/PORT is set differently in the daemon's
+                 environment than in your shell. Unset it in the daemon's
+                 launchd/systemd env and restart the daemon, OR set it in
+                 your shell to match.
+```
+
+The `daemon=` URL is **authoritative** — that's where dispatch will actually go. The `shell=` URL is **diagnostic** — that's what your shell would have predicted. Doctor surfaces both so you can see which world is wrong without guessing.
+
+### Diagnosis
+
+The daemon runs under `launchd` (macOS) or `systemd` (Linux); your shell runs the env you sourced from your dotfiles. The two environments are independent process contexts. If `FORGE_BRIDGE_HOST` or `FORGE_BRIDGE_PORT` is set in only one of them — or set differently in each — the daemon's bridge client and your shell's view of the Flame hook will disagree.
+
+The most common cause is an operator-side install-script edit that set `FORGE_BRIDGE_PORT` in the daemon's launchd plist (typically to move state_ws off `:9998` onto a custom port, then forgetting that the same env name controls a different role in `forge_bridge/bridge.py`). The bridge client silently followed the env to a port that doesn't speak HTTP, every dispatch RST'd in ~12ms, and your shell continued to see the correct hook because *your* shell env wasn't touched.
+
+The substrate is fine. The Flame hook is fine. Doctor's two-world view is what's wrong — and Phase 24.2 made that visible.
+
+### Recovery
+
+**Fast path (under 2 minutes):**
+
+1. **Inspect the daemon's effective environment.** macOS:
+
+    ```bash
+    launchctl print system/com.cnoellert.forge-bridge | grep -i FORGE_
+    # or, for a user-session daemon:
+    launchctl print gui/$(id -u)/com.cnoellert.forge-bridge | grep -i FORGE_
+    ```
+
+    Linux:
+
+    ```bash
+    systemctl show forge-bridge --property=Environment
+    # or read the service file directly:
+    sudo cat /etc/systemd/system/forge-bridge.service | grep Environment
+    ```
+
+    Note any `FORGE_BRIDGE_HOST` or `FORGE_BRIDGE_PORT` values that don't match the default (`127.0.0.1` / `9999`).
+
+2. **Decide which side is wrong.** The default is `127.0.0.1:9999`. If your shell or your `~/.zshrc` / `~/.bashrc` exports a non-default, that's probably load-bearing for some other workflow — leave it and fix the daemon side instead. If the daemon's launchd/systemd env has a value that doesn't match where the Flame hook is actually listening (likely the case — the warm-probe diagnostic that exposed this on portofino had `FORGE_BRIDGE_PORT=9998` in launchd aimed at the WebSocket port), unset it.
+
+3. **Unset the daemon-side override.** macOS:
+
+    ```bash
+    # Edit the LaunchDaemon plist that sets the env. Common paths:
+    sudo vi /Library/LaunchDaemons/com.cnoellert.forge-bridge.plist
+    # Remove the <key>FORGE_BRIDGE_PORT</key> / <string>...</string> pair from
+    # the EnvironmentVariables dict. Save.
+    ```
+
+    Linux:
+
+    ```bash
+    sudo systemctl edit forge-bridge
+    # Remove the [Service] Environment=FORGE_BRIDGE_PORT=... line. Save.
+    ```
+
+4. **Restart the daemon:**
+
+    ```bash
+    # macOS
+    sudo launchctl kickstart -k system/com.cnoellert.forge-bridge
+    # or:
+    sudo launchctl bootout system/com.cnoellert.forge-bridge && \
+    sudo launchctl bootstrap system/Library/LaunchDaemons/com.cnoellert.forge-bridge.plist
+
+    # Linux
+    sudo systemctl daemon-reload && sudo systemctl restart forge-bridge
+    ```
+
+    Wait ~15 seconds.
+
+5. **Re-run doctor:**
+
+    ```bash
+    fbridge doctor
+    ```
+
+    The `flame_bridge` row should now report `ok` with `daemon=` and `shell=` agreeing (or just `running (daemon dispatches http://127.0.0.1:9999)`).
+
+### Verification
+
+You're recovered when **all three** signals hold:
+
+- `fbridge doctor` reports `flame_bridge: ok` with the daemon-effective URL matching `http://127.0.0.1:9999` (or whichever URL is correct for your install).
+- A chat call that picks `flame_execute_python` returns a real Flame result with `status=ok` graph emission at `~/.forge-bridge/graphs/<graph_id>.jsonl` — NOT `status=transport_error` in ~12ms.
+- `fbridge flame-exec "import flame; print(flame.project.current_project.name)"` succeeds and surfaces the project name.
+
+### If you arrived here while following...
+
+- **Recipe 4 (Drive Flame from chat).** Same recovery path; the symptom often presents as the chat looping on `flame_execute_python` because affordance recovery finds the right tool but every dispatch silently RSTs.
+- **Recipe 1 Step 6 (Bring up forge-bridge).** Install-time variant. If the bootstrap script set a non-default `FORGE_BRIDGE_PORT` in the daemon's env, that's the source. Unset it; the install default is `9999` and the Flame hook installer also uses `9999` by default.
+- **Recipe 1 Step 8 (Smoke-test the surfaces).** `curl http://localhost:9999/status` succeeding while `fbridge doctor` reports `flame_bridge: fail` with `dispatch target mismatch` is the canonical signature of this failure mode.
+
+### Why this happens
+
+Pre Phase 24.2, doctor probed `:9999/status` directly from its own process. Doctor read `FORGE_BRIDGE_HOST/PORT` from the operator's shell env, the daemon read the same names from its own launchd/systemd env, and the two computations could disagree silently. Doctor would report `flame_bridge: ok` based on **its own view** of where the hook lives, even when the daemon was misrouting every dispatch.
+
+Phase 24.2 collapsed this two-world divergence by re-rooting the doctor probe through the daemon. Doctor now asks the running daemon to call `flame_ping` (the chain engine's deterministic path); the daemon's response echoes its own effective `bridge.BRIDGE_URL`. Doctor compares that against its own re-derived URL and surfaces the divergence directly.
+
+**The architectural invariant:** the health surface reflects daemon-observed dispatch truth, not independently reconstructed local truth. Doctor never falls back to a re-derived local probe under degradation — daemon truth or no truth. Shell-derived config remains *diagnostic context* for divergence detection; it is never authoritative.
+
+This is one specific operational asymmetry (operator-shell env vs daemon-launchd env). It is not generalized distributed config reconciliation, service discovery, config orchestration, or runtime topology management — those patterns are not what Phase 24.2 introduces. The single failure mode this section documents is the only divergence class doctor currently surfaces; if a future operational truth gap appears under a different daemon-side surface, that's a separate phase.
+
+### Cross-references
+
+- `.planning/milestones/v1.6-PHASE-24-2-FRAMING.md` — the architectural diagnosis + Q1-Q4 convergence record.
+- `forge_bridge/cli/runtime_doctor.py:_check_flame_bridge` — the daemon-routed probe implementation.
+- `forge_bridge/console/read_api.py:_check_flame_bridge` — the Console mirror probe (in-process direct call to `utility.ping`).
+- `forge_bridge/tools/utility.py:ping` — the `flame_ping` MCP tool, which echoes the daemon's effective `bridge.BRIDGE_URL`.
+- `forge_bridge/config.py` — the role-separated port env vars (`FORGE_CONSOLE_PORT` / `FORGE_MCP_PORT` / `FORGE_STATE_WS_PORT` / `FORGE_BRIDGE_PORT`) and their `9996` / `9997` / `9998` / `9999` defaults.
+- Phase 24.2 commit `7fdacf7` (`feat(24.2): doctor truth ↔ effective dispatch truth — daemon-routed flame_bridge probe`) — the substrate-correction commit that introduced this row taxonomy.
+
+---
