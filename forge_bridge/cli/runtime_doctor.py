@@ -28,6 +28,10 @@ from forge_bridge.runtime.graph_emit import graph_dir
 
 _HTTP_TIMEOUT = 1.5
 _TCP_TIMEOUT = 1.0
+# Phase 24.2: daemon-routed flame_bridge probe runs flame_ping through the
+# chain engine; allow more time than a passive HEAD because the daemon round-
+# trips to the Flame hook before responding.
+_EXEC_PROBE_TIMEOUT = 5.0
 
 
 def runtime_doctor_cmd(
@@ -120,46 +124,140 @@ def _check_mcp_http() -> dict[str, Any]:
 
 
 def _check_flame_bridge() -> dict[str, Any]:
-    url = config.flame_bridge_url()
+    """Daemon-routed Flame bridge dispatch probe (Phase 24.2).
+
+    Probes the running daemon (Console on :9996) via
+    ``POST /api/v1/exec text="flame_ping"``. The chain engine dispatches
+    ``flame_ping`` via ``bridge.execute_json()`` from the daemon's process
+    env; ``flame_ping`` echoes the daemon's effective ``bridge.BRIDGE_URL``
+    in its response body (see ``forge_bridge/tools/utility.py:ping``). Doctor
+    compares the daemon-effective URL against its own re-derived
+    ``config.flame_bridge_url()`` to detect config-context divergence (e.g.
+    shell env vs launchd env disagreeing on ``FORGE_BRIDGE_PORT``).
+
+    Architectural invariant (Phase 24.2): the health surface reflects
+    daemon-observed dispatch truth, not independently reconstructed local
+    truth. Doctor never falls back to a re-derived local probe under
+    degradation — daemon truth or no truth.
+
+    Four operational states:
+      OK         daemon reachable, ``connected=true``, daemon's bridge_url
+                 matches doctor's re-derived URL
+      WARN       daemon reachable, daemon's bridge_url disagrees with
+                 doctor's re-derived URL (config-context divergence)
+      FAIL       daemon reachable, daemon reports ``connected=false`` (URLs
+                 agree but Flame is unreachable from the daemon)
+      UNKNOWN    daemon unreachable; links to ``mcp_http`` row
+    """
+    shell_url = config.flame_bridge_url()
+    exec_url = f"{config.console_url()}/api/v1/exec"
+
     try:
-        with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
-            r = client.get(f"{url}/status")
+        with httpx.Client(timeout=_EXEC_PROBE_TIMEOUT) as client:
+            r = client.post(exec_url, json={"text": "flame_ping"})
     except (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError) as exc:
         return {
             "name": "flame_bridge",
             "ok": False,
-            "status": f"unreachable ({type(exc).__name__})",
-            "url": url,
-            "fix": "start Flame with the forge-bridge hook loaded "
-                   "(see `./scripts/install-flame-hook.sh`)",
+            "status": f"unknown (daemon unreachable: {type(exc).__name__})",
+            "url": shell_url,
+            "fix": "daemon not running or not reachable — see mcp_http row",
         }
+
     if r.status_code != 200:
         return {
             "name": "flame_bridge",
             "ok": False,
-            "status": f"http {r.status_code}",
-            "url": url,
-            "fix": "Flame bridge responded but not 200 — restart Flame and retry",
+            "status": f"unknown (daemon http {r.status_code})",
+            "url": shell_url,
+            "fix": "daemon /api/v1/exec returned non-200 — see mcp_http row",
         }
+
     try:
-        body = r.json()
+        envelope = r.json()
     except ValueError:
-        body = {}
-    flame_available = bool(body.get("flame_available"))
-    if not flame_available:
         return {
             "name": "flame_bridge",
             "ok": False,
-            "status": "running, no flame module",
-            "url": url,
-            "fix": "the bridge HTTP server is up but Flame isn't attached — "
-                   "open a Flame project to load the `flame` module",
+            "status": "unknown (daemon returned malformed envelope)",
+            "url": shell_url,
+            "fix": "daemon /api/v1/exec returned invalid JSON — restart the daemon",
         }
+
+    if envelope.get("status") != "success":
+        err = envelope.get("error") or {}
+        code = err.get("code") or "unknown"
+        return {
+            "name": "flame_bridge",
+            "ok": False,
+            "status": f"daemon dispatch failed ({code})",
+            "url": shell_url,
+            "fix": err.get("message") or
+                   "daemon chain engine returned error — check daemon logs",
+        }
+
+    chain = envelope.get("chain") or []
+    if not chain:
+        return {
+            "name": "flame_bridge",
+            "ok": False,
+            "status": "unknown (daemon returned empty chain)",
+            "url": shell_url,
+            "fix": "daemon /api/v1/exec returned no chain steps — restart the daemon",
+        }
+
+    ping_result = chain[0].get("result")
+    if not isinstance(ping_result, dict):
+        return {
+            "name": "flame_bridge",
+            "ok": False,
+            "status": "unknown (flame_ping returned non-dict result)",
+            "url": shell_url,
+            "fix": "daemon returned unexpected flame_ping shape — restart the daemon",
+        }
+
+    daemon_url = ping_result.get("bridge_url")
+    connected = bool(ping_result.get("connected"))
+
+    if daemon_url and daemon_url != shell_url:
+        # WARN — config-context divergence between doctor and daemon
+        return {
+            "name": "flame_bridge",
+            "ok": False,
+            "status": (
+                f"dispatch target mismatch — daemon={daemon_url} "
+                f"shell={shell_url}"
+            ),
+            "url": daemon_url,  # daemon-effective is authoritative
+            "fix": (
+                "FORGE_BRIDGE_HOST/PORT is set differently in the daemon's "
+                "environment than in your shell. Unset it in the daemon's "
+                "launchd/systemd env and restart the daemon, OR set it in "
+                "your shell to match. See docs/TROUBLESHOOTING.md."
+            ),
+        }
+
+    if not connected:
+        # FAIL — daemon reports Flame unreachable; URLs agree
+        ping_err = ping_result.get("error") or ""
+        suffix = f" ({ping_err})" if ping_err else ""
+        return {
+            "name": "flame_bridge",
+            "ok": False,
+            "status": f"daemon reports flame disconnected{suffix}",
+            "url": daemon_url or shell_url,
+            "fix": (
+                "daemon's dispatch path is correct but Flame isn't reachable "
+                "— start Flame with the forge-bridge hook loaded "
+                "(see `./scripts/install-flame-hook.sh`) or open a project"
+            ),
+        }
+
     return {
         "name": "flame_bridge",
         "ok": True,
-        "status": "running",
-        "url": url,
+        "status": f"running (daemon dispatches {daemon_url})",
+        "url": daemon_url,
         "fix": "",
     }
 

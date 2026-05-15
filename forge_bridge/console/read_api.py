@@ -21,6 +21,7 @@ Return type philosophy (per RESEARCH.md section 2):
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import uuid
@@ -308,34 +309,77 @@ class ConsoleReadAPI:
         `postgres: fail` at the doctor surface would contradict the
         substrate/consumer architectural truth that DIAG-02 teaches.
         """
-        import httpx
-
         from forge_bridge import __version__
 
         async def _check_flame_bridge() -> dict:
+            """Daemon-routed dispatch probe (Phase 24.2).
+
+            Console runs in-process with the daemon, so the "daemon-routed"
+            semantic reduces to a direct call to flame_ping — the same MCP
+            tool the CLI doctor invokes via /api/v1/exec. Both surfaces
+            exercise bridge.execute_json(); Console in-process, CLI cross-
+            process. Phase 24.2 invariant: the health surface reflects
+            daemon-observed dispatch truth, not independently reconstructed
+            local truth. Divergence-detection (daemon-effective bridge_url vs
+            Console's __init__-time _flame_bridge_url) is kept for invariant
+            consistency with the CLI doctor row taxonomy; in normal operation
+            both reads come from the same process env at startup so
+            divergence here is structurally rare.
+            """
+            from forge_bridge.tools import utility
+
             try:
-                async with httpx.AsyncClient(timeout=1.5) as client:
-                    r = await asyncio.wait_for(
-                        client.get(self._flame_bridge_url, timeout=1.5),
-                        timeout=2.0,
-                    )
-                if r.status_code < 500:
-                    return {
-                        "status": "ok",
-                        "url": self._flame_bridge_url,
-                        "detail": f"http {r.status_code}",
-                    }
+                raw = await asyncio.wait_for(utility.ping(), timeout=5.0)
+            except Exception as exc:  # noqa: BLE001
                 return {
                     "status": "fail",
                     "url": self._flame_bridge_url,
-                    "detail": f"http {r.status_code}",
+                    "detail": f"in-process flame_ping failed: {type(exc).__name__}",
                 }
-            except Exception as exc:  # noqa: BLE001 - intentional: never surface
+
+            try:
+                result = json.loads(raw)
+            except (ValueError, json.JSONDecodeError):
                 return {
                     "status": "fail",
                     "url": self._flame_bridge_url,
-                    "detail": type(exc).__name__,
+                    "detail": "flame_ping returned non-JSON",
                 }
+
+            if not isinstance(result, dict):
+                return {
+                    "status": "fail",
+                    "url": self._flame_bridge_url,
+                    "detail": "flame_ping returned non-dict result",
+                }
+
+            daemon_url = result.get("bridge_url")
+            connected = bool(result.get("connected"))
+
+            if daemon_url and daemon_url != self._flame_bridge_url:
+                return {
+                    "status": "fail",
+                    "url": daemon_url,
+                    "detail": (
+                        f"dispatch target mismatch — daemon={daemon_url} "
+                        f"console={self._flame_bridge_url}"
+                    ),
+                }
+
+            if not connected:
+                ping_err = result.get("error") or ""
+                suffix = f": {ping_err}" if ping_err else ""
+                return {
+                    "status": "fail",
+                    "url": daemon_url or self._flame_bridge_url,
+                    "detail": f"flame disconnected{suffix}",
+                }
+
+            return {
+                "status": "ok",
+                "url": daemon_url or self._flame_bridge_url,
+                "detail": "running",
+            }
 
         async def _check_ws_server() -> dict:
             # Best-effort TCP reachability -- full WS handshake is expensive.
