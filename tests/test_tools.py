@@ -259,6 +259,12 @@ def test_utility_models():
         # Skip functions imported from other modules
         if getattr(fn, "__module__", None) != utility.__name__:
             continue
+        # Skip private helpers (underscore prefix). They are internal shared
+        # bodies (e.g. _execute_python_core, called by operator-side CLI and
+        # the MCP tool entry point) — not registered to FastMCP, so the
+        # BaseModel-first-arg invariant does not apply to them.
+        if name.startswith("_"):
+            continue
         if name in _FLAT_SIGNATURE_EXCEPTIONS:
             continue
         sig = inspect.signature(fn)

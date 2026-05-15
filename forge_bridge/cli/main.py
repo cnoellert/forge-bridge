@@ -21,6 +21,7 @@ from forge_bridge.cli import chat as _chat
 from forge_bridge.cli import doctor as _doctor
 from forge_bridge.cli import exec as _exec
 from forge_bridge.cli import execs as _execs
+from forge_bridge.cli import flame_exec as _flame_exec
 from forge_bridge.cli import graph as _graph
 from forge_bridge.cli import health as _health
 from forge_bridge.cli import manifest as _manifest
@@ -182,6 +183,36 @@ app.command(
     ),
     epilog=_RUN_EPILOG,
 )(_run.run_cmd)
+
+_FLAME_EXEC_EPILOG = """\
+Examples:
+  fbridge flame-exec "import flame; print(flame.project.current_project.name)"
+  fbridge flame-exec -f introspect_reels.py
+  fbridge flame-exec --main-thread "import flame; flame.batch.create_node('Action')"
+  fbridge flame-exec "print(1)" --json
+
+After execution, the printed graph_id round-trips through:
+  fbridge graph show <graph_id>      # full event stream for this run
+
+Exit codes:
+  0  execution success (Flame returned cleanly)
+  1  Flame execution failure (resp.error set; traceback rendered)
+  2  Flame bridge unreachable / transport-level failure
+
+This is the operator-side surface onto the same execution path the chat
+endpoint uses through `flame_execute_python`. Every LLM execution
+failure can be reproduced here against the same substrate.
+"""
+
+app.command(
+    "flame-exec",
+    help=(
+        "Execute Python inside Flame through the shared execution substrate "
+        "— operator-side complement to the `flame_execute_python` MCP tool. "
+        "Reports a graph_id you can replay with `fbridge graph show`."
+    ),
+    epilog=_FLAME_EXEC_EPILOG,
+)(_flame_exec.flame_exec_cmd)
 
 
 # ── runtime manager: forge up / down / status ────────────────────────────

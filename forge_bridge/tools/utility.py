@@ -174,10 +174,25 @@ async def execute_python(code: str, main_thread: bool = False) -> str:
     # a later commit. The structured log line above stays unchanged —
     # operators read it in real time; the JSONL events are the
     # observability artifact for replay + non-author audit.
+    return await _execute_python_core(code, main_thread, new_graph_id())
+
+
+async def _execute_python_core(code: str, main_thread: bool, graph_id: str) -> str:
+    """Shared execution body for ``execute_python`` and operator-side surfaces.
+
+    The caller provides the ``graph_id``. ``execute_python`` (the MCP tool
+    entry point) calls this with a freshly-minted graph_id each invocation;
+    operator-side CLI surfaces (``fbridge flame-exec``) call it with a
+    graph_id they pre-allocated so they can report it back to the operator.
+
+    Single execution path, single observability emission, single error
+    shaping. The operator surface boundary is metadata (who initiated),
+    NOT ontology — both paths emit ``node_kind="python"`` because the
+    substrate truth is the same: a Python execution against Flame occurred.
+    """
     code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()[:16]
     started = time.monotonic()
     status = "unknown"
-    graph_id = new_graph_id()
     # node_kind is substrate-level runtime semantics, NOT MCP-tool-name.
     # The Flame hook executes Python; that's the substrate kind. A future
     # `flame_run_batch` MCP tool would emit `node_kind="batch_run"`; a future
