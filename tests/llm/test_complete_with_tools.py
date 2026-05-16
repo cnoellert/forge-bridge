@@ -25,6 +25,7 @@ Coverage map:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -691,3 +692,147 @@ class TestCompleteWithToolsMessagesKwarg:
         assert adapter.last_state["history"] == [
             {"role": "user", "content": "legacy prompt"}
         ]
+
+
+# ---------------------------------------------------------------------------
+# Phase 24.3 commit 4 — message_callback streaming hook
+# ---------------------------------------------------------------------------
+
+
+class TestMessageCallback:
+    """Phase 24.3 — message_callback fires once after each adapter.send_turn()
+    with the OpenAI-shaped assistant message, and once after each tool result
+    is appended with the OpenAI-shaped tool message. Input echo is NEVER
+    emitted (only NEW messages from the loop). Callback failures never abort
+    the loop. See forge_bridge/llm/router.py docstring at message_callback
+    param for the full contract."""
+
+    @pytest.mark.asyncio
+    async def test_callback_fires_for_terminal_only_turn(self):
+        """Single terminal turn with no tool calls — callback fires once with
+        the terminal assistant message (content only, no tool_calls)."""
+        emitted: list[dict] = []
+
+        async def cb(msg: dict) -> None:
+            emitted.append(msg)
+
+        adapter = _StubAdapter([_make_terminal_turn(text="hi")])
+        router = LLMRouter()
+        _patch_clients(router)
+        with _patch_adapters(adapter):
+            await router.complete_with_tools(
+                "test", tools=[_FakeTool("forge_x")],
+                tool_executor=AsyncMock(return_value="ignored"),
+                message_callback=cb,
+            )
+        assert len(emitted) == 1
+        assert emitted[0] == {"role": "assistant", "content": "hi"}
+
+    @pytest.mark.asyncio
+    async def test_callback_fires_for_assistant_with_tool_calls(self):
+        """Turn 1 has tool_calls → callback fires with assistant message
+        carrying tool_calls in OpenAI format (id, type, function.name,
+        function.arguments as JSON string per the existing PR20 schema)."""
+        emitted: list[dict] = []
+
+        async def cb(msg: dict) -> None:
+            emitted.append(msg)
+
+        adapter = _StubAdapter([
+            _make_tool_call_turn("forge_list", {"k": "v"}, ref="r1"),
+            _make_terminal_turn(text="done"),
+        ])
+        router = LLMRouter()
+        _patch_clients(router)
+        with _patch_adapters(adapter):
+            await router.complete_with_tools(
+                "test", tools=[_FakeTool("forge_list")],
+                tool_executor=AsyncMock(return_value="tool result"),
+                message_callback=cb,
+            )
+        # Sequence: assistant(tool_call) → tool(result) → assistant(terminal)
+        assert len(emitted) == 3
+        assert emitted[0]["role"] == "assistant"
+        assert emitted[0]["tool_calls"][0]["function"]["name"] == "forge_list"
+        # arguments serialized as JSON string (matching to_chat_messages)
+        assert json.loads(
+            emitted[0]["tool_calls"][0]["function"]["arguments"]
+        ) == {"k": "v"}
+        assert emitted[1]["role"] == "tool"
+        assert emitted[1]["tool_call_id"] == "r1"
+        assert emitted[1]["name"] == "forge_list"
+        assert emitted[1]["content"] == "tool result"
+        assert emitted[2]["role"] == "assistant"
+        assert emitted[2]["content"] == "done"
+
+    @pytest.mark.asyncio
+    async def test_callback_never_emits_input_echo(self):
+        """The caller's `messages=` argument is NEVER emitted via callback —
+        only NEW messages produced during the loop. Client reconstruction
+        relies on the client already having their input echo."""
+        emitted: list[dict] = []
+
+        async def cb(msg: dict) -> None:
+            emitted.append(msg)
+
+        adapter = _StubAdapter([_make_terminal_turn(text="hi")])
+        router = LLMRouter()
+        _patch_clients(router)
+        history = [
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "second"},
+            {"role": "user", "content": "third"},
+        ]
+        with _patch_adapters(adapter):
+            await router.complete_with_tools(
+                messages=history, tools=[_FakeTool("forge_x")],
+                tool_executor=AsyncMock(return_value="ignored"),
+                message_callback=cb,
+            )
+        # Only the terminal assistant emit — input echo NOT in the callback stream
+        assert len(emitted) == 1
+        for emitted_msg in emitted:
+            assert emitted_msg not in history, (
+                f"input echo leaked into callback: {emitted_msg!r}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_callback_failure_does_not_abort_loop(self):
+        """A callback that raises must NOT abort the loop — streaming is
+        delivery cadence, not a load-bearing protocol path per framing §7."""
+        call_count = {"n": 0}
+
+        async def flaky_cb(msg: dict) -> None:
+            call_count["n"] += 1
+            raise RuntimeError("simulated streaming-transport hiccup")
+
+        adapter = _StubAdapter([
+            _make_tool_call_turn("forge_x", {"a": 1}),
+            _make_terminal_turn(text="finished"),
+        ])
+        router = LLMRouter()
+        _patch_clients(router)
+        with _patch_adapters(adapter):
+            result = await router.complete_with_tools(
+                "test", tools=[_FakeTool("forge_x")],
+                tool_executor=AsyncMock(return_value="r"),
+                message_callback=flaky_cb,
+            )
+        # Loop completes successfully despite callback raising on every emit
+        assert result.final_text == "finished"
+        assert call_count["n"] >= 1, "callback should have been called at least once"
+
+    @pytest.mark.asyncio
+    async def test_none_callback_is_a_noop(self):
+        """Default `message_callback=None` is a no-op — existing callers
+        unaffected. Backward-compatibility guard."""
+        adapter = _StubAdapter([_make_terminal_turn(text="ok")])
+        router = LLMRouter()
+        _patch_clients(router)
+        with _patch_adapters(adapter):
+            result = await router.complete_with_tools(
+                "test", tools=[_FakeTool("forge_x")],
+                tool_executor=AsyncMock(return_value="ignored"),
+                # No message_callback kwarg — must work as before
+            )
+        assert result.final_text == "ok"

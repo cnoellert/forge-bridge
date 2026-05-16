@@ -330,6 +330,7 @@ class LLMRouter:
         tool_result_max_bytes: Optional[int] = None,
         parallel: bool = False,
         messages: Optional[list[dict]] = None,
+        message_callback: Optional[Callable[[dict], Awaitable[None]]] = None,
     ) -> ChatTurnResult:
         """Run the FB-C agentic tool-call loop end-to-end.
 
@@ -379,6 +380,19 @@ class LLMRouter:
                 per call. Defaults to _TOOL_RESULT_MAX_BYTES (8192) per D-08.
             parallel: Reserved for v1.5 (D-06). True raises NotImplementedError;
                 v1.4 ships serial-only.
+            message_callback: Optional Phase 24.3 streaming hook. When provided,
+                fires once after each ``adapter.send_turn()`` with the OpenAI-
+                shaped assistant message ({"role": "assistant", "content": ...,
+                "tool_calls": [...]}) and once after each tool result with the
+                OpenAI-shaped tool message ({"role": "tool", "tool_call_id":
+                ..., "name": ..., "content": ...}). Callback failures are
+                logged at WARN level but do NOT abort the loop — streaming is
+                a delivery cadence, not a load-bearing protocol path. The
+                input echo (caller's ``messages=`` argument) is NEVER emitted
+                via this callback; only NEW messages produced during the loop.
+                Bug-D salvage at _adapters.py:733 runs BEFORE the callback
+                fires — salvaged tool_calls are present in the emitted
+                assistant message per framing §3.2 + §7.
 
         Returns:
             ChatTurnResult — Phase A chat-contract realignment (2026-05-05).
@@ -525,6 +539,56 @@ class LLMRouter:
                 "index": len(tool_trace),
             })
 
+        async def _emit_stream_assistant(response: "_TurnResponse") -> None:
+            """Phase 24.3 streaming hook — fires assistant message after each
+            send_turn(). Bug-D salvage at _adapters.py:733 runs BEFORE this
+            fires; salvaged tool_calls are already present on response.tool_calls
+            and round-trip into the emitted assistant message via the same
+            OpenAI shape adapter.to_chat_messages() emits at terminal moment."""
+            if message_callback is None:
+                return
+            msg: dict[str, Any] = {
+                "role": "assistant",
+                "content": response.text or "",
+            }
+            if response.tool_calls:
+                msg["tool_calls"] = [
+                    {
+                        "id": tc.ref,
+                        "type": "function",
+                        "function": {
+                            "name": tc.tool_name,
+                            "arguments": json.dumps(tc.arguments),
+                        },
+                    }
+                    for tc in response.tool_calls
+                ]
+            try:
+                await message_callback(msg)
+            except Exception:
+                logger.warning(
+                    "message_callback raised on assistant emit; loop continues",
+                    exc_info=True,
+                )
+
+        async def _emit_stream_tool(result: "ToolCallResult") -> None:
+            """Phase 24.3 streaming hook — fires after each tool result is
+            appended. Content matches what the LLM sees (post-sanitization)."""
+            if message_callback is None:
+                return
+            try:
+                await message_callback({
+                    "role": "tool",
+                    "tool_call_id": result.tool_call_ref,
+                    "name": result.tool_name,
+                    "content": result.content,
+                })
+            except Exception:
+                logger.warning(
+                    "message_callback raised on tool emit; loop continues",
+                    exc_info=True,
+                )
+
         async def _loop_body() -> str:
             nonlocal prompt_tokens_total, completion_tokens_total, completed_iterations
             nonlocal state
@@ -536,6 +600,14 @@ class LLMRouter:
                 prompt_tokens_total += response.usage_tokens[0]
                 completion_tokens_total += response.usage_tokens[1]
                 completed_iterations = iteration + 1
+
+                # Phase 24.3 streaming hook — assistant message emit (history-grows,
+                # message granularity). Fires for both terminal and continuing
+                # turns; salvage already ran at the adapter so any rescued
+                # tool_calls round-trip into the emitted shape. Per framing §7,
+                # callback failures never abort the loop — streaming is delivery
+                # cadence, not load-bearing protocol path.
+                await _emit_stream_assistant(response)
 
                 # Terminal: no more tool calls — emit terminal log + return text.
                 if not response.tool_calls:
@@ -706,6 +778,14 @@ class LLMRouter:
                         iteration + 1, call.tool_name, args_hash,
                         response.usage_tokens[0], response.usage_tokens[1], elapsed_ms, status,
                     )
+
+                # Phase 24.3 streaming hook — tool message emits (history-grows,
+                # message granularity). One emit per ToolCallResult in this
+                # iteration; content matches what the LLM sees (post-sanitization).
+                # Order matches results[] order, which matches effective_calls
+                # order. Per framing §7, callback failures never abort the loop.
+                for r in results:
+                    await _emit_stream_tool(r)
 
                 # Update state with assistant turn + tool results.
                 state = adapter.append_results(state, response, results)
