@@ -37,16 +37,54 @@ def test_env_template_exists():
 
 
 def test_env_template_has_all_required_keys():
-    """Every key the daemons read MUST appear in the template (8 keys after Plan 20.1-08)."""
+    """Every key the daemons read MUST appear in the template (9 keys after Phase 24.2).
+
+    FORGE_STATE_WS_PORT added at Phase 24.2 — the env file pre-Phase-24.2
+    conflated the state_ws bus port into FORGE_BRIDGE_PORT, silently routing
+    the daemon's Flame bridge client at :9998 (the WebSocket port) instead
+    of :9999. Splitting the two role-separated env vars in the template
+    eliminates the conflation at the source.
+    """
     required = {
         "FORGE_DB_URL", "FORGE_LOCAL_LLM_URL", "FORGE_LOCAL_MODEL",
         "FORGE_CLOUD_MODEL", "FORGE_CONSOLE_PORT", "FORGE_BRIDGE_PORT",
-        "ANTHROPIC_API_KEY", "FORGE_MCP_PORT",
+        "FORGE_STATE_WS_PORT", "ANTHROPIC_API_KEY", "FORGE_MCP_PORT",
     }
     content = _read("packaging/forge-bridge.env.example")
     for key in required:
         assert f"\n{key}=" in content or content.startswith(f"{key}="), \
             f"env template missing {key}"
+
+
+def test_env_template_ports_role_separated_phase_24_2():
+    """Phase 24.2 regression: FORGE_BRIDGE_PORT must be 9999 (Flame hook target),
+    NOT 9998 (which is FORGE_STATE_WS_PORT). The pre-Phase-24.2 env file shipped
+    `FORGE_BRIDGE_PORT=9998` with comment "WebSocket bus" — that conflation
+    propagated through the daemon's bridge.BRIDGE_URL into status=transport_error
+    on every Flame call. This test pins the role separation in the template so
+    no future edit can re-introduce the conflation silently.
+
+    See:
+      - .planning/milestones/v1.6-PHASE-24-2-FRAMING.md
+      - ~/.forge-bridge/measurements/2026-05-15-phase-24-2-rerun/README.md
+      - forge_bridge/config.py:85 (FORGE_STATE_WS_PORT) and :97 (FORGE_BRIDGE_PORT)
+    """
+    content = _read("packaging/forge-bridge.env.example")
+
+    # Role-correct defaults
+    assert "\nFORGE_BRIDGE_PORT=9999\n" in content or content.endswith("FORGE_BRIDGE_PORT=9999"), \
+        "FORGE_BRIDGE_PORT must be 9999 (Flame HTTP bridge client target) — see Phase 24.2"
+    assert "\nFORGE_STATE_WS_PORT=9998\n" in content or "FORGE_STATE_WS_PORT=9998" in content, \
+        "FORGE_STATE_WS_PORT must be 9998 (WebSocket bus bind port) — see Phase 24.2"
+
+    # The pre-Phase-24.2 conflation must never reappear
+    assert "FORGE_BRIDGE_PORT=9998" not in content, (
+        "FORGE_BRIDGE_PORT=9998 is the Phase 24.2 conflation — that value belongs to "
+        "FORGE_STATE_WS_PORT. Crossing them silently routes the daemon's Flame bridge "
+        "client at the WebSocket port and produces 'Server disconnected without sending "
+        "a response' on every Flame call. See "
+        "~/.forge-bridge/measurements/2026-05-15-phase-24-2-rerun/."
+    )
 
 
 def test_env_template_locked_local_model():
