@@ -108,9 +108,13 @@ Respond with concise, production-ready Python unless asked otherwise.
 
 
 # Default Ollama model used for sensitive (local-network) completions.
-# qwen2.5-coder:32b is the v1.4 conservative-bump-first baseline (Phase 15 D-28).
+# qwen2.5-coder:14b is the Phase 24.3 swap from qwen2.5-coder:32b (which was the
+# v1.4 conservative-bump-first baseline per Phase 15 D-28). Swap justified by
+# .planning/milestones/v1.6-PHASE-24-3-BASELINE-32B.md — 32b cold prefix produced
+# 0 tokens in the 120s budget, warm prefix dispatched correctly but never
+# terminated (model looped on same flame_execute_python invocation).
 # Override via the FORGE_LOCAL_MODEL env var or the local_model= kwarg on LLMRouter().
-_DEFAULT_LOCAL_MODEL = "qwen2.5-coder:32b"
+_DEFAULT_LOCAL_MODEL = "qwen2.5-coder:14b"
 
 # Default Anthropic model used for non-sensitive (cloud) completions.
 # claude-sonnet-4-6 is the Phase 17 (v1.4.x) bump from claude-opus-4-6 (deprecated;
@@ -220,7 +224,7 @@ class LLMRouter:
 
     Tier 1 (sensitive=True, default):
         -> local Ollama (local network, no data egress)
-        -> Model: qwen2.5-coder:32b
+        -> Model: qwen2.5-coder:14b
 
     Tier 2 (sensitive=False):
         -> Anthropic Claude (cloud, non-sensitive queries only)
@@ -228,7 +232,7 @@ class LLMRouter:
 
     Environment overrides:
         FORGE_LOCAL_LLM_URL    default: http://localhost:11434/v1
-        FORGE_LOCAL_MODEL      default: qwen2.5-coder:32b
+        FORGE_LOCAL_MODEL      default: qwen2.5-coder:14b
         FORGE_CLOUD_MODEL      default: claude-sonnet-4-6
         FORGE_SYSTEM_PROMPT    default: built-in VFX pipeline prompt
         ANTHROPIC_API_KEY      required for cloud calls

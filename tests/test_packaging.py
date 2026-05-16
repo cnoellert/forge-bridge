@@ -88,9 +88,14 @@ def test_env_template_ports_role_separated_phase_24_2():
 
 
 def test_env_template_locked_local_model():
-    """SEED-DEFAULT-MODEL-BUMP-V1.4.x: FORGE_LOCAL_MODEL stays at qwen2.5-coder:32b."""
+    """Phase 24.3: FORGE_LOCAL_MODEL bumped to qwen2.5-coder:14b. The prior
+    SEED-DEFAULT-MODEL-BUMP-V1.4.x (which pinned 32b) was superseded by the
+    Phase 24.3 measure-first-then-swap arc per
+    .planning/milestones/v1.6-PHASE-24-3-BASELINE-32B.md. qwen3:32b still
+    blocked (thinking-mode token verbosity exceeds 60s wall-clock budget per
+    SEED-DEFAULT-MODEL-BUMP-V1.4.x archaeology)."""
     content = _read("packaging/forge-bridge.env.example")
-    assert "FORGE_LOCAL_MODEL=qwen2.5-coder:32b" in content
+    assert "FORGE_LOCAL_MODEL=qwen2.5-coder:14b" in content
     assert "FORGE_LOCAL_MODEL=qwen3:32b" not in content
 
 

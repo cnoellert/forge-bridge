@@ -110,12 +110,12 @@ def test_chat_quiet_suppresses_progress_messages():
 
 
 def test_chat_verbose_shows_model_and_timing():
-    body = {"response": "hi", "model": "qwen2.5-coder:32b", "provider": "ollama"}
+    body = {"response": "hi", "model": "qwen2.5-coder:14b", "provider": "ollama"}
     with _patch_httpx([_Resp(200, body)]):
         result = runner.invoke(app, ["chat", "--verbose", "ping"])
     assert result.exit_code == 0
     err = getattr(result, "stderr", "") or ""
-    assert "qwen2.5-coder:32b" in err
+    assert "qwen2.5-coder:14b" in err
     assert "ollama" in err
     assert "elapsed=" in err
 
@@ -204,7 +204,7 @@ def test_chat_json_does_not_emit_progress_messages():
 
 
 def test_chat_verbose_success_block_includes_attempts_and_tool_calls():
-    payload = {"response": "hi", "model": "qwen2.5-coder:32b",
+    payload = {"response": "hi", "model": "qwen2.5-coder:14b",
                "provider": "ollama", "tool_calls": [{"name": "flame_ping"}],
                "tool_duration": 0.42}
     with _patch_httpx([_Resp(200, payload)]):
@@ -214,7 +214,7 @@ def test_chat_verbose_success_block_includes_attempts_and_tool_calls():
     assert "[chat]" in err
     assert "elapsed=" in err
     assert "attempts=" in err
-    assert "model=qwen2.5-coder:32b" in err
+    assert "model=qwen2.5-coder:14b" in err
     # PR13-B: verbose tools field renders as ``tools=N (Xs)``.
     assert "tools=1 (0.4s)" in err
 

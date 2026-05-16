@@ -17,8 +17,9 @@ Skipped on dev machines without Ollama. Ollama-only — sensitive=True locked
 for v1.4 (16-CONTEXT D-05).
 
 How to run on assist-01:
-    # 1. Preload qwen2.5-coder:32b (Pitfall 9 — avoids 10-30s cold-start)
-    ollama run qwen2.5-coder:32b "warm" >/dev/null 2>&1
+    # 1. Preload qwen2.5-coder:14b (Pitfall 9 — avoids cold-start; Phase 24.3
+    #    swap from 32b — see .planning/milestones/v1.6-PHASE-24-3-BASELINE-32B.md)
+    ollama run qwen2.5-coder:14b "warm" >/dev/null 2>&1
 
     # 2. Run the sweep
     FB_INTEGRATION_TESTS=1 pytest tests/integration/test_chat_tool_list_threshold.py -v --tb=short -s

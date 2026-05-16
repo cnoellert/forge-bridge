@@ -7,7 +7,8 @@ Plugs the Bug A/B/C automated-coverage gap that Phase 16 missed in deploy.
 WHAT THIS TEST COVERS:
   - The full /api/v1/chat handler path including Plan 01's
     filter_tools_by_reachable_backends() (REAL TCP probe, no stub).
-  - LLMRouter routing to live Ollama (qwen2.5-coder:32b, sensitive=True).
+  - LLMRouter routing to live Ollama (qwen2.5-coder:14b, sensitive=True;
+    Phase 24.3 swap from 32b).
   - The real mcp.list_tools() registry snapshot (49 tools pre-filter).
   - Response structural shape — stop_reason, messages envelope, content
     quality proxy (length >= 40 chars, no rate-limit fallback).
@@ -26,12 +27,13 @@ Gate: FB_INTEGRATION_TESTS=1 + Ollama reachable at http://localhost:11434.
 Skipped on dev machines without Ollama. Ollama-only — sensitive=True locked
 for v1.4 (16-CONTEXT D-05).
 
-Pitfall 9 (16.1-RESEARCH §6): preload qwen2.5-coder:32b before running on
-assist-01 — first call adds 10-30s cold start which can blow the <60s budget:
-    ollama run qwen2.5-coder:32b "warm" >/dev/null 2>&1
+Pitfall 9 (16.1-RESEARCH §6): preload qwen2.5-coder:14b before running on
+assist-01 — first call adds 10-30s cold start which can blow the <60s budget
+(Phase 24.3 swap from 32b — see .planning/milestones/v1.6-PHASE-24-3-BASELINE-32B.md):
+    ollama run qwen2.5-coder:14b "warm" >/dev/null 2>&1
 
 How to run on assist-01:
-    ollama run qwen2.5-coder:32b "warm" >/dev/null 2>&1
+    ollama run qwen2.5-coder:14b "warm" >/dev/null 2>&1
     FB_INTEGRATION_TESTS=1 pytest tests/integration/test_chat_endpoint_live.py -v --tb=short
 
 Expected on dev machine (no Ollama):
@@ -107,7 +109,7 @@ async def live_chat_client():
 
     No mocks below the HTTP boundary — this is the Strategy B pattern.
 
-    Pitfall 9: preload qwen2.5-coder:32b on assist-01 before running this
+    Pitfall 9: preload qwen2.5-coder:14b on assist-01 before running this
     fixture. First call without preload adds 10-30s cold start which can blow
     the <60s budget assertion.
 
