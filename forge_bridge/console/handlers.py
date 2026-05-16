@@ -40,7 +40,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from forge_bridge.console._constants import CHAIN_MAX_STEPS
 from forge_bridge.console._engine import run_chain_steps
@@ -821,7 +821,232 @@ def _ambiguity_state_for(n: int) -> str:
     return {0: "zero_survivor", 1: "single_survivor"}.get(n, "multi_survivor")
 
 
-async def chat_handler(request: Request) -> JSONResponse:
+def _format_sse_event(event: str, data: dict) -> str:
+    """Format one Server-Sent Events frame per the HTML5 SSE spec.
+
+    `data:` is single-line JSON per W3C — no embedded newlines in payload
+    (json.dumps with default separators is single-line, so no escaping
+    needed for our schema). Trailing blank line is the frame terminator.
+    """
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+async def _chat_sse_response(
+    *,
+    router: Any,
+    messages: list[dict],
+    tools: list,
+    enforced_system: str,
+    max_iterations: int,
+    tool_result_max_bytes: Optional[int],
+    request_id: str,
+    client_ip: str,
+    started: float,
+    tool_call_count_in: int,
+    tools_available_count: int,
+    tools_filtered_count: int,
+    tool_enforced_flag: bool,
+) -> StreamingResponse:
+    """Phase 24.3 commit 4 — SSE history-grows streaming response for
+    `POST /api/v1/chat` when the client sends `Accept: text/event-stream`.
+
+    Event shape (history-grows; framing §6.5 — preserves D-03 response
+    semantics at the contents level; transport changes to SSE only):
+
+      event: message
+      data: {"role": "assistant", "content": "...", "tool_calls": [...]}
+
+      event: message
+      data: {"role": "tool", "tool_call_id": "...", "name": "...",
+             "content": "..."}
+
+      ...
+
+      event: done
+      data: {"final_text": "...", "stop_reason": "end_turn",
+             "request_id": "...", "tools_available": N, ...}
+
+      OR (terminal failure path):
+      event: error
+      data: {"error": {"code": "...", "message": "..."}}
+
+    Per framing §7 anti-scope: Bug-D salvage logic body at _adapters.py:733
+    is UNCHANGED. Salvage runs BEFORE the assistant-message emit (router's
+    `_emit_stream_assistant` reads `response.tool_calls` which is already
+    post-salvage). Token-delta streaming explicitly NOT in scope; emit
+    granularity is message-level per Sub-Q3.b convergence.
+
+    Per framing §4.0 binding ("streaming exposes forward progress, NOT
+    redefines conversational success"): the stream's existence does not
+    change L1/L2/L3 success criteria. A run that emits 20 messages and
+    then hits the 120s budget is still a Layer-A/B failure — the SSE
+    stream just makes the failure path observable in real time.
+
+    Input echo (caller's `messages=` argument) is NEVER emitted via the
+    stream — only NEW messages produced during the loop. Client
+    reconstruction: client's input messages + accumulated stream events
+    = equivalent of the D-03 JSON response's `messages` field.
+
+    D-02/D-13/D-14 wiring untouched — pre-flight validation, rate limit,
+    and 125s outer cap all enforced upstream of this function. The 504
+    timeout case becomes an in-stream `event: error` (HTTP 200 OK has
+    already been committed once the StreamingResponse iterator yields
+    its first event).
+    """
+    msg_queue: asyncio.Queue = asyncio.Queue()
+    _DONE = object()  # sentinel for end of stream
+
+    async def _on_message(msg: dict) -> None:
+        await msg_queue.put(("message", msg))
+
+    async def _run_loop() -> None:
+        try:
+            try:
+                chat_result = await asyncio.wait_for(
+                    router.complete_with_tools(
+                        messages=messages,
+                        tools=tools,
+                        sensitive=True,                  # D-05 hardcoded
+                        system=enforced_system,          # PR15 deterministic enforcement
+                        max_iterations=max_iterations,
+                        max_seconds=120.0,               # FB-C inner cap
+                        tool_result_max_bytes=tool_result_max_bytes,
+                        message_callback=_on_message,    # Phase 24.3 streaming hook
+                    ),
+                    timeout=125.0,                       # CHAT-02 outer cap
+                )
+            except asyncio.TimeoutError:
+                elapsed_ms = int((time.monotonic() - started) * 1000)
+                logger.info(
+                    "chat timeout request_id=%s client_ip=%s message_count_in=%d "
+                    "tools_offered_count=%d wall_clock_ms=%d "
+                    "stop_reason=outer_wait_for_timeout transport=sse",
+                    request_id, client_ip, len(messages), len(tools), elapsed_ms,
+                )
+                await msg_queue.put(("error", {"error": {
+                    "code": "request_timeout",
+                    "message": "Response timed out — try a simpler question or fewer tools.",
+                }}))
+                return
+            except LLMLoopBudgetExceeded:
+                elapsed_ms = int((time.monotonic() - started) * 1000)
+                logger.info(
+                    "chat loop_budget request_id=%s client_ip=%s tools_offered_count=%d "
+                    "wall_clock_ms=%d stop_reason=loop_budget_exceeded transport=sse",
+                    request_id, client_ip, len(tools), elapsed_ms,
+                )
+                await msg_queue.put(("error", {"error": {
+                    "code": "request_timeout",
+                    "message": "Response timed out — try a simpler question or fewer tools.",
+                }}))
+                return
+            except RecursiveToolLoopError:
+                logger.warning(
+                    "chat recursive_loop request_id=%s transport=sse — should not "
+                    "reach handler (synthesizer guard). Investigate.",
+                    request_id,
+                )
+                await msg_queue.put(("error", {"error": {
+                    "code": "internal_error",
+                    "message": "Chat error — check console for details.",
+                }}))
+                return
+            except LLMToolError as exc:
+                logger.warning(
+                    "chat tool_error request_id=%s exc_type=%s transport=sse",
+                    request_id, type(exc).__name__,
+                )
+                await msg_queue.put(("error", {"error": {
+                    "code": "internal_error",
+                    "message": "Chat error — check console for details.",
+                }}))
+                return
+            except Exception as exc:
+                logger.warning(
+                    "chat_handler sse failed request_id=%s exc_type=%s",
+                    request_id, type(exc).__name__, exc_info=True,
+                )
+                await msg_queue.put(("error", {"error": {
+                    "code": "internal_error",
+                    "message": "Chat error — check console for details.",
+                }}))
+                return
+
+            # PR15 output validation — same as JSON path. Malformed terminal
+            # tool-call text becomes an in-stream error event (HTTP 200 is
+            # already committed).
+            if is_response_text_malformed_tool(chat_result.final_text):
+                logger.warning(
+                    "chat malformed_tool_text request_id=%s "
+                    "tools_offered_count=%d transport=sse",
+                    request_id, len(tools),
+                )
+                await msg_queue.put(("error", {"error": {
+                    "code": "internal_error",
+                    "message": "Model produced a hallucinated tool-call as text — see logs.",
+                }}))
+                return
+
+            # Success — emit done event with the same metadata the JSON path
+            # would have packed into the response body. Client reconstructs
+            # final messages list by concatenating their input + all
+            # streamed assistant/tool messages.
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            logger.info(
+                "chat ok request_id=%s client_ip=%s message_count_in=%d "
+                "message_count_out=%d tool_call_count=%d tools_offered_count=%d "
+                "wall_clock_ms=%d stop_reason=end_turn transport=sse",
+                request_id, client_ip, len(messages), len(chat_result.messages),
+                tool_call_count_in, len(tools), elapsed_ms,
+            )
+            await msg_queue.put(("done", {
+                "final_text": chat_result.final_text,
+                "stop_reason": "end_turn",
+                "request_id": request_id,
+                "tools_available": tools_available_count,
+                "tools_filtered": tools_filtered_count,
+                "tool_enforced": tool_enforced_flag,
+                "tool_forced": False,
+                "tool_trace": chat_result.tool_trace,
+            }))
+        finally:
+            # Sentinel guarantees the SSE generator unblocks even if the
+            # loop crashes in an unhandled way before reaching an explicit
+            # error/done emit (defense-in-depth — the per-except blocks
+            # above all explicit-return before reaching this finally).
+            await msg_queue.put(_DONE)
+
+    loop_task = asyncio.create_task(_run_loop())
+
+    async def _event_generator():
+        try:
+            while True:
+                item = await msg_queue.get()
+                if item is _DONE:
+                    return
+                event_kind, payload = item
+                yield _format_sse_event(event_kind, payload)
+        finally:
+            if not loop_task.done():
+                loop_task.cancel()
+                # Don't await — we're in cleanup; await would block on the
+                # cancellation that's already in flight.
+
+    return StreamingResponse(
+        _event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "X-Request-ID": request_id,
+            "Cache-Control": "no-cache",
+            # X-Accel-Buffering disables nginx response buffering for SSE in
+            # case a future deployment puts forge-bridge behind nginx —
+            # harmless when no proxy is present (operator-workstation default).
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+async def chat_handler(request: Request) -> Response:
     """POST /api/v1/chat — Phase 16 FB-D chat endpoint.
 
     See `.planning/phases/16-fb-d-chat-endpoint/16-CONTEXT.md` for the
@@ -1274,6 +1499,34 @@ async def chat_handler(request: Request) -> JSONResponse:
     # a Starlette default 500 with a traceback.
 
     tool_call_count_in = sum(1 for m in messages if m.get("role") == "tool")
+
+    # Phase 24.3 commit 4 — content-negotiated SSE response. When the client
+    # sends `Accept: text/event-stream`, switch the response shape to SSE
+    # (history-grows per framing §6.5). Default Accept (or any other content
+    # type) keeps the existing JSONResponse path below unchanged. Pre-flight
+    # validation (D-02), rate limit (D-13), tool-list assembly, and short-
+    # circuit paths (macros, chains, PR20 forced execution) all return JSON
+    # regardless — only the LLM-loop path branches on the Accept header.
+    # Per framing §4.0: streaming exposes forward progress, NOT redefines
+    # conversational success. The JSON and SSE paths emit semantically
+    # equivalent terminal state (final_text + stop_reason + tool_trace).
+    wants_sse = "text/event-stream" in request.headers.get("accept", "").lower()
+    if wants_sse:
+        return await _chat_sse_response(
+            router=router,
+            messages=messages,
+            tools=tools,
+            enforced_system=enforced_system,
+            max_iterations=max_iterations,
+            tool_result_max_bytes=tool_result_max_bytes,
+            request_id=request_id,
+            client_ip=client_ip,
+            started=started,
+            tool_call_count_in=tool_call_count_in,
+            tools_available_count=tools_available_count,
+            tools_filtered_count=tools_filtered_count,
+            tool_enforced_flag=tool_enforced_flag,
+        )
 
     try:
         # Phase A chat-contract realignment (2026-05-05): the router now
