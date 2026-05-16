@@ -126,7 +126,7 @@ class TestOllamaToolAdapterAllowList:
     def test_all_documented_models_in_allowlist(self):
         """D-29 verbatim — the 5 production-acceptable models per research §3.5."""
         expected = {"qwen3:32b", "qwen3-coder:32b", "qwen2.5-coder:32b",
-                    "llama3.1:70b", "mixtral:8x22b"}
+                    "qwen2.5-coder:14b", "llama3.1:70b", "mixtral:8x22b"}
         assert _OLLAMA_TOOL_MODELS == expected
 
 

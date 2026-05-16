@@ -52,6 +52,7 @@ _OLLAMA_TOOL_MODELS: frozenset[str] = frozenset({
     "qwen3:32b",
     "qwen3-coder:32b",
     "qwen2.5-coder:32b",
+    "qwen2.5-coder:14b",
     "llama3.1:70b",
     "mixtral:8x22b",
 })

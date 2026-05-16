@@ -119,11 +119,12 @@ async def test_ollama_tool_call_loop_live():
     includes the sentinel substring.
 
     Backend: Ollama daemon at FORGE_LOCAL_LLM_URL (default http://localhost:11434/v1).
-    Model: FORGE_LOCAL_MODEL (default qwen2.5-coder:32b per FB-C D-28).
+    Model: FORGE_LOCAL_MODEL (default qwen2.5-coder:14b — Phase 24.3 swap from
+    qwen2.5-coder:32b which was the FB-C D-28 baseline).
 
     Skipped unless FB_INTEGRATION_TESTS=1.
     Should be run on assist-01 (the canonical hardware host) per the v1.4
-    UAT plan; runs anywhere Ollama+qwen2.5-coder:32b is reachable.
+    UAT plan; runs anywhere Ollama+qwen2.5-coder:14b is reachable.
     """
     from forge_bridge.llm.router import LLMRouter
 
@@ -139,7 +140,7 @@ async def test_ollama_tool_call_loop_live():
         sensitive=True,                   # routes to Ollama per D-01
         tool_executor=_executor,          # use our in-test executor
         max_iterations=4,                 # two-step loop fits in 4 with headroom
-        max_seconds=60.0,                 # qwen2.5-coder:32b on assist-01 is fast
+        max_seconds=60.0,                 # qwen2.5-coder:14b on assist-01 is fast
     )
 
     assert isinstance(response, str) and response, (

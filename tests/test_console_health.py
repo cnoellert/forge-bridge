@@ -232,7 +232,7 @@ async def test_health_llm_backend_detail_says_reachable_when_ok(real_log, ms, mo
     monkeypatch.setattr("forge_bridge.mcp.server._server_started", True, raising=False)
     router = _StubRouter({
         "local": True, "cloud": False,
-        "local_model": "qwen2.5-coder:32b",
+        "local_model": "qwen2.5-coder:14b",
         "cloud_model": "claude-sonnet-4-6",
     })
     api = ConsoleReadAPI(execution_log=real_log, manifest_service=ms, llm_router=router)
@@ -241,7 +241,7 @@ async def test_health_llm_backend_detail_says_reachable_when_ok(real_log, ms, mo
     local = next(b for b in backends if b["name"] == "local")
     assert local["status"] == "ok"
     assert local["detail"].startswith("reachable;")
-    assert "qwen2.5-coder:32b" in local["detail"]
+    assert "qwen2.5-coder:14b" in local["detail"]
 
 
 async def test_health_llm_backend_detail_says_unreachable_when_down(real_log, ms, monkeypatch):
@@ -255,7 +255,7 @@ async def test_health_llm_backend_detail_says_unreachable_when_down(real_log, ms
     monkeypatch.setattr("forge_bridge.mcp.server._server_started", True, raising=False)
     router = _StubRouter({
         "local": False, "cloud": False,
-        "local_model": "qwen2.5-coder:32b",
+        "local_model": "qwen2.5-coder:14b",
         "cloud_model": "claude-sonnet-4-6",
     })
     api = ConsoleReadAPI(execution_log=real_log, manifest_service=ms, llm_router=router)
@@ -264,7 +264,7 @@ async def test_health_llm_backend_detail_says_unreachable_when_down(real_log, ms
     local = next(b for b in backends if b["name"] == "local")
     assert local["status"] == "fail"
     assert local["detail"].startswith("unreachable;")
-    assert "qwen2.5-coder:32b" in local["detail"]
+    assert "qwen2.5-coder:14b" in local["detail"]
 
 
 # -- Postgres reachability probe (Phase 23 Commit B) ----------------------
