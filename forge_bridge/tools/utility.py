@@ -294,7 +294,19 @@ async def execute_shortcut(params: ShortcutInput) -> str:
 async def ping() -> str:
     """Check if the FORGE Bridge is reachable and Flame is running.
 
-    Returns connection status, Flame version, and current project.
+    Returns connection status, Flame version, current project, and the
+    daemon's effective `bridge.BRIDGE_URL`. The `bridge_url` field is echoed
+    on BOTH success and failure paths so that Phase 24.2's daemon-routed
+    doctor probe can distinguish "wrong target, no response" (WARN-divergent)
+    from "right target, no response" (FAIL-daemon-says-broken) — the
+    pre-Phase-24.2 failure-path body omitted bridge_url, which caused
+    doctor's divergence detection to mis-classify the portofino env-file
+    conflation case as FAIL-daemon-says-broken instead of WARN-divergent.
+
+    See: .planning/milestones/v1.6-PHASE-24-2-FRAMING.md §6.4 (Q4 4-state
+    truth-authority degradation table); ~/.forge-bridge/measurements/
+    2026-05-15-phase-24-2-rerun/ (the canonical-probe re-fire that
+    surfaced the design gap).
     """
     try:
         data = await bridge.execute_json("""
@@ -309,4 +321,8 @@ async def ping() -> str:
         """)
         return json.dumps(data, indent=2)
     except bridge.BridgeConnectionError as e:
-        return json.dumps({"connected": False, "error": str(e)}, indent=2)
+        return json.dumps({
+            "connected": False,
+            "error": str(e),
+            "bridge_url": bridge.BRIDGE_URL,
+        }, indent=2)
