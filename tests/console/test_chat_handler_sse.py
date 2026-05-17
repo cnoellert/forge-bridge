@@ -474,3 +474,224 @@ def test_chat_sse_event_format_is_strict_html5_sse(make_client):
         # data line is single-line JSON (forge-bridge schema contract).
         data_line = next(L for L in lines if L.startswith("data:"))
         json.loads(data_line[len("data:"):].strip())  # raises if malformed
+
+
+# ---------------------------------------------------------------------------
+# Phase 24.4 — SSE orchestration-terminated event taxonomy
+# (.planning/milestones/v1.6-PHASE-24-4-FRAMING.md §5 + §9 Seam B)
+# ---------------------------------------------------------------------------
+
+
+from forge_bridge.llm.router import OrchestrationTerminationEnvelope
+
+
+def _build_terminating_mock_router(
+    *,
+    stream_messages: list[dict],
+    tool_name: str = "forge_x",
+    result_text: str = "canonical_answer",
+    k: int = 2,
+):
+    """Mock router that fires stream_messages, then returns a
+    ChatTurnResult shaped like the K-fold canonical trigger fired —
+    final_text="" + populated OrchestrationTerminationEnvelope."""
+    accumulated = [
+        {
+            "tool_name": tool_name,
+            "args_hash": "deadbeef",
+            "result_hash": "abc12345",
+            "content": result_text,
+            "iter": i,
+        }
+        for i in range(1, k + 1)
+    ]
+
+    async def _mock_complete(*, messages, message_callback=None, **kwargs):
+        if message_callback is not None:
+            for m in stream_messages:
+                await message_callback(m)
+        return ChatTurnResult(
+            final_text="",
+            messages=list(messages) + stream_messages,
+            tool_trace=[
+                {"tool_name": tool_name, "arguments": {}, "result": result_text,
+                 "error": None, "index": i}
+                for i in range(k)
+            ],
+            termination=OrchestrationTerminationEnvelope(
+                status="orchestration_terminated",
+                trigger="k_fold_canonical",
+                reason=(
+                    f"Tool {tool_name} dispatched successfully {k} times with "
+                    "identical canonical arguments and identical canonical "
+                    "result. Loop terminated by orchestration policy."
+                ),
+                iterations=k,
+                accumulated_results=accumulated,
+            ),
+        )
+
+    mock_router = MagicMock()
+    mock_router.complete_with_tools = AsyncMock(side_effect=_mock_complete)
+    return mock_router
+
+
+def test_chat_sse_orchestration_terminated_emits_distinct_event(make_client):
+    """Framing §10.1 + §9 Seam B: terminal event is named
+    ``orchestration_terminated``, NOT ``done`` (model-decided success)
+    and NOT ``error`` (transport failure). Consumers branch by event
+    name; three terminal-event taxa now exist."""
+    mock_router = _build_terminating_mock_router(
+        stream_messages=[
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": "call_0",
+                    "type": "function",
+                    "function": {"name": "forge_x", "arguments": "{}"},
+                }],
+            },
+            {"role": "tool", "tool_call_id": "call_0", "name": "forge_x",
+             "content": "canonical_answer"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "forge_x", "arguments": "{}"},
+                }],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "name": "forge_x",
+             "content": "canonical_answer"},
+        ],
+    )
+    client, patches = make_client(mock_router)
+    with patches[0], patches[1]:
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [{"role": "user", "content": "show canonical"}]},
+            headers={"Accept": "text/event-stream"},
+        )
+    events = _parse_sse_stream(r.text)
+    event_kinds = [k for k, _ in events]
+    # No `done` event — policy outcome is distinct from model-decided success
+    assert "done" not in event_kinds, f"unexpected `done` event: {event_kinds}"
+    # No `error` event — orchestration succeeded at its scope (policy)
+    assert "error" not in event_kinds, f"unexpected `error` event: {event_kinds}"
+    # Exactly one orchestration_terminated event
+    terminated = [e for e in events if e[0] == "orchestration_terminated"]
+    assert len(terminated) == 1, (
+        f"expected exactly one orchestration_terminated event; got: {event_kinds}"
+    )
+
+
+def test_chat_sse_orchestration_terminated_event_carries_envelope(make_client):
+    """Framing §3.1.3 + §5: terminal event payload carries the verbatim
+    envelope inside ``data["termination"]`` plus transport metadata
+    parity with model-decided ``done`` event."""
+    mock_router = _build_terminating_mock_router(
+        stream_messages=[{"role": "tool", "tool_call_id": "c0",
+                          "name": "forge_x", "content": "canonical_answer"}],
+    )
+    client, patches = make_client(mock_router)
+    with patches[0], patches[1]:
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [{"role": "user", "content": "show"}]},
+            headers={"Accept": "text/event-stream"},
+        )
+    events = _parse_sse_stream(r.text)
+    terminated = [p for k, p in events if k == "orchestration_terminated"]
+    assert len(terminated) == 1
+    payload = terminated[0]
+
+    # Envelope verbatim under data.termination
+    assert "termination" in payload
+    env = payload["termination"]
+    assert env["status"] == "orchestration_terminated"
+    assert env["trigger"] == "k_fold_canonical"
+    assert env["iterations"] == 2
+    assert "forge_x" in env["reason"]
+    assert len(env["accumulated_results"]) == 2
+
+    # Transport metadata parity with done event
+    for key in (
+        "stop_reason", "request_id", "tools_available",
+        "tools_filtered", "tool_enforced", "tool_forced", "tool_trace",
+    ):
+        assert key in payload, f"missing transport key {key!r}"
+    assert payload["stop_reason"] == "orchestration_terminated"
+    assert payload["tool_forced"] is False
+
+    # final_text OMITTED — orchestrator did not synthesize prose
+    assert "final_text" not in payload
+
+
+def test_chat_sse_orchestration_terminated_emits_messages_before_terminal(make_client):
+    """Framing §5 + §8.3: deferred-raise sequencing — the K-th tool
+    result reaches the consumer via ``event: message`` BEFORE the
+    terminal ``event: orchestration_terminated``. SSE truthfulness
+    preserved (operator observes the canonical answer that triggered
+    termination, not just the policy decision)."""
+    mock_router = _build_terminating_mock_router(
+        stream_messages=[
+            {"role": "assistant", "content": "",
+             "tool_calls": [{"id": "c0", "type": "function",
+                             "function": {"name": "forge_x", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "c0", "name": "forge_x",
+             "content": "canonical_answer"},
+            {"role": "assistant", "content": "",
+             "tool_calls": [{"id": "c1", "type": "function",
+                             "function": {"name": "forge_x", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "c1", "name": "forge_x",
+             "content": "canonical_answer"},
+        ],
+    )
+    client, patches = make_client(mock_router)
+    with patches[0], patches[1]:
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [{"role": "user", "content": "show"}]},
+            headers={"Accept": "text/event-stream"},
+        )
+    events = _parse_sse_stream(r.text)
+    # Sequence: 4 message events, then 1 orchestration_terminated
+    kinds = [k for k, _ in events]
+    assert kinds == [
+        "message", "message", "message", "message",
+        "orchestration_terminated",
+    ], f"unexpected event sequence: {kinds}"
+    # K-th tool result observed before terminal event
+    msgs = [p for k, p in events if k == "message"]
+    tool_results = [m for m in msgs if m.get("role") == "tool"]
+    assert len(tool_results) == 2
+    assert tool_results[-1]["content"] == "canonical_answer"
+
+
+def test_chat_sse_model_decided_done_event_unaffected(make_client):
+    """C-layer regression check (framing §7.4): model-decided
+    ``event: done`` path BYTE-IDENTICAL to pre-24.4 behavior.
+    The terminated path is OPT-IN via populated ChatTurnResult.termination;
+    nothing in the model-decided path changes."""
+    mock_router = _build_streaming_mock_router(
+        final_text="model answered",
+        stream_messages=[{"role": "assistant", "content": "model answered"}],
+    )
+    client, patches = make_client(mock_router)
+    with patches[0], patches[1]:
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [{"role": "user", "content": "hi"}]},
+            headers={"Accept": "text/event-stream"},
+        )
+    events = _parse_sse_stream(r.text)
+    kinds = [k for k, _ in events]
+    assert "done" in kinds, f"missing model-decided done event: {kinds}"
+    assert "orchestration_terminated" not in kinds, (
+        f"unexpected orchestration_terminated in model-decided path: {kinds}"
+    )
+    done = next(p for k, p in events if k == "done")
+    assert done["stop_reason"] == "end_turn"
+    assert done["final_text"] == "model answered"

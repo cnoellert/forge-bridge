@@ -831,6 +831,70 @@ def _format_sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+def _build_orchestration_terminated_body(
+    chat_result: Any,
+    *,
+    request_id: str,
+    tools_available_count: int,
+    tools_filtered_count: int,
+    tool_enforced_flag: bool,
+) -> dict:
+    """Phase 24.4 commit 3 — shared response/event body for the
+    orchestration-terminated case (.planning/milestones/v1.6-PHASE-24-4-
+    FRAMING.md §5 + §9 Seam B).
+
+    Identical shape across JSON ``/api/v1/chat`` response body and SSE
+    ``event: orchestration_terminated`` data payload. The handler
+    projects the policy outcome cleanly — it does NOT reinterpret,
+    beautify, or synthesize prose around the envelope (framing §10.1).
+
+    Shape:
+      - ``termination``: the verbatim OrchestrationTerminationEnvelope
+        (status, trigger, reason, iterations, accumulated_results).
+        Consumers detect orchestration termination via
+        ``data["termination"] is not None`` OR via
+        ``data["termination"]["status"] == "orchestration_terminated"``.
+      - ``stop_reason``: ``"orchestration_terminated"`` — distinct
+        taxonomic value vs canonical-success ``"end_turn"`` and
+        budget-exceeded ``"loop_budget_exceeded"``. Makes the policy
+        outcome unmistakable to consumers reading transport-level
+        metadata (parity guarantee with framing §5.2 — orchestration
+        terminated by policy, NOT failed by transport).
+      - ``messages``: full transcript at trigger time (Phase A invariant
+        — tool execution history preserved). Ends with the K-th
+        successful tool result (not a synthetic assistant turn — see
+        ChatTurnResult docstring + framing §10.1).
+      - ``tool_trace``: every dispatch this session (success + failure;
+        Phase A invariant).
+      - Transport metadata parity with canonical success path:
+        ``request_id``, ``tools_available``, ``tools_filtered``,
+        ``tool_enforced``, ``tool_forced``.
+
+    NOT included: ``final_text``. The orchestrator does not produce
+    conversational text in this case. Including an empty string would
+    create ambiguity with model-emitted empty responses (which are a
+    different failure mode, not the same shape). Omission is unambiguous.
+    """
+    env = chat_result.termination
+    return {
+        "termination": {
+            "status": env.status,
+            "trigger": env.trigger,
+            "reason": env.reason,
+            "iterations": env.iterations,
+            "accumulated_results": env.accumulated_results,
+        },
+        "stop_reason": "orchestration_terminated",
+        "messages": chat_result.messages,
+        "tool_trace": chat_result.tool_trace,
+        "request_id": request_id,
+        "tools_available": tools_available_count,
+        "tools_filtered": tools_filtered_count,
+        "tool_enforced": tool_enforced_flag,
+        "tool_forced": False,
+    }
+
+
 async def _chat_sse_response(
     *,
     router: Any,
@@ -985,6 +1049,44 @@ async def _chat_sse_response(
                     "code": "internal_error",
                     "message": "Model produced a hallucinated tool-call as text — see logs.",
                 }}))
+                return
+
+            # Phase 24.4 commit 3 — orchestration-terminated case routes
+            # to a distinct terminal event taxonomy. The envelope is the
+            # entire payload (carried inside ``data["termination"]``);
+            # ``stop_reason`` makes the policy outcome unmistakable to
+            # consumers reading transport-level metadata. SSE consumers
+            # observed the K-th tool result via ``event: message`` before
+            # this terminal event (framing §5 + §8.3 — deferred-raise
+            # mechanism in router._loop_body ensures sequencing).
+            #
+            # Distinct from ``event: done`` (model-decided success) and
+            # ``event: error`` (transport/recovery failure). Three
+            # terminal-event taxa now exist; consumers branch by event
+            # name (framing §10.1 — unmistakable termination shape).
+            if chat_result.termination is not None:
+                elapsed_ms = int((time.monotonic() - started) * 1000)
+                logger.info(
+                    "chat orchestration_terminated request_id=%s client_ip=%s "
+                    "message_count_in=%d message_count_out=%d "
+                    "tool_call_count=%d tools_offered_count=%d "
+                    "wall_clock_ms=%d stop_reason=orchestration_terminated "
+                    "trigger=%s iterations=%d transport=sse",
+                    request_id, client_ip, len(messages),
+                    len(chat_result.messages), tool_call_count_in,
+                    len(tools), elapsed_ms,
+                    chat_result.termination.trigger,
+                    chat_result.termination.iterations,
+                )
+                await msg_queue.put(("orchestration_terminated",
+                    _build_orchestration_terminated_body(
+                        chat_result,
+                        request_id=request_id,
+                        tools_available_count=tools_available_count,
+                        tools_filtered_count=tools_filtered_count,
+                        tool_enforced_flag=tool_enforced_flag,
+                    ),
+                ))
                 return
 
             # Success — emit done event with the same metadata the JSON path
@@ -1549,6 +1651,7 @@ async def chat_handler(request: Request) -> Response:
         result_text = chat_result.final_text
         result_messages = chat_result.messages
         result_trace = chat_result.tool_trace
+        result_termination = chat_result.termination  # Phase 24.4
     except asyncio.TimeoutError:
         elapsed_ms = int((time.monotonic() - started) * 1000)
         logger.info(
@@ -1607,6 +1710,39 @@ async def chat_handler(request: Request) -> Response:
             "Chat error — check console for details.",
             500,
             request_id,
+        )
+
+    # ---- Phase 24.4 orchestration-terminated branch ------------------------
+    # Per .planning/milestones/v1.6-PHASE-24-4-FRAMING.md §5 + §9 Seam B:
+    # the K-fold canonical-recurrence trigger fired inside the router's
+    # complete_with_tools loop. Project the policy outcome cleanly — no
+    # editorialization, no reinterpretation, no synthesis. HTTP 200 with
+    # ``stop_reason=orchestration_terminated`` + verbatim envelope under
+    # the ``termination`` top-level key. PR15 malformed-tool validation
+    # below is bypassed because ``result_text=""`` is structural (not
+    # model-emitted prose) — the model didn't produce text; the
+    # orchestrator decided to terminate.
+    if result_termination is not None:
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        logger.info(
+            "chat orchestration_terminated request_id=%s client_ip=%s "
+            "message_count_in=%d message_count_out=%d tool_call_count=%d "
+            "tools_offered_count=%d wall_clock_ms=%d "
+            "stop_reason=orchestration_terminated trigger=%s iterations=%d",
+            request_id, client_ip, len(messages), len(result_messages),
+            len(result_trace), len(tools), elapsed_ms,
+            result_termination.trigger, result_termination.iterations,
+        )
+        return JSONResponse(
+            _build_orchestration_terminated_body(
+                chat_result,
+                request_id=request_id,
+                tools_available_count=tools_available_count,
+                tools_filtered_count=tools_filtered_count,
+                tool_enforced_flag=tool_enforced_flag,
+            ),
+            status_code=200,
+            headers={"X-Request-ID": request_id},
         )
 
     # ---- PR15: output validation -------------------------------------------

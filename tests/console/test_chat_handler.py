@@ -1491,3 +1491,176 @@ def test_chat_safe_error_envelope_when_router_raises_value_error(chat_client):
     assert r.status_code == 500
     assert r.json()["error"]["code"] == "internal_error"
     assert "oops" not in r.json()["error"]["message"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 24.4 — JSON path orchestration-terminated passthrough
+# (.planning/milestones/v1.6-PHASE-24-4-FRAMING.md §5 + §9 Seam B)
+# ---------------------------------------------------------------------------
+
+
+from forge_bridge.llm.router import OrchestrationTerminationEnvelope
+
+
+def _make_terminated_chat_result(
+    *,
+    messages,
+    tool_name: str = "forge_x",
+    result_text: str = "canonical_answer",
+    k: int = 2,
+) -> ChatTurnResult:
+    """Build a ChatTurnResult shaped like what router._loop_body produces
+    when the K-fold canonical trigger fires — final_text="" + populated
+    termination envelope + transcript ending in tool results."""
+    accumulated = [
+        {
+            "tool_name": tool_name,
+            "args_hash": "deadbeef",
+            "result_hash": "abc12345",
+            "content": result_text,
+            "iter": i,
+        }
+        for i in range(1, k + 1)
+    ]
+    transcript = list(messages) + [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": f"call_{i}",
+                "type": "function",
+                "function": {"name": tool_name, "arguments": "{}"},
+            }],
+        }
+        for i in range(k)
+    ]
+    for i in range(k):
+        transcript.append({
+            "role": "tool",
+            "tool_call_id": f"call_{i}",
+            "name": tool_name,
+            "content": result_text,
+        })
+    return ChatTurnResult(
+        final_text="",
+        messages=transcript,
+        tool_trace=[
+            {"tool_name": tool_name, "arguments": {}, "result": result_text,
+             "error": None, "index": i}
+            for i in range(k)
+        ],
+        termination=OrchestrationTerminationEnvelope(
+            status="orchestration_terminated",
+            trigger="k_fold_canonical",
+            reason=(
+                f"Tool {tool_name} dispatched successfully {k} times with "
+                "identical canonical arguments and identical canonical result. "
+                "Loop terminated by orchestration policy."
+            ),
+            iterations=k,
+            accumulated_results=accumulated,
+        ),
+    )
+
+
+def test_chat_orchestration_terminated_returns_200_with_envelope(chat_client):
+    """Framing §5 + §9 Seam B: HTTP 200 (policy success), top-level
+    ``termination`` field carries the verbatim envelope, ``stop_reason``
+    is ``orchestration_terminated`` (distinct from ``end_turn``)."""
+    client, mock_router = chat_client
+    async def _termination_complete(**kwargs):
+        return _make_terminated_chat_result(messages=kwargs.get("messages") or [])
+    mock_router.complete_with_tools = AsyncMock(side_effect=_termination_complete)
+
+    r = client.post(
+        "/api/v1/chat",
+        json={"messages": [{"role": "user", "content": "show canonical"}]},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    # Distinct stop_reason — consumers reading transport metadata
+    # cannot mistake this for model-decided success.
+    assert body["stop_reason"] == "orchestration_terminated"
+
+    # Envelope is verbatim under the ``termination`` top-level key
+    assert "termination" in body
+    env = body["termination"]
+    assert env["status"] == "orchestration_terminated"
+    assert env["trigger"] == "k_fold_canonical"
+    assert env["iterations"] == 2
+    assert "forge_x" in env["reason"]
+    assert len(env["accumulated_results"]) == 2
+    for entry in env["accumulated_results"]:
+        assert entry["tool_name"] == "forge_x"
+        assert entry["content"] == "canonical_answer"
+
+    # ``final_text`` field is OMITTED — orchestrator did not synthesize
+    # conversational text (framing §10.1). Including it as "" would
+    # create ambiguity with model-emitted empty responses.
+    assert "final_text" not in body
+
+
+def test_chat_orchestration_terminated_preserves_transcript_and_trace(chat_client):
+    """Phase A invariant + framing §3.1.3: tool_trace and messages
+    transcript still surfaced. tool_trace carries every dispatch this
+    session (success + failure); the envelope carries only the K
+    successful canonical results."""
+    client, mock_router = chat_client
+    async def _termination_complete(**kwargs):
+        return _make_terminated_chat_result(messages=kwargs.get("messages") or [])
+    mock_router.complete_with_tools = AsyncMock(side_effect=_termination_complete)
+
+    r = client.post(
+        "/api/v1/chat",
+        json={"messages": [{"role": "user", "content": "show canonical"}]},
+    )
+    body = r.json()
+    # Transcript present and non-empty
+    assert isinstance(body["messages"], list)
+    assert len(body["messages"]) >= 1
+    # Tool results in transcript
+    tool_msgs = [m for m in body["messages"] if m.get("role") == "tool"]
+    assert len(tool_msgs) == 2
+    # tool_trace surfaces every dispatch
+    assert isinstance(body["tool_trace"], list)
+    assert len(body["tool_trace"]) == 2
+
+
+def test_chat_orchestration_terminated_preserves_transport_metadata(chat_client):
+    """Framing §10.1 + transport-parity: request_id, tools_available,
+    tools_filtered, tool_enforced, tool_forced all present so wrapper
+    trace summaries (forge_bridge/llm/call_wrapper.py) work unchanged."""
+    client, mock_router = chat_client
+    async def _termination_complete(**kwargs):
+        return _make_terminated_chat_result(messages=kwargs.get("messages") or [])
+    mock_router.complete_with_tools = AsyncMock(side_effect=_termination_complete)
+
+    r = client.post(
+        "/api/v1/chat",
+        json={"messages": [{"role": "user", "content": "show canonical"}]},
+    )
+    body = r.json()
+    for key in (
+        "request_id", "tools_available", "tools_filtered",
+        "tool_enforced", "tool_forced",
+    ):
+        assert key in body, f"missing transport key {key!r}"
+    assert body["tool_forced"] is False  # LLM-loop path
+    assert "X-Request-ID" in r.headers
+
+
+def test_chat_model_decided_success_unaffected_by_termination_branch(chat_client):
+    """C-layer regression check (framing §7.4): model-decided
+    ``end_turn`` path BYTE-IDENTICAL to pre-24.4 behavior.
+    ``termination`` field is OMITTED (not present, not null) so
+    consumers using `"termination" in body` detection work cleanly."""
+    client, mock_router = chat_client  # default fixture returns model-decided result
+    r = client.post(
+        "/api/v1/chat",
+        json={"messages": [{"role": "user", "content": "hi"}]},
+    )
+    body = r.json()
+    assert body["stop_reason"] == "end_turn"
+    assert "termination" not in body  # absent in model-decided path
+    assert body["final_text"] == "OK from mock LLM"
