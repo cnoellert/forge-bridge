@@ -33,9 +33,11 @@ import pytest
 
 from forge_bridge.llm._adapters import _ToolCall, _TurnResponse, ToolCallResult
 from forge_bridge.llm.router import (
+    ChatTurnResult,
     LLMLoopBudgetExceeded,
     LLMRouter,
     LLMToolError,
+    OrchestrationTerminationEnvelope,
     RecursiveToolLoopError,
     _in_tool_loop,
 )
@@ -156,9 +158,17 @@ class TestLoopTermination:
 
 class TestRepeatCallDetection:
     @pytest.mark.asyncio
-    async def test_third_identical_call_injects_synthetic_without_invoking_tool(self):
-        """LLMTOOL-04 acceptance: 3rd (tool_name, args) repeat → synthetic
-        is_error=True; tool_executor NOT called the third time."""
+    async def test_third_identical_failed_call_injects_synthetic_without_invoking_tool(self):
+        """LLMTOOL-04 / D-07 acceptance: 3rd (tool_name, args) repeat → synthetic
+        is_error=True; tool_executor NOT called the third time.
+
+        Phase 24.4 boundary: this test specifically exercises the
+        failed-affordance repetition pathology — the executor raises on
+        every invocation. The new K-fold canonical-recurrence trigger
+        (framing §4) only counts successful (status=ok) dispatches, so
+        failed repeats fall through to D-07's K>=3 site unchanged.
+        Parallel triggers, different authorities (framing §9 Seam D).
+        """
         # Stub LLM emits same tool_call THREE times, then terminal
         same_call = lambda r: _make_tool_call_turn("forge_x", {"a": 1}, ref=r)
         adapter = _StubAdapter([
@@ -167,7 +177,10 @@ class TestRepeatCallDetection:
             same_call("r3"),
             _make_terminal_turn(text="give up"),
         ])
-        executor = AsyncMock(return_value="result")
+        # Executor RAISES on every invocation — failed-affordance shape.
+        # The new K=2 canonical trigger never fires (no status=ok dispatches);
+        # D-07's K>=3 path fires cleanly on the 3rd attempt.
+        executor = AsyncMock(side_effect=RuntimeError("tool failed"))
         router = LLMRouter()
         _patch_clients(router)
         with _patch_adapters(adapter):
@@ -187,14 +200,20 @@ class TestRepeatCallDetection:
         assert "forge_x" in third.content
 
     @pytest.mark.asyncio
-    async def test_two_identical_calls_still_invoke_tool_normally(self):
-        """≥3 not ≥2 — research §6.1 / D-07: 2-call loops are sometimes legitimate."""
+    async def test_two_identical_failed_calls_still_invoke_tool_normally(self):
+        """D-07: ≥3 threshold for failed-affordance — 2 failed calls still
+        reach the executor; D-07 doesn't fire until the 3rd.
+
+        Phase 24.4: same is_error=True semantics as the third-call test —
+        executor raises, so the new K=2 canonical trigger never engages.
+        Demonstrates D-07's K>=3 threshold under its designed pathology.
+        """
         adapter = _StubAdapter([
             _make_tool_call_turn("forge_x", {"a": 1}),
             _make_tool_call_turn("forge_x", {"a": 1}),
             _make_terminal_turn(text="done"),
         ])
-        executor = AsyncMock(return_value="result")
+        executor = AsyncMock(side_effect=RuntimeError("tool failed"))
         router = LLMRouter()
         _patch_clients(router)
         with _patch_adapters(adapter):
@@ -202,6 +221,281 @@ class TestRepeatCallDetection:
                 "ok", tools=[_FakeTool("forge_x")], tool_executor=executor,
             )
         assert executor.await_count == 2  # Both calls invoked normally
+
+
+# ---------------------------------------------------------------------------
+# Phase 24.4 — K-fold canonical-recurrence trigger
+# (.planning/milestones/v1.6-PHASE-24-4-FRAMING.md)
+#
+# Authority: orchestration-only — terminates loop deterministically when the
+# K-th (K=2) identical successful canonical dispatch is observed
+# (tool_name + args_canonical + result_canonical, status=ok).
+# Parallel to existing D-07 (failed-affordance repetition stays at K>=3).
+# ---------------------------------------------------------------------------
+
+
+class TestKFoldCanonicalTrigger:
+    """Phase 24.4 framing §4-§9: K=2 canonical-recurrence orchestration
+    termination. Parallel trigger to D-07; different authority shape.
+
+    Trigger key: (tool_name, args_canonical, result_canonical).
+    Result hash over post-sanitization bytes shown to LLM (§4.1, §9 Seam C).
+    Restricted to status=ok dispatches (§4).
+    Threshold K>=2 (§9 Seam A).
+    Action: raise _OrchestrationTerminated → ChatTurnResult with
+    termination envelope populated (§5, §9 Seam B).
+    """
+
+    @pytest.mark.asyncio
+    async def test_second_identical_successful_call_terminates_loop(self):
+        """Framing §4 + §8.1: 2nd identical successful canonical dispatch
+        fires the trigger. Tool IS invoked both times (state mutation
+        captured); termination occurs AFTER 2nd successful dispatch +
+        streaming emits + state update so SSE consumers observe the K-th
+        result before the terminal event (§5, §8.3)."""
+        same_call = lambda r: _make_tool_call_turn("forge_x", {"a": 1}, ref=r)
+        adapter = _StubAdapter([
+            same_call("r1"),
+            same_call("r2"),
+            # 3rd turn never reached — orchestration_terminated fires at iter 2
+            _make_terminal_turn(text="model would have said this"),
+        ])
+        executor = AsyncMock(return_value="canonical_answer_bytes")
+        router = LLMRouter()
+        _patch_clients(router)
+        with _patch_adapters(adapter):
+            result = await router.complete_with_tools(
+                "show canonical", tools=[_FakeTool("forge_x")],
+                tool_executor=executor, max_iterations=10,
+            )
+
+        # Executor invoked BOTH times — trigger fires AFTER 2nd successful dispatch
+        assert executor.await_count == 2
+
+        # ChatTurnResult contract: final_text empty, termination populated
+        assert isinstance(result, ChatTurnResult)
+        assert result.final_text == ""
+        assert result.termination is not None
+        assert isinstance(result.termination, OrchestrationTerminationEnvelope)
+
+        # Envelope shape (framing §3.1.3 required fields)
+        env = result.termination
+        assert env.status == "orchestration_terminated"
+        assert env.trigger == "k_fold_canonical"
+        assert env.iterations == 2
+        assert "forge_x" in env.reason
+        assert "2 times" in env.reason
+
+        # accumulated_results: every successful status=ok dispatch this session,
+        # verbatim post-sanitization bytes
+        assert len(env.accumulated_results) == 2
+        assert env.accumulated_results[0]["tool_name"] == "forge_x"
+        assert env.accumulated_results[0]["content"] == "canonical_answer_bytes"
+        assert env.accumulated_results[0]["iter"] == 1
+        assert env.accumulated_results[1]["iter"] == 2
+        # Both entries hash to the same result_hash (same bytes)
+        assert (
+            env.accumulated_results[0]["result_hash"]
+            == env.accumulated_results[1]["result_hash"]
+        )
+        # And the same args_hash (same canonical args)
+        assert (
+            env.accumulated_results[0]["args_hash"]
+            == env.accumulated_results[1]["args_hash"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_trigger_does_not_fire_when_args_differ(self):
+        """Framing §4 + §4.2: trigger key includes args_canonical. Same
+        tool, DIFFERENT args → no canonical-recurrence; loop continues
+        normally to model-decided terminal."""
+        adapter = _StubAdapter([
+            _make_tool_call_turn("forge_x", {"a": 1}),
+            _make_tool_call_turn("forge_x", {"a": 2}),  # different args
+            _make_terminal_turn(text="model finished"),
+        ])
+        executor = AsyncMock(return_value="result")
+        router = LLMRouter()
+        _patch_clients(router)
+        with _patch_adapters(adapter):
+            result = await router.complete_with_tools(
+                "varying", tools=[_FakeTool("forge_x")],
+                tool_executor=executor, max_iterations=10,
+            )
+        # Model-terminated path — trigger never fired
+        assert result.termination is None
+        assert result.final_text == "model finished"
+
+    @pytest.mark.asyncio
+    async def test_trigger_does_not_fire_when_result_differs(self):
+        """Framing §4.1 + §9 Seam C: trigger key includes
+        result_canonical. Same tool, same args, but DIFFERENT result
+        bytes → state is changing; iteration may still be legitimate
+        per framing reasoning. Trigger does NOT fire."""
+        adapter = _StubAdapter([
+            _make_tool_call_turn("forge_x", {"a": 1}),
+            _make_tool_call_turn("forge_x", {"a": 1}),
+            _make_terminal_turn(text="ok"),
+        ])
+        # Executor returns DIFFERENT result each call — state varying
+        executor = AsyncMock(side_effect=["result_A", "result_B"])
+        router = LLMRouter()
+        _patch_clients(router)
+        with _patch_adapters(adapter):
+            result = await router.complete_with_tools(
+                "varying state", tools=[_FakeTool("forge_x")],
+                tool_executor=executor, max_iterations=10,
+            )
+        # Model-terminated path — trigger never fired
+        assert result.termination is None
+        assert result.final_text == "ok"
+
+    @pytest.mark.asyncio
+    async def test_trigger_does_not_fire_on_failed_dispatches(self):
+        """Framing §4: trigger restricted to status=ok dispatches.
+        Failed (executor raises) dispatches do NOT increment the canonical
+        counter; D-07's K>=3 path remains the authority for that pathology
+        (framing §9 Seam D — parallel triggers, different authorities)."""
+        same_call = lambda r: _make_tool_call_turn("forge_x", {"a": 1}, ref=r)
+        adapter = _StubAdapter([
+            same_call("r1"),
+            same_call("r2"),
+            _make_terminal_turn(text="give up"),
+        ])
+        executor = AsyncMock(side_effect=RuntimeError("tool failed"))
+        router = LLMRouter()
+        _patch_clients(router)
+        with _patch_adapters(adapter):
+            result = await router.complete_with_tools(
+                "broken", tools=[_FakeTool("forge_x")],
+                tool_executor=executor, max_iterations=10,
+            )
+        # New K=2 trigger never fires — model-terminated path
+        assert result.termination is None
+        assert result.final_text == "give up"
+
+    @pytest.mark.asyncio
+    async def test_messages_includes_kth_tool_result_at_termination(self):
+        """Framing §10.1 + ChatTurnResult docstring: in the
+        orchestration-terminated case, messages reflects the transcript
+        at trigger time. The K-th successful tool result is preserved
+        in the transcript (state.messages snapshotted at raise time)."""
+        same_call = lambda r: _make_tool_call_turn("forge_x", {"a": 1}, ref=r)
+        adapter = _StubAdapter([
+            same_call("r1"),
+            same_call("r2"),
+        ])
+        executor = AsyncMock(return_value="canonical_answer")
+        router = LLMRouter()
+        _patch_clients(router)
+        with _patch_adapters(adapter):
+            result = await router.complete_with_tools(
+                "show canonical", tools=[_FakeTool("forge_x")],
+                tool_executor=executor,
+            )
+        # Transcript present and non-empty
+        assert isinstance(result.messages, list)
+        assert len(result.messages) >= 1
+        # Tool results present (one per successful dispatch)
+        tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
+        assert len(tool_msgs) == 2
+        for tm in tool_msgs:
+            assert tm["content"] == "canonical_answer"
+
+    @pytest.mark.asyncio
+    async def test_tool_trace_preserves_full_session(self):
+        """Framing ChatTurnResult docstring: tool_trace carries the
+        Phase A invariant — every tool invocation, success or failure,
+        available to downstream consumers. Orchestration-terminated case
+        does not abridge tool_trace."""
+        same_call = lambda r: _make_tool_call_turn("forge_x", {"a": 1}, ref=r)
+        adapter = _StubAdapter([
+            same_call("r1"),
+            same_call("r2"),
+        ])
+        executor = AsyncMock(return_value="answer")
+        router = LLMRouter()
+        _patch_clients(router)
+        with _patch_adapters(adapter):
+            result = await router.complete_with_tools(
+                "show", tools=[_FakeTool("forge_x")], tool_executor=executor,
+            )
+        assert len(result.tool_trace) == 2
+        for entry in result.tool_trace:
+            assert entry["tool_name"] == "forge_x"
+            assert entry["error"] is None
+            assert entry["result"] == "answer"
+
+    @pytest.mark.asyncio
+    async def test_telemetry_emits_orchestration_terminated_status(self, caplog):
+        """Framing §7.1: trigger predicate observable at telemetry.
+        Log line emits status=orchestration_terminated trigger=k_fold_canonical
+        + result_hash + k_count."""
+        caplog.set_level(logging.INFO, logger="forge_bridge.llm.router")
+        same_call = lambda r: _make_tool_call_turn("forge_x", {"a": 1}, ref=r)
+        adapter = _StubAdapter([same_call("r1"), same_call("r2")])
+        executor = AsyncMock(return_value="answer")
+        router = LLMRouter()
+        _patch_clients(router)
+        with _patch_adapters(adapter):
+            await router.complete_with_tools(
+                "show", tools=[_FakeTool("forge_x")], tool_executor=executor,
+            )
+        log_text = caplog.text
+        assert "status=orchestration_terminated" in log_text
+        assert "trigger=k_fold_canonical" in log_text
+        assert "k_count=2" in log_text
+        # Result hash present (no semantic content — observation-layer-clean per §7.1)
+        assert "result_hash=" in log_text
+
+    @pytest.mark.asyncio
+    async def test_envelope_excludes_failed_dispatches_from_accumulated_results(self):
+        """Framing §3.1.3: accumulated_results carries every SUCCESSFUL
+        tool_result verbatim. Failed dispatches stay in tool_trace
+        (with error populated); they do NOT appear in the envelope."""
+        # iter 1: success | iter 2: failure | iter 3: success (same as iter 1) → trigger
+        adapter = _StubAdapter([
+            _make_tool_call_turn("forge_x", {"a": 1}, ref="r1"),
+            _make_tool_call_turn("forge_y", {"b": 2}, ref="r2"),
+            _make_tool_call_turn("forge_x", {"a": 1}, ref="r3"),
+        ])
+        # forge_x always succeeds with "answer"; forge_y raises
+        def _exec(name, args):
+            if name == "forge_y":
+                raise RuntimeError("y broke")
+            return "answer"
+        executor = AsyncMock(side_effect=_exec)
+        router = LLMRouter()
+        _patch_clients(router)
+        with _patch_adapters(adapter):
+            result = await router.complete_with_tools(
+                "mixed",
+                tools=[_FakeTool("forge_x"), _FakeTool("forge_y")],
+                tool_executor=executor,
+                max_iterations=10,
+            )
+        assert result.termination is not None
+        # Only 2 successful forge_x dispatches in envelope; forge_y failure absent
+        assert len(result.termination.accumulated_results) == 2
+        for entry in result.termination.accumulated_results:
+            assert entry["tool_name"] == "forge_x"
+        # But tool_trace has all 3
+        assert len(result.tool_trace) == 3
+
+    @pytest.mark.asyncio
+    async def test_envelope_is_frozen_dataclass(self):
+        """Framing §5: envelope is immutable archaeology. Mutation must
+        raise to prevent downstream consumers from rewriting the trigger
+        history after the orchestrator has decided."""
+        env = OrchestrationTerminationEnvelope(
+            status="orchestration_terminated",
+            trigger="k_fold_canonical",
+            reason="test",
+            iterations=2,
+            accumulated_results=[],
+        )
+        with pytest.raises((AttributeError, Exception)):
+            env.status = "mutated"  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
