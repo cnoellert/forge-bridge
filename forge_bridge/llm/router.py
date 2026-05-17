@@ -61,6 +61,52 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
+class OrchestrationTerminationEnvelope:
+    """Structured terminal payload emitted when Phase 24.4 K-fold canonical
+    recurrence fires and the orchestrator takes deterministic termination
+    authority over the agentic loop.
+
+    Per `.planning/milestones/v1.6-PHASE-24-4-FRAMING.md` §5: the envelope
+    distinguishes orchestration-decided termination from model-decided
+    termination (Phase A canonical-schema success path) and from runtime
+    budget exhaustion (LLMLoopBudgetExceeded → HTTP 504). It is NOT a
+    failure — it is a policy-layer success.
+
+    Anti-scope (framing §5.1, §10): the orchestrator MUST NOT synthesize
+    conversational text in this envelope. ``accumulated_results`` carries
+    the verbatim post-sanitization bytes that flowed back to the LLM; the
+    downstream surface (chat handler / Console UI / CLI) decides how to
+    present them to the operator.
+
+    Fields:
+        status: Always ``"orchestration_terminated"`` — the enum-like
+            marker that distinguishes this envelope from canonical-schema
+            success (``stop_reason="end_turn"``).
+        trigger: Taxonomic name of the trigger that fired. v1.6 ships
+            ``"k_fold_canonical"``; future triggers each get their own
+            structurally-named string (framing §10.1).
+        reason: Human-readable description of what the orchestrator
+            observed (tool name + K count + recurrence shape). Telemetry +
+            archaeology, NOT model-facing prose.
+        iterations: 1-based count of iterations completed before the
+            trigger fired. Matches the ``iter`` value in the K-th
+            accumulated_results entry.
+        accumulated_results: Every successful ``status=ok`` tool dispatch
+            in this session, in invocation order. Each entry:
+            ``{tool_name, args_hash, result_hash, content, iter}`` where
+            ``content`` is the exact post-sanitization, post-truncation
+            bytes shown to the LLM. Failed dispatches are NOT included —
+            they live in ``ChatTurnResult.tool_trace``.
+    """
+
+    status: str
+    trigger: str
+    reason: str
+    iterations: int
+    accumulated_results: list[dict] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class ChatTurnResult:
     """Structured return shape for ``LLMRouter.complete_with_tools()``.
 
@@ -70,23 +116,37 @@ class ChatTurnResult:
 
     Fields:
         final_text: The model's terminal assistant text. Identical to
-            ``messages[-1]["content"]`` by construction.
+            ``messages[-1]["content"]`` by construction in the model-
+            terminated case. Empty string ``""`` when ``termination`` is
+            populated (Phase 24.4 orchestration-terminated case — the
+            orchestrator does NOT synthesize conversational text per
+            framing §5.1).
         messages: Full transcript in OpenAI-style chat format —
             ``{role, content, tool_calls?, tool_call_id?, name?}``. Provider-
             native shapes (Anthropic content blocks) are normalized at the
-            adapter boundary; no native format leaks past the router. The
-            list always ends with the terminal assistant turn, even when no
-            tools fired.
+            adapter boundary; no native format leaks past the router. In
+            the model-terminated case, ``messages[-1]`` is the terminal
+            assistant turn. In the orchestration-terminated case
+            (``termination is not None``), ``messages`` is the transcript
+            at the iteration where the trigger fired — ending with the
+            K-th identical successful tool result, NOT a synthetic
+            assistant turn (framing §10.1).
         tool_trace: One entry per tool invocation, in invocation order.
             Each entry: ``{tool_name, arguments, result, error, index}``.
             On success: ``error is None`` and ``result`` is the parsed value.
             On failure: ``result is None`` and ``error`` is a string. Never
             both populated, never both null. Empty when no tools were called.
+        termination: Phase 24.4 — populated when the orchestrator's K-fold
+            canonical-recurrence trigger fires, ``None`` otherwise. When
+            populated, the loop terminated by orchestration policy, not
+            by model choice and not by budget exhaustion. See
+            ``OrchestrationTerminationEnvelope`` for field shape.
     """
 
     final_text: str
     messages: list[dict]
     tool_trace: list[dict] = field(default_factory=list)
+    termination: Optional["OrchestrationTerminationEnvelope"] = None
 
 # Default system prompt injected into every local call.
 # Keeps Flame/pipeline context in scope without repeating it per-call.
@@ -195,6 +255,49 @@ class LLMToolError(RuntimeError):
     Per FB-C D-19, this exception carries no extra fields in v1.4. Future fields
     (e.g., chained anthropic.APIError) deferred to v1.5 if FB-D needs them.
     """
+
+
+# ---------------------------------------------------------------------------
+# Phase 24.4 internal control-flow signal (NOT exported)
+#
+# Per `.planning/milestones/v1.6-PHASE-24-4-FRAMING.md` §5: when the K-fold
+# canonical-recurrence trigger fires inside _loop_body, the orchestrator
+# needs to unwind cleanly to the outer try/except so the caller receives a
+# ChatTurnResult with the termination envelope populated — NOT an
+# LLMLoopBudgetExceeded (HTTP 504) and NOT an unhandled exception (HTTP 500).
+#
+# This is a private signal class, not a public exception. Caught exactly
+# once in complete_with_tools()'s outer try/except. Not added to
+# forge_bridge.__all__ — handler code interacts with the termination
+# envelope through ChatTurnResult.termination, never through this class.
+# ---------------------------------------------------------------------------
+
+
+class _OrchestrationTerminated(Exception):
+    """Internal signal raised by _loop_body when the Phase 24.4 K-fold
+    canonical trigger fires. Carries the assembled envelope so the outer
+    handler can construct ChatTurnResult without re-deriving state.
+
+    Anti-scope (framing §10.1): this signal is the ONLY mechanism that
+    bypasses the model-decided ``return response.text`` path. It does NOT
+    inject prompts, does NOT synthesize content, does NOT alter the
+    transcript — it carries already-collected orchestration-layer state
+    out of the loop.
+    """
+
+    def __init__(
+        self,
+        envelope: "OrchestrationTerminationEnvelope",
+        state_messages: list[dict],
+        completed_iterations: int,
+    ):
+        super().__init__(
+            f"orchestration_terminated trigger={envelope.trigger} "
+            f"iter={envelope.iterations}"
+        )
+        self.envelope = envelope
+        self.state_messages = state_messages
+        self.completed_iterations = completed_iterations
 
 
 # ---------------------------------------------------------------------------
@@ -499,6 +602,23 @@ class LLMRouter:
             messages=messages,   # D-02a: structured history pass-through (may be None)
         )
         seen_calls: collections.Counter = collections.Counter()
+        # Phase 24.4: K-fold canonical-recurrence counter — parallel trigger
+        # to existing D-07 (failed-affordance repetition stays at K>=3 with
+        # synthetic is_error injection). New trigger key extends the
+        # (tool_name, args_canonical) shape with the post-sanitization
+        # result_canonical bytes shown to the LLM, restricted to
+        # status=ok dispatches. Threshold K>=2 per framing §9 Seam A.
+        # When this fires, _OrchestrationTerminated is raised after the
+        # iteration's streaming emits + state update so the SSE consumer
+        # observes the K-th successful tool result before the terminal
+        # event (framing §5, §8.3).
+        seen_canonical_results: collections.Counter = collections.Counter()
+        # Every successful status=ok dispatch in this session, in
+        # invocation order. Becomes ``accumulated_results`` of the
+        # OrchestrationTerminationEnvelope when the K-fold trigger fires.
+        # Failed dispatches are NOT recorded here — they live in
+        # tool_trace with ``error`` populated. Framing §3.1.3.
+        accumulated_successful_results: list[dict] = []
         registered_names = {t.name for t in tools}
         started = time.monotonic()
         prompt_tokens_total = 0
@@ -592,6 +712,16 @@ class LLMRouter:
         async def _loop_body() -> str:
             nonlocal prompt_tokens_total, completion_tokens_total, completed_iterations
             nonlocal state
+
+            # Phase 24.4: deferred-raise slot for K-fold canonical-recurrence
+            # trigger. Set in the per-call success branch when the K-th
+            # identical (tool_name, args_canonical, result_canonical) dispatch
+            # is observed. Raised AFTER the iteration's streaming emits +
+            # state update so SSE consumers observe the K-th tool result
+            # before the terminal envelope event (framing §5, §8.3).
+            pending_termination_envelope: Optional[
+                "OrchestrationTerminationEnvelope"
+            ] = None
 
             for iteration in range(max_iterations):
                 turn_start = time.monotonic()
@@ -727,6 +857,50 @@ class LLMRouter:
                             call,
                             result=_maybe_parse_result(result_text),
                         )
+                        # Phase 24.4: K-fold canonical-recurrence trigger.
+                        # Restricted to status=ok dispatches (this branch).
+                        # Hash the EXACT post-sanitization bytes shown to
+                        # the LLM (framing §4.1, §9 Seam C — orchestration
+                        # reasons over model-visible state, not raw
+                        # substrate payload). Key:
+                        # (tool_name, args_canonical, result_text).
+                        # Threshold K>=2 per framing §9 Seam A.
+                        result_hash = hashlib.sha256(
+                            result_text.encode("utf-8")
+                        ).hexdigest()[:8]
+                        accumulated_successful_results.append({
+                            "tool_name": call.tool_name,
+                            "args_hash": args_hash,
+                            "result_hash": result_hash,
+                            "content": result_text,
+                            "iter": iteration + 1,
+                        })
+                        canonical_key = (
+                            call.tool_name, args_canonical, result_text,
+                        )
+                        seen_canonical_results[canonical_key] += 1
+                        if (
+                            pending_termination_envelope is None
+                            and seen_canonical_results[canonical_key] >= 2
+                        ):
+                            k_count = seen_canonical_results[canonical_key]
+                            pending_termination_envelope = (
+                                OrchestrationTerminationEnvelope(
+                                    status="orchestration_terminated",
+                                    trigger="k_fold_canonical",
+                                    reason=(
+                                        f"Tool {call.tool_name} dispatched "
+                                        f"successfully {k_count} times with "
+                                        "identical canonical arguments and "
+                                        "identical canonical result. Loop "
+                                        "terminated by orchestration policy."
+                                    ),
+                                    iterations=iteration + 1,
+                                    accumulated_results=list(
+                                        accumulated_successful_results
+                                    ),
+                                )
+                            )
                     except asyncio.TimeoutError:
                         msg = f"ERROR: tool '{call.tool_name}' timed out after {per_tool_budget:.1f}s"
                         results.append(ToolCallResult(
@@ -790,6 +964,33 @@ class LLMRouter:
                 # Update state with assistant turn + tool results.
                 state = adapter.append_results(state, response, results)
 
+                # Phase 24.4: K-fold canonical trigger was armed in the per-
+                # call loop above — raise NOW (after streaming emits + state
+                # update so the SSE consumer observes the K-th tool result
+                # before the terminal envelope event). Carries the envelope
+                # + state snapshot so the outer try/except constructs the
+                # ChatTurnResult without re-deriving state. Framing §5, §6.
+                if pending_termination_envelope is not None:
+                    elapsed_ms = int((time.monotonic() - turn_start) * 1000)
+                    last = pending_termination_envelope.accumulated_results[-1]
+                    # k_count is K=2 by construction (trigger fires at K-th
+                    # match per framing §9 Seam A — first K=2 hit terminates).
+                    logger.info(
+                        "tool-call iter=%d tool=%s args_hash=%s "
+                        "result_hash=%s prompt_tokens=%d completion_tokens=%d "
+                        "elapsed_ms=%d status=orchestration_terminated "
+                        "trigger=k_fold_canonical k_count=2",
+                        iteration + 1, last["tool_name"], last["args_hash"],
+                        last["result_hash"],
+                        response.usage_tokens[0], response.usage_tokens[1],
+                        elapsed_ms,
+                    )
+                    raise _OrchestrationTerminated(
+                        envelope=pending_termination_envelope,
+                        state_messages=adapter.to_chat_messages(state, ""),
+                        completed_iterations=iteration + 1,
+                    )
+
             # Iteration cap exhausted (D-03).
             raise LLMLoopBudgetExceeded(
                 "max_iterations", max_iterations, time.monotonic() - started,
@@ -813,6 +1014,25 @@ class LLMRouter:
                     final_text=terminal_text,
                     messages=adapter.to_chat_messages(state, terminal_text),
                     tool_trace=list(tool_trace),
+                )
+            except _OrchestrationTerminated as exc:
+                # Phase 24.4 — K-fold canonical-recurrence trigger fired
+                # inside _loop_body. Construct ChatTurnResult with the
+                # termination envelope populated; final_text="" because the
+                # orchestrator does NOT synthesize conversational text
+                # (framing §5.1, §10.1). messages reflects the transcript
+                # at the iteration where the trigger fired (state_messages
+                # snapshotted at raise time so failed dispatches, salvaged
+                # calls, and the K-th successful tool result are all
+                # preserved). tool_trace carries the full session trace
+                # (Phase A invariant — every tool invocation, success or
+                # failure, available to downstream consumers).
+                terminal_reason = "orchestration_terminated"
+                return ChatTurnResult(
+                    final_text="",
+                    messages=exc.state_messages,
+                    tool_trace=list(tool_trace),
+                    termination=exc.envelope,
                 )
             except asyncio.TimeoutError:
                 terminal_reason = "max_seconds"
