@@ -54,8 +54,8 @@ def get_provenance() -> dict:
     """
     pkg_file = Path(forge_bridge.__file__).resolve()
     import_path = str(pkg_file.parent)
-    repo_root = _find_repo_root(pkg_file.parent)
-    startup_sha = _git_head(repo_root) if repo_root else None
+    repo_root = find_repo_root(pkg_file.parent)
+    startup_sha = git_head(repo_root) if repo_root else None
     return {
         "import_path": import_path,
         "repo_root": str(repo_root) if repo_root else None,
@@ -77,10 +77,10 @@ def current_disk_sha() -> Optional[str]:
     repo_root = prov.get("repo_root")
     if not repo_root:
         return None
-    return _git_head(Path(repo_root))
+    return git_head(Path(repo_root))
 
 
-def _find_repo_root(start: Path) -> Optional[Path]:
+def find_repo_root(start: Path) -> Optional[Path]:
     """Walk up from `start` looking for a `.git` directory or file.
 
     Worktree checkouts use a `.git` FILE (not a directory) that points at
@@ -93,7 +93,7 @@ def _find_repo_root(start: Path) -> Optional[Path]:
     return None
 
 
-def _git_head(repo_root: Path) -> Optional[str]:
+def git_head(repo_root: Path) -> Optional[str]:
     """Return the current HEAD SHA at `repo_root`, or None on failure.
 
     Failure modes intentionally collapse to None: missing git binary, not
