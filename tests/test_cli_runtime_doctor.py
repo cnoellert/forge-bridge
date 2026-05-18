@@ -94,6 +94,33 @@ def _flame_ping_envelope(
     })
 
 
+def _health_body_ok(*, install_provenance: dict | None = None) -> dict:
+    """Happy-path /api/v1/health body — install_provenance matches operator CWD.
+
+    Defaults to a provenance block where startup_sha == disk_sha_now ==
+    operator CWD HEAD, so the install_provenance probe returns ok. Pass
+    `install_provenance=` to override for warn-state tests, or pass an
+    empty dict to simulate a daemon that does not report the field
+    (incompatible-version warn branch).
+    """
+    if install_provenance is None:
+        from pathlib import Path as _P
+        from forge_bridge.install_provenance import find_repo_root, git_head
+        cwd_repo = find_repo_root(_P.cwd())
+        cwd_sha = git_head(cwd_repo) if cwd_repo else None
+        install_provenance = {
+            "import_path": (
+                str(cwd_repo / "forge_bridge") if cwd_repo else "/tmp/forge_bridge"
+            ),
+            "repo_root": str(cwd_repo) if cwd_repo else None,
+            "startup_sha": cwd_sha,
+            "pid": 99999,
+            "started_at": "2026-05-18T22:00:00+00:00",
+            "disk_sha_now": cwd_sha,
+        }
+    return {"status": "ok", "install_provenance": install_provenance}
+
+
 def _default_post_handlers() -> dict:
     """Default Phase 24.2 POST handlers — convergent flame_ping at exec URL.
 
@@ -139,7 +166,7 @@ def _patch_world(
 
 def test_json_shape_all_ok():
     handlers = {
-        config.console_url() + "/api/v1/health": _Resp(200, {"status": "ok"}),
+        config.console_url() + "/api/v1/health": _Resp(200, _health_body_ok()),
         config.flame_bridge_url() + "/status": _Resp(200, {"flame_available": True}),
     }
     tcp_open = {
@@ -153,7 +180,14 @@ def test_json_shape_all_ok():
     payload = json.loads(result.output.strip())
     assert payload["ok"] is True
     names = [c["name"] for c in payload["checks"]]
-    assert names == ["console", "mcp_http", "flame_bridge", "state_ws", "graph_store"]
+    assert names == [
+        "console",
+        "install_provenance",
+        "mcp_http",
+        "flame_bridge",
+        "state_ws",
+        "graph_store",
+    ]
     for c in payload["checks"]:
         assert set(c.keys()) >= {"name", "ok", "status", "url", "fix"}
         assert c["ok"] is True
@@ -186,7 +220,7 @@ def test_json_shape_console_down_sets_ok_false_and_fix():
 
 def test_human_mode_shows_urls_and_next_action():
     handlers = {
-        config.console_url() + "/api/v1/health": _Resp(200, {"status": "ok"}),
+        config.console_url() + "/api/v1/health": _Resp(200, _health_body_ok()),
         config.flame_bridge_url() + "/status": _Resp(200, {"flame_available": True}),
     }
     tcp_open = {
@@ -241,7 +275,7 @@ def test_human_mode_failure_surfaces_first_fix():
 def test_flame_bridge_ok_convergent():
     """OK state: daemon reachable, connected, URLs converge."""
     handlers = {
-        config.console_url() + "/api/v1/health": _Resp(200, {"status": "ok"}),
+        config.console_url() + "/api/v1/health": _Resp(200, _health_body_ok()),
     }
     tcp_open = {
         (config.MCP_HTTP_HOST, config.MCP_HTTP_PORT),
@@ -270,7 +304,7 @@ def test_flame_bridge_warn_divergent():
     explicitly with the daemon-effective URL as authoritative.
     """
     handlers = {
-        config.console_url() + "/api/v1/health": _Resp(200, {"status": "ok"}),
+        config.console_url() + "/api/v1/health": _Resp(200, _health_body_ok()),
     }
     tcp_open = {
         (config.MCP_HTTP_HOST, config.MCP_HTTP_PORT),
@@ -303,7 +337,7 @@ def test_flame_bridge_warn_divergent():
 def test_flame_bridge_fail_daemon_says_disconnected():
     """FAIL state: daemon reachable, URLs agree, Flame is unreachable."""
     handlers = {
-        config.console_url() + "/api/v1/health": _Resp(200, {"status": "ok"}),
+        config.console_url() + "/api/v1/health": _Resp(200, _health_body_ok()),
     }
     tcp_open = {
         (config.MCP_HTTP_HOST, config.MCP_HTTP_PORT),
@@ -333,7 +367,7 @@ def test_flame_bridge_fail_daemon_says_disconnected():
 def test_flame_bridge_unknown_daemon_unreachable():
     """UNKNOWN state: daemon unreachable; defers to mcp_http row."""
     handlers = {
-        config.console_url() + "/api/v1/health": _Resp(200, {"status": "ok"}),
+        config.console_url() + "/api/v1/health": _Resp(200, _health_body_ok()),
     }
     tcp_open = {
         (config.MCP_HTTP_HOST, config.MCP_HTTP_PORT),
@@ -365,7 +399,7 @@ def test_flame_bridge_fail_daemon_envelope_error():
     in fix.
     """
     handlers = {
-        config.console_url() + "/api/v1/health": _Resp(200, {"status": "ok"}),
+        config.console_url() + "/api/v1/health": _Resp(200, _health_body_ok()),
     }
     tcp_open = {
         (config.MCP_HTTP_HOST, config.MCP_HTTP_PORT),
@@ -400,7 +434,7 @@ def test_runtime_doctor_uses_config_urls(monkeypatch):
     monkeypatch.setenv("FORGE_CONSOLE_PORT", "18996")
     custom_console = "http://127.0.0.1:18996"
     handlers = {
-        custom_console + "/api/v1/health": _Resp(200, {"status": "ok"}),
+        custom_console + "/api/v1/health": _Resp(200, _health_body_ok()),
         config.flame_bridge_url() + "/status": _Resp(200, {"flame_available": True}),
     }
     tcp_open = {
@@ -422,7 +456,7 @@ def test_runtime_doctor_uses_config_urls(monkeypatch):
 def _graph_store_world():
     """Default _patch_world for graph_store tests — every non-graph row ok."""
     handlers = {
-        config.console_url() + "/api/v1/health": _Resp(200, {"status": "ok"}),
+        config.console_url() + "/api/v1/health": _Resp(200, _health_body_ok()),
         config.flame_bridge_url() + "/status": _Resp(200, {"flame_available": True}),
     }
     tcp_open = {
@@ -504,3 +538,210 @@ def test_graph_store_appears_in_human_output(tmp_path):
     with p1, p2:
         result = runner.invoke(app, ["doctor"])
     assert "graph_store" in result.output
+
+
+# ── install_provenance row — operational invariant from 24.6 + D-04 ─────────
+
+
+def _provenance_world(health_body: dict):
+    """Build the patch context for a provenance test — only the health body
+    varies between cases; everything else stays at happy-path defaults."""
+    handlers = {
+        config.console_url() + "/api/v1/health": _Resp(200, health_body),
+        config.flame_bridge_url() + "/status": _Resp(200, {"flame_available": True}),
+    }
+    tcp_open = {
+        (config.MCP_HTTP_HOST, config.MCP_HTTP_PORT),
+        (config.STATE_WS_HOST, config.STATE_WS_PORT),
+    }
+    return _patch_world(handlers, tcp_open=tcp_open)
+
+
+def _provenance_row(result_output: str) -> dict:
+    payload = json.loads(result_output.strip())
+    return next(c for c in payload["checks"] if c["name"] == "install_provenance")
+
+
+def test_provenance_ok_matches_operator_cwd():
+    """Happy path: daemon's snapshot SHA matches operator CWD HEAD; no drift."""
+    p1, p2 = _provenance_world(_health_body_ok())
+    with p1, p2:
+        result = runner.invoke(app, ["doctor", "--json"])
+    row = _provenance_row(result.output)
+    assert row["ok"] is True
+    assert "matches operator CWD" in row["status"]
+    assert row["fix"] == ""
+
+
+def test_provenance_warn_drift_daemon_behind_disk():
+    """Daemon's loaded code is behind the on-disk HEAD at the same path."""
+    body = _health_body_ok(install_provenance={
+        "import_path": "/Users/cnoellert/GitHub/forge-bridge/forge_bridge",
+        "repo_root": "/Users/cnoellert/GitHub/forge-bridge",
+        "startup_sha": "a" * 40,           # daemon loaded at this SHA
+        "disk_sha_now": "b" * 40,          # disk has advanced to a different SHA
+        "pid": 99999,
+        "started_at": "2026-05-18T22:00:00+00:00",
+    })
+    p1, p2 = _provenance_world(body)
+    with p1, p2:
+        result = runner.invoke(app, ["doctor", "--json"])
+    row = _provenance_row(result.output)
+    assert row["ok"] is False
+    assert row["chip"] == "warn"
+    assert "aaaaaaaa" in row["status"]
+    assert "bbbbbbbb" in row["status"]
+    assert "disk advanced" in row["status"]
+    assert "restart" in row["fix"].lower()
+
+
+def test_provenance_warn_detached_no_git_metadata():
+    """Daemon installed from a non-git source — repo_root and startup_sha None."""
+    body = _health_body_ok(install_provenance={
+        "import_path": "/opt/forge-bridge/forge_bridge",
+        "repo_root": None,
+        "startup_sha": None,
+        "disk_sha_now": None,
+        "pid": 99999,
+        "started_at": "2026-05-18T22:00:00+00:00",
+    })
+    p1, p2 = _provenance_world(body)
+    with p1, p2:
+        result = runner.invoke(app, ["doctor", "--json"])
+    row = _provenance_row(result.output)
+    assert row["ok"] is False
+    assert row["chip"] == "warn"
+    assert "no git metadata" in row["status"]
+    assert "detached/unknown" in row["status"]
+
+
+def test_provenance_warn_missing_field_incompatible_daemon():
+    """Daemon health body lacks the install_provenance key — older version."""
+    body = _health_body_ok(install_provenance={})  # empty dict — falsy after .get()
+    p1, p2 = _provenance_world(body)
+    with p1, p2:
+        result = runner.invoke(app, ["doctor", "--json"])
+    row = _provenance_row(result.output)
+    assert row["ok"] is False
+    assert row["chip"] == "warn"
+    assert "does not report install_provenance" in row["status"]
+    assert "restart the daemon" in row["fix"]
+
+
+def test_provenance_warn_console_unreachable():
+    """Console is down — provenance probe degrades to warn-with-link."""
+    handlers = {
+        config.console_url() + "/api/v1/health": httpx.ConnectError("nope"),
+        config.flame_bridge_url() + "/status": _Resp(200, {"flame_available": True}),
+    }
+    tcp_open = {
+        (config.MCP_HTTP_HOST, config.MCP_HTTP_PORT),
+        (config.STATE_WS_HOST, config.STATE_WS_PORT),
+    }
+    p1, p2 = _patch_world(handlers, tcp_open=tcp_open)
+    with p1, p2:
+        result = runner.invoke(app, ["doctor", "--json"])
+    row = _provenance_row(result.output)
+    assert row["ok"] is False
+    assert row["chip"] == "warn"
+    assert "unreachable" in row["status"]
+    assert "console row above" in row["fix"]
+
+
+def test_provenance_warn_console_non_200():
+    """Console reachable but returns 500 — same degraded posture."""
+    handlers = {
+        config.console_url() + "/api/v1/health": _Resp(500, {"status": "error"}),
+        config.flame_bridge_url() + "/status": _Resp(200, {"flame_available": True}),
+    }
+    tcp_open = {
+        (config.MCP_HTTP_HOST, config.MCP_HTTP_PORT),
+        (config.STATE_WS_HOST, config.STATE_WS_PORT),
+    }
+    p1, p2 = _patch_world(handlers, tcp_open=tcp_open)
+    with p1, p2:
+        result = runner.invoke(app, ["doctor", "--json"])
+    row = _provenance_row(result.output)
+    assert row["ok"] is False
+    assert row["chip"] == "warn"
+    assert "http 500" in row["status"]
+
+
+def test_provenance_warn_cross_checkout_different_repos():
+    """Daemon's repo_root differs from operator CWD's repo root."""
+    body = _health_body_ok(install_provenance={
+        "import_path": "/some/other/checkout/forge_bridge",
+        "repo_root": "/some/other/checkout",
+        "startup_sha": "c" * 40,
+        "disk_sha_now": "c" * 40,           # no drift on the daemon's side
+        "pid": 99999,
+        "started_at": "2026-05-18T22:00:00+00:00",
+    })
+    p1, p2 = _provenance_world(body)
+    with p1, p2:
+        result = runner.invoke(app, ["doctor", "--json"])
+    row = _provenance_row(result.output)
+    assert row["ok"] is False
+    assert row["chip"] == "warn"
+    assert "different checkouts" in row["status"]
+    assert "/some/other/checkout" in row["fix"]
+
+
+def test_provenance_warn_cross_commit_same_repo():
+    """Same repo, but daemon's startup SHA differs from operator CWD HEAD."""
+    # Operator CWD is the real test-runner cwd (forge-bridge); daemon claims
+    # to be in the same repo but at a fake SHA.
+    from pathlib import Path
+    from forge_bridge.install_provenance import find_repo_root
+    cwd_repo = find_repo_root(Path.cwd())
+    if not cwd_repo:
+        import pytest
+        pytest.skip("test runner CWD is not in a git repo — cannot evaluate")
+    body = _health_body_ok(install_provenance={
+        "import_path": str(cwd_repo / "forge_bridge"),
+        "repo_root": str(cwd_repo),
+        "startup_sha": "d" * 40,            # fake — does NOT match real HEAD
+        "disk_sha_now": "d" * 40,            # no drift between startup and "disk"
+        "pid": 99999,
+        "started_at": "2026-05-18T22:00:00+00:00",
+    })
+    p1, p2 = _provenance_world(body)
+    with p1, p2:
+        result = runner.invoke(app, ["doctor", "--json"])
+    row = _provenance_row(result.output)
+    assert row["ok"] is False
+    assert row["chip"] == "warn"
+    assert "different commits" in row["status"]
+    assert "dddddddd" in row["status"]
+
+
+def test_provenance_ok_cwd_not_in_git_skips_comparison():
+    """If operator CWD has no git repo, comparison is skipped (no false warn)."""
+    body = _health_body_ok(install_provenance={
+        "import_path": "/Users/cnoellert/GitHub/forge-bridge/forge_bridge",
+        "repo_root": "/Users/cnoellert/GitHub/forge-bridge",
+        "startup_sha": "e" * 40,
+        "disk_sha_now": "e" * 40,
+        "pid": 99999,
+        "started_at": "2026-05-18T22:00:00+00:00",
+    })
+    p1, p2 = _provenance_world(body)
+    # Force operator CWD lookup to return "no repo" so we don't depend on the
+    # test runner's actual cwd repo state.
+    with patch(
+        "forge_bridge.cli.runtime_doctor._operator_repo_context",
+        return_value=(None, None),
+    ), p1, p2:
+        result = runner.invoke(app, ["doctor", "--json"])
+    row = _provenance_row(result.output)
+    assert row["ok"] is True
+    assert "comparison skipped" in row["status"]
+    assert "eeeeeeee" in row["status"]
+
+
+def test_provenance_row_appears_in_human_output():
+    """Sanity: install_provenance row renders in the human-mode table."""
+    p1, p2 = _provenance_world(_health_body_ok())
+    with p1, p2:
+        result = runner.invoke(app, ["doctor"])
+    assert "install_provenance" in result.output

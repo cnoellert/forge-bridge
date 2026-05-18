@@ -16,7 +16,7 @@ import json
 import socket
 import sys
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Optional
 
 import httpx
 import typer
@@ -47,6 +47,7 @@ def runtime_doctor_cmd(
     """Probe forge-bridge surfaces and report status, URLs, and next steps."""
     checks: list[dict[str, Any]] = [
         _check_console(),
+        _check_install_provenance(),
         _check_mcp_http(),
         _check_flame_bridge(),
         _check_state_ws(),
@@ -94,6 +95,188 @@ def _check_console() -> dict[str, Any]:
         "url": url,
         "fix": "",
     }
+
+
+def _check_install_provenance() -> dict[str, Any]:
+    """Surface the daemon's loaded-code provenance as a first-class doctor row.
+
+    Operational invariant established by the 24.6 + D-04 dogfood sessions:
+    operators should always know what code the daemon is serving before
+    interpreting behavioral observations. Reads the `install_provenance`
+    block from /api/v1/health (added daemon-side in the preceding commit)
+    and compares against the operator's CWD repo context.
+
+    Three comparisons feed the verdict:
+
+      drift          daemon.startup_sha vs daemon.disk_sha_now (same path)
+      cross-repo     daemon.repo_root  vs operator CWD's repo root
+      cross-commit   daemon.startup_sha vs operator CWD's HEAD SHA
+
+    Green requires ALL THREE: provenance known, no drift, matches the
+    operator's CWD checkout/HEAD. NOT "matches main" — every feature
+    branch would otherwise produce a false warning. Warns for: drift
+    (daemon stale vs disk), missing git metadata (detached / wheel
+    install), cross-checkout state, or same-repo different-commit.
+    Operator CWD outside any git repo: comparison skipped rather than
+    warned (running doctor from ~/ or /tmp shouldn't generate noise).
+
+    Output preserves raw facts (SHAs short-form + paths) alongside the
+    interpreted verdict so operators can reason from underlying state,
+    not from a synthesized conclusion alone.
+    """
+    url = config.console_url()
+    health_url = f"{url}/api/v1/health"
+    try:
+        with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
+            r = client.get(health_url)
+    except (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError) as exc:
+        return _provenance_warn(
+            f"console unreachable ({type(exc).__name__}) — provenance unavailable",
+            url=url,
+            fix="see console row above",
+        )
+    if r.status_code != 200:
+        return _provenance_warn(
+            f"console http {r.status_code} — provenance unavailable",
+            url=url,
+            fix="see console row above",
+        )
+    try:
+        data = r.json()
+    except ValueError:
+        return _provenance_warn(
+            "console returned non-JSON — provenance unavailable",
+            url=url,
+            fix="see console row above",
+        )
+
+    prov = data.get("install_provenance") or {}
+    if not prov:
+        return _provenance_warn(
+            "daemon does not report install_provenance — incompatible version",
+            url=url,
+            fix="restart the daemon from a build that includes "
+                "forge_bridge.install_provenance",
+        )
+
+    daemon_path = prov.get("import_path") or "<unknown>"
+    daemon_repo = prov.get("repo_root")
+    daemon_startup = prov.get("startup_sha")
+    daemon_disk = prov.get("disk_sha_now")
+
+    if not daemon_repo or not daemon_startup:
+        return _provenance_warn(
+            f"daemon path={daemon_path} (no git metadata — "
+            f"detached/unknown provenance)",
+            url=daemon_path,
+            fix="daemon was installed from a non-git source; provenance "
+                "cannot be verified",
+        )
+
+    daemon_basename = Path(daemon_repo).name
+
+    # Drift: daemon's loaded code differs from current disk at SAME path
+    if daemon_disk and daemon_disk != daemon_startup:
+        return {
+            "name": "install_provenance",
+            "ok": False,
+            "chip": "warn",
+            "status": (
+                f"daemon serving {daemon_startup[:8]}; disk advanced to "
+                f"{daemon_disk[:8]} @ {daemon_basename} — restart to load latest"
+            ),
+            "url": daemon_path,
+            "fix": "restart the daemon process to pick up the on-disk state",
+        }
+
+    cwd_repo, cwd_sha = _operator_repo_context()
+
+    if not cwd_repo or not cwd_sha:
+        return {
+            "name": "install_provenance",
+            "ok": True,
+            "status": (
+                f"daemon {daemon_startup[:8]} @ {daemon_basename} "
+                f"(operator CWD not in a git repo; comparison skipped)"
+            ),
+            "url": daemon_path,
+            "fix": "",
+        }
+
+    if Path(cwd_repo).resolve() != Path(daemon_repo).resolve():
+        cwd_basename = Path(cwd_repo).name
+        return {
+            "name": "install_provenance",
+            "ok": False,
+            "chip": "warn",
+            "status": (
+                f"daemon serves from {daemon_basename}; operator CWD in "
+                f"{cwd_basename} — different checkouts"
+            ),
+            "url": daemon_path,
+            "fix": (
+                f"daemon imports from {daemon_repo}; your CWD is in "
+                f"{cwd_repo} — restart the daemon from your active checkout, "
+                f"or accept the cross-checkout state"
+            ),
+        }
+
+    if cwd_sha != daemon_startup:
+        return {
+            "name": "install_provenance",
+            "ok": False,
+            "chip": "warn",
+            "status": (
+                f"daemon serving {daemon_startup[:8]}; operator CWD at "
+                f"{cwd_sha[:8]} @ {daemon_basename} — different commits, "
+                f"same repo"
+            ),
+            "url": daemon_path,
+            "fix": (
+                "restart the daemon to load your active commit, OR "
+                "checkout the daemon's commit in your CWD"
+            ),
+        }
+
+    return {
+        "name": "install_provenance",
+        "ok": True,
+        "status": (
+            f"daemon {daemon_startup[:8]} @ {daemon_basename} matches "
+            f"operator CWD"
+        ),
+        "url": daemon_path,
+        "fix": "",
+    }
+
+
+def _provenance_warn(status: str, *, url: str, fix: str) -> dict[str, Any]:
+    """Build a warn-chip provenance row — used for unreachable / missing-field
+    branches where we can't fully evaluate the verdict but want to surface
+    the gap to the operator rather than silently passing."""
+    return {
+        "name": "install_provenance",
+        "ok": False,
+        "chip": "warn",
+        "status": status,
+        "url": url,
+        "fix": fix,
+    }
+
+
+def _operator_repo_context() -> tuple[Optional[str], Optional[str]]:
+    """Resolve the operator's CWD containing-git-repo root and HEAD SHA.
+
+    Returns (None, None) if CWD is not inside a git checkout — the probe
+    treats this as comparison-skipped, not as a warning.
+    """
+    from forge_bridge.install_provenance import find_repo_root, git_head
+
+    cwd = Path.cwd()
+    repo = find_repo_root(cwd)
+    if not repo:
+        return None, None
+    return str(repo), git_head(repo)
 
 
 def _check_mcp_http() -> dict[str, Any]:
