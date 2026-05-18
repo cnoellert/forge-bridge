@@ -129,7 +129,10 @@ def _collect_segments(seq):
 
 
 class GetSegmentsInput(BaseModel):
-    sequence_name: str = Field(..., description="Exact sequence name")
+    sequence_name: str = Field(
+        ...,
+        description="Sequence name as shown in Flame. Natural-language variants (spaces vs underscores, quoted/unquoted forms) are acceptable.",
+    )
 
 
 async def get_sequence_segments(params: GetSegmentsInput) -> str:
@@ -170,7 +173,10 @@ else:
 
 
 class PreviewRenameInput(BaseModel):
-    sequence_name: str = Field(..., description="Exact sequence name")
+    sequence_name: str = Field(
+        ...,
+        description="Sequence name as shown in Flame. Natural-language variants (spaces vs underscores, quoted/unquoted forms) are acceptable.",
+    )
     prefix:    str = Field(...,  description="Shot name prefix e.g. 'noise', 'tst'")
     increment: int = Field(10,   description="Shot number step (default 10)")
     padding:   int = Field(3,    description="Zero-pad width for shot number (default 3)")
@@ -410,7 +416,10 @@ else:
 
 
 class PreviewStartFramesInput(BaseModel):
-    sequence_name: str = Field(..., description="Exact sequence name")
+    sequence_name: str = Field(
+        ...,
+        description="Sequence name as shown in Flame. Natural-language variants (spaces vs underscores, quoted/unquoted forms) are acceptable.",
+    )
     default_frame: int = Field(1001, description="Default target start frame")
 
 
@@ -817,7 +826,10 @@ async def get_sequence_editing_guide(params: GetSequenceEditingGuide) -> str:
 
 
 class InspectVersionsInput(BaseModel):
-    sequence_name: str = Field(..., description="Exact sequence name")
+    sequence_name: str = Field(
+        ...,
+        description="Sequence name as shown in Flame. Natural-language variants (spaces vs underscores, quoted/unquoted forms) are acceptable.",
+    )
 
 
 async def inspect_sequence_versions(params: InspectVersionsInput) -> str:
@@ -1404,7 +1416,8 @@ else:
 class ScanRolesInput(BaseModel):
     """Scan segments for their detected/tagged roles."""
     sequence_names: list[str] = Field(
-        ..., description="Sequence names to scan. Scans all tracks of the last version.",
+        ...,
+        description="Sequence names as shown in Flame. Natural-language variants (spaces vs underscores, quoted/unquoted forms) are acceptable. Scans all tracks of the last version.",
     )
     reel_group: str = Field(
         default="", description="Reel group name. Empty = search all reel groups.",
