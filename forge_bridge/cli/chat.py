@@ -114,6 +114,18 @@ def chat_cmd(
             sys.stderr.write(f"fix: {result.fix}\n")
         raise typer.Exit(code=_KIND_TO_EXIT.get(result.error_kind, _EXIT_FAIL))
 
+    # Phase 24.5: orchestration_terminated is its own consumer taxon.
+    # Detect BEFORE _extract_reply runs — otherwise the K-th tool
+    # result's content gets rendered as if the model authored it, which
+    # is the consumer-side analog of the impersonation 24.4 ruled out at
+    # the orchestrator (framing §10.1 item 9). The termination IS the
+    # result of this chat call; render the envelope verbatim per the
+    # §4 contract (provenance / trigger / reason / iterations /
+    # accumulated_results) without paraphrase or synthesis.
+    if _is_orchestration_terminated(result.data):
+        _render_orchestration_terminated(result.data, verbose, retries, result)
+        raise typer.Exit(code=_EXIT_OK)
+
     # Success path. Extract reply text defensively — the chat endpoint's
     # response shape is owned by chat_handler; we don't enshrine it here.
     reply = _extract_reply(result.data)
@@ -204,6 +216,114 @@ def _format_tools(meta: dict, result) -> str:
     if isinstance(tool_duration, (int, float)) and not isinstance(tool_duration, bool):
         return f"{count} ({float(tool_duration):.1f}s)"
     return f"{count}"
+
+
+# ---------------------------------------------------------------------------
+# Phase 24.5: orchestration_terminated consumer projection
+#
+# Both the detection (_is_orchestration_terminated) and the rendering
+# (_render_orchestration_terminated) operate against the verbatim envelope
+# emitted by forge_bridge/console/handlers.py:_build_orchestration_terminated_body
+# (handlers.py:879-895). No paraphrase, no synthesis — the consumer is a
+# projection of the envelope, not a re-author of its semantics.
+#
+# Discipline question used during implementation:
+#   "Does this render preserve provenance?"
+# If the answer becomes blurry, the consumer is drifting toward semantic
+# impersonation (framing §10.1 item 9).
+# ---------------------------------------------------------------------------
+
+_ORCHESTRATION_TERMINATED_STOP_REASON = "orchestration_terminated"
+
+
+def _is_orchestration_terminated(data: Optional[dict]) -> bool:
+    """True if the envelope encodes an orchestrator-decided termination.
+
+    Detected via the top-level ``stop_reason`` field, set by
+    ``forge_bridge/console/handlers.py:_build_orchestration_terminated_body``.
+    """
+    if not isinstance(data, dict):
+        return False
+    return data.get("stop_reason") == _ORCHESTRATION_TERMINATED_STOP_REASON
+
+
+def _render_orchestration_terminated(
+    data: dict,
+    verbose: bool,
+    retries: int,
+    result,
+) -> None:
+    """Render the orchestration_terminated envelope as a structured block.
+
+    Projects the consumer-contract five facts to stdout per Phase 24.5
+    framing §4:
+
+      1. Provenance (the ``[orchestration termination]`` taxon prefix)
+      2. Trigger (``termination.trigger`` verbatim)
+      3. Reason (``termination.reason`` verbatim — author at orchestrator)
+      4. Iterations (``termination.iterations``)
+      5. Accumulated results (full ordered list so operator sees the
+         recurrence pattern; each entry shows tool_name + iter +
+         args_hash + result_hash + content)
+
+    Does NOT extract or paraphrase any ``content`` field as if it were
+    the model's reply (framing §10.1 item 9).
+    """
+    term = data.get("termination") if isinstance(data, dict) else None
+    if not isinstance(term, dict):
+        term = {}
+
+    trigger = term.get("trigger", "?")
+    reason = term.get("reason", "(reason field absent)")
+    iterations = term.get("iterations", "?")
+    accumulated = term.get("accumulated_results")
+    if not isinstance(accumulated, list):
+        accumulated = []
+
+    lines = [
+        "[orchestration termination]",
+        f"  trigger:     {trigger}",
+        f"  reason:      {reason}",
+        f"  iterations:  {iterations}",
+    ]
+
+    if accumulated:
+        lines.append(f"  canonical results ({len(accumulated)} successful):")
+        for i, entry in enumerate(accumulated, start=1):
+            if not isinstance(entry, dict):
+                lines.append(f"    {i}. <malformed entry>")
+                continue
+            tool_name = entry.get("tool_name", "?")
+            iter_num = entry.get("iter", "?")
+            args_hash = entry.get("args_hash", "?")
+            result_hash = entry.get("result_hash", "?")
+            content = entry.get("content", "")
+            lines.append(f"    {i}. {tool_name} [iter={iter_num}]")
+            lines.append(f"       args_hash:   {args_hash}")
+            lines.append(f"       result_hash: {result_hash}")
+            if isinstance(content, str) and content:
+                content_lines = content.splitlines() or [content]
+                lines.append("       content:")
+                for cl in content_lines:
+                    lines.append(f"         | {cl}")
+            else:
+                lines.append("       content:     (empty)")
+    else:
+        lines.append("  canonical results: (none)")
+
+    sys.stdout.write("\n".join(lines) + "\n")
+
+    if verbose:
+        _write_trace_block(result.trace)
+        meta = _extract_metadata(data)
+        sys.stderr.write(
+            f"[chat] orchestration_terminated  "
+            f"elapsed={result.elapsed_seconds:.2f}s  "
+            f"attempts={result.attempts}/{retries + 1}  "
+            f"model={meta.get('model', '?')}  "
+            f"provider={meta.get('provider', '?')}  "
+            f"tools={_format_tools(meta, result)}\n"
+        )
 
 
 def _extract_reply(data: Optional[dict]) -> str:
