@@ -20,7 +20,7 @@ The core ideas:
 
 ## Current State
 
-Shipped at v1.4.1 (2026-04-30). 19 phases across 6 milestones (v1.0 → v1.4.x). ~40,594 LOC. 19 symbols in `forge_bridge.__all__`. The v1.5 Legibility milestone is open (Phases 20-23) — see `.planning/STATE.md` for the live cursor.
+Shipped at tag `v1.4.1` (2026-04-30). `pyproject.toml` version is still `1.4.1` — v1.5 + v1.6 work has shipped reader docs (INSTALL.md, GETTING-STARTED.md, RECIPES.md, TROUBLESHOOTING.md), observability extensions (`postgres` + `graph_store` doctor rows, `ollama-turn` log line), chat-layer convergence (default model bump, SSE streaming, K=2 termination trigger), and operator surfaces (`fbridge flame-exec`, `fbridge graph list/show`) — all as patch-equivalent against the 1.4.1 baseline without API surface change. 19 symbols in `forge_bridge.__all__` (byte-identical from v1.4.x close through v1.6 Phase 24.4). The v1.5 Legibility milestone CLOSED 2026-05-14; the v1.6 Operability milestone is ACTIVE (phases 24, 24.1, 24.2, 24.3, 24.4 shipped; 24.5 anticipated) — see `.planning/STATE.md` for the live cursor.
 
 ### What exists and works
 
@@ -50,20 +50,22 @@ Shipped at v1.4.1 (2026-04-30). 19 phases across 6 milestones (v1.0 → v1.4.x).
    - LOGIK-PROJEKT amber-on-dark palette (UI-SPEC.md design contract)
    - Co-hosted with the MCP server on `:9996` via lifespan (NOT FastMCP `custom_route`)
 
-4. **CLI `fbridge` / `forge-bridge`** (`forge_bridge/cli/main.py` is the Typer front door; `__main__.py` is a thin delegate to it) — Phase 11, expanded through v1.4.x
+4. **CLI `fbridge` / `forge-bridge`** (`forge_bridge/cli/main.py` is the Typer front door; `__main__.py` is a thin delegate to it) — Phase 11, expanded through v1.4.x + v1.6 Phase 24.x
    - Both `fbridge` (canonical short name) and `forge-bridge` (back-compat alias) resolve to `forge_bridge.cli.main:app` (see `pyproject.toml` `[project.scripts]`)
    - Typer + Rich, sync `httpx` consumer of the `:9996` Read API for read commands; direct calls to the runtime manager / chain engine for write commands
-   - Top-level subcommands: `doctor` (runtime doctor — covers Console, MCP, Flame, State WS), `actions` (browse registered tools), `chat` (exercise the chat endpoint), `exec` (deterministic chain engine via `/api/v1/exec`, no LLM), `run` (execute a registered tool by exact name), `up` / `down` / `status` (managed background daemon lifecycle)
+   - Top-level subcommands: `doctor` (runtime doctor — covers Console, MCP, Flame, State WS, **`postgres`** (Phase 23), **`graph_store`** (Phase 24); Flame probe is **daemon-routed** via `POST :9996/api/v1/exec text="flame_ping"` since Phase 24.2), `actions` (browse registered tools), `chat` (exercise the chat endpoint), `exec` (deterministic chain engine via `/api/v1/exec`, no LLM), `run` (execute a registered tool by exact name), **`flame-exec`** (Phase 24 — operator surface onto `_execute_python_core` shared body; same dispatch substrate as the LLM tool-call path; emits `graph_id`), **`graph list / graph show`** (Phase 24 — read-only debug CLI over the JSONL graph store at `~/.forge-bridge/graphs/`), `up` / `down` / `status` (managed background daemon lifecycle)
    - Subgroups: `console` (legacy Phase-11 Read API browser: `tools | execs | manifest | health | doctor`), `mcp` (`stdio | http`), `flame` (`ping`)
    - `--json` short-circuits Rich on every command (P-01 stdout purity)
-   - Locked exit codes: 0=ok, 1=fail, 2=unreachable
+   - Locked exit codes: 0=ok, 1=fail, 2=unreachable (`flame-exec` adds 1=Flame-error, 2=transport)
 
-5. **Chat endpoint** (`forge_bridge/console/handlers.py:chat_handler`) — Phase 16/16.1/16.2
+5. **Chat endpoint** (`forge_bridge/console/handlers.py:chat_handler`) — Phase 16/16.1/16.2 + v1.6 Phase 24.3 + 24.4
    - `POST http://localhost:9996/api/v1/chat`
-   - Agentic tool-call loop via `LLMRouter.complete_with_tools()` (Phase 15 / FB-C)
-   - `sensitive=True` hardcoded → routes through local Ollama (`qwen2.5-coder:32b`); `ANTHROPIC_API_KEY` not required for chat
+   - Agentic tool-call loop via `LLMRouter.complete_with_tools()` (Phase 15 / FB-C); now with K=2 canonical-recurrence termination at the orchestrator-side D-07 site (Phase 24.4)
+   - `sensitive=True` hardcoded → routes through local Ollama (default model **`qwen2.5-coder:14b`** — bumped from `32b` in Phase 24.3 per measure-first canonical baseline); `ANTHROPIC_API_KEY` not required for chat
+   - **Transport:** JSON response by default; **SSE history-grows streaming** when client sends `Accept: text/event-stream` (Phase 24.3; 4.4ms first-byte vs 120s budget; JSON path preserved byte-equivalent)
+   - **Terminal SSE event taxa (Phase 24.4):** `event: done` = model-decided completion / `event: orchestration_terminated` = policy-decided termination (K=2 canonical-recurrence trigger fired; envelope carries distinct `stop_reason` + `trigger=k_fold_canonical` + `k_count` + `result_hash`) / `event: error` = transport / runtime failure
    - Rate limit: 10 req/60s (IP-keyed; SEED-AUTH-V1.5 plants caller-identity migration)
-   - Outer wall-clock 125s (FB-C 120s inner + 5s framing buffer)
+   - Outer wall-clock 125s (FB-C 120s inner + 5s framing buffer); on `orchestration_terminated` the loop ends before budget exhaustion
 
 **Subsystems behind the surfaces:**
 
@@ -72,7 +74,7 @@ Shipped at v1.4.1 (2026-04-30). 19 phases across 6 milestones (v1.0 → v1.4.x).
 - **Postgres persistence layer** (`forge_bridge/store/` + Alembic migrations in `forge_bridge/store/migrations/`) — entities, relationships, events, registry, and the `staged_operation` table from FB-A.
 - **Async/sync client pair** (`forge_bridge/client/`) — `AsyncClient` + `SyncClient` for connecting to the WS server.
 - **Learning pipeline** (`forge_bridge/learning/`) — execution log (JSONL source of truth at `~/.forge-bridge/executions.jsonl`), threshold-driven promotion, LLM synthesizer (Ollama backend), registry watcher, probation system. SQL mirror via `StoragePersistence` Protocol (Phase 8) — JSONL-authoritative, SQL eventual. **Substrate, not autonomous producer:** bridge ships the recording machinery, synthesizer, watcher, and manifest, but a *consumer application* (projekt-forge in production) is responsible for calling `ExecutionLog.record(code, intent)` to feed observations. On a stock install without a consumer wired, the pipeline is dormant — the log file exists, the watcher polls, but no patterns ever cross threshold.
-- **LLM router** (`forge_bridge/llm/router.py`) — `LLMRouter` with `acomplete()` and `complete_with_tools()`; sensitive routing to local Ollama vs. cloud Anthropic; hard caps (8 iterations, 120s wall-clock, 30s per-tool); `LLMLoopBudgetExceeded` / `RecursiveToolLoopError` / `LLMToolError` exported from the public API.
+- **LLM router** (`forge_bridge/llm/router.py`) — `LLMRouter` with `acomplete()` and `complete_with_tools()`; sensitive routing to local Ollama vs. cloud Anthropic; hard caps (8 iterations, 120s wall-clock, 30s per-tool); `LLMLoopBudgetExceeded` / `RecursiveToolLoopError` / `LLMToolError` exported from the public API. **v1.6 Phase 24.4** added the **K=2 canonical-recurrence termination trigger** at the D-07 site (`router.py:639-662`): when the 2nd identical successful canonical dispatch is observed (matching `tool_name` + `args_hash` + `result_hash`, both `status=ok`), internal `_OrchestrationTerminated` is raised after the K-th iter's streaming emits + state update (deferred-raise per framing §5 + §8.3); the handler catches and emits a distinct `event: orchestration_terminated` SSE taxon. Load-bearing invariant: "orchestrator may terminate but does not impersonate the model" — no orchestrator-side synthesis, no system message changes, no prompt shaping.
 - **Staged operations platform** (`forge_bridge/store/staged_operation.py` + console + MCP wiring) — `proposed → approved → executed/rejected/failed` state machine. Approval is bookkeeping; the proposer subscribes to events and executes against its own domain. **Approval surface, not propose-side:** bridge ships only `forge_list_staged` / `forge_get_staged` / `forge_approve_staged` / `forge_reject_staged` — the inspection-and-decision tools. The propose-side MCP tools (`forge_stage_rename`, `forge_stage_publish_shots`, `forge_stage_set_startframes`, …) live in the consumer (projekt-forge in production); on a stock install without a consumer, the `staged_operation` table stays empty until something feeds it. Same substrate/consumer pattern as the Learning pipeline above.
 - **Tool provenance** — every synthesized tool carries `_meta.forge-bridge/*` fields (`origin`, `code_hash`, `synthesized_at`, `version`, `observation_count`); `annotations.readOnlyHint=False` always; sanitization at the read boundary (single-source `_sanitize_patterns.py` shared across Phase 7 + FB-C).
 
@@ -212,7 +214,7 @@ curl -s   http://localhost:9999/status                                  # Flame 
 forge-bridge console doctor                                             # CLI + post-install diagnostic
 ```
 
-`ANTHROPIC_API_KEY` is **optional** — the chat endpoint hardcodes `sensitive=True`, which routes through local Ollama (`qwen2.5-coder:32b`). The key is only needed for `sensitive=False` cloud routing (not the daily operator workflow).
+`ANTHROPIC_API_KEY` is **optional** — the chat endpoint hardcodes `sensitive=True`, which routes through local Ollama (`qwen2.5-coder:14b` since Phase 24.3). The key is only needed for `sensitive=False` cloud routing (not the daily operator workflow).
 
 **Do not use `qwen3:32b` as the default model.** It exceeds the 60s wall-clock budget due to thinking-mode token verbosity (SEED-DEFAULT-MODEL-BUMP-V1.4.x).
 
@@ -220,18 +222,36 @@ forge-bridge console doctor                                             # CLI + 
 
 ## Active Development Context
 
-Milestone: **v1.5 Legibility** (opened 2026-04-30; see `.planning/STATE.md` for the live cursor).
+Milestone: **v1.6 Operability** (opened 2026-05-14; v1.5 Legibility closed same day). See `.planning/STATE.md` for the live cursor; framing at `.planning/milestones/v1.6-FRAMING.md`.
 
-Theme: make forge-bridge usable by its first daily user — close the gap between what's shipped (19 phases, 5 surfaces, ~40k LOC) and what a person can sit down and actually use without re-deriving the deployment topology each time. Four phases:
+Architectural baseline (v1.6-FRAMING §2.5): forge-bridge is **a low-latency conversational runtime + a graph-native operational runtime sharing a common dispatch substrate**. Three engineering domains are now held separately and named explicitly:
 
-- **Phase 20** (current) — Reality Audit + Canonical Install: ships `docs/INSTALL.md`, refreshes README install section + this `CLAUDE.md` ground-truth, pins `install-flame-hook.sh` default to `v1.4.1`. Forcing function: a non-author UAT must pass on a fresh conda env.
-- **Phase 21** — Surface Map + Concept Docs: ships `docs/GETTING-STARTED.md`, rewrites README "What This Is", documents the projekt-forge consumer relationship.
-- **Phase 22** — Daily Workflow Recipes: 6 step-by-step recipes (first-time setup, Claude Desktop wiring, tool synthesis, Flame chat automation, staged-ops approval, manifest inspection).
-- **Phase 23** — Diagnostics + Recovery: ships `docs/TROUBLESHOOTING.md`; in-flight `forge doctor` polish if recipe authoring surfaces gaps.
+1. **Runtime economics** — token budget, KV cache, model size, prompt prefix length.
+2. **Protocol serialization** — provider-native `tool_calls` ingestion + Bug-D salvage normalization (load-bearing on qwen2.5-coder under the 58-tool prefix per Phase 24.1 live measurement).
+3. **Dispatch substrate** — `_execute_python_core` shared body across MCP tool-call path + `fbridge flame-exec` CLI + graph_store JSONL append-only event log.
 
-**v1.5 constraints:** Legibility, not features. No new external libraries. Public `forge_bridge.__all__` stays at 19 unless an install audit surfaces a genuine need. All v1.5+ planted seeds (`SEED-OPUS-4-7-TEMPERATURE-V1.5`, `SEED-AUTH-V1.5`, `SEED-DEFAULT-MODEL-BUMP-V1.4.x`, `SEED-CHAT-STREAMING-V1.4.x`, etc.) defer to v1.6+.
+Five v1.6 phases shipped under writer's-room cadence (no formal GSD plan substrate; framing + commits + cursors + STATE.md updates carry archaeology):
 
-**Don't break:** the Flame hook + MCP server + Artist Console + CLI + chat endpoint are all in production use on assist-01. Refactoring during a docs milestone is out of scope unless the install audit explicitly surfaces a code gap that blocks the operator path (CONTEXT.md D-04).
+- **Phase 24** (substrate work closed on portofino 2026-05-15) — Operational substrate loop. 4-commit operator arc Exists → See → Trust → Drive: `fbridge graph list/show` + `fbridge doctor graph_store` row (tri-state ok/loaded/fail) + Q8 POSIX append atomicity verified dual-platform (portofino macOS + flame-01 Linux) + `fbridge flame-exec` CLI sharing `_execute_python_core` body with the LLM tool-call path. Substrate-discipline encoded structurally — operator surfaces are projections, not parallel execution paths.
+- **Phase 24.1** (CLOSED 2026-05-14) — KV-cache work + protocol-path observability. `OllamaToolAdapter.send_turn` instrumented with structured `ollama-turn` log line. Three-domain decomposition folded into framing. Bug-D salvage promoted to first-class normalization layer.
+- **Phase 24.2** (CLOSED 2026-05-15) — Doctor probe refactored to daemon-routed dispatch (`POST :9996/api/v1/exec text="flame_ping"`). Architectural invariant: **health surface reflects daemon-observed dispatch truth, not independently reconstructed local truth.** Closes the config-context-divergence class (launchd env vs shell env drift was silent + indefinite pre-24.2).
+- **Phase 24.3** (CLOSED 2026-05-16; PR #4 MERGED) — Chat-layer convergence Layer A + Layer C. (A) Default model `qwen2.5-coder:32b → qwen2.5-coder:14b` per measure-first canonical baseline (~1.5–2× per-iter speedup). (C) SSE history-grows streaming for `POST /api/v1/chat` with `Accept: text/event-stream` (4.4ms first-byte vs 120s budget; JSON path preserved).
+- **Phase 24.4** (CLOSED 2026-05-18; PR #5 MERGED) — Chat-layer convergence Layer B: orchestrator-side K=2 canonical-recurrence trigger at D-07 site (`router.py:639-662`). Three terminal SSE event taxa (`done` = model-decided / `orchestration_terminated` = policy-decided / `error` = transport/runtime) encode architectural truth. Load-bearing invariant: **"orchestrator may terminate but does not impersonate the model."**
+
+**24.x A/B/C decomposition complete.**
+
+**Next phase (anticipated, not opened): Phase 24.5** — Consumer-side UX of `orchestration_terminated` in Console + CLI. The K-th `event: message` carries the answer that triggered termination; the consumer surfaces this as the user-facing response. Framing constraint per 24.4 §3.1: the chat handler / Console UI / CLI surface the envelope; the orchestrator does NOT synthesize.
+
+**§11 deferral register from 24.4 framing (live "what's next" menu; all explicitly unbound pending evidence, NOT rejected):** (1) affordance-selection regression — iter 1 still picks `flame_find_media` not `flame_execute_python`; (2) orchestrator-side terminal-content surfacing in consumer (24.5); (3) D-07 unification; (4) cross-provider Anthropic termination semantics (production hardcodes `sensitive=True` → Ollama); (5) token-delta streaming (native `tool_calls` reliability unchanged); (6) adaptive / per-tool K; (7) result-hash normalization.
+
+**v1.6 constraints (binding):**
+
+- Public `forge_bridge.__all__` unchanged at 19 through every 24.x phase. No new external libraries. `pyproject.toml` version still `1.4.1`.
+- Anti-scope §10 (24.4 framing) binding across all 24.x work: no orchestrator-side synthesis, no prompt injection, no system-message changes, no temperature drift, no tool-list narrowing, no semantic-equivalence result-hashing, no cross-provider reach.
+- Per-layer success criteria attached to native layer; UX wins ride as ADDITIONAL, not laundered into convergence success.
+- Writer's-room cadence persists; framing + execution commits + cursors + STATE.md updates carry archaeology.
+
+**Don't break:** the Flame hook + MCP server + Artist Console + CLI + chat endpoint are all in production use across portofino + flame-01 + assist-01. v1.6 added: SSE streaming on `/api/v1/chat`, K=2 termination + `event: orchestration_terminated` taxon, graph_store JSONL emission via `_execute_python_core`, `fbridge flame-exec` + `fbridge graph list/show`, daemon-routed doctor probe, `postgres` + `graph_store` doctor rows, default model bump to `qwen2.5-coder:14b`. All preserve existing surfaces byte-equivalently — refactoring beyond what 24.5 framing explicitly scopes is out of scope.
 
 ---
 
