@@ -43,11 +43,32 @@ def _detect_role(file_path):
 
 def _find_seq(name):
     desk = flame.projects.current_project.current_workspace.desktop
+    candidates = []
     for rg in desk.reel_groups:
         for reel in rg.reels:
             for seq in (reel.sequences or []):
-                if str(seq.name) == name or str(seq.name).strip("'") == name:
-                    return seq
+                candidates.append((seq, str(seq.name)))
+    # tier 1: exact
+    for seq, sname in candidates:
+        if sname == name:
+            return seq
+    # tier 2: quote-strip (pre-D-04 behavior)
+    for seq, sname in candidates:
+        if sname.strip("'") == name:
+            return seq
+    # tier 3: space <-> underscore swap
+    def _swap(s):
+        return s.replace('_', ' ') if '_' in s else s.replace(' ', '_')
+    for seq, sname in candidates:
+        if sname == _swap(name) or _swap(sname) == name:
+            return seq
+    # tier 4: casefold + whitespace collapse
+    def _norm(s):
+        return ' '.join(s.casefold().split())
+    target = _norm(name)
+    for seq, sname in candidates:
+        if _norm(sname) == target or _norm(sname.strip("'")) == target:
+            return seq
     return None
 
 def _collect_segments(seq):
