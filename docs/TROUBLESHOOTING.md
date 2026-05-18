@@ -729,3 +729,97 @@ This is one specific operational asymmetry (operator-shell env vs daemon-launchd
 - Phase 24.2 commit `7fdacf7` (`feat(24.2): doctor truth ↔ effective dispatch truth — daemon-routed flame_bridge probe`) — the substrate-correction commit that introduced this row taxonomy.
 
 ---
+
+## Failure mode: `ModuleNotFoundError: No module named 'forge_bridge'` (editable-install anchor lost)
+
+**Surfaces from:** any `fbridge <subcommand>`, `python -m forge_bridge`, `python -c "import forge_bridge"`, or `pytest` invocation in a conda env where the package was previously installed editable. Distinctive signature: the `fbridge` console script is still on `$PATH` (so the install looked fine), but Python can't actually import the package.
+
+> **Scope note.** This failure mode is structurally pre-runtime — the daemon never starts and `fbridge doctor` can't run, so it falls outside the doctor-coverage commitment that governs the DIAG-01..04 sections above. It lives here because the symptom is real, the recovery is short, and the alternative is a long arc through "did I `pip install` correctly" diagnostics. Polishing doctor cannot close this gap; the gap is upstream of doctor itself.
+
+### Symptom
+
+```text
+$ fbridge doctor
+Traceback (most recent call last):
+  ...
+ModuleNotFoundError: No module named 'forge_bridge'
+```
+
+Or:
+
+```text
+$ python -c "import forge_bridge"
+ModuleNotFoundError: No module named 'forge_bridge'
+```
+
+`which fbridge` resolves to a real binary in your conda env's `bin/`. `pip list` claims `forge-bridge` is installed. But every actual invocation fails on import. The install **looks** present at every layer except the one that matters.
+
+### What `fbridge doctor` shows
+
+Nothing — doctor cannot run. The error occurs during interpreter startup, before any forge-bridge code is reached. This is the structural marker of the failure mode: when doctor itself fails to import, the issue is the install anchor, not any runtime subsystem.
+
+### Diagnosis
+
+`pip install -e .` records the **absolute filesystem path** of the source tree into the conda env (under `site-packages/__editable__.forge_bridge-*.pth` and a corresponding `.dist-info` entry). When that path stops existing — typically because a git worktree got removed, the repo got moved, or the original checkout got deleted — Python's import resolver returns nothing, but the console-script wrapper in `bin/fbridge` stays on `$PATH` and continues to be reachable until you actually invoke it.
+
+The most common precipitating shape on this project:
+
+1. AI assistant or operator runs `git worktree remove <path>` for cleanup.
+2. The active conda env's editable install pointed at that worktree.
+3. The next `fbridge` / `python -m forge_bridge` / `pytest` invocation fails with `ModuleNotFoundError`.
+
+The bridge daemon may still be running from the now-deleted source path — its interpreter holds an open file handle, so the daemon itself continues to serve until restarted. Doctor failing while the daemon keeps running is the cleanest signature of this dual-state condition.
+
+### Recovery
+
+**Fast path (under 1 minute):**
+
+1. **Confirm the diagnosis:**
+
+    ```bash
+    pip show forge-bridge | grep -E '^(Name|Location|Editable)'
+    ```
+
+    A dangling install shows `Location:` or `Editable project location:` pointing at a path that no longer exists. Verify with `ls` if you want to be certain.
+
+2. **Re-anchor the install** from the checkout you're keeping:
+
+    ```bash
+    cd /path/to/your/active/forge-bridge/checkout
+    pip install -e ".[dev,llm]"
+    ```
+
+    The new editable install overwrites the old `.pth` / `.dist-info` entry; the console-script wrapper in `bin/` stays in place unchanged.
+
+3. **Verify the new anchor:**
+
+    ```bash
+    python -c "import forge_bridge; print(forge_bridge.__file__)"
+    ```
+
+    The path printed should point into your active checkout.
+
+### Verification
+
+You're recovered when **all three** signals hold:
+
+- `python -c "import forge_bridge"` succeeds without error.
+- `pip show forge-bridge` reports a `Location` that exists on disk.
+- `fbridge doctor` runs to completion — the underlying daemon-runtime failure modes are now reachable through doctor again.
+
+### Why this happens
+
+`pip install -e .` is implemented as a `.pth` file in `site-packages` that injects the source tree's absolute path onto `sys.path` at interpreter startup. The console script entry point (`fbridge`) is installed as a tiny wrapper in the conda env's `bin/` that does `from forge_bridge.cli.main import app; app()` — but the wrapper itself lives in the env, not in the source tree. So:
+
+- Delete the source tree → import breaks, wrapper still on `$PATH`.
+- Move the source tree → import breaks, wrapper still on `$PATH`.
+- Switch git branches in the same checkout → import keeps working (paths unchanged).
+- Remove a git worktree that the editable install was anchored to → import breaks; this is the most common precipitating action on this project because worktrees feel disposable but a `pip install -e` against one anchors the env to the worktree path.
+
+This is a Python packaging / workflow hazard, not a forge-bridge bug. The same shape applies to every editable install of every Python package; forge-bridge surfaces it more often than most because the daily workflow involves multiple checkouts (main, worktrees, AI-assistant scratch branches) and a long-running daemon that masks the issue until something triggers a fresh import.
+
+### Cross-references
+
+- `CLAUDE.md` "Housekeeping discipline (cleanup actions)" — the precondition check that prevents this in the first place, written so AI assistants doing routine cleanup catch the editable-install anchor before destructive worktree removal.
+
+---
