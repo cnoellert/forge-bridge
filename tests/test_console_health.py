@@ -34,7 +34,17 @@ async def test_health_body_has_d14_shape(real_log, ms, monkeypatch):
     )
     api = ConsoleReadAPI(execution_log=real_log, manifest_service=ms)
     body = await api.get_health()
-    assert set(body.keys()) >= {"status", "ts", "version", "services", "instance_identity"}
+    assert set(body.keys()) >= {
+        "status", "ts", "version", "services", "instance_identity",
+        "install_provenance",
+    }
+    # install_provenance carries the daemon's startup snapshot + live disk SHA
+    # so operators can interpret behavioral observations against known code state.
+    prov = body["install_provenance"]
+    assert set(prov.keys()) >= {
+        "import_path", "repo_root", "startup_sha", "pid", "started_at",
+        "disk_sha_now",
+    }
     expected_services = {
         "mcp", "flame_bridge", "ws_server", "llm_backends",
         "watcher", "storage_callback", "postgres", "console_port",
