@@ -1664,3 +1664,239 @@ def test_chat_model_decided_success_unaffected_by_termination_branch(chat_client
     assert body["stop_reason"] == "end_turn"
     assert "termination" not in body  # absent in model-decided path
     assert body["final_text"] == "OK from mock LLM"
+
+
+# ── Phase 24.5 — Console UI consumer projection of orchestration_terminated ──
+#
+# Static structural tests against the shipped panel.html template + the static
+# forge-chat.js + forge-console.css. Pattern parity with the existing
+# test_ui_chat_handler_renders_panel_template (line 289). Tests verify the
+# Console UI surface implements the §4 consumer contract and honors the
+# §10.1 anti-impersonation guard at the chrome layer ("the consumer may
+# project, but does not synthesize").
+#
+# Browser-runtime behavioral verification (Alpine consuming the envelope and
+# rendering it live) is covered by the §8.2 forcing-function rerun bundle in
+# the canonical-probe rerun commit (commit 4 of the 4-commit arc) — opt-in
+# pytest-playwright extras, not part of the default suite.
+
+
+def _static_asset_source(filename: str) -> str:
+    """Read a forge_bridge/console/static asset for structural assertions."""
+    from pathlib import Path
+    pkg_root = Path(__file__).resolve().parent.parent.parent / "forge_bridge"
+    return (pkg_root / "console" / "static" / filename).read_text(encoding="utf-8")
+
+
+def test_ui_chat_panel_has_orchestration_termination_section(chat_client):
+    """Phase 24.5: panel.html ships the orchestration-termination block.
+
+    Section is at top-level — a SIBLING of the message list, not nested
+    inside any .chat-message variant (framing §5 + §6: distinct KIND).
+    """
+    client, _ = chat_client
+    r = client.get("/ui/chat")
+    assert r.status_code == 200
+    body = r.text
+    # Top-level section with distinct class + ARIA region role.
+    assert '<section class="orchestration-termination"' in body
+    assert 'role="region"' in body
+    assert 'aria-label="Orchestration termination"' in body
+    # Conditionally shown via Alpine x-show against `termination` state.
+    assert 'x-show="termination"' in body
+    # Uppercase taxon header per framing §5.
+    assert "Orchestration Termination" in body
+    assert "orchestration-termination__taxon" in body
+    # Sub-tag explicitly distinguishes from model completion.
+    assert "policy-decided" in body
+    assert "not model completion" in body
+
+
+def test_ui_chat_panel_orchestration_termination_uses_x_text_not_markdown(chat_client):
+    """Framing §10.1 — NO markdown rendering of envelope strings.
+
+    trigger / reason / iterations / accumulated_results.content are all
+    operator-authored at the orchestrator; the consumer projects them
+    verbatim via x-text. ANY x-html binding (or use of renderContent)
+    would route them through renderMarkdown(), which is consumer-side
+    synthesis through markdown transformation.
+    """
+    client, _ = chat_client
+    body = client.get("/ui/chat").text
+    # All five contract facts bind via x-text on the termination object.
+    assert 'x-text="termination && termination.trigger"' in body
+    assert 'x-text="termination && termination.reason"' in body
+    assert 'x-text="termination && termination.iterations"' in body
+    # accumulated_results.content uses <pre> + x-text (verbatim display)
+    assert 'x-text="entry.content"' in body
+    # Anti-synthesis guard: locate the termination <section> and verify
+    # renderContent / x-html appear NOWHERE inside it.
+    start = body.find('<section class="orchestration-termination"')
+    end = body.find("</section>", start)
+    assert start > 0 and end > start
+    ot_block = body[start:end]
+    assert "renderContent" not in ot_block
+    assert "x-html" not in ot_block
+
+
+def test_ui_chat_panel_orchestration_termination_is_sibling_not_message_variant(chat_client):
+    """Framing §6: termination is a sibling of messages, not a styled
+    .chat-message-- variant. DOM order: termination block appears AFTER
+    the message x-for template, and the block's class namespace MUST NOT
+    include any .chat-message-- leak (which would semantically subordinate
+    it under the assistant family per operator's commit-3 reinforcement)."""
+    client, _ = chat_client
+    body = client.get("/ui/chat").text
+    xfor_idx = body.find('x-for="msg in renderableMessages()"')
+    ot_idx = body.find("orchestration-termination")
+    assert xfor_idx > 0 and ot_idx > 0
+    assert ot_idx > xfor_idx, "termination section must appear after the message x-for"
+    # Termination block uses its own class namespace; no chat-message-- leak.
+    start = body.find('<section class="orchestration-termination"')
+    end = body.find("</section>", start)
+    ot_block = body[start:end]
+    assert "chat-message--" not in ot_block
+    assert "chat-message-content" not in ot_block
+
+
+def test_ui_chat_panel_orchestration_termination_done_path_byte_identical(chat_client):
+    """Anti-scope §7.4: done-path rendering structurally unchanged at 24.5.
+
+    The orchestration-termination section is x-show'd against termination
+    state — when termination is null (done path), the section is hidden.
+    No new elements leak into the done rendering path.
+    """
+    client, _ = chat_client
+    body = client.get("/ui/chat").text
+    # Existing message-rendering chrome unchanged.
+    assert ':class="messageClass(msg)"' in body
+    assert "chat-message--user" in body or "messageClass" in body  # via JS
+    # Empty-state copy unchanged.
+    assert "Ask about pipeline state, tools, or execution history" in body
+
+
+# ── forge-chat.js orchestration_terminated detection ────────────────────────
+
+
+def test_forge_chat_js_has_termination_state_field():
+    """Phase 24.5: chatPanel() factory carries `termination: null` state."""
+    src = _static_asset_source("forge-chat.js")
+    assert "termination: null" in src
+
+
+def test_forge_chat_js_clears_termination_on_new_send():
+    """A new send() must clear any prior turn's termination state.
+
+    Otherwise stale termination chrome persists into the next turn —
+    operator perceives "this conversation is policy-terminated" when in
+    fact a new send is in flight.
+    """
+    src = _static_asset_source("forge-chat.js")
+    # The clear assignment exists; locate it INSIDE the send() body by
+    # finding the marker that precedes it ("this.error = "").
+    error_clear_idx = src.find('this.error = ""')
+    term_clear_idx = src.find("this.termination = null")
+    assert error_clear_idx > 0 and term_clear_idx > 0
+    # The termination clear must follow the error clear (both at the top
+    # of send() per the convention established by D-09).
+    assert term_clear_idx > error_clear_idx
+
+
+def test_forge_chat_js_detects_orchestration_terminated_envelope():
+    """Detection key: stop_reason === "orchestration_terminated" AND
+    a typeof-checked termination object."""
+    src = _static_asset_source("forge-chat.js")
+    assert 'body.stop_reason === "orchestration_terminated"' in src
+    assert "body.termination" in src
+    # Typeof guard prevents detection on malformed envelopes (defensive
+    # parsing parity with CLI _is_orchestration_terminated).
+    assert 'typeof body.termination === "object"' in src
+
+
+def test_forge_chat_js_does_not_paraphrase_or_transform_termination():
+    """Framing §10.1: assignment is verbatim — `this.termination = body.termination`.
+
+    No JSON.parse, no Object.assign with overrides, no field renames, no
+    field synthesis. The envelope IS the consumer state. Any transform
+    pattern (.map / JSON.parse on body.termination) is the synthesis red
+    flag this test catches.
+    """
+    src = _static_asset_source("forge-chat.js")
+    assert "this.termination = body.termination" in src
+    # Specific synthesis anti-patterns: explicit absence assertions.
+    assert "JSON.parse(body.termination" not in src
+    assert "body.termination.map" not in src
+    # No spread-and-mutate (would allow field injection / rename).
+    assert "...body.termination" not in src
+
+
+def test_forge_chat_js_termination_null_when_envelope_lacks_it():
+    """Defensive: when the envelope's stop_reason is anything OTHER than
+    orchestration_terminated, termination is explicitly set to null (not
+    left stale from prior turns)."""
+    src = _static_asset_source("forge-chat.js")
+    # Look for the else branch clearing termination.
+    # Loose pattern: an explicit `this.termination = null` after the
+    # detection block (i.e. the second occurrence in the file — first is
+    # the top-of-send clear, second is the else branch).
+    occurrences = src.count("this.termination = null")
+    assert occurrences >= 2, "Need both top-of-send clear AND else-branch clear"
+
+
+# ── forge-console.css orchestration_terminated chrome ───────────────────────
+
+
+def test_forge_console_css_has_orchestration_termination_chrome():
+    """Phase 24.5: CSS ships distinct visual chrome for termination."""
+    src = _static_asset_source("forge-console.css")
+    assert ".orchestration-termination{" in src
+    assert ".orchestration-termination__taxon" in src
+    assert ".orchestration-termination__header" in src
+    assert ".orchestration-termination__facts" in src
+    assert ".orchestration-termination__results" in src
+    assert ".orchestration-termination__entry" in src
+
+
+def test_forge_console_css_termination_is_not_styled_assistant_variant():
+    """Framing §5 + operator's commit-3 reinforcement: termination must
+    NOT visually subordinate beneath assistant styling.
+
+    Concretely: no compound selector chains .chat-message--assistant with
+    .orchestration-termination (which would layer assistant chrome under
+    termination, or vice versa). Independent visual KINDS.
+    """
+    src = _static_asset_source("forge-console.css")
+    # Compound-selector laundering patterns must not exist.
+    assert ".chat-message--assistant.orchestration-termination" not in src
+    assert ".orchestration-termination.chat-message" not in src
+    assert ".chat-message .orchestration-termination" not in src
+    # Inside the termination block (locate by its first selector through
+    # its next /* === comment marker), no chat-message references.
+    start = src.find(".orchestration-termination{")
+    end = src.find("/* ===", start)
+    if end < 0:
+        end = len(src)
+    block = src[start:end]
+    assert "chat-message" not in block
+
+
+def test_forge_console_css_termination_uses_distinct_shape_signals():
+    """Distinction-by-shape (not just color): box outline + thick left
+    band (4px — distinct from .chat-message--*'s 2px) + mono font +
+    uppercase taxon header. Four independent visual signals so the
+    distinction survives single-channel degradation (colorblind,
+    high-contrast mode, low-color-depth displays)."""
+    src = _static_asset_source("forge-console.css")
+    start = src.find(".orchestration-termination{")
+    end = src.find("/* ===", start)
+    if end < 0:
+        end = len(src)
+    block = src[start:end]
+    # 1. Box outline (NOT single-side border like .chat-message--user/assistant)
+    assert "border:1px solid" in block
+    # 2. Thick left band — 4px distinct from .chat-message--*'s 2px
+    assert "border-left:4px" in block
+    # 3. Monospace font signals "structured truth" not "prose"
+    assert "var(--font-mono)" in block
+    # 4. Uppercase taxon header for at-a-glance distinction
+    assert "text-transform:uppercase" in block

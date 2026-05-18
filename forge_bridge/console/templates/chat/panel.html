@@ -48,6 +48,49 @@
     <p x-show="messages.length === 0" class="chat-empty">
       Ask about pipeline state, tools, or execution history.
     </p>
+
+    {# Phase 24.5: orchestration_terminated consumer projection.
+       Rendered as a SIBLING of the message list, not as a styled message —
+       this is a different KIND of thing (policy-decided termination), not a
+       different style of assistant completion. All fields use x-text (NOT
+       x-html / NOT renderContent) so the verbatim envelope strings are NEVER
+       passed through the markdown renderer that turns prose into HTML.
+       The orchestrator authored these strings; the consumer projects them. #}
+    <section class="orchestration-termination"
+             x-show="termination"
+             x-cloak
+             role="region"
+             aria-label="Orchestration termination">
+      <header class="orchestration-termination__header">
+        <span class="orchestration-termination__taxon">Orchestration Termination</span>
+        <span class="orchestration-termination__sub">policy-decided — not model completion</span>
+      </header>
+      <dl class="orchestration-termination__facts">
+        <dt>trigger</dt>
+        <dd x-text="termination && termination.trigger"></dd>
+        <dt>reason</dt>
+        <dd x-text="termination && termination.reason"></dd>
+        <dt>iterations</dt>
+        <dd x-text="termination && termination.iterations"></dd>
+      </dl>
+      <details class="orchestration-termination__results"
+               x-show="termination && (termination.accumulated_results || []).length > 0">
+        <summary>
+          <span x-text="`canonical results (${(termination && termination.accumulated_results || []).length} successful)`"></span>
+        </summary>
+        <template x-for="(entry, i) in (termination && termination.accumulated_results || [])" :key="i">
+          <div class="orchestration-termination__entry">
+            <div class="orchestration-termination__entry-header"
+                 x-text="`${i + 1}. ${entry.tool_name} [iter=${entry.iter}]`"></div>
+            <dl class="orchestration-termination__entry-meta">
+              <dt>args_hash</dt><dd x-text="entry.args_hash"></dd>
+              <dt>result_hash</dt><dd x-text="entry.result_hash"></dd>
+            </dl>
+            <pre class="orchestration-termination__entry-content" x-text="entry.content"></pre>
+          </div>
+        </template>
+      </details>
+    </section>
   </div>
 
   <!-- input (D-10: single textarea, Enter sends, Shift+Enter newline) -->
