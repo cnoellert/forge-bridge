@@ -142,7 +142,7 @@ def _check_install_provenance() -> dict[str, Any]:
             fix="see console row above",
         )
     try:
-        data = r.json()
+        body = r.json()
     except ValueError:
         return _provenance_warn(
             "console returned non-JSON — provenance unavailable",
@@ -150,6 +150,11 @@ def _check_install_provenance() -> dict[str, Any]:
             fix="see console row above",
         )
 
+    # /api/v1/health wraps the get_health() body in the standard
+    # {data, meta} envelope (handlers.py:408 -> _envelope). The CLI fetch()
+    # helper auto-unwraps; we use raw httpx.Client to avoid coupling this
+    # probe to the helper's error-translation layer, so we unwrap here.
+    data = body.get("data") or {}
     prov = data.get("install_provenance") or {}
     if not prov:
         return _provenance_warn(
