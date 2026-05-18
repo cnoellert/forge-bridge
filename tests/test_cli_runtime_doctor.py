@@ -95,12 +95,18 @@ def _flame_ping_envelope(
 
 
 def _health_body_ok(*, install_provenance: dict | None = None) -> dict:
-    """Happy-path /api/v1/health body — install_provenance matches operator CWD.
+    """Happy-path /api/v1/health wire body (wrapped in {data, meta} envelope).
 
-    Defaults to a provenance block where startup_sha == disk_sha_now ==
-    operator CWD HEAD, so the install_provenance probe returns ok. Pass
-    `install_provenance=` to override for warn-state tests, or pass an
-    empty dict to simulate a daemon that does not report the field
+    /api/v1/health goes through health_handler -> _envelope(data), so the
+    wire shape is {"data": {<get_health() body>}, "meta": {...}} — NOT the
+    bare body. Fixtures here mirror that wrapping so the doctor probe (which
+    uses raw httpx.Client, not the auto-unwrapping fetch() helper) reads
+    the same shape it would in production.
+
+    install_provenance defaults to a provenance block where
+    startup_sha == disk_sha_now == operator CWD HEAD, so the probe returns
+    ok. Pass `install_provenance=` to override for warn-state tests, or pass
+    an empty dict to simulate a daemon that does not report the field
     (incompatible-version warn branch).
     """
     if install_provenance is None:
@@ -118,7 +124,10 @@ def _health_body_ok(*, install_provenance: dict | None = None) -> dict:
             "started_at": "2026-05-18T22:00:00+00:00",
             "disk_sha_now": cwd_sha,
         }
-    return {"status": "ok", "install_provenance": install_provenance}
+    return {
+        "data": {"status": "ok", "install_provenance": install_provenance},
+        "meta": {},
+    }
 
 
 def _default_post_handlers() -> dict:
