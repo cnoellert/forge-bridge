@@ -67,6 +67,13 @@
       draft: "",
       inflight: false,
       error: "",
+      // Phase 24.5: orchestration_terminated consumer state. Stored as a
+      // SIBLING of messages — termination is a different KIND of thing
+      // (policy-decided termination), not a message. Null when the last
+      // response was a normal model completion or an error. Populated
+      // verbatim from response body's `termination` field; consumer does
+      // NOT paraphrase, summarize, or transform any field (framing §10.1).
+      termination: null,
 
       init() {
         // D-06 per-tab: nothing to restore. Cleared on tab close.
@@ -118,6 +125,10 @@
         this.draft = "";
         this.inflight = true;
         this.error = "";
+        // Phase 24.5: clear any prior turn's termination state. A new send
+        // means the previous orchestration termination (if any) is no
+        // longer the current state of the conversation.
+        this.termination = null;
 
         // Build the wire payload — strip client-side ids so the server
         // contract stays {role, content, tool_call_id?}.
@@ -161,6 +172,21 @@
               content: m.content,
               tool_call_id: m.tool_call_id,
             }));
+            // Phase 24.5: orchestration_terminated detection. When the
+            // envelope encodes a policy-decided termination, surface the
+            // termination block as its own sibling chrome (see panel.html
+            // <section class="orchestration-termination">). The envelope
+            // is consumed verbatim — trigger / reason / iterations /
+            // accumulated_results are projected through x-text bindings
+            // (NOT x-html) to guarantee no markdown rendering, no
+            // synthesis, no paraphrase (framing §10.1).
+            if (body.stop_reason === "orchestration_terminated"
+                && body.termination
+                && typeof body.termination === "object") {
+              this.termination = body.termination;
+            } else {
+              this.termination = null;
+            }
           }
         } catch (e) {
           this.error = "Chat error — check console for details.";
