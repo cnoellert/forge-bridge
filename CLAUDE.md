@@ -255,6 +255,29 @@ Five v1.6 phases shipped under writer's-room cadence (no formal GSD plan substra
 
 ---
 
+## Housekeeping discipline (cleanup actions)
+
+Before any destructive housekeeping that touches the filesystem layout this project anchors to — `git worktree remove`, moving the repo, deleting a checkout — **check whether an editable install is anchored to the target path first:**
+
+```bash
+pip show forge-bridge | grep -E '^(Location|Editable)'
+```
+
+If the `Location` (or `Editable project location`) points into the path you're about to delete, **re-anchor the editable install from a checkout you're keeping before removing anything:**
+
+```bash
+cd /path/to/the/checkout/you/are/keeping
+pip install -e ".[dev,llm]"
+```
+
+THEN remove the worktree. Reversing the order leaves the env with a dangling `.pth` pointer — `fbridge` stays on `$PATH` but every invocation surfaces `ModuleNotFoundError: No module named 'forge_bridge'` until the install is re-anchored. The long-running daemon usually keeps serving (its interpreter holds an open file handle to the deleted source), so the breakage doesn't surface until the next `pytest` / `fbridge` / `python -c "import forge_bridge"` invocation — at which point it can look like a much deeper problem than it actually is.
+
+Full recovery + symptom catalogue: `docs/TROUBLESHOOTING.md` → "Failure mode: `ModuleNotFoundError: No module named 'forge_bridge'` (editable-install anchor lost)".
+
+This precondition check matters more on this project than on most because the daily workflow involves multiple checkouts (main + worktrees + AI-assistant scratch branches) and the active conda env is typically anchored to exactly one of them.
+
+---
+
 ## Questions To Come Back To
 
 1. What format should bridge use for inter-service messages? JSON? MessagePack? Something else?
