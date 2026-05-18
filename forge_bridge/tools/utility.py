@@ -53,21 +53,8 @@ class ExecutePythonInput(BaseModel):
 
 
 async def execute_python(code: str, main_thread: bool = False) -> str:
-    """Flame: the universal Flame introspection and automation surface.
-
-    When a dedicated flame_* tool covers your need (flame_get_project,
-    flame_list_desktop, flame_list_libraries, flame_context, etc.), prefer
-    it — those tools are typed, validated, and cheaper. For everything
-    else, this is the canonical answer.
-
-    Use this tool whenever you need to inspect or manipulate Flame state
-    and no dedicated flame_* tool directly exposes the required
-    information. This is the escalation path when narrow tools either
-    don't exist for your question or return adjacent-but-insufficient
-    data (e.g. flame_list_desktop returns reel clip *counts* but the
-    user wants clip *names* — reach here with a one-liner). It is the
-    reflective surface of Flame itself: anything the Flame Python API
-    can answer, this tool can answer.
+    """Flame: the canonical introspection surface for reel structure,
+    clip enumeration, timeline traversal, and Flame state inspection.
 
     Canonical use cases:
     - reel inspection (clip names, sequence enumeration, reel-group structure)
@@ -79,6 +66,21 @@ async def execute_python(code: str, main_thread: bool = False) -> str:
     - sequence inspection (segment counts, frame ranges, layer structure)
     - selection queries (what is the artist currently looking at)
     - any state question that doesn't map to a narrow flame_* tool
+
+    This is the reflective surface of Flame itself: anything the Flame
+    Python API can answer, this tool can answer. Use it whenever you need
+    to inspect or manipulate Flame state and no dedicated flame_* tool
+    directly exposes the required information. It is also the escalation
+    path when narrow tools return adjacent-but-insufficient data (e.g.
+    flame_list_desktop returns reel clip *counts* but the user wants
+    clip *names* — reach here with a one-liner).
+
+    Dedicated flame_* tools remain useful for narrow typed operations
+    (flame_get_project, flame_list_desktop, flame_list_libraries,
+    flame_context, etc.) because they are validated and cheaper to run.
+    But when the question requires structural traversal, enumeration,
+    cross-surface inspection, or reflective access to Flame state,
+    this is the canonical answer surface.
 
     Do NOT use this tool when:
     - a narrow flame_* tool exists for the exact question — those are

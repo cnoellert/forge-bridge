@@ -313,14 +313,19 @@ class FindMediaInput(BaseModel):
 
 
 async def find_media(params: FindMediaInput) -> str:
-    """Flame: search the live Flame session for clips/sequences by name.
+    """Flame: locate a *named* clip or sequence inside the live Flame
+    session by substring match against the name.
 
     Searches Flame's desktop reels and/or workspace libraries for clips
     and sequences whose names contain the query (case-insensitive). The
-    user must provide a query string.
+    user must provide a query string. This tool searches *by name*; it
+    is not a structural traversal of reel or sequence contents — without
+    a specific name to match, it will not enumerate the items inside
+    a reel, sequence, library, or folder.
 
     Use this tool ONLY when:
     - the user is searching for a *named clip or sequence inside Flame*
+    - the user has a specific name (or substring of a name) to match
     - the search target is in the live Flame session (desktop or libraries)
 
     Do NOT use this tool for:
