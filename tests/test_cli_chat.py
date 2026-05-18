@@ -331,3 +331,212 @@ def test_chat_json_envelope_includes_trace():
     assert "timeline" in payload
     assert payload["attempts"] == 1
     assert "elapsed_seconds" in payload
+
+
+# ---------------------------------------------------------------------------
+# Phase 24.5: orchestration_terminated consumer projection
+#
+# The envelope shape below mirrors what
+# forge_bridge/console/handlers.py:_build_orchestration_terminated_body
+# (handlers.py:879-895) emits when the K=2 canonical-recurrence trigger
+# fires at the orchestrator-side D-07 site (router.py:639-662, raise at
+# :988, catch at :1018). Tests do NOT exercise the server-side trigger
+# itself — those are covered at tests/llm/test_complete_with_tools.py
+# and tests/console/test_chat_handler_sse.py × 3. These tests cover the
+# CLI consumer-projection gap (24.5 framing §14: 30 CLI tests / 0
+# covering orchestration_terminated pre-24.5).
+# ---------------------------------------------------------------------------
+
+_OT_ENVELOPE = {
+    "stop_reason": "orchestration_terminated",
+    "termination": {
+        "status": "orchestration_terminated",
+        "trigger": "k_fold_canonical",
+        "reason": (
+            "Tool flame_execute_python dispatched successfully 2 times with "
+            "identical canonical arguments and identical canonical result. "
+            "Loop terminated by orchestration policy."
+        ),
+        "iterations": 4,
+        "accumulated_results": [
+            {
+                "tool_name": "flame_execute_python",
+                "args_hash": "5be50d5d",
+                "result_hash": "8ca14d1e",
+                "content": (
+                    "Reel 1: 5 clips\n"
+                    "Clip01.mov\n"
+                    "Clip02.mov\n"
+                    "Clip03.mov\n"
+                    "Clip04.mov\n"
+                    "Clip05.mov"
+                ),
+                "iter": 2,
+            },
+            {
+                "tool_name": "flame_execute_python",
+                "args_hash": "5be50d5d",
+                "result_hash": "8ca14d1e",
+                "content": (
+                    "Reel 1: 5 clips\n"
+                    "Clip01.mov\n"
+                    "Clip02.mov\n"
+                    "Clip03.mov\n"
+                    "Clip04.mov\n"
+                    "Clip05.mov"
+                ),
+                "iter": 4,
+            },
+        ],
+    },
+    "messages": [
+        {"role": "user", "content": "What are the clips on Reel 1?"},
+    ],
+    "tool_trace": [],
+    "request_id": "req-test-24-5",
+    "tools_available": 58,
+    "tools_filtered": 58,
+    "tool_enforced": False,
+    "tool_forced": False,
+    "model": "qwen2.5-coder:14b",
+    "provider": "ollama",
+}
+
+
+def test_chat_orchestration_terminated_renders_taxonomic_block():
+    """Five-fact contract (framing §4) projected to stdout with taxon prefix."""
+    with _patch_httpx([_Resp(200, _OT_ENVELOPE)]):
+        result = runner.invoke(app, ["chat", "What are the clips on Reel 1?"])
+    assert result.exit_code == 0
+    # Provenance taxon (fact 1)
+    assert "[orchestration termination]" in result.stdout
+    # Trigger (fact 2)
+    assert "trigger:" in result.stdout
+    assert "k_fold_canonical" in result.stdout
+    # Reason verbatim (fact 3) — NOT paraphrased
+    assert "reason:" in result.stdout
+    assert "Loop terminated by orchestration policy" in result.stdout
+    # Iterations (fact 4)
+    assert "iterations:" in result.stdout
+    assert "4" in result.stdout
+
+
+def test_chat_orchestration_terminated_renders_accumulated_results():
+    """Full recurrence pattern visible (fact 5) — both K-fold entries + hashes."""
+    with _patch_httpx([_Resp(200, _OT_ENVELOPE)]):
+        result = runner.invoke(app, ["chat", "ping"])
+    assert result.exit_code == 0
+    assert "canonical results (2 successful)" in result.stdout
+    assert "flame_execute_python [iter=2]" in result.stdout
+    assert "flame_execute_python [iter=4]" in result.stdout
+    assert "5be50d5d" in result.stdout  # args_hash
+    assert "8ca14d1e" in result.stdout  # result_hash
+    # Multi-line content rendered with pipe-prefix (per-line demarcation)
+    assert "| Reel 1: 5 clips" in result.stdout
+    assert "| Clip05.mov" in result.stdout
+
+
+def test_chat_orchestration_terminated_does_not_impersonate_via_extract_reply():
+    """Framing §10.1 item 9 — the load-bearing anti-impersonation guard.
+
+    _extract_reply would happily pull data["response"] or messages[-1].content
+    and render it as if the model authored it. With orchestration_terminated
+    detection, that path MUST NOT run.
+    """
+    sentinel = "IMPERSONATION_SENTINEL_must_not_appear_as_bare_reply"
+    envelope = {
+        **_OT_ENVELOPE,
+        # If _extract_reply ran, it would prefer "response" first.
+        "response": sentinel,
+        "messages": [
+            {"role": "user", "content": "test"},
+            # If _extract_reply fell back, it would pull messages[-1].content.
+            {"role": "tool", "content": sentinel},
+        ],
+    }
+    with _patch_httpx([_Resp(200, envelope)]):
+        result = runner.invoke(app, ["chat", "test"])
+    assert result.exit_code == 0
+    # Termination taxon present (the orchestration_terminated path ran)
+    assert "[orchestration termination]" in result.stdout
+    # The bare-reply shape would have been just `sentinel + "\n"` — verify NOT.
+    assert result.stdout != sentinel + "\n"
+    # _OT_ENVELOPE's accumulated_results content does NOT contain the
+    # sentinel; the only way sentinel could appear in output is via
+    # impersonation through _extract_reply. Assert it is absent.
+    assert sentinel not in result.stdout
+
+
+def test_chat_orchestration_terminated_exit_code_zero():
+    """Transport succeeded; termination is the result, not a failure (exit 0)."""
+    with _patch_httpx([_Resp(200, _OT_ENVELOPE)]):
+        result = runner.invoke(app, ["chat", "ping"])
+    assert result.exit_code == 0
+
+
+def test_chat_orchestration_terminated_json_mode_byte_identical_envelope():
+    """--json passes envelope through unchanged; no projection in JSON path."""
+    with _patch_httpx([_Resp(200, _OT_ENVELOPE)]):
+        result = runner.invoke(app, ["chat", "--json", "ping"])
+    assert result.exit_code == 0
+    parsed = json.loads(result.stdout)
+    assert parsed["ok"] is True
+    assert parsed["data"]["stop_reason"] == "orchestration_terminated"
+    assert parsed["data"]["termination"]["trigger"] == "k_fold_canonical"
+    assert parsed["data"]["termination"]["iterations"] == 4
+    assert len(parsed["data"]["termination"]["accumulated_results"]) == 2
+    # The structured-block taxon prefix MUST NOT leak into --json stdout.
+    assert "[orchestration termination]" not in result.stdout
+
+
+def test_chat_orchestration_terminated_quiet_mode():
+    """--quiet still renders termination block (it IS the result); suppresses verbose."""
+    with _patch_httpx([_Resp(200, _OT_ENVELOPE)]):
+        result = runner.invoke(app, ["chat", "--quiet", "ping"])
+    assert result.exit_code == 0
+    # Termination block stays on stdout — operator must see what happened.
+    assert "[orchestration termination]" in result.stdout
+    # Verbose [chat] line absent (quiet contract).
+    assert "[chat] orchestration_terminated" not in result.stderr
+
+
+def test_chat_orchestration_terminated_verbose_mode_distinguishes_from_done():
+    """--verbose emits a verbose line naming orchestration_terminated explicitly.
+
+    The done path emits ``[chat] elapsed=...``; the termination path emits
+    ``[chat] orchestration_terminated elapsed=...``. Different leading
+    token = operator-visible distinction at the verbose surface.
+    """
+    with _patch_httpx([_Resp(200, _OT_ENVELOPE)]):
+        result = runner.invoke(app, ["chat", "--verbose", "ping"])
+    assert result.exit_code == 0
+    assert "[orchestration termination]" in result.stdout
+    assert "[chat] orchestration_terminated" in result.stderr
+
+
+def test_chat_orchestration_terminated_visually_distinct_from_done_path():
+    """Cross-path anti-confusion: done output and OT output do not share the taxon prefix."""
+    done_envelope = {"response": "Reel 1 has 5 clips: Clip01-Clip05"}
+    with _patch_httpx([_Resp(200, done_envelope)]):
+        done = runner.invoke(app, ["chat", "ping"])
+    with _patch_httpx([_Resp(200, _OT_ENVELOPE)]):
+        ot = runner.invoke(app, ["chat", "ping"])
+    # Done path renders bare reply text (existing contract preserved)
+    assert done.stdout == "Reel 1 has 5 clips: Clip01-Clip05\n"
+    assert "[orchestration termination]" not in done.stdout
+    # OT path renders the structured block
+    assert "[orchestration termination]" in ot.stdout
+
+
+def test_chat_orchestration_terminated_defensive_on_malformed_envelope():
+    """Render gracefully even if termination field is absent (defensive parsing)."""
+    envelope = {"stop_reason": "orchestration_terminated"}  # no termination dict
+    with _patch_httpx([_Resp(200, envelope)]):
+        result = runner.invoke(app, ["chat", "ping"])
+    assert result.exit_code == 0
+    # Taxon still present so operator can see termination occurred.
+    assert "[orchestration termination]" in result.stdout
+    # Placeholders rendered for missing facts (no crash).
+    assert "trigger:" in result.stdout
+    assert "iterations:" in result.stdout
+    assert "canonical results: (none)" in result.stdout
