@@ -158,26 +158,31 @@ def test_docstring_contains_three_worked_examples():
 
 
 def test_docstring_teaches_canonical_positioning_not_escape_hatch():
-    """Post-walk repositioning (23.1, in-flight per D-20): the docstring's
-    opening must position this tool as the canonical Flame introspection
-    surface, NOT as a generic escape hatch / dangerous code execution
-    primitive. The model reads the opening as positioning; without canonical-
-    surface framing it treats this tool as a last-resort fallback rather
-    than the right answer to Flame state questions.
+    """Post-walk repositioning (23.1, in-flight per D-20; refined 24.6 per
+    affordance-selection-sharpening framing): the docstring's opening must
+    position this tool as the canonical Flame introspection surface, NOT as
+    a generic escape hatch / dangerous code execution primitive. The model
+    reads the opening as positioning; without canonical-surface framing it
+    treats this tool as a last-resort fallback rather than the right answer
+    to Flame state questions.
 
     Specifically pins:
-      - The 'universal Flame introspection and automation surface' framing
+      - Canonical-surface framing in the opening tagline ('canonical
+        introspection surface', per 24.6 — replaced 23.1's 'universal Flame
+        introspection and automation surface' as part of rhetorical inversion
+        that fronts concrete capabilities before universality)
       - The 'canonical answer' positioning relative to dedicated flame_* tools
       - The 'reflective surface of Flame itself' generalization
     """
     doc = execute_python.__doc__ or ""
     # Canonical positioning, not escape-hatch language.
-    assert "universal Flame introspection and automation surface" in doc, (
-        "lost canonical-surface positioning; the model will read this tool "
-        "as escape-hatch-shaped and skip it for introspection queries"
+    assert "canonical introspection surface" in doc, (
+        "lost canonical-surface positioning in opening tagline; the model "
+        "will read this tool as escape-hatch-shaped and skip it for "
+        "introspection queries"
     )
     assert "canonical answer" in doc.lower(), (
-        "lost the 'for everything else, this is the canonical answer' framing"
+        "lost the 'canonical answer' positioning relative to dedicated tools"
     )
     assert "reflective surface of Flame itself" in doc, (
         "lost the introspection-generalization sentence"
@@ -190,10 +195,17 @@ def test_docstring_teaches_when_to_use_and_when_not_to():
     'Use this tool when' with an escalation rule that teaches when to
     reach for this tool vs the narrow flame_* surface. Both forms are
     acceptable; what's NOT acceptable is dropping the escalation rule
-    entirely."""
+    entirely.
+
+    Whitespace is normalized before substring checks because intentional
+    paragraph rewrapping (e.g. the 24.6 rhetorical inversion) can split
+    the escalation phrase across a line break without changing its meaning.
+    """
     doc = execute_python.__doc__ or ""
+    # Normalize whitespace so line-wrapping changes don't break semantic checks.
+    normalized = " ".join(doc.split())
     # The escalation rule — load-bearing for tool selection.
-    assert "no dedicated flame_* tool directly exposes" in doc, (
+    assert "no dedicated flame_* tool directly exposes" in normalized, (
         "lost the escalation rule that teaches the model when to escalate "
         "to this tool from narrow flame_* tools"
     )
