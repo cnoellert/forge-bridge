@@ -709,4 +709,24 @@ class ConsoleReadAPI:
             "version": __version__,
             "services": services,
             "instance_identity": instance_identity,
+            "install_provenance": _build_install_provenance_block(),
         }
+
+
+def _build_install_provenance_block() -> dict:
+    """Assemble the install-provenance dict for the /api/v1/health body.
+
+    Snapshot fields (import_path / repo_root / startup_sha / pid /
+    started_at) come from the cached `get_provenance()` capture; the
+    live `disk_sha_now` re-invokes git every call so the doctor can
+    detect daemon-vs-disk drift. Per the 24.6 + D-04 dogfood archaeology,
+    knowing what code the daemon is actually serving is the operational
+    invariant any behavioral observation should be interpreted against.
+    """
+    from forge_bridge.install_provenance import current_disk_sha, get_provenance
+
+    snapshot = get_provenance()
+    return {
+        **snapshot,
+        "disk_sha_now": current_disk_sha(),
+    }
