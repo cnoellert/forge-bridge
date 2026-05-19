@@ -151,3 +151,22 @@ def test_rename_shots_uses_worker_bridge_for_inner_idle_event(monkeypatch):
     assert json.loads(out)["renamed"] == 0
     assert "flame.schedule_idle_event(_do)" in captured["code"]
     assert captured["main_thread"] is False
+
+
+def test_rename_shots_numbers_from_start_by_increment():
+    src = _source_of(timeline.rename_shots)
+
+    assert "num_str   = str(shot_num).zfill(padding)" in src
+    assert "shot_num += increment" in src
+    assert "shot_num * increment" not in src
+
+
+def test_rename_defaults_start_at_first_ten():
+    assert timeline.RenameInput(
+        sequence_name="30sec_21",
+        prefix="genesis",
+    ).start == 10
+    assert timeline.PreviewRenameInput(
+        sequence_name="30sec_21",
+        prefix="genesis",
+    ).start == 10

@@ -195,7 +195,7 @@ class PreviewRenameInput(BaseModel):
     prefix:    str = Field(...,  description="Shot name prefix e.g. 'noise', 'tst'")
     increment: int = Field(10,   description="Shot number step (default 10)")
     padding:   int = Field(3,    description="Zero-pad width for shot number (default 3)")
-    start:     int = Field(1,    description="Starting shot counter — first shot = start × increment")
+    start:     int = Field(10,   description="Starting shot number (default 10)")
 
 
 async def preview_rename(params: PreviewRenameInput) -> str:
@@ -230,16 +230,16 @@ else:
     for s in segs:
         if s['track_idx'] != 0:
             continue
-        num_str   = str(shot_num * increment).zfill(padding)
+        num_str   = str(shot_num).zfill(padding)
         shot_name = f"{{prefix}}_{{num_str}}"
         bg_map.append((shot_name, s['record_in'], s['record_out']))
-        shot_num += 1
+        shot_num += increment
 
     # Assign shot names and build preview
     preview = []
     for s in segs:
         if s['track_idx'] == 0:
-            num_str   = str(start * increment).zfill(padding)
+            num_str   = str(start).zfill(padding)
             # find by position in bg_map
             bg_idx = sum(1 for x in segs[:segs.index(s)] if x['track_idx'] == 0)
             shot_name = bg_map[bg_idx][0] if bg_idx < len(bg_map) else ''
@@ -277,7 +277,7 @@ class RenameInput(BaseModel):
     prefix:        str = Field(..., description="Shot name prefix e.g. 'noise', 'tst'")
     increment:     int = Field(10,  description="Shot number step (default 10)")
     padding:       int = Field(3,   description="Zero-pad width (default 3)")
-    start:         int = Field(1,   description="Starting shot counter")
+    start:         int = Field(10,  description="Starting shot number (default 10)")
     role_overrides: dict = Field(
         default={},
         description="Override roles by segment index: {'0': 'graded', '2': 'raw'}"
@@ -360,22 +360,22 @@ else:
                         if fill_seg:
                             break
                     if fill_seg is not None:
-                        num_str   = str(shot_num * increment).zfill(padding)
+                        num_str   = str(shot_num).zfill(padding)
                         shot_name = f"{{prefix}}_{{num_str}}"
                         fill_seg.shot_name.set_value(shot_name)
                         bg_map.append((shot_name, gap_in, gap_out))
                         gap_fills.add(id(fill_seg))
                         result['shots_assigned'] += 1
-                        shot_num += 1
+                        shot_num += increment
                     else:
                         bg_map.append((None, gap_in, gap_out))
                     continue
-                num_str   = str(shot_num * increment).zfill(padding)
+                num_str   = str(shot_num).zfill(padding)
                 shot_name = f"{{prefix}}_{{num_str}}"
                 seg.shot_name.set_value(shot_name)
                 bg_map.append((shot_name, str(seg.record_in), str(seg.record_out)))
                 result['shots_assigned'] += 1
-                shot_num += 1
+                shot_num += increment
 
             # Pass 2: propagate shot names to upper tracks
             for ti in range(1, len(tracks)):
