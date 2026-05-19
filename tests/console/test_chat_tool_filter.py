@@ -695,6 +695,51 @@ def test_pr18_token_complete_match_survives_when_cap_exceeded():
     assert len(names) == 2                       # one other match fills remainder
 
 
+def test_pr18_ignores_namespace_prefix_for_exact_subset_cap_survival():
+    """Operator messages rarely include namespace words like ``flame``.
+    PR18 exact-subset matching must compare content tokens so a Flame
+    tool can survive the PR14 cap before PR21 has a chance to narrow."""
+    from forge_bridge.console._tool_filter import (
+        deterministic_narrow,
+        filter_tools_by_message,
+    )
+
+    tools = [
+        _make_tool("forge_list_shots"),
+        _make_tool("forge_get_shot"),
+        _make_tool("forge_create_shot"),
+        _make_tool("forge_update_shot_status"),
+        _make_tool("forge_get_shot_stack"),
+        _make_tool("forge_check_shots"),
+        _make_tool("forge_get_shot_versions"),
+        _make_tool("forge_get_shot_lineage"),
+        _make_tool("flame_rename_segments"),
+        _make_tool("flame_rename_shots"),
+    ]
+
+    msg = "Rename the shots on 30sec 21 using prefix genesis"
+    filtered = filter_tools_by_message(tools, msg, max_tools=8)
+    filtered_names = _names(filtered)
+
+    assert "flame_rename_shots" in filtered_names
+    assert filtered_names[0] == "flame_rename_shots"
+
+    narrowed = deterministic_narrow(filtered, msg)
+    assert _names(narrowed) == ["flame_rename_shots"]
+
+
+def test_pr18_namespace_prefix_change_preserves_get_sequence_segments_exact_match():
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [_make_tool(f"forge_get_{i}") for i in range(9)] + [
+        _make_tool("flame_get_sequence_segments"),
+    ]
+    out = filter_tools_by_message(
+        tools, "get sequence segments", max_tools=8,
+    )
+    assert _names(out)[0] == "flame_get_sequence_segments"
+
+
 def test_pr18_no_regression_pr17_substring_path():
     """PR17 substring exact-match path remains unaffected: an underscored
     tool name in the message goes to head as before."""

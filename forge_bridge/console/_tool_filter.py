@@ -253,6 +253,7 @@ NORMALIZATION_MAP: dict[str, str] = {
 # a future PR adds another verb-cluster (e.g., a "create" cluster mapping
 # add/new/make→create), add the new canonical form here as well.
 _VERB_TOKENS: frozenset[str] = frozenset({"list"})
+_NAMESPACE_PREFIXES: frozenset[str] = frozenset({"flame", "forge", "synth"})
 
 
 def normalize_token(token: str) -> str:
@@ -331,7 +332,8 @@ def filter_tools_by_message(
             exact_matches.append(t)
             continue
         name_tokens = _pr14_tokens(name)
-        if name_tokens and name_tokens.issubset(msg_tokens):
+        content_tokens = name_tokens - _NAMESPACE_PREFIXES
+        if content_tokens and content_tokens.issubset(msg_tokens):
             exact_matches.append(t)
             continue
         if name_tokens & msg_tokens:
