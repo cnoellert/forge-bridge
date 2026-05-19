@@ -1251,6 +1251,19 @@ def test_pr21_rule2_version_beats_project_when_both_present():
     assert _names(out) == ["forge_list_versions"]
 
 
+def test_pr21_rule2_shot_rename_beats_segment_rename_when_shots_requested():
+    """Rule 2: shot rename outranks segment rename for shot-level rename
+    requests. ``shots`` normalizes to the canonical ``shot`` token."""
+    from forge_bridge.console._tool_filter import deterministic_narrow
+
+    tools = [
+        _make_tool("flame_rename_segments"),
+        _make_tool("flame_rename_shots"),
+    ]
+    out = deterministic_narrow(tools, "rename the shots")
+    assert _names(out) == ["flame_rename_shots"]
+
+
 def test_pr21_rule2_does_not_apply_when_only_one_priority_token_present():
     """Rule 2 only fires when BOTH tokens of the priority pair are in
     the message. If only ``project`` is present, the version-tool isn't

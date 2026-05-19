@@ -379,6 +379,7 @@ def filter_tools_by_message(
 # present in the message. Closed list — extending requires explicit spec.
 _PR21_DOMAIN_PRIORITIES: tuple[tuple[str, str], ...] = (
     ("version", "project"),  # versions are more specific than projects
+    ("shot", "segments"),    # shot rename is more specific than segment rename
 )
 
 
