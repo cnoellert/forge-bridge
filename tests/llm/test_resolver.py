@@ -44,6 +44,15 @@ def test_passes_operator_prefix_through_for_rename_query():
     assert resolved["prefix"] == {"value": "genesis", "source": "genesis"}
 
 
+def test_passes_quoted_prefix_phrase_through_for_rename_query():
+    resolved = resolve_query_entities(
+        "Rename the shots on 30sec 21 with prefix 'noise'",
+    )
+
+    assert resolved["sequence_name"]["value"] == "30sec_21"
+    assert resolved["prefix"] == {"value": "noise", "source": "noise"}
+
+
 def test_enrichment_block_uses_resolved_context_shape():
     resolved = resolve_query_entities(
         "Preview the start frames for the sequence 30sec 21",
