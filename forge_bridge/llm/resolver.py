@@ -19,9 +19,15 @@ _EXPLICIT_ENTITY_RE = re.compile(
     r"(?=\s+(?:to|with|by|and|,)|[?.!]|$)",
     re.IGNORECASE,
 )
-_PREFIX_RE = re.compile(
-    r"\brename\b.*?\bto\s+(?P<prefix>[A-Za-z][A-Za-z0-9_-]*)\b",
-    re.IGNORECASE,
+_PREFIX_PATTERNS = (
+    re.compile(
+        r"\brename\b.*?\bto\s+[\"']?(?P<prefix>[A-Za-z][A-Za-z0-9_-]*)[\"']?\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bprefix\s+[\"']?(?P<prefix>[A-Za-z][A-Za-z0-9_-]*)[\"']?\b",
+        re.IGNORECASE,
+    ),
 )
 _SHOT_NAME_RE = re.compile(
     r"\bshot(?:\s+name)?\s+(?P<shot_name>[A-Za-z][A-Za-z0-9_-]*)\b",
@@ -71,10 +77,12 @@ def resolve_query_entities(
             value = _match_known_entity("sequence_name", value, desktop) or value
             resolved["sequence_name"] = _entity(value=value, source=source)
 
-    prefix_match = _PREFIX_RE.search(query)
-    if prefix_match:
-        prefix = prefix_match.group("prefix").strip()
-        resolved.setdefault("prefix", _entity(value=prefix, source=prefix))
+    for prefix_pattern in _PREFIX_PATTERNS:
+        prefix_match = prefix_pattern.search(query)
+        if prefix_match:
+            prefix = prefix_match.group("prefix").strip()
+            resolved.setdefault("prefix", _entity(value=prefix, source=prefix))
+            break
 
     shot_match = _SHOT_NAME_RE.search(query)
     if shot_match:

@@ -297,6 +297,11 @@ async def execute_chain_step(
                 "Could not resolve reel name from your query. "
                 "Please specify the exact reel name."
             )
+        elif key == "prefix":
+            message = (
+                "Could not resolve rename prefix from your query. "
+                "Please specify the exact prefix."
+            )
         return {"error": {
             "type": "UNRESOLVED_REQUIRED_PARAM",
             "message": message,
