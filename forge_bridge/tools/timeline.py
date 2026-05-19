@@ -60,7 +60,10 @@ def _find_seq(name):
     def _swap(s):
         return s.replace('_', ' ') if '_' in s else s.replace(' ', '_')
     for seq, sname in candidates:
-        if sname == _swap(name) or _swap(sname) == name:
+        # Flame may wrap names in single quotes; strip before swap comparison
+        # so tier 3 operates on normalized representations, not raw substrate strings.
+        sname_stripped = sname.strip("'")
+        if sname_stripped == _swap(name) or _swap(sname_stripped) == name:
             return seq
     # tier 4: casefold + whitespace collapse
     def _norm(s):
