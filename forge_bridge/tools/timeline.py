@@ -837,6 +837,8 @@ async def inspect_sequence_versions(params: InspectVersionsInput) -> str:
 
     Call with the sequence name from the user's query (e.g. sequence_name="30sec_21").
 
+    Example call: {"params": {"sequence_name": "30sec_21"}}
+
     Returns the full editorial structure:
     - Number of versions (PyVersion objects, index-only — no name attribute)
     - For each version: all tracks with segment names, record positions,
