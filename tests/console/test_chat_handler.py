@@ -849,6 +849,43 @@ def test_pr20_forced_path_normalizes_wrapper_schema_args():
     assert json.loads(args_str) == {"params": {}}
 
 
+def test_pr20_forced_path_uses_query_resolved_sequence_name():
+    """Forced execution receives deterministic query-time entity resolution."""
+    from mcp.types import TextContent
+
+    tools = [
+        _pr20_make_wrapped_tool("flame_get_sequence_segments"),
+        _pr20_make_tool("forge_unrelated"),
+    ]
+
+    async def fake_call_tool(name, arguments):
+        return [TextContent(type="text", text=json.dumps({"arguments": arguments}))]
+
+    list_p, back_p, call_p, app, mock_router = _pr20_build_app(
+        tools, fake_call_tool=fake_call_tool,
+    )
+    with list_p, back_p, call_p as call_mock:
+        client = TestClient(app)
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [
+                {"role": "user", "content": "get sequence segments on 30sec 21"},
+            ]},
+        )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["tool_forced"] is True
+    mock_router.complete_with_tools.assert_not_called()
+    call_mock.assert_awaited_once_with(
+        "flame_get_sequence_segments",
+        {"params": {"sequence_name": "30sec_21"}},
+    )
+    assistant = body["messages"][-2]
+    args_str = assistant["tool_calls"][0]["function"]["arguments"]
+    assert json.loads(args_str) == {"params": {"sequence_name": "30sec_21"}}
+
+
 def test_pr20_trace_tool_forced_absent_when_not_forced():
     """`tool_forced` MUST be absent (or falsy) on the multi-tool LLM path —
     only present on forced executions. Use a bare ``"list"`` message so
@@ -904,6 +941,30 @@ def test_pr20_does_not_force_when_available_equals_filtered_equals_one(chat_clie
     assert body["stop_reason"] == "end_turn"
     assert body.get("tool_forced") in (None, False)
     mock_router.complete_with_tools.assert_called_once()
+
+
+def test_phase_24_11_llm_path_receives_resolved_entity_context(chat_client):
+    """The LLM path sees deterministic resolved-entity context in-band."""
+    client, mock_router = chat_client
+    r = client.post(
+        "/api/v1/chat",
+        json={"messages": [
+            {
+                "role": "user",
+                "content": "Give me the versions on the sequence 30sec 21",
+            },
+        ]},
+    )
+
+    assert r.status_code == 200, r.text
+    mock_router.complete_with_tools.assert_called_once()
+    forwarded = mock_router.complete_with_tools.call_args.kwargs["messages"]
+    assert forwarded[-1]["role"] == "user"
+    assert forwarded[-1]["content"].startswith("[Resolved entities from query]\n")
+    assert 'sequence_name: "30sec_21"  (normalized from "30sec 21")' in (
+        forwarded[-1]["content"]
+    )
+    assert "User query: Give me the versions" in forwarded[-1]["content"]
 
 
 def test_pr20_envelope_keys_on_forced_path():
