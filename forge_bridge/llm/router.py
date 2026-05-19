@@ -164,27 +164,6 @@ Key context:
   NOT printf %04d notation.
 
 Respond with concise, production-ready Python unless asked otherwise.
-
-Tool invocation grammar:
-- All tools require arguments wrapped in a params object.
-  Always call tools as: params={field: value}
-  Never call tools with flat arguments or empty params.
-- Sequence names, reel names, and clip names should be inferred from the
-  user's query. Spaces and underscores are equivalent.
-- When a tool returns an error naming a required field, extract it from the
-  error and include it in the next call.
-
-Examples:
-  User: "Give me the versions on the sequence 30sec 21"
-  Call: flame_inspect_sequence_versions(params={"sequence_name": "30sec_21"})
-
-  User: "Assign shots to 30sec 21 using prefix gen2, increment 10, 4-digit padding"
-  Call: flame_rename_shots(params={"sequence_name": "30sec_21", "prefix": "gen2",
-                                    "increment": 10, "padding": 4})
-
-  Tool error: "project_id is required. Call forge_list_projects to find one."
-  Next:  forge_list_projects(params={})
-  Then:  forge_list_shots(params={"project_id": "<uuid-from-previous-result>"})
 """.strip()
 
 
