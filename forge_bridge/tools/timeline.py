@@ -897,14 +897,7 @@ async def inspect_sequence_versions(params: InspectVersionsInput) -> str:
     data = await bridge.execute_json(f"""
 import flame, json
 
-def _find_seq(name):
-    desk = flame.projects.current_project.current_workspace.desktop
-    for rg in desk.reel_groups:
-        for reel in rg.reels:
-            for s in (reel.sequences or []):
-                if s.name.get_value() == name:
-                    return s
-    return None
+{_COLLECT_CODE}
 
 seq = _find_seq({params.sequence_name!r})
 if not seq:
@@ -973,14 +966,7 @@ async def create_version(params: CreateVersionInput) -> str:
     data = await bridge.execute_json(f"""
 import flame, json, threading
 
-def _find_seq(name):
-    desk = flame.projects.current_project.current_workspace.desktop
-    for rg in desk.reel_groups:
-        for reel in rg.reels:
-            for s in (reel.sequences or []):
-                if s.name.get_value() == name:
-                    return s
-    return None
+{_COLLECT_CODE}
 
 seq = _find_seq({params.sequence_name!r})
 if not seq:
@@ -1062,14 +1048,7 @@ async def reconstruct_track(params: ReconstructTrackInput) -> str:
     data = await bridge.execute_json(f"""
 import flame, json, threading
 
-def _find_seq(name):
-    desk = flame.projects.current_project.current_workspace.desktop
-    for rg in desk.reel_groups:
-        for reel in rg.reels:
-            for s in (reel.sequences or []):
-                if s.name.get_value() == name:
-                    return s, reel
-    return None, None
+{_COLLECT_CODE}
 
 def _find_reel(name):
     desk = flame.projects.current_project.current_workspace.desktop
@@ -1079,7 +1058,7 @@ def _find_reel(name):
                 return reel
     return None
 
-seq, _ = _find_seq({params.sequence_name!r})
+seq = _find_seq({params.sequence_name!r})
 scratch_reel = _find_reel({params.scratch_reel_name!r})
 
 if not seq:
@@ -1186,14 +1165,7 @@ async def clone_version(params: CloneVersionInput) -> str:
     data = await bridge.execute_json(f"""
 import flame, json, threading
 
-def _find_seq(name):
-    desk = flame.projects.current_project.current_workspace.desktop
-    for rg in desk.reel_groups:
-        for reel in rg.reels:
-            for s in (reel.sequences or []):
-                if s.name.get_value() == name:
-                    return s
-    return None
+{_COLLECT_CODE}
 
 def _find_reel(name):
     desk = flame.projects.current_project.current_workspace.desktop
