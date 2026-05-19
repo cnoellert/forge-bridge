@@ -20,6 +20,7 @@ a live sequence.
 from __future__ import annotations
 
 import inspect
+import json
 import re
 
 from forge_bridge.tools import timeline
@@ -115,3 +116,38 @@ def test_shots_assigned_counter_incremented_on_fill():
     assert src.count("shots_assigned") >= 3, (
         "Expected multiple shots_assigned references (init, fill, non-gap)"
     )
+
+
+def test_rename_shots_uses_worker_bridge_for_inner_idle_event(monkeypatch):
+    """The generated Flame code schedules its own idle callback and waits.
+
+    Sending that wrapper through bridge main_thread=True would put the wait
+    itself on Flame's main thread, preventing the scheduled callback from
+    running until the wait releases.
+    """
+    captured: dict = {}
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        captured["code"] = code
+        captured["main_thread"] = main_thread
+        return {"renamed": 0}
+
+    monkeypatch.setattr(timeline.bridge, "execute_json", _fake_execute_json)
+
+    import asyncio
+
+    out = asyncio.run(
+        timeline.rename_shots(
+            timeline.RenameInput(
+                sequence_name="30sec_21",
+                prefix="genesis",
+                padding=4,
+                increment=10,
+                start=10,
+            ),
+        ),
+    )
+
+    assert json.loads(out)["renamed"] == 0
+    assert "flame.schedule_idle_event(_do)" in captured["code"]
+    assert captured["main_thread"] is False

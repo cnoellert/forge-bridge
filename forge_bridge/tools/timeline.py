@@ -430,7 +430,7 @@ else:
     flame.schedule_idle_event(_do)
     event.wait(timeout=60)
     print(json.dumps(result))
-""", main_thread=True)
+""", main_thread=False)
     return json.dumps(data, indent=2)
 
 
