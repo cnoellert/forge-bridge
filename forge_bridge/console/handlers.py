@@ -65,6 +65,7 @@ from forge_bridge.llm.router import (
     LLMToolError,
     RecursiveToolLoopError,
 )
+from forge_bridge.mcp.arguments import normalize_tool_args
 from forge_bridge.store.staged_operations import StagedOpRepo, StagedOpLifecycleError
 
 # Shape A — top-level guarded import (PR 4 step 6 topology lock).
@@ -652,6 +653,7 @@ async def _execute_forced_tool(
     trace_error: Optional[str] = None
 
     try:
+        params = normalize_tool_args(tool_name, params, [tool])
         raw = await _mcp_server.mcp.call_tool(tool_name, params)
         tool_content = serialize_forced_tool_result(raw)
         tool_ok = True

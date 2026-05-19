@@ -626,7 +626,7 @@ class TestInvokeTool:
         fake_mcp.list_tools = AsyncMock(return_value=[t])
         fake_mcp.call_tool = AsyncMock(return_value="ok")
 
-        with caplog.at_level(logging.DEBUG, logger="forge_bridge.mcp.registry"):
+        with caplog.at_level(logging.DEBUG, logger="forge_bridge.mcp.arguments"):
             with patch("forge_bridge.mcp.server.mcp", fake_mcp):
                 await invoke_tool("flame_wrapped", {"sequence_name": "30sec_21"})
 
@@ -635,7 +635,8 @@ class TestInvokeTool:
     @pytest.mark.asyncio
     async def test_existing_tool_schema_audit_separates_flat_and_wrapped_tools(self):
         from mcp.server.fastmcp import FastMCP
-        from forge_bridge.mcp.registry import _requires_params_wrapper, register_builtins
+        from forge_bridge.mcp.arguments import requires_params_wrapper
+        from forge_bridge.mcp.registry import register_builtins
 
         mcp = FastMCP("audit")
         register_builtins(mcp)
@@ -643,11 +644,11 @@ class TestInvokeTool:
 
         for name in ("flame_execute_python", "flame_ping", "flame_list_desktop", "forge_ping"):
             assert name in tools
-            assert _requires_params_wrapper(tools[name].inputSchema) is False
+            assert requires_params_wrapper(tools[name].inputSchema) is False
 
         for name in ("flame_find_media", "flame_rename_shots", "forge_get_project"):
             assert name in tools
-            assert _requires_params_wrapper(tools[name].inputSchema) is True
+            assert requires_params_wrapper(tools[name].inputSchema) is True
 
     def test_invoke_tool_exported_from_mcp_package(self):
         """D-21 module re-export: planner-locked YES — mirror register_tools symmetry."""

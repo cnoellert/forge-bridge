@@ -572,6 +572,27 @@ def _pr20_make_tool(name: str):
     )
 
 
+def _pr20_make_wrapped_tool(name: str):
+    """Tool with required top-level params wrapper."""
+    from mcp.types import Tool
+    return Tool(
+        name=name,
+        description=f"{name} description",
+        inputSchema={
+            "$defs": {
+                "WrappedInput": {
+                    "type": "object",
+                    "properties": {"sequence_name": {"type": "string"}},
+                    "required": ["sequence_name"],
+                },
+            },
+            "type": "object",
+            "properties": {"params": {"$ref": "#/$defs/WrappedInput"}},
+            "required": ["params"],
+        },
+    )
+
+
 def _pr20_build_app(tools_list, fake_call_tool=None):
     """Spin up a chat app with a custom tool registry. Returns
     (client, mock_router, call_mock). Each test wires its own tools
@@ -790,6 +811,42 @@ def test_pr20_validation_error_returns_structured_tool_message():
     payload = json.loads(tool_msg["content"])
     assert payload["error"]["type"] == "ToolError"
     assert "missing required argument" in payload["error"]["message"]
+
+
+def test_pr20_forced_path_normalizes_wrapper_schema_args():
+    """Forced execution crosses the shared flat-to-params boundary."""
+    from mcp.types import TextContent
+
+    tools = [
+        _pr20_make_wrapped_tool("flame_get_sequence_segments"),
+        _pr20_make_tool("forge_unrelated"),
+    ]
+
+    async def fake_call_tool(name, arguments):
+        return [TextContent(type="text", text=json.dumps({"arguments": arguments}))]
+
+    list_p, back_p, call_p, app, mock_router = _pr20_build_app(
+        tools, fake_call_tool=fake_call_tool,
+    )
+    with list_p, back_p, call_p as call_mock:
+        client = TestClient(app)
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [
+                {"role": "user", "content": "get sequence segments"},
+            ]},
+        )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["tool_forced"] is True
+    mock_router.complete_with_tools.assert_not_called()
+    call_mock.assert_awaited_once_with(
+        "flame_get_sequence_segments", {"params": {}},
+    )
+    assistant = body["messages"][-2]
+    args_str = assistant["tool_calls"][0]["function"]["arguments"]
+    assert json.loads(args_str) == {"params": {}}
 
 
 def test_pr20_trace_tool_forced_absent_when_not_forced():

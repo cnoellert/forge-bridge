@@ -44,6 +44,7 @@ import logging
 from typing import Any, Awaitable, Callable, Optional, Union
 
 from forge_bridge.console._memory import _MEMORY
+from forge_bridge.mcp.arguments import normalize_tool_args
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +164,12 @@ async def _resolve_project_id(
     in production and only on the disambiguation path.
     """
     try:
-        raw = await mcp.call_tool("forge_list_projects", {})
+        args: dict = {}
+        list_tools = getattr(mcp, "list_tools", None)
+        if callable(list_tools):
+            available = await list_tools()
+            args = normalize_tool_args("forge_list_projects", args, available)
+        raw = await mcp.call_tool("forge_list_projects", args)
     except Exception:  # noqa: BLE001 — fail closed on any error
         return None
 

@@ -21,6 +21,7 @@ import time
 from typing import Any
 
 from forge_bridge.console._tool_filter import deterministic_narrow, filter_tools_by_message
+from forge_bridge.mcp.arguments import normalize_tool_args
 
 # A.5.3.2 PR 5 §4.1 — Shape A guarded import for divergence capture.
 # Per A.5.3.2-PR5-FRAMING.md §1.4 (inheriting PR 4 framing §1.4):
@@ -282,6 +283,7 @@ async def execute_chain_step(
         )
 
     try:
+        params = normalize_tool_args(tool_name, params, [filtered[0]])
         raw = await mcp.call_tool(tool_name, params)
     except Exception as exc:  # noqa: BLE001
         return {"error": {

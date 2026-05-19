@@ -52,7 +52,7 @@ def _make_app() -> typer.Typer:
     return app
 
 
-def _patch_mcp(monkeypatch, available: list[str], result):
+def _patch_mcp(monkeypatch, available: list[str], result, schemas: dict | None = None):
     """Stub the in-process FastMCP singleton: list_tools + call_tool.
 
     `result` is whatever `mcp.call_tool(...)` should return — a tuple,
@@ -65,9 +65,13 @@ def _patch_mcp(monkeypatch, available: list[str], result):
     cached attribute regardless of what sys.modules holds.
     """
     import forge_bridge.mcp.server as real_server
+    schemas = schemas or {}
 
     async def _list_tools():
-        return [SimpleNamespace(name=n) for n in available]
+        return [
+            SimpleNamespace(name=n, inputSchema=schemas.get(n))
+            for n in available
+        ]
 
     async def _call_tool(name, arguments):
         if name not in available:
@@ -223,6 +227,34 @@ class TestRunJsonOutput:
         assert payload["action"] == "flame_ping"
         assert payload["error"]["code"] == "execution_failed"
         assert "boom" in payload["error"]["message"]
+
+    def test_run_normalizes_empty_args_for_wrapper_schema(self, monkeypatch):
+        calls = []
+        schema = {
+            "$defs": {"WrappedInput": {"type": "object", "properties": {}}},
+            "type": "object",
+            "properties": {"params": {"$ref": "#/$defs/WrappedInput"}},
+            "required": ["params"],
+        }
+
+        import forge_bridge.mcp.server as real_server
+
+        async def _list_tools():
+            return [SimpleNamespace(name="flame_wrapped", inputSchema=schema)]
+
+        async def _call_tool(name, arguments):
+            calls.append((name, arguments))
+            return [_text_block("ok")]
+
+        monkeypatch.setattr(
+            real_server,
+            "mcp",
+            SimpleNamespace(list_tools=_list_tools, call_tool=_call_tool),
+        )
+
+        result = runner.invoke(_make_app(), ["run", "flame_wrapped", "--json"])
+        assert result.exit_code == 0
+        assert calls == [("flame_wrapped", {"params": {}})]
 
 
 # ── help ────────────────────────────────────────────────────────────────

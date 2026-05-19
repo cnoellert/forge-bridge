@@ -26,6 +26,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from forge_bridge.learning.sanitize import apply_size_budget
+from forge_bridge.mcp.arguments import normalize_tool_args
 
 logger = logging.getLogger(__name__)
 
@@ -237,7 +238,7 @@ async def invoke_tool(name: str, args: dict) -> str:
             f"Available tools: {', '.join(available_names) or '(none)'}"
         )
 
-    args = _normalize_args(name, args, available)
+    args = normalize_tool_args(name, args, available)
 
     # Invoke via the public FastMCP API. call_tool returns list[ContentBlock]
     # per the MCP protocol — for text-typed tools (forge-bridge's surface)
@@ -245,52 +246,6 @@ async def invoke_tool(name: str, args: dict) -> str:
     raw = await mcp.call_tool(name, arguments=args)
 
     return _stringify_tool_result(raw)
-
-
-def _normalize_args(name: str, args: dict, tools: list[Any]) -> dict:
-    """Normalize provider-native flat args to FastMCP wrapper args when needed."""
-    if not isinstance(args, dict):
-        return args
-    if "params" in args:
-        return args
-
-    tool = next((candidate for candidate in tools if candidate.name == name), None)
-    if tool is None or not _requires_params_wrapper(getattr(tool, "inputSchema", None)):
-        return args
-
-    normalized = {"params": args}
-    logger.debug(
-        "invoke_tool: flat→params normalization applied for %s: %r",
-        name,
-        args,
-    )
-    return normalized
-
-
-def _requires_params_wrapper(input_schema: dict[str, Any] | None) -> bool:
-    """Return True when a tool schema requires a nested object under params."""
-    if not input_schema:
-        return False
-
-    required = input_schema.get("required") or []
-    if "params" not in required:
-        return False
-
-    properties = input_schema.get("properties") or {}
-    params_schema = properties.get("params")
-    if not isinstance(params_schema, dict):
-        return False
-
-    ref = params_schema.get("$ref")
-    if not isinstance(ref, str):
-        return False
-    if not ref.startswith("#/$defs/"):
-        return False
-
-    def_name = ref[len("#/$defs/"):]
-    defs = input_schema.get("$defs") or {}
-    nested = defs.get(def_name)
-    return isinstance(nested, dict) and nested.get("type") == "object"
 
 
 def _stringify_tool_result(raw: Any) -> str:
