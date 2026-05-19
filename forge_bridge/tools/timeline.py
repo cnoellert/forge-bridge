@@ -138,6 +138,18 @@ class GetSegmentsInput(BaseModel):
 async def get_sequence_segments(params: GetSegmentsInput) -> str:
     """Get all segments from a sequence with full FORGE metadata.
 
+    Example invocation
+    ------------------
+    Operator query: "show me the segments on 30sec_21"
+    Tool call: {"params": {"sequence_name": "30sec_21"}}
+    Response shape: {"sequence": "30sec_21", "count": 30, "segments":
+                     [{"track_idx": 0, "seg_name": "...", "shot_name": "...",
+                     "role": "source", "source_name": "...", "file_path": "...",
+                     "record_in": "...", "record_out": "...",
+                     "start_frame": 1001, "head": 8,
+                     "forge_shot": "noise_010", "forge_role": "source",
+                     "forge_layer": 1}, ...]}
+
     Returns every non-gap segment across all tracks with:
     - Parsed FORGE name (shot_name, role, layer from segment name)
     - Source metadata: file_path, source_name, head handles
@@ -275,6 +287,13 @@ class RenameInput(BaseModel):
 
 async def rename_shots(params: RenameInput) -> str:
     """Rename all shots and segments on a sequence using FORGE convention.
+
+    Example invocation
+    ------------------
+    Operator query: "rename the shots on 30sec_21 with prefix 'noise'"
+    Tool call: {"params": {"sequence_name": "30sec_21", "prefix": "noise"}}
+    Response shape: {"shots_assigned": 12, "propagated": 18, "renamed": 30,
+                     "skipped": 0, "changes": [...]}
 
     Three-step process (matches forge_rename hook exactly):
     1. Assign shot names on background track: {prefix}_{NNN}
@@ -491,6 +510,14 @@ class SetStartFramesInput(BaseModel):
 
 async def set_start_frames(params: SetStartFramesInput) -> str:
     """Set the composite start frame for all shots on a sequence.
+
+    Example invocation
+    ------------------
+    Operator query: "set the start frames on 30sec_21 to 1001"
+    Tool call: {"params": {"sequence_name": "30sec_21", "default_frame": 1001}}
+    Response shape: {"applied": 12, "skipped": 0, "errors": [],
+                     "changes": [{"shot": "noise_010", "target": 1001,
+                     "head": 8, "clip_start": 993}, ...]}
 
     Processes all tracks (not just L01) — timelines are typically multi-track
     and every non-gap segment needs its start frame set.
@@ -838,6 +865,17 @@ async def inspect_sequence_versions(params: InspectVersionsInput) -> str:
     Call with the sequence name from the user's query (e.g. sequence_name="30sec_21").
 
     Example call: {"params": {"sequence_name": "30sec_21"}}
+
+    Example invocation
+    ------------------
+    Operator query: "inspect the versions on 30sec_21"
+    Tool call: {"params": {"sequence_name": "30sec_21"}}
+    Response shape: {"sequence": "30sec_21", "frame_rate": "23.976",
+                     "duration": "00:00:30+00", "num_versions": 2,
+                     "versions": [{"version_index": 0, "num_tracks": 1,
+                     "tracks": [{"track_index": 0, "num_segments": 12,
+                     "real_segments": 10, "gap_segments": 2,
+                     "segments": [...]}]}]}
 
     Returns the full editorial structure:
     - Number of versions (PyVersion objects, index-only — no name attribute)
