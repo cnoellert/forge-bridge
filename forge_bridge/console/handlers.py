@@ -538,6 +538,7 @@ async def _execute_forced_tool(
     from forge_bridge.console._name_resolve import resolve_name_from_candidates
     from forge_bridge.console._tool_chain import (
         DISAMBIGUATION_KEY,
+        UNRESOLVED_KEY,
         resolve_required_params,
     )
     from forge_bridge.mcp import server as _mcp_server
@@ -564,8 +565,17 @@ async def _execute_forced_tool(
     # disambiguation branch via ``requested_name``.
     resolver_input = dict(user_params or {})
     requested_name = resolver_input.pop("project_name", None)
+    resolver_message = next(
+        (
+            m["content"] for m in reversed(messages)
+            if isinstance(m, dict)
+            and m.get("role") == "user"
+            and isinstance(m.get("content"), str)
+        ),
+        "",
+    )
     params: dict = await resolve_required_params(
-        tool_name, resolver_input, _mcp_server.mcp,
+        tool_name, resolver_input, _mcp_server.mcp, message=resolver_message,
     )
 
     # PR27: ambiguity short-circuit. When the resolver finds multiple
@@ -619,7 +629,10 @@ async def _execute_forced_tool(
             # carries through unchanged). The returned dict is the
             # canonical post-resolution params for the trace below.
             params = await resolve_required_params(
-                tool_name, {"project_id": resolved_id}, _mcp_server.mcp,
+                tool_name,
+                {"project_id": resolved_id},
+                _mcp_server.mcp,
+                message=resolver_message,
             )
             # Fall through to the ``mcp.call_tool`` block below. DO
             # NOT return — the rest of the forced-execution path
@@ -649,6 +662,41 @@ async def _execute_forced_tool(
                 request_id=request_id,
                 details=disambiguation,
             )
+
+    if UNRESOLVED_KEY in params:
+        unresolved = params[UNRESOLVED_KEY]
+        key = unresolved.get("key")
+        message = (
+            "Could not resolve sequence name from your query. "
+            "Please specify the exact sequence name."
+        )
+        if key == "reel_name":
+            message = (
+                "Could not resolve reel name from your query. "
+                "Please specify the exact reel name."
+            )
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        logger.info(
+            "chat tool_forced_unresolved key=%s request_id=%s client_ip=%s "
+            "tool=%s tools_available=%d tools_filtered=%d wall_clock_ms=%d",
+            key, request_id, client_ip, tool_name,
+            tools_available_count, tools_filtered_count, elapsed_ms,
+        )
+        return JSONResponse(
+            {
+                "error": message,
+                "request_id": request_id,
+                "tool": tool_name,
+                "unresolved": unresolved,
+                "tools_available": tools_available_count,
+                "tools_filtered": tools_filtered_count,
+                "tool_enforced": tool_enforced_flag,
+                "tool_forced": False,
+                "stop_reason": "tool_unresolved",
+            },
+            status_code=200,
+            headers={"X-Request-ID": request_id},
+        )
 
     # Phase A.2 trace bookkeeping — the short-circuit invokes exactly one
     # tool, so the trace always has exactly one entry. Result is the parsed

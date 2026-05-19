@@ -813,8 +813,8 @@ def test_pr20_validation_error_returns_structured_tool_message():
     assert "missing required argument" in payload["error"]["message"]
 
 
-def test_pr20_forced_path_normalizes_wrapper_schema_args():
-    """Forced execution crosses the shared flat-to-params boundary."""
+def test_pr20_forced_path_does_not_call_when_sequence_unresolved():
+    """Unresolved required sequence params stop before FastMCP validation."""
     from mcp.types import TextContent
 
     tools = [
@@ -839,14 +839,18 @@ def test_pr20_forced_path_normalizes_wrapper_schema_args():
 
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["tool_forced"] is True
-    mock_router.complete_with_tools.assert_not_called()
-    call_mock.assert_awaited_once_with(
-        "flame_get_sequence_segments", {"params": {}},
+    assert body["tool_forced"] is False
+    assert body["stop_reason"] == "tool_unresolved"
+    assert body["error"] == (
+        "Could not resolve sequence name from your query. "
+        "Please specify the exact sequence name."
     )
-    assistant = body["messages"][-2]
-    args_str = assistant["tool_calls"][0]["function"]["arguments"]
-    assert json.loads(args_str) == {"params": {}}
+    assert body["unresolved"] == {
+        "key": "sequence_name",
+        "tool": "flame_get_sequence_segments",
+    }
+    mock_router.complete_with_tools.assert_not_called()
+    call_mock.assert_not_awaited()
 
 
 def test_pr20_forced_path_uses_query_resolved_sequence_name():
