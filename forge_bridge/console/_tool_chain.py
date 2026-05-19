@@ -225,6 +225,14 @@ async def _resolve_sequence_name(message: str, mcp: Any) -> Optional[str]:
     return value if isinstance(value, str) and value else None
 
 
+async def _resolve_rename_shot_params(message: str, mcp: Any) -> Optional[dict]:
+    """Resolve deterministic rename-shot params from an operator utterance."""
+    from forge_bridge.llm.resolver import resolved_entity_params, resolve_query_entities
+
+    params = resolved_entity_params(resolve_query_entities(message))
+    return {k: v for k, v in params.items() if k in {"sequence_name", "prefix"}}
+
+
 # Resolver dispatch table — keys match ``_PR25_CHAINS[*]["resolver"]``.
 # Decoupling the chain entry from the function reference keeps the
 # registry data-shaped (easier to extend/inspect) and avoids forward
@@ -232,6 +240,7 @@ async def _resolve_sequence_name(message: str, mcp: Any) -> Optional[str]:
 _RESOLVERS: dict[str, Callable[..., Awaitable[Optional[Union[str, list[dict]]]]]] = {
     "_resolve_project_id": _resolve_project_id,
     "_resolve_sequence_name": _resolve_sequence_name,
+    "_resolve_rename_shot_params": _resolve_rename_shot_params,
 }
 
 
@@ -266,8 +275,8 @@ _PR25_CHAINS: dict[str, dict] = {
         "resolver": "_resolve_sequence_name",
     },
     "flame_rename_shots": {
-        "requires": frozenset({"sequence_name"}),
-        "resolver": "_resolve_sequence_name",
+        "requires": frozenset({"sequence_name", "prefix"}),
+        "resolver": "_resolve_rename_shot_params",
     },
 }
 
@@ -450,6 +459,27 @@ async def resolve_required_params(
         result = await resolver(message, mcp)
         if isinstance(result, str):
             return {**resolved, "sequence_name": result}
+
+        return {
+            UNRESOLVED_KEY: {
+                "key": "sequence_name",
+                "tool": tool_name,
+            }
+        }
+    elif resolver_name == "_resolve_rename_shot_params":
+        result = await resolver(message, mcp)
+        if isinstance(result, dict):
+            merged = {**resolved, **result}
+            if all(k in merged for k in required):
+                return merged
+
+            missing = next((key for key in sorted(required) if key not in merged), None)
+            return {
+                UNRESOLVED_KEY: {
+                    "key": missing or "sequence_name",
+                    "tool": tool_name,
+                }
+            }
 
         return {
             UNRESOLVED_KEY: {

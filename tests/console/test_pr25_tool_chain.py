@@ -252,8 +252,12 @@ def test_pr25_chains_covers_project_and_sequence_resolution_tools():
         "flame_rename_shots",
     ):
         chain = _PR25_CHAINS[tool]
-        assert chain["requires"] == frozenset({"sequence_name"}), tool
-        assert chain["resolver"] == "_resolve_sequence_name", tool
+        if tool == "flame_rename_shots":
+            assert chain["requires"] == frozenset({"sequence_name", "prefix"}), tool
+            assert chain["resolver"] == "_resolve_rename_shot_params", tool
+        else:
+            assert chain["requires"] == frozenset({"sequence_name"}), tool
+            assert chain["resolver"] == "_resolve_sequence_name", tool
 
 
 @pytest.mark.asyncio
@@ -298,6 +302,41 @@ async def test_pr25_sequence_tool_unresolved_returns_sentinel():
         UNRESOLVED_KEY: {
             "key": "sequence_name",
             "tool": "flame_get_sequence_segments",
+        }
+    }
+    mcp.call_tool.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pr25_rename_shots_resolves_sequence_name_and_prefix():
+    mcp = _make_mcp(project_count=0)
+
+    out = await resolve_required_params(
+        "flame_rename_shots",
+        {},
+        mcp,
+        message="Rename the shots on 30sec 21 to genesis, 4-digit padding",
+    )
+
+    assert out == {"sequence_name": "30sec_21", "prefix": "genesis"}
+    mcp.call_tool.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pr25_rename_shots_unresolved_prefix_returns_sentinel():
+    mcp = _make_mcp(project_count=0)
+
+    out = await resolve_required_params(
+        "flame_rename_shots",
+        {},
+        mcp,
+        message="Rename the shots on 30sec 21",
+    )
+
+    assert out == {
+        UNRESOLVED_KEY: {
+            "key": "prefix",
+            "tool": "flame_rename_shots",
         }
     }
     mcp.call_tool.assert_not_called()

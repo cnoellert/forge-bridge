@@ -675,6 +675,11 @@ async def _execute_forced_tool(
                 "Could not resolve reel name from your query. "
                 "Please specify the exact reel name."
             )
+        elif key == "prefix":
+            message = (
+                "Could not resolve rename prefix from your query. "
+                "Please specify the exact prefix."
+            )
         elapsed_ms = int((time.monotonic() - started) * 1000)
         logger.info(
             "chat tool_forced_unresolved key=%s request_id=%s client_ip=%s "
