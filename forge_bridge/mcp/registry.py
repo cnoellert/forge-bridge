@@ -26,6 +26,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from forge_bridge.learning.sanitize import apply_size_budget
+from forge_bridge.mcp.arguments import normalize_tool_args
 
 logger = logging.getLogger(__name__)
 
@@ -236,6 +237,8 @@ async def invoke_tool(name: str, args: dict) -> str:
             f"tool {name!r} is not registered. "
             f"Available tools: {', '.join(available_names) or '(none)'}"
         )
+
+    args = normalize_tool_args(name, args, available)
 
     # Invoke via the public FastMCP API. call_tool returns list[ContentBlock]
     # per the MCP protocol — for text-typed tools (forge-bridge's surface)

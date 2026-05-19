@@ -25,6 +25,8 @@ import pytest
 from forge_bridge.console._tool_chain import (
     _PR25_CHAINS,
     _resolve_project_id,
+    _resolve_sequence_name,
+    UNRESOLVED_KEY,
     resolve_required_params,
 )
 
@@ -226,16 +228,76 @@ async def test_pr25_resolver_returns_none_when_id_missing_from_project():
 # ── Registry sanity — pin the documented chain coverage ───────────────────
 
 
-def test_pr25_chains_covers_exactly_the_two_pr22_graceful_tools():
-    """The chain registry MUST track PR22's graceful surface 1:1.
-    A drift here means a tool got added to the chain without verifying
-    its PR22 contract — the failure mode is opaque (silent injection
-    into a tool that doesn't gracefully surface MISSING_PROJECT_ID).
-    Update both this test and the registry together."""
+def test_pr25_chains_covers_project_and_sequence_resolution_tools():
+    """The chain registry MUST track deterministic resolver coverage.
+    A drift here means a tool got added without pinning its required-key
+    ownership and resolver path. Update both this test and the registry
+    together."""
     assert set(_PR25_CHAINS.keys()) == {
         "forge_list_versions",
         "forge_list_shots",
+        "flame_inspect_sequence_versions",
+        "flame_get_sequence_segments",
+        "flame_preview_start_frames",
+        "flame_rename_shots",
     }
-    for tool, chain in _PR25_CHAINS.items():
+    for tool in ("forge_list_versions", "forge_list_shots"):
+        chain = _PR25_CHAINS[tool]
         assert chain["requires"] == frozenset({"project_id"}), tool
         assert chain["resolver"] == "_resolve_project_id", tool
+    for tool in (
+        "flame_inspect_sequence_versions",
+        "flame_get_sequence_segments",
+        "flame_preview_start_frames",
+        "flame_rename_shots",
+    ):
+        chain = _PR25_CHAINS[tool]
+        assert chain["requires"] == frozenset({"sequence_name"}), tool
+        assert chain["resolver"] == "_resolve_sequence_name", tool
+
+
+@pytest.mark.asyncio
+async def test_pr25_sequence_resolver_delegates_to_query_resolver():
+    mcp = _make_mcp(project_count=0)
+
+    resolved = await _resolve_sequence_name(
+        "Give me the versions on the sequence 30sec 21", mcp,
+    )
+
+    assert resolved == "30sec_21"
+    mcp.call_tool.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pr25_sequence_tool_resolves_required_sequence_name_from_message():
+    mcp = _make_mcp(project_count=0)
+
+    out = await resolve_required_params(
+        "flame_get_sequence_segments",
+        {},
+        mcp,
+        message="Get the segments on the sequence 30sec 21",
+    )
+
+    assert out == {"sequence_name": "30sec_21"}
+    mcp.call_tool.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pr25_sequence_tool_unresolved_returns_sentinel():
+    mcp = _make_mcp(project_count=0)
+
+    out = await resolve_required_params(
+        "flame_get_sequence_segments",
+        {},
+        mcp,
+        message="Get the segments",
+    )
+
+    assert out == {
+        UNRESOLVED_KEY: {
+            "key": "sequence_name",
+            "tool": "flame_get_sequence_segments",
+        }
+    }
+    mcp.call_tool.assert_not_called()

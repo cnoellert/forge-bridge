@@ -21,6 +21,7 @@ import time
 from typing import Any
 
 from forge_bridge.console._tool_filter import deterministic_narrow, filter_tools_by_message
+from forge_bridge.mcp.arguments import normalize_tool_args
 
 # A.5.3.2 PR 5 §4.1 — Shape A guarded import for divergence capture.
 # Per A.5.3.2-PR5-FRAMING.md §1.4 (inheriting PR 4 framing §1.4):
@@ -139,6 +140,7 @@ async def execute_chain_step(
     from forge_bridge.console._param_extract import extract_explicit_params
     from forge_bridge.console._tool_chain import (
         DISAMBIGUATION_KEY,
+        UNRESOLVED_KEY,
         resolve_required_params,
     )
 
@@ -260,7 +262,9 @@ async def execute_chain_step(
         }}
     tool_name = filtered[0].name
 
-    params = await resolve_required_params(tool_name, resolver_input, mcp)
+    params = await resolve_required_params(
+        tool_name, resolver_input, mcp, message=step_text,
+    )
 
     if DISAMBIGUATION_KEY in params:
         candidates = (params[DISAMBIGUATION_KEY] or {}).get("candidates", []) or []
@@ -278,10 +282,29 @@ async def execute_chain_step(
                 "details": params[DISAMBIGUATION_KEY],
             }}
         params = await resolve_required_params(
-            tool_name, {"project_id": resolved_id}, mcp,
+            tool_name, {"project_id": resolved_id}, mcp, message=step_text,
         )
 
+    if UNRESOLVED_KEY in params:
+        unresolved = params[UNRESOLVED_KEY]
+        key = unresolved.get("key")
+        message = (
+            "Could not resolve sequence name from your query. "
+            "Please specify the exact sequence name."
+        )
+        if key == "reel_name":
+            message = (
+                "Could not resolve reel name from your query. "
+                "Please specify the exact reel name."
+            )
+        return {"error": {
+            "type": "UNRESOLVED_REQUIRED_PARAM",
+            "message": message,
+            "details": unresolved,
+        }}
+
     try:
+        params = normalize_tool_args(tool_name, params, [filtered[0]])
         raw = await mcp.call_tool(tool_name, params)
     except Exception as exc:  # noqa: BLE001
         return {"error": {

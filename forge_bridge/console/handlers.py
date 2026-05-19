@@ -65,6 +65,12 @@ from forge_bridge.llm.router import (
     LLMToolError,
     RecursiveToolLoopError,
 )
+from forge_bridge.llm.resolver import (
+    enrich_messages_with_resolved_entities,
+    resolve_query_entities,
+    resolved_entity_params,
+)
+from forge_bridge.mcp.arguments import normalize_tool_args
 from forge_bridge.store.staged_operations import StagedOpRepo, StagedOpLifecycleError
 
 # Shape A — top-level guarded import (PR 4 step 6 topology lock).
@@ -532,6 +538,7 @@ async def _execute_forced_tool(
     from forge_bridge.console._name_resolve import resolve_name_from_candidates
     from forge_bridge.console._tool_chain import (
         DISAMBIGUATION_KEY,
+        UNRESOLVED_KEY,
         resolve_required_params,
     )
     from forge_bridge.mcp import server as _mcp_server
@@ -558,8 +565,17 @@ async def _execute_forced_tool(
     # disambiguation branch via ``requested_name``.
     resolver_input = dict(user_params or {})
     requested_name = resolver_input.pop("project_name", None)
+    resolver_message = next(
+        (
+            m["content"] for m in reversed(messages)
+            if isinstance(m, dict)
+            and m.get("role") == "user"
+            and isinstance(m.get("content"), str)
+        ),
+        "",
+    )
     params: dict = await resolve_required_params(
-        tool_name, resolver_input, _mcp_server.mcp,
+        tool_name, resolver_input, _mcp_server.mcp, message=resolver_message,
     )
 
     # PR27: ambiguity short-circuit. When the resolver finds multiple
@@ -613,7 +629,10 @@ async def _execute_forced_tool(
             # carries through unchanged). The returned dict is the
             # canonical post-resolution params for the trace below.
             params = await resolve_required_params(
-                tool_name, {"project_id": resolved_id}, _mcp_server.mcp,
+                tool_name,
+                {"project_id": resolved_id},
+                _mcp_server.mcp,
+                message=resolver_message,
             )
             # Fall through to the ``mcp.call_tool`` block below. DO
             # NOT return — the rest of the forced-execution path
@@ -644,6 +663,41 @@ async def _execute_forced_tool(
                 details=disambiguation,
             )
 
+    if UNRESOLVED_KEY in params:
+        unresolved = params[UNRESOLVED_KEY]
+        key = unresolved.get("key")
+        message = (
+            "Could not resolve sequence name from your query. "
+            "Please specify the exact sequence name."
+        )
+        if key == "reel_name":
+            message = (
+                "Could not resolve reel name from your query. "
+                "Please specify the exact reel name."
+            )
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        logger.info(
+            "chat tool_forced_unresolved key=%s request_id=%s client_ip=%s "
+            "tool=%s tools_available=%d tools_filtered=%d wall_clock_ms=%d",
+            key, request_id, client_ip, tool_name,
+            tools_available_count, tools_filtered_count, elapsed_ms,
+        )
+        return JSONResponse(
+            {
+                "error": message,
+                "request_id": request_id,
+                "tool": tool_name,
+                "unresolved": unresolved,
+                "tools_available": tools_available_count,
+                "tools_filtered": tools_filtered_count,
+                "tool_enforced": tool_enforced_flag,
+                "tool_forced": False,
+                "stop_reason": "tool_unresolved",
+            },
+            status_code=200,
+            headers={"X-Request-ID": request_id},
+        )
+
     # Phase A.2 trace bookkeeping — the short-circuit invokes exactly one
     # tool, so the trace always has exactly one entry. Result is the parsed
     # tool output on success, None on failure; error is the failure message
@@ -652,6 +706,7 @@ async def _execute_forced_tool(
     trace_error: Optional[str] = None
 
     try:
+        params = normalize_tool_args(tool_name, params, [tool])
         raw = await _mcp_server.mcp.call_tool(tool_name, params)
         tool_content = serialize_forced_tool_result(raw)
         tool_ok = True
@@ -1407,6 +1462,17 @@ async def chat_handler(request: Request) -> Response:
         )
 
     last_user_text = expand_macro(last_user_text)
+    resolved_entities = resolve_query_entities(last_user_text)
+    resolved_params = resolved_entity_params(resolved_entities)
+    messages_for_llm = [dict(message) for message in messages]
+    for index in range(len(messages_for_llm) - 1, -1, -1):
+        message = messages_for_llm[index]
+        if message.get("role") == "user" and isinstance(message.get("content"), str):
+            message["content"] = last_user_text
+            break
+    messages_for_llm = enrich_messages_with_resolved_entities(
+        messages_for_llm, resolved_entities,
+    )
 
     # ---- PR30: deterministic multi-step tool chaining -----------------------
     # If the user message contains the ``->`` separator, parse it into a
@@ -1547,14 +1613,18 @@ async def chat_handler(request: Request) -> Response:
     #
     # PR28: extract any user-supplied parameters (today: ``project_id=<uuid>``
     # or a single bare UUID) from the last user message and forward them as
-    # caller params. Extraction is pure regex — no LLM, no fuzzy matching,
-    # no name resolution. PR26's precedence chain (explicit > memory >
-    # resolver) ensures an explicit value collapses ambiguity before the
-    # PR27 disambiguation envelope would fire.
+    # caller params. Phase 24.11 layers deterministic query-time entity
+    # resolution into the same caller-param map before the FastMCP boundary;
+    # no LLM, no fuzzy matching. PR26's precedence chain (explicit > memory >
+    # resolver) ensures an explicit value collapses ambiguity before the PR27
+    # disambiguation envelope would fire.
     if tools_filtered_count == 1 and tools_filtered_count < tools_available_count:
         from forge_bridge.console._param_extract import extract_explicit_params
 
-        user_params = extract_explicit_params(last_user_text)
+        user_params = {
+            **resolved_params,
+            **extract_explicit_params(last_user_text),
+        }
         return await _execute_forced_tool(
             tool=tools[0],
             messages=messages,
@@ -1600,7 +1670,7 @@ async def chat_handler(request: Request) -> Response:
     # transport-level error becomes a deterministic 500 envelope rather than
     # a Starlette default 500 with a traceback.
 
-    tool_call_count_in = sum(1 for m in messages if m.get("role") == "tool")
+    tool_call_count_in = sum(1 for m in messages_for_llm if m.get("role") == "tool")
 
     # Phase 24.3 commit 4 — content-negotiated SSE response. When the client
     # sends `Accept: text/event-stream`, switch the response shape to SSE
@@ -1616,7 +1686,7 @@ async def chat_handler(request: Request) -> Response:
     if wants_sse:
         return await _chat_sse_response(
             router=router,
-            messages=messages,
+            messages=messages_for_llm,
             tools=tools,
             enforced_system=enforced_system,
             max_iterations=max_iterations,
@@ -1638,7 +1708,7 @@ async def chat_handler(request: Request) -> Response:
         # ``input + final_text`` — that was the bug Phase A fixes.
         chat_result = await asyncio.wait_for(
             router.complete_with_tools(
-                messages=messages,            # D-02a (plan 16-01)
+                messages=messages_for_llm,    # D-02a (plan 16-01)
                 tools=tools,
                 sensitive=True,               # D-05 hardcoded
                 system=enforced_system,       # PR15 deterministic enforcement

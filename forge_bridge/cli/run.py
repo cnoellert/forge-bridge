@@ -35,12 +35,14 @@ async def _lookup_and_call(name: str) -> Any:
     # Lazy import — pulling in mcp.server triggers register_builtins() and
     # flame tool imports. Keeps `fbridge --help` fast.
     from forge_bridge.mcp import server as _server
+    from forge_bridge.mcp.arguments import normalize_tool_args
 
     available = await _server.mcp.list_tools()
     names = sorted(t.name for t in available)
     if name not in names:
         raise _UnknownAction(name, names)
-    return await _server.mcp.call_tool(name, arguments={})
+    args = normalize_tool_args(name, {}, available)
+    return await _server.mcp.call_tool(name, arguments=args)
 
 
 def _extract(raw: Any) -> Any:

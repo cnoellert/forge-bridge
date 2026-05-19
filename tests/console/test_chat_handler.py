@@ -572,6 +572,27 @@ def _pr20_make_tool(name: str):
     )
 
 
+def _pr20_make_wrapped_tool(name: str):
+    """Tool with required top-level params wrapper."""
+    from mcp.types import Tool
+    return Tool(
+        name=name,
+        description=f"{name} description",
+        inputSchema={
+            "$defs": {
+                "WrappedInput": {
+                    "type": "object",
+                    "properties": {"sequence_name": {"type": "string"}},
+                    "required": ["sequence_name"],
+                },
+            },
+            "type": "object",
+            "properties": {"params": {"$ref": "#/$defs/WrappedInput"}},
+            "required": ["params"],
+        },
+    )
+
+
 def _pr20_build_app(tools_list, fake_call_tool=None):
     """Spin up a chat app with a custom tool registry. Returns
     (client, mock_router, call_mock). Each test wires its own tools
@@ -792,6 +813,83 @@ def test_pr20_validation_error_returns_structured_tool_message():
     assert "missing required argument" in payload["error"]["message"]
 
 
+def test_pr20_forced_path_does_not_call_when_sequence_unresolved():
+    """Unresolved required sequence params stop before FastMCP validation."""
+    from mcp.types import TextContent
+
+    tools = [
+        _pr20_make_wrapped_tool("flame_get_sequence_segments"),
+        _pr20_make_tool("forge_unrelated"),
+    ]
+
+    async def fake_call_tool(name, arguments):
+        return [TextContent(type="text", text=json.dumps({"arguments": arguments}))]
+
+    list_p, back_p, call_p, app, mock_router = _pr20_build_app(
+        tools, fake_call_tool=fake_call_tool,
+    )
+    with list_p, back_p, call_p as call_mock:
+        client = TestClient(app)
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [
+                {"role": "user", "content": "get sequence segments"},
+            ]},
+        )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["tool_forced"] is False
+    assert body["stop_reason"] == "tool_unresolved"
+    assert body["error"] == (
+        "Could not resolve sequence name from your query. "
+        "Please specify the exact sequence name."
+    )
+    assert body["unresolved"] == {
+        "key": "sequence_name",
+        "tool": "flame_get_sequence_segments",
+    }
+    mock_router.complete_with_tools.assert_not_called()
+    call_mock.assert_not_awaited()
+
+
+def test_pr20_forced_path_uses_query_resolved_sequence_name():
+    """Forced execution receives deterministic query-time entity resolution."""
+    from mcp.types import TextContent
+
+    tools = [
+        _pr20_make_wrapped_tool("flame_get_sequence_segments"),
+        _pr20_make_tool("forge_unrelated"),
+    ]
+
+    async def fake_call_tool(name, arguments):
+        return [TextContent(type="text", text=json.dumps({"arguments": arguments}))]
+
+    list_p, back_p, call_p, app, mock_router = _pr20_build_app(
+        tools, fake_call_tool=fake_call_tool,
+    )
+    with list_p, back_p, call_p as call_mock:
+        client = TestClient(app)
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [
+                {"role": "user", "content": "get sequence segments on 30sec 21"},
+            ]},
+        )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["tool_forced"] is True
+    mock_router.complete_with_tools.assert_not_called()
+    call_mock.assert_awaited_once_with(
+        "flame_get_sequence_segments",
+        {"params": {"sequence_name": "30sec_21"}},
+    )
+    assistant = body["messages"][-2]
+    args_str = assistant["tool_calls"][0]["function"]["arguments"]
+    assert json.loads(args_str) == {"params": {"sequence_name": "30sec_21"}}
+
+
 def test_pr20_trace_tool_forced_absent_when_not_forced():
     """`tool_forced` MUST be absent (or falsy) on the multi-tool LLM path —
     only present on forced executions. Use a bare ``"list"`` message so
@@ -847,6 +945,30 @@ def test_pr20_does_not_force_when_available_equals_filtered_equals_one(chat_clie
     assert body["stop_reason"] == "end_turn"
     assert body.get("tool_forced") in (None, False)
     mock_router.complete_with_tools.assert_called_once()
+
+
+def test_phase_24_11_llm_path_receives_resolved_entity_context(chat_client):
+    """The LLM path sees deterministic resolved-entity context in-band."""
+    client, mock_router = chat_client
+    r = client.post(
+        "/api/v1/chat",
+        json={"messages": [
+            {
+                "role": "user",
+                "content": "Give me the versions on the sequence 30sec 21",
+            },
+        ]},
+    )
+
+    assert r.status_code == 200, r.text
+    mock_router.complete_with_tools.assert_called_once()
+    forwarded = mock_router.complete_with_tools.call_args.kwargs["messages"]
+    assert forwarded[-1]["role"] == "user"
+    assert forwarded[-1]["content"].startswith("[Resolved entities from query]\n")
+    assert 'sequence_name: "30sec_21"  (normalized from "30sec 21")' in (
+        forwarded[-1]["content"]
+    )
+    assert "User query: Give me the versions" in forwarded[-1]["content"]
 
 
 def test_pr20_envelope_keys_on_forced_path():

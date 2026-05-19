@@ -44,6 +44,7 @@ import logging
 from typing import Any, Awaitable, Callable, Optional, Union
 
 from forge_bridge.console._memory import _MEMORY
+from forge_bridge.mcp.arguments import normalize_tool_args
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ logger = logging.getLogger(__name__)
 # coupling to a string literal across modules. The string value is
 # part of the wire contract internally; do NOT rename it casually.
 DISAMBIGUATION_KEY = "__disambiguation__"
+UNRESOLVED_KEY = "__unresolved__"
 
 
 # ── Structured-payload extraction ─────────────────────────────────────────
@@ -163,7 +165,12 @@ async def _resolve_project_id(
     in production and only on the disambiguation path.
     """
     try:
-        raw = await mcp.call_tool("forge_list_projects", {})
+        args: dict = {}
+        list_tools = getattr(mcp, "list_tools", None)
+        if callable(list_tools):
+            available = await list_tools()
+            args = normalize_tool_args("forge_list_projects", args, available)
+        raw = await mcp.call_tool("forge_list_projects", args)
     except Exception:  # noqa: BLE001 — fail closed on any error
         return None
 
@@ -206,15 +213,25 @@ async def _resolve_project_id(
     return candidates
 
 
+async def _resolve_sequence_name(message: str, mcp: Any) -> Optional[str]:
+    """Resolve sequence_name from an operator utterance using 24.11 resolver."""
+    from forge_bridge.llm.resolver import resolve_query_entities
+
+    entities = resolve_query_entities(message)
+    sequence = entities.get("sequence_name")
+    if not isinstance(sequence, dict):
+        return None
+    value = sequence.get("value")
+    return value if isinstance(value, str) and value else None
+
+
 # Resolver dispatch table — keys match ``_PR25_CHAINS[*]["resolver"]``.
 # Decoupling the chain entry from the function reference keeps the
 # registry data-shaped (easier to extend/inspect) and avoids forward
 # references to async functions that the registry has to know about.
-_RESOLVERS: dict[
-    str,
-    Callable[[Any], Awaitable[Optional[Union[str, list[dict]]]]],
-] = {
+_RESOLVERS: dict[str, Callable[..., Awaitable[Optional[Union[str, list[dict]]]]]] = {
     "_resolve_project_id": _resolve_project_id,
+    "_resolve_sequence_name": _resolve_sequence_name,
 }
 
 
@@ -236,6 +253,22 @@ _PR25_CHAINS: dict[str, dict] = {
         "requires": frozenset({"project_id"}),
         "resolver": "_resolve_project_id",
     },
+    "flame_inspect_sequence_versions": {
+        "requires": frozenset({"sequence_name"}),
+        "resolver": "_resolve_sequence_name",
+    },
+    "flame_get_sequence_segments": {
+        "requires": frozenset({"sequence_name"}),
+        "resolver": "_resolve_sequence_name",
+    },
+    "flame_preview_start_frames": {
+        "requires": frozenset({"sequence_name"}),
+        "resolver": "_resolve_sequence_name",
+    },
+    "flame_rename_shots": {
+        "requires": frozenset({"sequence_name"}),
+        "resolver": "_resolve_sequence_name",
+    },
 }
 
 
@@ -246,6 +279,7 @@ async def resolve_required_params(
     tool_name: str,
     params: dict,
     mcp: Any,
+    message: str = "",
 ) -> dict:
     """Resolve any missing required params for ``tool_name``.
 
@@ -412,5 +446,16 @@ async def resolve_required_params(
         # ``None`` — zero candidates or error. Fall through to return
         # the un-injected working copy; PR22 contract surfaces
         # MISSING_PROJECT_ID downstream.
+    elif resolver_name == "_resolve_sequence_name":
+        result = await resolver(message, mcp)
+        if isinstance(result, str):
+            return {**resolved, "sequence_name": result}
+
+        return {
+            UNRESOLVED_KEY: {
+                "key": "sequence_name",
+                "tool": tool_name,
+            }
+        }
 
     return resolved

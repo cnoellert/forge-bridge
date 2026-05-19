@@ -470,6 +470,186 @@ class TestInvokeTool:
 
         assert "tool blew up" in str(exc_info.value)
 
+    @pytest.mark.asyncio
+    async def test_invoke_tool_wraps_flat_args_for_params_schema(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from forge_bridge.mcp.registry import invoke_tool
+
+        fake_mcp = MagicMock()
+        t = MagicMock()
+        t.name = "flame_wrapped"
+        t.inputSchema = {
+            "$defs": {
+                "WrappedInput": {
+                    "properties": {"sequence_name": {"type": "string"}},
+                    "required": ["sequence_name"],
+                    "type": "object",
+                },
+            },
+            "properties": {"params": {"$ref": "#/$defs/WrappedInput"}},
+            "required": ["params"],
+            "type": "object",
+        }
+        fake_mcp.list_tools = AsyncMock(return_value=[t])
+        fake_mcp.call_tool = AsyncMock(return_value="ok")
+
+        with patch("forge_bridge.mcp.server.mcp", fake_mcp):
+            await invoke_tool("flame_wrapped", {"sequence_name": "30sec_21"})
+
+        fake_mcp.call_tool.assert_awaited_once_with(
+            "flame_wrapped",
+            arguments={"params": {"sequence_name": "30sec_21"}},
+        )
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_preserves_already_wrapped_args(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from forge_bridge.mcp.registry import invoke_tool
+
+        fake_mcp = MagicMock()
+        t = MagicMock()
+        t.name = "flame_wrapped"
+        t.inputSchema = {
+            "$defs": {"WrappedInput": {"properties": {}, "type": "object"}},
+            "properties": {"params": {"$ref": "#/$defs/WrappedInput"}},
+            "required": ["params"],
+            "type": "object",
+        }
+        fake_mcp.list_tools = AsyncMock(return_value=[t])
+        fake_mcp.call_tool = AsyncMock(return_value="ok")
+        wrapped = {"params": {"sequence_name": "30sec_21"}}
+
+        with patch("forge_bridge.mcp.server.mcp", fake_mcp):
+            await invoke_tool("flame_wrapped", wrapped)
+
+        fake_mcp.call_tool.assert_awaited_once_with("flame_wrapped", arguments=wrapped)
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_wraps_empty_args_for_params_schema(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from forge_bridge.mcp.registry import invoke_tool
+
+        fake_mcp = MagicMock()
+        t = MagicMock()
+        t.name = "flame_wrapped"
+        t.inputSchema = {
+            "$defs": {"WrappedInput": {"properties": {}, "type": "object"}},
+            "properties": {"params": {"$ref": "#/$defs/WrappedInput"}},
+            "required": ["params"],
+            "type": "object",
+        }
+        fake_mcp.list_tools = AsyncMock(return_value=[t])
+        fake_mcp.call_tool = AsyncMock(return_value="ok")
+
+        with patch("forge_bridge.mcp.server.mcp", fake_mcp):
+            await invoke_tool("flame_wrapped", {})
+
+        fake_mcp.call_tool.assert_awaited_once_with(
+            "flame_wrapped",
+            arguments={"params": {}},
+        )
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_preserves_flat_args_for_non_wrapper_schema(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from forge_bridge.mcp.registry import invoke_tool
+
+        fake_mcp = MagicMock()
+        t = MagicMock()
+        t.name = "flame_flat"
+        t.inputSchema = {
+            "properties": {
+                "code": {"type": "string"},
+                "main_thread": {"default": False, "type": "boolean"},
+            },
+            "required": ["code"],
+            "type": "object",
+        }
+        fake_mcp.list_tools = AsyncMock(return_value=[t])
+        fake_mcp.call_tool = AsyncMock(return_value="ok")
+        flat = {"code": "print('ok')"}
+
+        with patch("forge_bridge.mcp.server.mcp", fake_mcp):
+            await invoke_tool("flame_flat", flat)
+
+        fake_mcp.call_tool.assert_awaited_once_with("flame_flat", arguments=flat)
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_wraps_mixed_optional_required_params(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from forge_bridge.mcp.registry import invoke_tool
+
+        fake_mcp = MagicMock()
+        t = MagicMock()
+        t.name = "flame_mixed"
+        t.inputSchema = {
+            "$defs": {
+                "MixedInput": {
+                    "properties": {
+                        "sequence_name": {"type": "string"},
+                        "padding": {"default": 4, "type": "integer"},
+                    },
+                    "required": ["sequence_name"],
+                    "type": "object",
+                },
+            },
+            "properties": {"params": {"$ref": "#/$defs/MixedInput"}},
+            "required": ["params"],
+            "type": "object",
+        }
+        fake_mcp.list_tools = AsyncMock(return_value=[t])
+        fake_mcp.call_tool = AsyncMock(return_value="ok")
+
+        with patch("forge_bridge.mcp.server.mcp", fake_mcp):
+            await invoke_tool("flame_mixed", {"sequence_name": "30sec_21", "padding": 4})
+
+        fake_mcp.call_tool.assert_awaited_once_with(
+            "flame_mixed",
+            arguments={"params": {"sequence_name": "30sec_21", "padding": 4}},
+        )
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_logs_params_normalization(self, caplog):
+        import logging
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from forge_bridge.mcp.registry import invoke_tool
+
+        fake_mcp = MagicMock()
+        t = MagicMock()
+        t.name = "flame_wrapped"
+        t.inputSchema = {
+            "$defs": {"WrappedInput": {"properties": {}, "type": "object"}},
+            "properties": {"params": {"$ref": "#/$defs/WrappedInput"}},
+            "required": ["params"],
+            "type": "object",
+        }
+        fake_mcp.list_tools = AsyncMock(return_value=[t])
+        fake_mcp.call_tool = AsyncMock(return_value="ok")
+
+        with caplog.at_level(logging.DEBUG, logger="forge_bridge.mcp.arguments"):
+            with patch("forge_bridge.mcp.server.mcp", fake_mcp):
+                await invoke_tool("flame_wrapped", {"sequence_name": "30sec_21"})
+
+        assert "flat→params normalization applied for flame_wrapped" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_existing_tool_schema_audit_separates_flat_and_wrapped_tools(self):
+        from mcp.server.fastmcp import FastMCP
+        from forge_bridge.mcp.arguments import requires_params_wrapper
+        from forge_bridge.mcp.registry import register_builtins
+
+        mcp = FastMCP("audit")
+        register_builtins(mcp)
+        tools = {tool.name: tool for tool in await mcp.list_tools()}
+
+        for name in ("flame_execute_python", "flame_ping", "flame_list_desktop", "forge_ping"):
+            assert name in tools
+            assert requires_params_wrapper(tools[name].inputSchema) is False
+
+        for name in ("flame_find_media", "flame_rename_shots", "forge_get_project"):
+            assert name in tools
+            assert requires_params_wrapper(tools[name].inputSchema) is True
+
     def test_invoke_tool_exported_from_mcp_package(self):
         """D-21 module re-export: planner-locked YES — mirror register_tools symmetry."""
         import forge_bridge.mcp

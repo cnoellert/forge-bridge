@@ -1,6 +1,10 @@
 """PR31 — Unified chain response envelope (success + failure same top-level keys)."""
 from __future__ import annotations
 
+import asyncio
+import json
+from types import SimpleNamespace
+
 from starlette.testclient import TestClient
 
 from tests.console.test_pr30_chain import (
@@ -223,3 +227,87 @@ def test_step_index_zero_based():
     assert body["error"]["step_index"] == 0
     assert body["chain"] == []
     mock_router.complete_with_tools.assert_not_called()
+
+
+def test_chain_step_normalizes_wrapper_schema_args():
+    from forge_bridge.console._step import execute_chain_step
+
+    calls = []
+    tool = SimpleNamespace(
+        name="flame_get_sequence_segments",
+        inputSchema={
+            "$defs": {
+                "WrappedInput": {
+                    "type": "object",
+                    "properties": {"sequence_name": {"type": "string"}},
+                    "required": ["sequence_name"],
+                },
+            },
+            "type": "object",
+            "properties": {"params": {"$ref": "#/$defs/WrappedInput"}},
+            "required": ["params"],
+        },
+    )
+
+    class FakeMCP:
+        async def call_tool(self, name, arguments):
+            calls.append((name, arguments))
+            return _text_block(json.dumps({"ok": True}))
+
+    result = asyncio.run(execute_chain_step(
+        step_text="get sequence segments on 30sec 21",
+        tools=[tool],
+        mcp=FakeMCP(),
+        inherited_context={},
+    ))
+
+    assert result["tool"] == "flame_get_sequence_segments"
+    assert calls == [
+        ("flame_get_sequence_segments", {"params": {"sequence_name": "30sec_21"}}),
+    ]
+
+
+def test_chain_step_stops_before_call_when_sequence_unresolved():
+    from forge_bridge.console._step import execute_chain_step
+
+    calls = []
+    tool = SimpleNamespace(
+        name="flame_get_sequence_segments",
+        inputSchema={
+            "$defs": {
+                "WrappedInput": {
+                    "type": "object",
+                    "properties": {"sequence_name": {"type": "string"}},
+                    "required": ["sequence_name"],
+                },
+            },
+            "type": "object",
+            "properties": {"params": {"$ref": "#/$defs/WrappedInput"}},
+            "required": ["params"],
+        },
+    )
+
+    class FakeMCP:
+        async def call_tool(self, name, arguments):
+            calls.append((name, arguments))
+            return _text_block(json.dumps({"ok": True}))
+
+    result = asyncio.run(execute_chain_step(
+        step_text="get sequence segments",
+        tools=[tool],
+        mcp=FakeMCP(),
+        inherited_context={},
+    ))
+
+    assert result == {"error": {
+        "type": "UNRESOLVED_REQUIRED_PARAM",
+        "message": (
+            "Could not resolve sequence name from your query. "
+            "Please specify the exact sequence name."
+        ),
+        "details": {
+            "key": "sequence_name",
+            "tool": "flame_get_sequence_segments",
+        },
+    }}
+    assert calls == []
