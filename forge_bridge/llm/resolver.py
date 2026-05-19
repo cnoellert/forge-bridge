@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 
-ResolvedEntity = dict[str, str]
+ResolvedEntity = dict[str, str | int]
 ResolvedEntities = dict[str, ResolvedEntity]
 
 _SEQ_CANDIDATE_RE = re.compile(
@@ -19,9 +19,25 @@ _EXPLICIT_ENTITY_RE = re.compile(
     r"(?=\s+(?:to|with|by|and|,)|[?.!]|$)",
     re.IGNORECASE,
 )
-_PREFIX_RE = re.compile(
-    r"\brename\b.*?\bto\s+(?P<prefix>[A-Za-z][A-Za-z0-9_-]*)\b",
-    re.IGNORECASE,
+_PREFIX_PATTERNS = (
+    re.compile(
+        r"\brename\b.*?\bto\s+(?P<prefix>[A-Za-z][A-Za-z0-9_-]*)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bprefix\s+(?P<prefix>[A-Za-z][A-Za-z0-9_-]*)\b",
+        re.IGNORECASE,
+    ),
+)
+_PADDING_PATTERNS = (
+    re.compile(r"\b(\d+)-digit\s+padding\b", re.IGNORECASE),
+    re.compile(r"\bpadding\s+(?:of\s+)?(\d+)\b", re.IGNORECASE),
+)
+_INCREMENT_PATTERNS = (
+    re.compile(r"\bincrement(?:\s+of)?\s+(\d+)\b", re.IGNORECASE),
+)
+_START_PATTERNS = (
+    re.compile(r"\bstart(?:ing|s)?\s+at\s+(\d+)\b", re.IGNORECASE),
 )
 _SHOT_NAME_RE = re.compile(
     r"\bshot(?:\s+name)?\s+(?P<shot_name>[A-Za-z][A-Za-z0-9_-]*)\b",
@@ -71,10 +87,22 @@ def resolve_query_entities(
             value = _match_known_entity("sequence_name", value, desktop) or value
             resolved["sequence_name"] = _entity(value=value, source=source)
 
-    prefix_match = _PREFIX_RE.search(query)
-    if prefix_match:
-        prefix = prefix_match.group("prefix").strip()
-        resolved.setdefault("prefix", _entity(value=prefix, source=prefix))
+    for prefix_pattern in _PREFIX_PATTERNS:
+        prefix_match = prefix_pattern.search(query)
+        if prefix_match:
+            prefix = prefix_match.group("prefix").strip()
+            resolved.setdefault("prefix", _entity(value=prefix, source=prefix))
+            break
+
+    for key, patterns in (
+        ("padding", _PADDING_PATTERNS),
+        ("increment", _INCREMENT_PATTERNS),
+        ("start", _START_PATTERNS),
+    ):
+        numeric_match = _first_int_match(query, patterns)
+        if numeric_match is not None:
+            value, source = numeric_match
+            resolved.setdefault(key, _entity(value=value, source=source))
 
     shot_match = _SHOT_NAME_RE.search(query)
     if shot_match:
@@ -84,19 +112,21 @@ def resolve_query_entities(
     return resolved
 
 
-def resolved_entity_params(resolved: Mapping[str, Mapping[str, str]]) -> dict[str, str]:
+def resolved_entity_params(
+    resolved: Mapping[str, Mapping[str, str | int]],
+) -> dict[str, str | int]:
     """Return the flat argument map suitable for forced tool execution."""
-    params: dict[str, str] = {}
+    params: dict[str, str | int] = {}
     for key, item in resolved.items():
         value = item.get("value")
-        if isinstance(value, str) and value:
+        if value not in (None, ""):
             params[key] = value
     return params
 
 
 def enrich_user_message_with_resolved_entities(
     user_query: str,
-    resolved: Mapping[str, Mapping[str, str]],
+    resolved: Mapping[str, Mapping[str, str | int]],
 ) -> str:
     """Prepend the resolved-entities context block to a user message."""
     if not resolved:
@@ -117,7 +147,7 @@ def enrich_user_message_with_resolved_entities(
 
 def enrich_messages_with_resolved_entities(
     messages: list[dict[str, Any]],
-    resolved: Mapping[str, Mapping[str, str]],
+    resolved: Mapping[str, Mapping[str, str | int]],
 ) -> list[dict[str, Any]]:
     """Return a copy with the last user message enriched for the LLM path."""
     if not resolved:
@@ -135,8 +165,19 @@ def enrich_messages_with_resolved_entities(
     return enriched
 
 
-def _entity(*, value: str, source: str) -> ResolvedEntity:
+def _entity(*, value: str | int, source: str) -> ResolvedEntity:
     return {"value": value, "source": source}
+
+
+def _first_int_match(
+    query: str,
+    patterns: tuple[re.Pattern[str], ...],
+) -> tuple[int, str] | None:
+    for pattern in patterns:
+        match = pattern.search(query)
+        if match:
+            return int(match.group(1)), match.group(0)
+    return None
 
 
 def _clean_source(value: str) -> str:
