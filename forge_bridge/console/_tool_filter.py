@@ -395,6 +395,7 @@ def filter_tools_by_message(
 _PR21_DOMAIN_PRIORITIES: tuple[tuple[str, str], ...] = (
     ("version", "project"),  # versions are more specific than projects
     ("shot", "segments"),    # shot rename is more specific than segment rename
+    ("shot", "preview"),     # preview is an intent modifier; shot names the op
 )
 
 

@@ -199,74 +199,20 @@ class PreviewRenameInput(BaseModel):
 
 
 async def preview_rename(params: PreviewRenameInput) -> str:
-    """Preview the rename result for a sequence without making any changes.
+    """Compatibility shim for previewing rename output.
 
-    Shows what each segment will be renamed to using FORGE convention:
-      {shot_name}_{role}_L{track##}
-
-    Background track (L01) segments drive shot numbering. Upper track
-    segments inherit the shot name of whichever L01 segment their
-    record_in falls within.
-
-    Use this to verify names before running flame_rename_shots.
+    Phase 25.0 makes preview a dry_run mode on mutation tools. This
+    legacy tool delegates to flame_rename_shots with dry_run=True so
+    both paths share one implementation.
     """
-    data = await bridge.execute_json(f"""
-import flame, json
-{_COLLECT_CODE}
-
-seq = _find_seq({params.sequence_name!r})
-if not seq:
-    print(json.dumps({{'error': 'Sequence not found: ' + {params.sequence_name!r}}}))
-else:
-    segs = _collect_segments(seq)
-    prefix    = {params.prefix!r}
-    increment = {params.increment!r}
-    padding   = {params.padding!r}
-    start     = {params.start!r}
-
-    # Build shot map from background track (track_idx == 0)
-    bg_map = []   # [(shot_name, record_in, record_out), ...]
-    shot_num = start
-    for s in segs:
-        if s['track_idx'] != 0:
-            continue
-        num_str   = str(shot_num).zfill(padding)
-        shot_name = f"{{prefix}}_{{num_str}}"
-        bg_map.append((shot_name, s['record_in'], s['record_out']))
-        shot_num += increment
-
-    # Assign shot names and build preview
-    preview = []
-    for s in segs:
-        if s['track_idx'] == 0:
-            num_str   = str(start).zfill(padding)
-            # find by position in bg_map
-            bg_idx = sum(1 for x in segs[:segs.index(s)] if x['track_idx'] == 0)
-            shot_name = bg_map[bg_idx][0] if bg_idx < len(bg_map) else ''
-        else:
-            shot_name = ''
-            for bg_shot, bg_in, bg_out in bg_map:
-                if bg_in <= s['record_in'] <= bg_out:
-                    shot_name = bg_shot
-                    break
-
-        if not shot_name:
-            continue
-
-        new_name = f"{{shot_name}}_{{s['role']}}_L{{s['layer_num']}}"
-        preview.append({{
-            'track':     s['track_idx'],
-            'layer':     s['layer_num'],
-            'old_name':  s['seg_name'],
-            'new_name':  new_name,
-            'shot_name': shot_name,
-            'role':      s['role'],
-            'file_path': s['file_path'],
-        }})
-
-    print(json.dumps({{'sequence': {params.sequence_name!r}, 'preview': preview, 'count': len(preview)}}))
-""")
-    return json.dumps(data, indent=2)
+    return await rename_shots(RenameInput(
+        sequence_name=params.sequence_name,
+        prefix=params.prefix,
+        increment=params.increment,
+        padding=params.padding,
+        start=params.start,
+        dry_run=True,
+    ))
 
 
 # ── Tool: flame_rename_shots ───────────────────────────────────────────
@@ -285,6 +231,10 @@ class RenameInput(BaseModel):
     qualifier_overrides: dict = Field(
         default={},
         description="Override qualifiers by segment index: {'1': 'alt'}"
+    )
+    dry_run: bool = Field(
+        False,
+        description="When true, return proposed changes without mutating Flame.",
     )
 
 
@@ -323,6 +273,7 @@ else:
     start               = {params.start!r}
     role_overrides      = {{{', '.join(f'{int(k)}: {v!r}' for k, v in params.role_overrides.items())}}}
     qualifier_overrides = {{{', '.join(f'{int(k)}: {v!r}' for k, v in params.qualifier_overrides.items())}}}
+    dry_run             = {params.dry_run!r}
 
     result = {{'shots_assigned': 0, 'propagated': 0, 'renamed': 0, 'skipped': 0, 'changes': []}}
     event  = threading.Event()
@@ -341,6 +292,7 @@ else:
             # an upper track covers the cut.
             bg_map     = []   # [(shot_name, record_in_str, record_out_str)]
             gap_fills  = set()  # id() of segments used as gap fills
+            proposed_shots = {{}}
             shot_num   = start
             for seg in tracks[0].segments:
                 src = str(seg.source_name) if seg.source_name else ''
@@ -362,7 +314,9 @@ else:
                     if fill_seg is not None:
                         num_str   = str(shot_num).zfill(padding)
                         shot_name = f"{{prefix}}_{{num_str}}"
-                        fill_seg.shot_name.set_value(shot_name)
+                        proposed_shots[id(fill_seg)] = shot_name
+                        if not dry_run:
+                            fill_seg.shot_name.set_value(shot_name)
                         bg_map.append((shot_name, gap_in, gap_out))
                         gap_fills.add(id(fill_seg))
                         result['shots_assigned'] += 1
@@ -372,7 +326,9 @@ else:
                     continue
                 num_str   = str(shot_num).zfill(padding)
                 shot_name = f"{{prefix}}_{{num_str}}"
-                seg.shot_name.set_value(shot_name)
+                proposed_shots[id(seg)] = shot_name
+                if not dry_run:
+                    seg.shot_name.set_value(shot_name)
                 bg_map.append((shot_name, str(seg.record_in), str(seg.record_out)))
                 result['shots_assigned'] += 1
                 shot_num += increment
@@ -389,7 +345,9 @@ else:
                     seg_in = str(seg.record_in)
                     for bg_shot, bg_in, bg_out in bg_map:
                         if bg_shot and bg_in <= seg_in <= bg_out:
-                            seg.shot_name.set_value(bg_shot)
+                            proposed_shots[id(seg)] = bg_shot
+                            if not dry_run:
+                                seg.shot_name.set_value(bg_shot)
                             result['propagated'] += 1
                             break
 
@@ -402,7 +360,8 @@ else:
                     if not src:
                         result['skipped'] += 1
                         continue
-                    shot_name = seg.shot_name.get_value() if hasattr(seg.shot_name, 'get_value') else ''
+                    current_shot_name = seg.shot_name.get_value() if hasattr(seg.shot_name, 'get_value') else ''
+                    shot_name = proposed_shots.get(id(seg), current_shot_name)
                     if not shot_name:
                         result['skipped'] += 1
                         continue
@@ -419,8 +378,16 @@ else:
                         new_name = f"{{shot_name}}_{{role}}_{{qualifier}}_L{{layer_num}}"
                     else:
                         new_name = f"{{shot_name}}_{{role}}_L{{layer_num}}"
-                    seg.name.set_value(new_name)
-                    result['changes'].append({{'seg_idx': seg_idx, 'old': old_name, 'new': new_name}})
+                    if dry_run:
+                        result['changes'].append({{
+                            'index': seg_idx,
+                            'current': old_name,
+                            'proposed': new_name,
+                            'type': 'shot_name',
+                        }})
+                    else:
+                        seg.name.set_value(new_name)
+                        result['changes'].append({{'seg_idx': seg_idx, 'old': old_name, 'new': new_name}})
                     result['renamed'] += 1
                     seg_idx += 1
         except Exception as e:
@@ -429,7 +396,15 @@ else:
 
     flame.schedule_idle_event(_do)
     event.wait(timeout=60)
-    print(json.dumps(result))
+    if dry_run:
+        print(json.dumps({{
+            'dry_run': True,
+            'proposed_changes': result.get('changes', []),
+            'count': len(result.get('changes', [])),
+            'sequence': {params.sequence_name!r},
+        }}))
+    else:
+        print(json.dumps(result))
 """, main_thread=False)
     return json.dumps(data, indent=2)
 
@@ -446,57 +421,12 @@ class PreviewStartFramesInput(BaseModel):
 
 
 async def preview_start_frames(params: PreviewStartFramesInput) -> str:
-    """Preview start frame assignments for a sequence — background track only.
-
-    Returns one row per shot showing:
-    - shot_name, seg_name
-    - head: handle frames before the cut point (seg.head)
-    - target: the proposed start frame (default_frame)
-    - clip_start: target - head (actual first frame of clip material)
-    - valid: False if clip_start < 0 (Flame cannot write negative frame numbers)
-
-    Math: clip.change_start_frame(target - head)
-    Frame 'target' will be the first visible frame. Head handles run
-    from clip_start to target-1.
-
-    Use this before flame_set_start_frames to check for negative frame issues.
-    """
-    data = await bridge.execute_json(f"""
-import flame, json
-{_COLLECT_CODE}
-
-seq = _find_seq({params.sequence_name!r})
-if not seq:
-    print(json.dumps({{'error': 'Sequence not found: ' + {params.sequence_name!r}}}))
-else:
-    default_frame = {params.default_frame!r}
-    segs = _collect_segments(seq)
-    rows = []
-    for s in segs:
-        head        = s['head']
-        clip_start  = default_frame - head
-        rows.append({{
-            'shot_name':   s['shot_name'],
-            'seg_name':    s['seg_name'],
-            'track':       s['track_idx'],
-            'layer':       s['layer_num'],
-            'head':        head,
-            'target':      default_frame,
-            'clip_start':  clip_start,
-            'valid':       clip_start >= 0,
-            'current_start_frame': s['start_frame'],
-        }})
-    invalid = [r['shot_name'] or r['seg_name'] for r in rows if not r['valid']]
-    print(json.dumps({{
-        'sequence':      {params.sequence_name!r},
-        'default_frame': default_frame,
-        'shot_count':    len(rows),
-        'invalid_count': len(invalid),
-        'invalid_shots': invalid,
-        'rows':          rows,
-    }}))
-""")
-    return json.dumps(data, indent=2)
+    """Compatibility shim for previewing start-frame changes."""
+    return await set_start_frames(SetStartFramesInput(
+        sequence_name=params.sequence_name,
+        default_frame=params.default_frame,
+        dry_run=True,
+    ))
 
 
 # ── Tool: flame_set_start_frames ──────────────────────────────────────
@@ -508,6 +438,10 @@ class SetStartFramesInput(BaseModel):
     overrides: dict = Field(
         default={},
         description="Per-shot overrides: {'noise_010': 1001, 'noise_020': 1101}"
+    )
+    dry_run: bool = Field(
+        False,
+        description="When true, return proposed changes without mutating Flame.",
     )
 
 
@@ -546,6 +480,7 @@ if not seq:
 else:
     default_frame = {params.default_frame!r}
     overrides     = {params.overrides!r}
+    dry_run       = {params.dry_run!r}
 
     result = {{'applied': 0, 'skipped': 0, 'errors': [], 'changes': []}}
     event  = threading.Event()
@@ -575,8 +510,23 @@ else:
                         result['skipped'] += 1
                         continue
                     try:
-                        seg.change_start_frame(target)
-                        result['changes'].append({{'shot': shot_name, 'target': target, 'head': head, 'clip_start': clip_start}})
+                        current = None
+                        try:
+                            current = int(seg.start_frame) if seg.start_frame else None
+                        except: pass
+                        if dry_run:
+                            result['changes'].append({{
+                                'index': len(result['changes']),
+                                'current': current,
+                                'proposed': target,
+                                'type': 'start_frame',
+                                'shot': shot_name,
+                                'head': head,
+                                'clip_start': clip_start,
+                            }})
+                        else:
+                            seg.change_start_frame(target)
+                            result['changes'].append({{'shot': shot_name, 'target': target, 'head': head, 'clip_start': clip_start}})
                         result['applied'] += 1
                     except Exception as e:
                         result['errors'].append(f"{{shot_name}}: {{e}}")
@@ -587,7 +537,16 @@ else:
 
     flame.schedule_idle_event(_do)
     event.wait(timeout=60)
-    print(json.dumps(result))
+    if dry_run:
+        print(json.dumps({{
+            'dry_run': True,
+            'proposed_changes': result.get('changes', []),
+            'count': len(result.get('changes', [])),
+            'sequence': {params.sequence_name!r},
+            'errors': result.get('errors', []),
+        }}))
+    else:
+        print(json.dumps(result))
 """, main_thread=True)
     return json.dumps(data, indent=2)
 
@@ -600,6 +559,10 @@ class SetSegmentInput(BaseModel):
     segment_name:  str = Field(..., description="Name of the segment to modify.")
     attribute:     str = Field(..., description="Attribute to set: 'name', 'shot_name', 'comment'.")
     value:         str = Field(..., description="New value as string.")
+    dry_run: bool = Field(
+        False,
+        description="When true, return proposed changes without mutating Flame.",
+    )
 
 
 async def set_segment_attribute(params: SetSegmentInput) -> str:
@@ -624,6 +587,7 @@ if not seq:
 else:
     attr_name = {params.attribute!r}
     new_value = {value_code}
+    dry_run = {params.dry_run!r}
     target = None
     for ver in seq.versions:
         for track in ver.tracks:
@@ -643,10 +607,23 @@ else:
         def _do():
             try:
                 attr = getattr(target, attr_name)
-                attr.set_value(new_value)
-                result['ok']        = True
-                result['attribute'] = attr_name
-                result['new_value'] = str(attr.get_value())
+                current = str(attr.get_value()) if hasattr(attr, 'get_value') else str(attr)
+                if dry_run:
+                    result['dry_run'] = True
+                    result['proposed_changes'] = [{{
+                        'index': 0,
+                        'current': current,
+                        'proposed': str(new_value),
+                        'type': 'attribute',
+                        'attribute': attr_name,
+                        'segment': {params.segment_name!r},
+                    }}]
+                    result['count'] = 1
+                else:
+                    attr.set_value(new_value)
+                    result['ok']        = True
+                    result['attribute'] = attr_name
+                    result['new_value'] = str(attr.get_value())
             except Exception as e:
                 result['error'] = str(e)
             event.set()
@@ -1583,6 +1560,10 @@ class AssignRolesInput(BaseModel):
     reel_name: str = Field(
         default="", description="Reel name. Empty = search all.",
     )
+    dry_run: bool = Field(
+        False,
+        description="When true, return proposed changes without mutating Flame.",
+    )
 
 
 async def assign_roles(params: AssignRolesInput) -> str:
@@ -1610,6 +1591,7 @@ seq_names = {params.sequence_names!r}
 assignments = {params.assignments!r}
 rg_filter = {params.reel_group!r}
 reel_filter = {params.reel_name!r}
+dry_run = {params.dry_run!r}
 
 # Validate roles
 invalid = [r for r in assignments.values() if r not in ALL_KNOWN]
@@ -1630,6 +1612,7 @@ else:
     applied = []
     not_found = []
     errors = []
+    proposed_changes = []
 
     for seg_name, role in assignments.items():
         found = False
@@ -1642,9 +1625,23 @@ else:
                         try:
                             existing = seg.tags.get_value() or []
                             filtered = [t for t in existing if t not in ROLE_TAGS]
-                            filtered.append('forge:' + role)
-                            seg.tags.set_value(filtered)
-                            applied.append({{'segment': seg_name, 'role': role}})
+                            current_role = ''
+                            for tag in existing:
+                                if tag in ROLE_TAGS:
+                                    current_role = tag.replace('forge:', '')
+                                    break
+                            if dry_run:
+                                proposed_changes.append({{
+                                    'index': len(proposed_changes),
+                                    'current': current_role,
+                                    'proposed': role,
+                                    'type': 'role',
+                                    'segment': seg_name,
+                                }})
+                            else:
+                                filtered.append('forge:' + role)
+                                seg.tags.set_value(filtered)
+                                applied.append({{'segment': seg_name, 'role': role}})
                         except Exception as e:
                             errors.append({{'segment': seg_name, 'error': str(e)}})
                         break
@@ -1655,11 +1652,20 @@ else:
         if not found:
             not_found.append(seg_name)
 
-    print(json.dumps({{
-        'applied': len(applied),
-        'not_found': not_found,
-        'errors': errors,
-        'details': applied,
-    }}))
+    if dry_run:
+        print(json.dumps({{
+            'dry_run': True,
+            'proposed_changes': proposed_changes,
+            'count': len(proposed_changes),
+            'not_found': not_found,
+            'errors': errors,
+        }}))
+    else:
+        print(json.dumps({{
+            'applied': len(applied),
+            'not_found': not_found,
+            'errors': errors,
+            'details': applied,
+        }}))
 """, main_thread=True)
     return json.dumps(data, indent=2)

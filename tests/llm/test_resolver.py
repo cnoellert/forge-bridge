@@ -67,6 +67,34 @@ def test_resolves_rename_numeric_directives_with_types():
     assert resolved["start"]["source"] == "starting at 10"
 
 
+def test_resolves_preview_intent_as_dry_run_modifier():
+    params = resolved_entity_params(
+        resolve_query_entities(
+            "Preview rename shots on 30sec 21 using prefix genesis",
+        ),
+    )
+
+    assert params["sequence_name"] == "30sec_21"
+    assert params["prefix"] == "genesis"
+    assert params["dry_run"] is True
+    assert isinstance(params["dry_run"], bool)
+
+
+def test_resolves_ecological_preview_intent_phrases():
+    assert resolved_entity_params(
+        resolve_query_entities(
+            "Show me what would change if we rename shots on 30sec 21 "
+            "with prefix genesis",
+        ),
+    )["dry_run"] is True
+    assert resolved_entity_params(
+        resolve_query_entities(
+            "What would happen if we rename shots on 30sec 21 "
+            "with prefix genesis",
+        ),
+    )["dry_run"] is True
+
+
 def test_resolves_rename_directive_phrase_variants():
     assert resolved_entity_params(
         resolve_query_entities("Rename shots on 30sec 21 with prefix genesis"),

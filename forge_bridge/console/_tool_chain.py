@@ -246,7 +246,7 @@ async def _resolve_rename_params(message: str, mcp: Any) -> Optional[dict]:
         return None
 
     result: dict = {"sequence_name": seq_val, "prefix": prefix_val}
-    for key in ("increment", "padding", "start"):
+    for key in ("increment", "padding", "start", "dry_run"):
         entity = entities.get(key)
         if isinstance(entity, dict) and entity.get("value") is not None:
             result[key] = entity["value"]
@@ -298,6 +298,10 @@ _PR25_CHAINS: dict[str, dict] = {
         "resolver": "_resolve_sequence_name",
     },
     "flame_rename_shots": {
+        "requires": frozenset({"sequence_name", "prefix"}),
+        "resolver": "_resolve_rename_params",
+    },
+    "flame_preview_rename": {
         "requires": frozenset({"sequence_name", "prefix"}),
         "resolver": "_resolve_rename_params",
     },

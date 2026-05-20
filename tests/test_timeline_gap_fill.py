@@ -170,3 +170,78 @@ def test_rename_defaults_start_at_first_ten():
         sequence_name="30sec_21",
         prefix="genesis",
     ).start == 10
+
+
+def test_phase25_mutation_inputs_expose_dry_run_port():
+    assert timeline.RenameInput(
+        sequence_name="30sec_21",
+        prefix="genesis",
+    ).dry_run is False
+    assert timeline.SetStartFramesInput(sequence_name="30sec_21").dry_run is False
+    assert timeline.SetSegmentInput(
+        sequence_name="30sec_21",
+        segment_name="seg01",
+        attribute="comment",
+        value="ok",
+    ).dry_run is False
+    assert timeline.AssignRolesInput(
+        sequence_names=["30sec_21"],
+        assignments={"seg01": "comp"},
+    ).dry_run is False
+
+
+def test_rename_shots_dry_run_template_does_not_write_names():
+    src = _source_of(timeline.rename_shots)
+
+    assert "dry_run" in src
+    assert "'proposed_changes': result.get('changes', [])" in src
+    assert re.search(r"if dry_run:.*?else:\s+seg\.name\.set_value", src, re.S)
+    assert re.search(r"if not dry_run:\s+seg\.shot_name\.set_value", src)
+
+
+def test_legacy_preview_rename_delegates_to_dry_run_rename(monkeypatch):
+    captured = {}
+
+    async def _fake_rename(params):
+        captured["params"] = params
+        return json.dumps({"dry_run": True})
+
+    monkeypatch.setattr(timeline, "rename_shots", _fake_rename)
+
+    import asyncio
+
+    out = asyncio.run(
+        timeline.preview_rename(
+            timeline.PreviewRenameInput(
+                sequence_name="30sec_21",
+                prefix="genesis",
+            ),
+        ),
+    )
+
+    assert json.loads(out) == {"dry_run": True}
+    assert captured["params"].dry_run is True
+    assert captured["params"].sequence_name == "30sec_21"
+    assert captured["params"].prefix == "genesis"
+
+
+def test_legacy_preview_start_frames_delegates_to_dry_run_set_start(monkeypatch):
+    captured = {}
+
+    async def _fake_set_start_frames(params):
+        captured["params"] = params
+        return json.dumps({"dry_run": True})
+
+    monkeypatch.setattr(timeline, "set_start_frames", _fake_set_start_frames)
+
+    import asyncio
+
+    out = asyncio.run(
+        timeline.preview_start_frames(
+            timeline.PreviewStartFramesInput(sequence_name="30sec_21"),
+        ),
+    )
+
+    assert json.loads(out) == {"dry_run": True}
+    assert captured["params"].dry_run is True
+    assert captured["params"].sequence_name == "30sec_21"

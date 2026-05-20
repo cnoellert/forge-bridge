@@ -242,6 +242,7 @@ def test_pr25_chains_covers_project_and_sequence_resolution_tools():
         "flame_get_sequence_segments",
         "flame_preview_start_frames",
         "flame_rename_shots",
+        "flame_preview_rename",
     }
     for tool in ("forge_list_versions", "forge_list_shots"):
         chain = _PR25_CHAINS[tool]
@@ -258,6 +259,9 @@ def test_pr25_chains_covers_project_and_sequence_resolution_tools():
     rename_chain = _PR25_CHAINS["flame_rename_shots"]
     assert rename_chain["requires"] == frozenset({"sequence_name", "prefix"})
     assert rename_chain["resolver"] == "_resolve_rename_params"
+    preview_rename_chain = _PR25_CHAINS["flame_preview_rename"]
+    assert preview_rename_chain["requires"] == frozenset({"sequence_name", "prefix"})
+    assert preview_rename_chain["resolver"] == "_resolve_rename_params"
 
 
 @pytest.mark.asyncio
@@ -347,6 +351,25 @@ async def test_pr25_rename_tool_merges_structured_resolver_payload():
         "padding": 4,
         "increment": 10,
         "start": 10,
+    }
+    mcp.call_tool.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pr25_preview_rename_tool_merges_dry_run_modifier():
+    mcp = _make_mcp(project_count=0)
+
+    out = await resolve_required_params(
+        "flame_preview_rename",
+        {},
+        mcp,
+        message="Preview rename shots on 30sec 21 using prefix genesis",
+    )
+
+    assert out == {
+        "sequence_name": "30sec_21",
+        "prefix": "genesis",
+        "dry_run": True,
     }
     mcp.call_tool.assert_not_called()
 

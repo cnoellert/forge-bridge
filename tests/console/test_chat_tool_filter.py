@@ -1339,6 +1339,23 @@ def test_pr21_rule2_shot_rename_beats_segment_rename_when_shots_requested():
     assert _names(out) == ["flame_rename_shots"]
 
 
+def test_pr21_rule2_preview_is_modifier_for_shot_rename():
+    """Rule 2: preview is operator intent, not the operation noun.
+    For previewed shot rename, keep the mutation tool so the resolver
+    can set dry_run=True."""
+    from forge_bridge.console._tool_filter import deterministic_narrow
+
+    tools = [
+        _make_tool("flame_preview_rename"),
+        _make_tool("flame_rename_shots"),
+    ]
+    out = deterministic_narrow(
+        tools,
+        "preview rename shots on 30sec 21 with prefix genesis",
+    )
+    assert _names(out) == ["flame_rename_shots"]
+
+
 def test_pr21_rule2_does_not_apply_when_only_one_priority_token_present():
     """Rule 2 only fires when BOTH tokens of the priority pair are in
     the message. If only ``project`` is present, the version-tool isn't

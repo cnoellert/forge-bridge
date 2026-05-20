@@ -6,9 +6,13 @@ from collections.abc import Mapping
 from typing import Any
 
 
-ResolvedEntity = dict[str, str | int]
+ResolvedEntity = dict[str, str | int | bool]
 ResolvedEntities = dict[str, ResolvedEntity]
 
+_PREVIEW_INTENT_RE = re.compile(
+    r"\bpreview\b|\bshow\s+me\s+what\s+would\s+change\b|\bwhat\s+would\s+happen\s+if\b",
+    re.IGNORECASE,
+)
 _SEQ_CANDIDATE_RE = re.compile(
     r"\b(?P<head>\d+[A-Za-z]{2,})[ _-]?(?P<tail>\d{1,4})\b"
 )
@@ -60,6 +64,10 @@ def resolve_query_entities(
         return {}
 
     resolved: ResolvedEntities = {}
+    preview_match = _PREVIEW_INTENT_RE.search(query)
+    if preview_match:
+        resolved["dry_run"] = _entity(value=True, source=preview_match.group(0))
+
     for match in _EXPLICIT_ENTITY_RE.finditer(query):
         label = match.group("label").casefold()
         key = "sequence_name" if label == "sequence" else "reel_name"
@@ -113,10 +121,10 @@ def resolve_query_entities(
 
 
 def resolved_entity_params(
-    resolved: Mapping[str, Mapping[str, str | int]],
-) -> dict[str, str | int]:
+    resolved: Mapping[str, Mapping[str, str | int | bool]],
+) -> dict[str, str | int | bool]:
     """Return the flat argument map suitable for forced tool execution."""
-    params: dict[str, str | int] = {}
+    params: dict[str, str | int | bool] = {}
     for key, item in resolved.items():
         value = item.get("value")
         if value not in (None, ""):
@@ -126,7 +134,7 @@ def resolved_entity_params(
 
 def enrich_user_message_with_resolved_entities(
     user_query: str,
-    resolved: Mapping[str, Mapping[str, str | int]],
+    resolved: Mapping[str, Mapping[str, str | int | bool]],
 ) -> str:
     """Prepend the resolved-entities context block to a user message."""
     if not resolved:
@@ -147,7 +155,7 @@ def enrich_user_message_with_resolved_entities(
 
 def enrich_messages_with_resolved_entities(
     messages: list[dict[str, Any]],
-    resolved: Mapping[str, Mapping[str, str | int]],
+    resolved: Mapping[str, Mapping[str, str | int | bool]],
 ) -> list[dict[str, Any]]:
     """Return a copy with the last user message enriched for the LLM path."""
     if not resolved:
@@ -165,7 +173,7 @@ def enrich_messages_with_resolved_entities(
     return enriched
 
 
-def _entity(*, value: str | int, source: str) -> ResolvedEntity:
+def _entity(*, value: str | int | bool, source: str) -> ResolvedEntity:
     return {"value": value, "source": source}
 
 
