@@ -78,11 +78,14 @@ def _collect_segments(seq):
     '''Return all non-gap segments with full metadata, grouped by track.
     Each entry: {
         track_idx, track_name, seg_name, shot_name, role, head,
-        record_in, record_out, source_name, file_path, start_frame
+        record_in, record_out, duration, source_name, file_path, start_frame
     }
     '''
+    from forge_bridge.utils.timecode import TimecodeParseError, timecode_to_frames
+
     result = []
     tracks = []
+    fps = float(str(seq.frame_rate).split()[0])
     for ver in seq.versions:
         for track in ver.tracks:
             tracks.append(track)
@@ -110,6 +113,13 @@ def _collect_segments(seq):
                 head = int(seg.head)
             except Exception:
                 pass
+            try:
+                duration = (
+                    timecode_to_frames(str(seg.record_out), fps)
+                    - timecode_to_frames(str(seg.record_in), fps)
+                )
+            except TimecodeParseError:
+                raise
             result.append({
                 'track_idx':   ti,
                 'track_name':  track_name,
@@ -122,6 +132,7 @@ def _collect_segments(seq):
                 'head':        head,
                 'record_in':   str(seg.record_in),
                 'record_out':  str(seg.record_out),
+                'duration':    duration,
                 'start_frame': int(seg.start_frame) if seg.start_frame else None,
             })
     return result
@@ -149,7 +160,7 @@ async def get_sequence_segments(params: GetSegmentsInput) -> str:
                      [{"track_idx": 0, "seg_name": "...", "shot_name": "...",
                      "role": "source", "source_name": "...", "file_path": "...",
                      "record_in": "...", "record_out": "...",
-                     "start_frame": 1001, "head": 8,
+                     "duration": 99, "start_frame": 1001, "head": 8,
                      "forge_shot": "noise_010", "forge_role": "source",
                      "forge_layer": 1}, ...]}
 
@@ -157,6 +168,7 @@ async def get_sequence_segments(params: GetSegmentsInput) -> str:
     - Parsed FORGE name (shot_name, role, layer from segment name)
     - Source metadata: file_path, source_name, head handles
     - Edit position: record_in, record_out
+    - Duration in integer frames, normalized from Flame timecode strings
     - Start frame (for start frame workflow)
     - Role auto-detected from footage/{role}/ path pattern
 

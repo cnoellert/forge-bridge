@@ -59,6 +59,16 @@ def test_gap_fills_set_present_in_rename_shots_code():
     assert "gap_fills" in src
 
 
+def test_sequence_segment_collection_emits_graph_native_duration():
+    src = timeline._COLLECT_CODE
+
+    assert "from forge_bridge.utils.timecode import TimecodeParseError, timecode_to_frames" in src
+    assert "fps = float(str(seq.frame_rate).split()[0])" in src
+    assert "timecode_to_frames(str(seg.record_out), fps)" in src
+    assert "timecode_to_frames(str(seg.record_in), fps)" in src
+    assert "'duration':    duration" in src
+
+
 def test_gap_fills_tracks_segments_by_id():
     """The set stores id(seg) (not the segment itself) because Flame
     PySegment objects are not hashable by identity semantics we want."""
