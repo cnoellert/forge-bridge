@@ -83,34 +83,17 @@ async def get_node_types() -> str:
 async def get_batch_iterations() -> str:
     """List iterations for the currently open Flame Batch group.
 
-    Read-only. Returns the current iteration index, total count, and each
-    iteration's name and render state. If no batch group is open, returns a
+    Read-only. Returns the current iteration index, total count, and
+    available iteration indices. If no batch group is open, returns a
     structured no_batch_open error rather than raising.
+
+    render_state per iteration is not exposed by PyBatchIteration
+    directly. Determining render state requires disk inspection or
+    node-graph traversal. Escape via flame_execute_python. Candidate
+    for flame_get_iteration_render_state when use case crystallizes.
     """
     data = await bridge.execute_json("""
         import flame, json
-
-        def _name(obj):
-            try:
-                value = obj.name.get_value() if hasattr(obj.name, 'get_value') else obj.name
-                return str(value).strip("'")
-            except Exception:
-                return str(obj).strip("'")
-
-        def _render_state(iteration):
-            for attr in ('render_state', 'state', 'status'):
-                try:
-                    value = getattr(iteration, attr)
-                    if hasattr(value, 'get_value'):
-                        value = value.get_value()
-                    if value:
-                        return str(value).lower()
-                except Exception:
-                    pass
-            try:
-                return 'rendered' if bool(iteration.rendered) else 'unrendered'
-            except Exception:
-                return 'unknown'
 
         batch = flame.batch
         if not batch.opened:
@@ -120,14 +103,9 @@ async def get_batch_iterations() -> str:
             }))
         else:
             iterations = []
-            for idx, iteration in enumerate(getattr(batch, 'iterations', [])):
-                state = _render_state(iteration)
-                if state not in ('rendered', 'unrendered'):
-                    state = 'unknown'
+            for iteration in getattr(batch, 'batch_iterations', []):
                 iterations.append({
-                    'index': idx,
-                    'name': _name(iteration),
-                    'render_state': state,
+                    'index': int(iteration.iteration_number),
                 })
 
             print(json.dumps({
@@ -482,11 +460,9 @@ def _disconnect_nodes_code(params: DisconnectNodesInput) -> str:
 print(json.dumps({
     'dry_run': True,
     'action': 'disconnect_nodes',
-    'from': _name(out_node),
-    'to': _name(in_node),
-    'output_socket': output_socket,
+    'input_node': _name(node),
     'input_socket': input_socket,
-    'connection_exists': _connection_exists(out_node, in_node, output_socket, input_socket),
+    'connection_exists': _connection_exists(node, input_socket),
 }))
 """, 20)
     else:
@@ -496,16 +472,9 @@ result = {}
 
 def _do():
     try:
-        if hasattr(batch, 'disconnect_nodes'):
-            ok = batch.disconnect_nodes(out_node, output_socket, in_node, input_socket)
-        elif hasattr(batch, 'disconnect'):
-            ok = batch.disconnect(out_node, output_socket, in_node, input_socket)
-        else:
-            raise RuntimeError('No Flame Batch node disconnect method available')
+        ok = batch.disconnect_node(node, input_socket)
         result['disconnected'] = bool(ok) if ok is not None else True
-        result['from'] = _name(out_node)
-        result['to'] = _name(in_node)
-        result['output_socket'] = output_socket
+        result['input_node'] = _name(node)
         result['input_socket'] = input_socket
     except Exception as e:
         result['error'] = str(e)
@@ -521,7 +490,6 @@ print(json.dumps(result))
 
         output_name = {params.output_node!r}
         input_name = {params.input_node!r}
-        output_socket = {params.output_socket!r}
         input_socket = {params.input_socket!r}
 
         def _name(obj):
@@ -531,27 +499,11 @@ print(json.dumps(result))
             except Exception:
                 return str(obj).strip("'")
 
-        def _find_unique(name):
-            matches = [node for node in batch.nodes if _name(node).casefold() == name.casefold()]
-            if len(matches) == 1:
-                return matches[0], None
-            if len(matches) == 0:
-                return None, {{'error': 'node_not_found', 'node_name': name}}
-            return None, {{
-                'error': 'ambiguous_node_name',
-                'matches': len(matches),
-                'message': 'Multiple nodes share this name; rename or specify a unique node first.',
-            }}
-
-        def _connection_exists(out_node, in_node, output_socket, input_socket):
+        def _connection_exists(node, input_socket):
             try:
-                sockets = out_node.sockets
+                sockets = node.sockets
                 haystack = str(sockets)
-                return (
-                    _name(in_node) in haystack
-                    and (output_socket == 'Default' or output_socket in haystack)
-                    and (input_socket == 'Default' or input_socket in haystack)
-                )
+                return input_socket == 'Default' or input_socket in haystack
             except Exception:
                 return False
 
@@ -562,20 +514,25 @@ print(json.dumps(result))
                 'message': 'Open a batch group first via flame_open_batch_group',
             }}))
         else:
-            out_node, error = _find_unique(output_name)
-            if error:
-                print(json.dumps(error))
+            try:
+                node = batch.get_node(input_name)
+            except Exception as e:
+                print(json.dumps({{'error': 'node_not_found',
+                                   'node_name': input_name,
+                                   'message': str(e)}}))
             else:
-                in_node, error = _find_unique(input_name)
-                if error:
-                    print(json.dumps(error))
-                else:
 {body}
     """)
 
 
 async def disconnect_nodes(params: DisconnectNodesInput) -> str:
     """Disconnect two nodes in the currently open Flame Batch group.
+
+    output_node is accepted in the schema for operator-query
+    legibility (matching the 'disconnect from X to Y' mental
+    model). The underlying Flame API only requires input_node
+    + input_socket. output_node is informational and does not
+    constrain behavior.
 
     Operates on the currently open batch group. If no batch group is open,
     returns {"error": "no_batch_open", "message": "Open a batch group first via flame_open_batch_group"}.

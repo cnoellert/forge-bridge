@@ -122,7 +122,7 @@ def test_flame_get_node_types_happy_path(monkeypatch):
 
 
 def test_flame_get_batch_iterations_happy_path(monkeypatch):
-    """Iteration enumeration returns current, total, and state list."""
+    """Iteration enumeration returns current, total, and iteration indices."""
     import asyncio
     import json
 
@@ -132,13 +132,15 @@ def test_flame_get_batch_iterations_happy_path(monkeypatch):
         "current_iteration": 1,
         "total_iterations": 2,
         "iterations": [
-            {"index": 0, "name": "Iteration 1", "render_state": "rendered"},
-            {"index": 1, "name": "Iteration 2", "render_state": "unrendered"},
+            {"index": 1},
+            {"index": 2},
         ],
     }
 
     async def _fake_execute_json(code: str, *, main_thread: bool = False):
         assert "current_iteration_number" in code
+        assert "batch_iterations" in code
+        assert "render_state" not in code
         return fixture
 
     monkeypatch.setattr(batch_tools.bridge, "execute_json", _fake_execute_json)
@@ -391,9 +393,7 @@ def test_flame_disconnect_nodes_dry_run_preview(monkeypatch):
     fixture = {
         "dry_run": True,
         "action": "disconnect_nodes",
-        "from": "Blur 1",
-        "to": "Write File 1",
-        "output_socket": "Result",
+        "input_node": "Write File 1",
         "input_socket": "Front",
         "connection_exists": True,
     }
@@ -402,6 +402,7 @@ def test_flame_disconnect_nodes_dry_run_preview(monkeypatch):
         compile(code, "<flame-disconnect-dry-run>", "exec")
         assert "flame.schedule_idle_event" not in code
         assert ".set_value" not in code
+        assert "output_socket" not in code
         return fixture
 
     monkeypatch.setattr(batch_tools.bridge, "execute_json", _fake_execute_json)
@@ -448,15 +449,15 @@ def test_flame_disconnect_nodes_executes_and_confirms(monkeypatch):
 
     fixture = {
         "disconnected": True,
-        "from": "Blur 1",
-        "to": "Write File 1",
-        "output_socket": "Default",
+        "input_node": "Write File 1",
         "input_socket": "Default",
     }
 
     async def _fake_execute_json(code: str, *, main_thread: bool = False):
         compile(code, "<flame-disconnect-exec>", "exec")
         assert "flame.schedule_idle_event" in code
+        assert "batch.disconnect_node(node, input_socket)" in code
+        assert "disconnect_nodes(out_node" not in code
         return fixture
 
     monkeypatch.setattr(batch_tools.bridge, "execute_json", _fake_execute_json)
