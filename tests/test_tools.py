@@ -132,8 +132,8 @@ def test_flame_get_batch_iterations_happy_path(monkeypatch):
         "current_iteration": 1,
         "total_iterations": 2,
         "iterations": [
-            {"index": 1},
-            {"index": 2},
+            {"iteration_number": 1},
+            {"iteration_number": 2},
         ],
     }
 
@@ -438,6 +438,14 @@ def test_flame_disconnect_nodes_dry_run_does_not_invoke_main_thread(monkeypatch)
         dry_run=True,
     )
     asyncio.run(batch_tools.disconnect_nodes(params))
+
+
+def test_flame_disconnect_nodes_output_node_defaults_to_empty():
+    from forge_bridge.tools import batch as batch_tools
+
+    params = batch_tools.DisconnectNodesInput(input_node="X")
+
+    assert params.output_node == ""
 
 
 def test_flame_disconnect_nodes_executes_and_confirms(monkeypatch):
