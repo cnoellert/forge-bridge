@@ -285,6 +285,23 @@ else:
                 for track in ver.tracks:
                     tracks.append(track)
 
+            # State-aware deterministic default resolution: preserve a
+            # coherent existing numbering grammar. The schema padding
+            # value is only the bootstrap fallback when no unanimous
+            # existing width is present.
+            existing_padding_widths = []
+            for track in tracks:
+                for seg in track.segments:
+                    current_shot_name_for_padding = ''
+                    try:
+                        current_shot_name_for_padding = seg.shot_name.get_value() if hasattr(seg.shot_name, 'get_value') else str(seg.shot_name)
+                    except: pass
+                    m = _re.search(r'_(\\d+)(?:_|$)', str(current_shot_name_for_padding or ''))
+                    if m:
+                        existing_padding_widths.append(len(m.group(1)))
+            if existing_padding_widths and len(set(existing_padding_widths)) == 1:
+                padding = existing_padding_widths[0]
+
             # Pass 1: assign shot names on background track, build bg_map.
             # When T0 has a gap, scan upward tracks (T1, T2, ...) for a real
             # segment covering the gap range and use it as the gap fill.

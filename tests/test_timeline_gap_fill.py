@@ -245,3 +245,81 @@ def test_legacy_preview_start_frames_delegates_to_dry_run_set_start(monkeypatch)
     assert json.loads(out) == {"dry_run": True}
     assert captured["params"].dry_run is True
     assert captured["params"].sequence_name == "30sec_21"
+
+
+def test_rename_shots_infers_padding_from_existing_shot_names():
+    src = _source_of(timeline.rename_shots)
+
+    assert "existing_padding_widths = []" in src
+    assert r"_(\\d+)(?:_|$)" in src
+    assert "existing_padding_widths.append(len(m.group(1)))" in src
+    assert "len(set(existing_padding_widths)) == 1" in src
+    assert "padding = existing_padding_widths[0]" in src
+
+
+def test_rename_shots_preview_preserves_existing_padding(monkeypatch):
+    captured: dict = {}
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        captured["code"] = code
+        captured["main_thread"] = main_thread
+        return {
+            "dry_run": True,
+            "proposed_changes": [
+                {
+                    "index": 0,
+                    "current": "genesis_0010_source_L01",
+                    "proposed": "nova_0010_source_L01",
+                    "type": "shot_name",
+                },
+            ],
+            "count": 1,
+        }
+
+    monkeypatch.setattr(timeline.bridge, "execute_json", _fake_execute_json)
+
+    import asyncio
+
+    out = asyncio.run(
+        timeline.rename_shots(
+            timeline.RenameInput(
+                sequence_name="30sec_21",
+                prefix="nova",
+                dry_run=True,
+            ),
+        ),
+    )
+
+    assert json.loads(out)["proposed_changes"][0]["proposed"] == (
+        "nova_0010_source_L01"
+    )
+    assert "padding = existing_padding_widths[0]" in captured["code"]
+    assert captured["main_thread"] is False
+
+
+def test_rename_shots_uses_provided_padding_when_no_existing_pattern(monkeypatch):
+    captured: dict = {}
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        captured["code"] = code
+        return {"dry_run": True, "proposed_changes": [], "count": 0}
+
+    monkeypatch.setattr(timeline.bridge, "execute_json", _fake_execute_json)
+
+    import asyncio
+
+    asyncio.run(
+        timeline.rename_shots(
+            timeline.RenameInput(
+                sequence_name="30sec_21",
+                prefix="nova",
+                padding=5,
+                dry_run=True,
+            ),
+        ),
+    )
+
+    assert "padding             = 5" in captured["code"]
+    assert "if existing_padding_widths and len(set(existing_padding_widths)) == 1" in (
+        captured["code"]
+    )
