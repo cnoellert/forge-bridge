@@ -35,6 +35,42 @@ def test_resolves_reel_name_with_same_normalization_pattern():
     }
 
 
+def test_resolves_reel_contents_on_phrase():
+    resolved = resolve_query_entities("list reel contents on Sequences")
+
+    assert resolved["reel_name"] == {
+        "value": "Sequences",
+        "source": "Sequences",
+    }
+
+
+def test_resolves_reel_contents_without_preposition_phrase():
+    resolved = resolve_query_entities("reel contents Sequences")
+
+    assert resolved["reel_name"] == {
+        "value": "Sequences",
+        "source": "Sequences",
+    }
+
+
+def test_resolves_reel_contents_of_phrase():
+    resolved = resolve_query_entities("reel contents of Sequences")
+
+    assert resolved["reel_name"] == {
+        "value": "Sequences",
+        "source": "Sequences",
+    }
+
+
+def test_resolves_library_contents_on_phrase():
+    resolved = resolve_query_entities("list library contents on Commercials")
+
+    assert resolved["library_name"] == {
+        "value": "Commercials",
+        "source": "Commercials",
+    }
+
+
 def test_passes_operator_prefix_through_for_rename_query():
     resolved = resolve_query_entities(
         "Rename the shots on 30sec 21 to genesis, 4-digit padding, by 10s",

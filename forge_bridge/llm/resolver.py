@@ -17,8 +17,8 @@ _SEQ_CANDIDATE_RE = re.compile(
     r"\b(?P<head>\d+[A-Za-z]{2,})[ _-]?(?P<tail>\d{1,4})\b"
 )
 _EXPLICIT_ENTITY_RE = re.compile(
-    r"\b(?P<label>sequence|reel)\s+"
-    r"(?:named\s+|called\s+)?"
+    r"\b(?P<label>sequence|reel|library)\s+"
+    r"(?:named\s+|called\s+|contents?\s+(?:of\s+|on\s+|in\s+)?)?"
     r"(?P<value>[A-Za-z0-9][A-Za-z0-9_ -]*?[A-Za-z0-9])"
     r"(?=\s+(?:to|with|by|and|,)|[?.!]|$)",
     re.IGNORECASE,
@@ -87,7 +87,13 @@ def resolve_query_entities(
 
     for match in _EXPLICIT_ENTITY_RE.finditer(query):
         label = match.group("label").casefold()
-        key = "sequence_name" if label == "sequence" else "reel_name"
+        key = (
+            "sequence_name"
+            if label == "sequence"
+            else "reel_name"
+            if label == "reel"
+            else "library_name"
+        )
         source = _clean_source(match.group("value"))
         seq_match = _SEQ_CANDIDATE_RE.search(source)
         if key == "sequence_name":
@@ -258,6 +264,9 @@ def _known_names_for(key: str, desktop: Mapping[str, Any]) -> list[Any]:
     elif key == "reel_name":
         candidates.extend(_extract_names(desktop.get("reels")))
         candidates.extend(_extract_names(desktop.get("reel_names")))
+    elif key == "library_name":
+        candidates.extend(_extract_names(desktop.get("libraries")))
+        candidates.extend(_extract_names(desktop.get("library_names")))
     return candidates
 
 
@@ -267,7 +276,12 @@ def _extract_names(value: Any) -> list[Any]:
     if isinstance(value, str):
         return [value]
     if isinstance(value, Mapping):
-        name = value.get("name") or value.get("sequence_name") or value.get("reel_name")
+        name = (
+            value.get("name")
+            or value.get("sequence_name")
+            or value.get("reel_name")
+            or value.get("library_name")
+        )
         return [name] if name else []
     if isinstance(value, (list, tuple)):
         names: list[Any] = []
