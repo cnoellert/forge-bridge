@@ -166,12 +166,23 @@ async def list_libraries(params: Optional[ListLibrariesInput] = None) -> str:
 # ── Tool: flame_list_desktop ────────────────────────────────────────────
 
 
-async def list_desktop() -> str:
+class ListDesktopInput(BaseModel):
+    """Input for listing the Flame Desktop."""
+
+    include_names: bool = Field(
+        default=False,
+        description="If True, include shallow item names for each reel. "
+        "Default False preserves the compact count-only desktop listing.",
+    )
+
+
+async def list_desktop(params: Optional[ListDesktopInput] = None) -> str:
     """Flame: list the current Flame Desktop's reel groups, reels, and batch groups.
 
     The "Desktop" is Flame's working surface — distinct from a library.
     Returns reel groups with nested reels and clip/sequence counts, plus
-    batch group names.
+    batch group names. Set include_names=True to add top-level clip/sequence
+    names for each reel without expanding tracks or segment metadata.
 
     Use this tool ONLY when:
     - the user asks about the *Flame Desktop* specifically
@@ -185,33 +196,449 @@ async def list_desktop() -> str:
     This tool is specific to Flame's Desktop view; it does not see
     library, project, or pipeline-registry content.
     """
-    data = await bridge.execute_json("""
+    if params is None:
+        params = ListDesktopInput()
+
+    if not params.include_names:
+        data = await bridge.execute_json("""
+            import flame, json
+            ws = flame.project.current_project.current_workspace
+            desk = ws.desktop
+            reel_groups = []
+            for rg in desk.reel_groups:
+                rg_name = rg.name.get_value() if hasattr(rg.name, 'get_value') else str(rg.name)
+                reels = []
+                for r in rg.reels:
+                    r_name = r.name.get_value() if hasattr(r.name, 'get_value') else str(r.name)
+                    reels.append({
+                        'name': r_name,
+                        'clips': len(r.clips),
+                        'sequences': len(r.sequences),
+                    })
+                reel_groups.append({'name': rg_name, 'reels': reels})
+
+            batch_groups = []
+            for bg in desk.batch_groups:
+                bg_name = bg.name.get_value() if hasattr(bg.name, 'get_value') else str(bg.name)
+                batch_groups.append({'name': bg_name})
+
+            result = {
+                'reel_groups': reel_groups,
+                'batch_groups': batch_groups,
+            }
+            print(json.dumps(result))
+        """)
+        return json.dumps(data, indent=2)
+
+    code = """
         import flame, json
+
+        def _name(obj):
+            try:
+                value = obj.name.get_value() if hasattr(obj.name, 'get_value') else obj.name
+                return str(value).strip("'")
+            except Exception:
+                return str(obj).strip("'")
+
         ws = flame.project.current_project.current_workspace
         desk = ws.desktop
         reel_groups = []
         for rg in desk.reel_groups:
-            rg_name = rg.name.get_value() if hasattr(rg.name, 'get_value') else str(rg.name)
+            rg_name = _name(rg)
             reels = []
             for r in rg.reels:
-                r_name = r.name.get_value() if hasattr(r.name, 'get_value') else str(r.name)
-                reels.append({
+                r_name = _name(r)
+                entry = {
                     'name': r_name,
                     'clips': len(r.clips),
                     'sequences': len(r.sequences),
-                })
+                }
+    """
+    if params.include_names:
+        code += """
+                items = []
+                for item in list(r.clips) + list(r.sequences):
+                    items.append({'name': _name(item), 'type': type(item).__name__})
+                entry['items'] = items
+        """
+    code += """
+                reels.append(entry)
             reel_groups.append({'name': rg_name, 'reels': reels})
 
         batch_groups = []
         for bg in desk.batch_groups:
-            bg_name = bg.name.get_value() if hasattr(bg.name, 'get_value') else str(bg.name)
-            batch_groups.append({'name': bg_name})
+            batch_groups.append({'name': _name(bg)})
 
         result = {
             'reel_groups': reel_groups,
             'batch_groups': batch_groups,
         }
         print(json.dumps(result))
+    """
+    data = await bridge.execute_json(code)
+    return json.dumps(data, indent=2)
+
+
+# ── Tool: flame_list_reel_contents ──────────────────────────────────────
+
+
+class ListReelContentsInput(BaseModel):
+    """Input for listing a reel's immediate contents."""
+
+    reel_name: str = Field(
+        ...,
+        description='Name of the reel to enumerate, e.g. "Sequences" or "Reel 1 Footage graded".',
+        min_length=1,
+    )
+    reel_group: str = Field(
+        default="",
+        description="Optional reel group name to narrow search; empty string searches all reel groups.",
+    )
+
+
+async def list_reel_contents(params: ListReelContentsInput) -> str:
+    """Flame: list the flat top-level contents of a reel by name.
+
+    Use this tool to enumerate what's in a reel by name.
+    For full clip metadata use flame_get_clip.
+    For sequence structure use flame_inspect_sequence_versions.
+
+    Returns a flat list of clip/sequence names with type, duration, and
+    sequence track count. This is deliberately shallow: no nested segment
+    structures, embedded metadata objects, or recursive track trees.
+    """
+    data = await bridge.execute_json(f"""
+        import flame, json
+
+        target_reel = {params.reel_name!r}
+        target_group = {params.reel_group!r}
+
+        def _name(obj):
+            try:
+                value = obj.name.get_value() if hasattr(obj.name, 'get_value') else obj.name
+                return str(value).strip("'")
+            except Exception:
+                return str(obj).strip("'")
+
+        def _duration_frames(obj):
+            try:
+                return int(obj.duration)
+            except Exception:
+                try:
+                    return int(obj.duration.frame)
+                except Exception:
+                    try:
+                        return int(float(str(obj.duration)))
+                    except Exception:
+                        return 0
+
+        def _track_count(obj):
+            try:
+                if hasattr(obj, 'versions') and len(obj.versions) > 0:
+                    return len(obj.versions[0].tracks)
+            except Exception:
+                pass
+            return 0
+
+        def _entry(item):
+            return {{
+                'name': _name(item),
+                'type': type(item).__name__,
+                'duration': _duration_frames(item),
+                'track_count': _track_count(item),
+            }}
+
+        def _contents(reel):
+            return [_entry(item) for item in list(reel.clips) + list(reel.sequences)]
+
+        def _matches(value, target):
+            return _name(value).casefold() == str(target).strip("'").casefold()
+
+        ws = flame.project.current_project.current_workspace
+        matches = []
+
+        desk = ws.desktop
+        for rg in desk.reel_groups:
+            if target_group and not _matches(rg, target_group):
+                continue
+            for reel in rg.reels:
+                if _matches(reel, target_reel):
+                    matches.append(_contents(reel))
+
+        for lib in ws.libraries:
+            for rg in getattr(lib, 'reel_groups', []):
+                if target_group and not _matches(rg, target_group):
+                    continue
+                for reel in rg.reels:
+                    if _matches(reel, target_reel):
+                        matches.append(_contents(reel))
+            for reel in getattr(lib, 'reels', []):
+                if target_group:
+                    continue
+                if _matches(reel, target_reel):
+                    matches.append(_contents(reel))
+            for folder in getattr(lib, 'folders', []):
+                for reel in getattr(folder, 'reels', []):
+                    if target_group:
+                        continue
+                    if _matches(reel, target_reel):
+                        matches.append(_contents(reel))
+
+        if matches:
+            print(json.dumps(matches[0]))
+        else:
+            print(json.dumps({{'error': 'Reel not found', 'reel_name': target_reel,
+                               'reel_group': target_group}}))
+    """)
+    return json.dumps(data, indent=2)
+
+
+# ── Tool: flame_get_clip ────────────────────────────────────────────────
+
+
+class GetClipInput(BaseModel):
+    """Input for retrieving Tier 1 clip metadata."""
+
+    clip_name: str = Field(
+        ...,
+        description="Exact clip name, normalized against Flame's displayed clip names.",
+        min_length=1,
+    )
+    reel_name: str = Field(
+        default="",
+        description="Optional reel name to narrow search.",
+    )
+
+
+async def get_clip(params: GetClipInput) -> str:
+    """Flame: get Tier 1 operator-decision metadata for a named clip.
+
+    Tier 1 clip metadata is operator-decision metadata,
+    not archival provenance metadata. For deeper metadata
+    use flame_execute_python.
+
+    Returns immediate decision fields such as duration, dimensions, frame
+    rate, colour space, bit depth, track count, and resolved media path when
+    Flame exposes one. It intentionally excludes tape name, source timecode,
+    creation dates, reel IDs, scanner metadata, and camera payloads.
+    """
+    data = await bridge.execute_json(f"""
+        import flame, json
+
+        target_clip = {params.clip_name!r}
+        target_reel = {params.reel_name!r}
+
+        def _value(value, default=''):
+            try:
+                if hasattr(value, 'get_value'):
+                    value = value.get_value()
+            except Exception:
+                return default
+            if value is None:
+                return default
+            return value
+
+        def _name(obj):
+            try:
+                return str(_value(obj.name)).strip("'")
+            except Exception:
+                return str(obj).strip("'")
+
+        def _matches(obj, target):
+            return _name(obj).casefold() == str(target).strip("'").casefold()
+
+        def _duration_frames(obj):
+            try:
+                return int(obj.duration)
+            except Exception:
+                try:
+                    return int(obj.duration.frame)
+                except Exception:
+                    try:
+                        return int(float(str(obj.duration)))
+                    except Exception:
+                        return 0
+
+        def _int_attr(obj, names):
+            for attr in names:
+                try:
+                    value = _value(getattr(obj, attr))
+                    if value not in ('', None):
+                        return int(value)
+                except Exception:
+                    pass
+            return 0
+
+        def _str_attr(obj, names):
+            for attr in names:
+                try:
+                    value = _value(getattr(obj, attr))
+                    if value not in ('', None):
+                        return str(value)
+                except Exception:
+                    pass
+            return ''
+
+        def _file_path(obj):
+            for attr in ('file_path', 'path', 'media_path'):
+                try:
+                    value = _value(getattr(obj, attr))
+                    if value:
+                        return str(value)
+                except Exception:
+                    pass
+            try:
+                return str(obj.get_media_path())
+            except Exception:
+                return ''
+
+        def _track_count(obj):
+            for attr in ('tracks', 'versions'):
+                try:
+                    value = getattr(obj, attr)
+                    if attr == 'versions' and len(value) > 0:
+                        return len(value[0].tracks)
+                    return len(value)
+                except Exception:
+                    pass
+            return 0
+
+        def _clip_entry(clip):
+            frame_rate = _str_attr(clip, ('frame_rate', 'rate', 'fps'))
+            if frame_rate and 'fps' not in frame_rate.lower():
+                frame_rate = frame_rate + ' fps'
+            return {{
+                'name': _name(clip),
+                'type': type(clip).__name__,
+                'duration': _duration_frames(clip),
+                'duration_tc': str(getattr(clip, 'duration', '')),
+                'width': _int_attr(clip, ('width',)),
+                'height': _int_attr(clip, ('height',)),
+                'frame_rate': frame_rate,
+                'colour_space': _str_attr(clip, ('colour_space', 'colorspace', 'colourspace')),
+                'bit_depth': _str_attr(clip, ('bit_depth', 'bitdepth')),
+                'track_count': _track_count(clip),
+                'file_path': _file_path(clip),
+            }}
+
+        def _search_container(container):
+            if target_reel and hasattr(container, 'name') and not _matches(container, target_reel):
+                return None
+            for clip in getattr(container, 'clips', []):
+                if _matches(clip, target_clip):
+                    return _clip_entry(clip)
+            return None
+
+        ws = flame.project.current_project.current_workspace
+
+        result = None
+        for rg in ws.desktop.reel_groups:
+            for reel in rg.reels:
+                if result:
+                    break
+                result = _search_container(reel)
+            if result:
+                break
+
+        if not result:
+            for lib in ws.libraries:
+                if not target_reel:
+                    result = _search_container(lib)
+                    if result:
+                        break
+                for reel in getattr(lib, 'reels', []):
+                    if result:
+                        break
+                    result = _search_container(reel)
+                if result:
+                    break
+                for folder in getattr(lib, 'folders', []):
+                    if result:
+                        break
+                    if not target_reel:
+                        result = _search_container(folder)
+                        if result:
+                            break
+                    for reel in getattr(folder, 'reels', []):
+                        if result:
+                            break
+                        result = _search_container(reel)
+
+        if result:
+            print(json.dumps(result))
+        else:
+            print(json.dumps({{'error': 'Clip not found', 'clip_name': target_clip,
+                               'reel_name': target_reel}}))
+    """)
+    return json.dumps(data, indent=2)
+
+
+# ── Tool: flame_list_library_contents ───────────────────────────────────
+
+
+class ListLibraryContentsInput(BaseModel):
+    """Input for listing a library's top-level contents."""
+
+    library_name: str = Field(
+        ...,
+        description="Exact Flame workspace library name.",
+        min_length=1,
+    )
+
+
+async def list_library_contents(params: ListLibraryContentsInput) -> str:
+    """Flame: list one level of top-level contents in a workspace library.
+
+    Complements flame_list_libraries, which returns library names. This
+    tool expands exactly one named library by one level: reels, clips,
+    sequences, and folders. Folders report child count only; they are not
+    recursively expanded.
+    """
+    data = await bridge.execute_json(f"""
+        import flame, json
+
+        target_library = {params.library_name!r}
+
+        def _name(obj):
+            try:
+                value = obj.name.get_value() if hasattr(obj.name, 'get_value') else obj.name
+                return str(value).strip("'")
+            except Exception:
+                return str(obj).strip("'")
+
+        def _matches(obj, target):
+            return _name(obj).casefold() == str(target).strip("'").casefold()
+
+        def _count(container):
+            count = 0
+            for attr in ('reels', 'clips', 'sequences', 'folders'):
+                try:
+                    count += len(getattr(container, attr))
+                except Exception:
+                    pass
+            return count
+
+        ws = flame.project.current_project.current_workspace
+        result = None
+        for lib in ws.libraries:
+            if not _matches(lib, target_library):
+                continue
+            items = []
+            for reel in getattr(lib, 'reels', []):
+                items.append({{'name': _name(reel), 'type': type(reel).__name__, 'count': _count(reel)}})
+            for clip in getattr(lib, 'clips', []):
+                items.append({{'name': _name(clip), 'type': type(clip).__name__, 'count': 0}})
+            for seq in getattr(lib, 'sequences', []):
+                items.append({{'name': _name(seq), 'type': type(seq).__name__, 'count': 0}})
+            for folder in getattr(lib, 'folders', []):
+                items.append({{'name': _name(folder), 'type': type(folder).__name__, 'count': _count(folder)}})
+            result = items
+            break
+
+        if result is None:
+            print(json.dumps({{'error': 'Library not found', 'library_name': target_library}}))
+        else:
+            print(json.dumps(result))
     """)
     return json.dumps(data, indent=2)
 
