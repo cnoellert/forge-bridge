@@ -5,6 +5,7 @@ import asyncio
 import json
 from types import SimpleNamespace
 
+import pytest
 from starlette.testclient import TestClient
 
 from tests.console.test_pr30_chain import (
@@ -400,6 +401,68 @@ def test_chain_step_maps_bullet_list_phrase_to_bullets_format():
         (
             "format_result",
             {"params": {"data": {"sequence": "30sec_21"}, "format": "bullets"}},
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("step_text", "expected_format"),
+    [
+        ("format as a table", "table"),
+        ("format as an email", "email"),
+        ("format as the table", "table"),
+        ("format as table", "table"),
+        ("format as email", "email"),
+        ("format as a bullet list", "bullets"),
+        ("format as bullet list", "bullets"),
+        ("format as bullet_list", "bullets"),
+        ("Format As A Table", "table"),
+    ],
+)
+def test_chain_step_extracts_format_class_with_optional_article(
+    step_text,
+    expected_format,
+):
+    from forge_bridge.console._step import execute_chain_step
+
+    calls = []
+    tool = SimpleNamespace(
+        name="format_result",
+        inputSchema={
+            "$defs": {
+                "FormatInput": {
+                    "type": "object",
+                    "properties": {"data": {}, "format": {"type": "string"}},
+                    "required": ["data", "format"],
+                },
+            },
+            "type": "object",
+            "properties": {"params": {"$ref": "#/$defs/FormatInput"}},
+            "required": ["params"],
+        },
+    )
+
+    class FakeMCP:
+        async def call_tool(self, name, arguments):
+            calls.append((name, arguments))
+            return _text_block("formatted")
+
+    asyncio.run(execute_chain_step(
+        step_text=step_text,
+        tools=[tool],
+        mcp=FakeMCP(),
+        inherited_context={"__previous_result__": {"sequence": "30sec_21"}},
+    ))
+
+    assert calls == [
+        (
+            "format_result",
+            {
+                "params": {
+                    "data": {"sequence": "30sec_21"},
+                    "format": expected_format,
+                },
+            },
         ),
     ]
 

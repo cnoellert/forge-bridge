@@ -58,7 +58,8 @@ except ImportError as _corpus_import_error:
 logger = logging.getLogger(__name__)
 
 _FORMAT_STEP_RE = re.compile(
-    r"\bformat\s+as\s+(?P<format>email|table|bullets?|bullet[_ -]?list)\b",
+    r"\bformat\s+as\s+(?:(?:a|an|the)\s+)?"
+    r"(?P<format>email|table|bullets?|bullet[_ -]?list)\b",
     re.IGNORECASE,
 )
 
