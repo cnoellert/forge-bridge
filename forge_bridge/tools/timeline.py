@@ -78,14 +78,11 @@ def _collect_segments(seq):
     '''Return all non-gap segments with full metadata, grouped by track.
     Each entry: {
         track_idx, track_name, seg_name, shot_name, role, head,
-        record_in, record_out, duration, source_name, file_path, start_frame
+        record_in, record_out, source_name, file_path, start_frame
     }
     '''
-    from forge_bridge.utils.timecode import TimecodeParseError, timecode_to_frames
-
     result = []
     tracks = []
-    fps = float(str(seq.frame_rate).split()[0])
     for ver in seq.versions:
         for track in ver.tracks:
             tracks.append(track)
@@ -113,13 +110,6 @@ def _collect_segments(seq):
                 head = int(seg.head)
             except Exception:
                 pass
-            try:
-                duration = (
-                    timecode_to_frames(str(seg.record_out), fps)
-                    - timecode_to_frames(str(seg.record_in), fps)
-                )
-            except TimecodeParseError:
-                raise
             result.append({
                 'track_idx':   ti,
                 'track_name':  track_name,
@@ -132,7 +122,6 @@ def _collect_segments(seq):
                 'head':        head,
                 'record_in':   str(seg.record_in),
                 'record_out':  str(seg.record_out),
-                'duration':    duration,
                 'start_frame': int(seg.start_frame) if seg.start_frame else None,
             })
     return result
@@ -175,6 +164,8 @@ async def get_sequence_segments(params: GetSegmentsInput) -> str:
     This is the primary inspection tool before running rename or
     set_start_frames. The metadata here drives both workflows.
     """
+    from forge_bridge.utils.timecode import TimecodeParseError, timecode_to_frames
+
     data = await bridge.execute_json(f"""
 import flame, json
 {_COLLECT_CODE}
@@ -191,8 +182,25 @@ else:
         s['forge_shot']  = m.group(1) if m else ''
         s['forge_role']  = m.group(2) if m else ''
         s['forge_layer'] = int(m.group(3)) if m else 0
-    print(json.dumps({{'sequence': {params.sequence_name!r}, 'segments': segs, 'count': len(segs)}}))
+    print(json.dumps({{
+        'sequence': {params.sequence_name!r},
+        'frame_rate': str(seq.frame_rate),
+        'segments': segs,
+        'count': len(segs),
+    }}))
 """)
+    if isinstance(data, dict) and "segments" in data:
+        seq_frame_rate = data.get("frame_rate")
+        fps = float(str(seq_frame_rate).split()[0])
+        for segment in data["segments"]:
+            try:
+                duration = (
+                    timecode_to_frames(segment["record_out"], fps)
+                    - timecode_to_frames(segment["record_in"], fps)
+                )
+                segment["duration"] = duration
+            except TimecodeParseError:
+                raise
     return json.dumps(data, indent=2)
 
 
