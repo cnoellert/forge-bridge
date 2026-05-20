@@ -234,7 +234,16 @@ def test_run_flame_list_libraries_explicit_args_still_work(monkeypatch):
     assert "folder_details" in captured["code"]
 
 
-def test_flame_list_desktop_include_names_false_preserves_shape(monkeypatch):
+def test_flame_list_desktop_signature_is_original_no_args():
+    """flame_list_desktop remains a no-arg tool with unchanged wire shape."""
+    import inspect
+
+    from forge_bridge.tools.project import list_desktop
+
+    assert inspect.signature(list_desktop).parameters == {}
+
+
+def test_flame_list_desktop_preserves_original_shape(monkeypatch):
     """Default desktop listing remains the compact count-only response."""
     import asyncio
     import json
@@ -250,6 +259,7 @@ def test_flame_list_desktop_include_names_false_preserves_shape(monkeypatch):
 
     async def _fake_execute_json(code: str, *, main_thread: bool = False):
         assert "entry['items']" not in code
+        assert "include_names" not in code
         return old_shape
 
     monkeypatch.setattr(project_tools.bridge, "execute_json", _fake_execute_json)
@@ -258,46 +268,66 @@ def test_flame_list_desktop_include_names_false_preserves_shape(monkeypatch):
     assert json.loads(out) == old_shape
 
 
-def test_flame_list_desktop_include_names_populates_items(monkeypatch):
-    """include_names=True adds shallow name/type entries to each reel."""
+def test_flame_list_reel_groups_happy_path(monkeypatch):
+    """Reel group enumeration returns groups with one-level reel counts."""
     import asyncio
     import json
 
     from forge_bridge.tools import project as project_tools
 
-    expanded = {
-        "reel_groups": [
-            {
-                "name": "Default",
-                "reels": [
-                    {
-                        "name": "Sequences",
-                        "clips": 1,
-                        "sequences": 1,
-                        "items": [
-                            {"name": "plate_A", "type": "PyClip"},
-                            {"name": "30sec_21", "type": "PySequence"},
-                        ],
-                    }
-                ],
-            }
-        ],
-        "batch_groups": [],
-    }
+    fixture = [
+        {
+            "name": "Default",
+            "reels": [
+                {"name": "Sequences", "clips": 1, "sequences": 2},
+                {"name": "Plates", "clips": 12, "sequences": 0},
+            ],
+        }
+    ]
 
     async def _fake_execute_json(code: str, *, main_thread: bool = False):
-        assert "entry['items']" in code
-        return expanded
+        assert "desk.reel_groups" in code
+        assert "batch_groups" not in code
+        return fixture
 
     monkeypatch.setattr(project_tools.bridge, "execute_json", _fake_execute_json)
 
-    params = project_tools.ListDesktopInput(include_names=True)
-    out = asyncio.run(project_tools.list_desktop(params))
-    parsed = json.loads(out)
-    assert parsed["reel_groups"][0]["reels"][0]["items"] == [
-        {"name": "plate_A", "type": "PyClip"},
-        {"name": "30sec_21", "type": "PySequence"},
-    ]
+    out = asyncio.run(project_tools.list_reel_groups())
+    assert json.loads(out) == fixture
+
+
+def test_flame_list_reel_groups_empty_desktop(monkeypatch):
+    """A desktop with no reel groups returns [] rather than an error."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import project as project_tools
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        return []
+
+    monkeypatch.setattr(project_tools.bridge, "execute_json", _fake_execute_json)
+
+    out = asyncio.run(project_tools.list_reel_groups())
+    assert json.loads(out) == []
+
+
+def test_flame_list_reel_groups_allows_empty_reels(monkeypatch):
+    """A reel group with no reels is represented cleanly."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import project as project_tools
+
+    fixture = [{"name": "Empty Group", "reels": []}]
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        return fixture
+
+    monkeypatch.setattr(project_tools.bridge, "execute_json", _fake_execute_json)
+
+    out = asyncio.run(project_tools.list_reel_groups())
+    assert json.loads(out) == fixture
 
 
 def test_flame_list_reel_contents_happy_path(monkeypatch):

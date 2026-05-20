@@ -575,6 +575,9 @@ def register_builtins(mcp: FastMCP) -> None:
         register_tool(mcp, flame_project.list_desktop, name="flame_list_desktop", source="builtin",
                       annotations={"readOnlyHint": True})
 
+        register_tool(mcp, flame_project.list_reel_groups, name="flame_list_reel_groups", source="builtin",
+                      annotations={"readOnlyHint": True})
+
         register_tool(mcp, flame_project.list_reel_contents, name="flame_list_reel_contents", source="builtin",
                       annotations={"readOnlyHint": True})
 

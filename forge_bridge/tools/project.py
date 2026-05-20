@@ -166,23 +166,12 @@ async def list_libraries(params: Optional[ListLibrariesInput] = None) -> str:
 # ── Tool: flame_list_desktop ────────────────────────────────────────────
 
 
-class ListDesktopInput(BaseModel):
-    """Input for listing the Flame Desktop."""
-
-    include_names: bool = Field(
-        default=False,
-        description="If True, include shallow item names for each reel. "
-        "Default False preserves the compact count-only desktop listing.",
-    )
-
-
-async def list_desktop(params: Optional[ListDesktopInput] = None) -> str:
+async def list_desktop() -> str:
     """Flame: list the current Flame Desktop's reel groups, reels, and batch groups.
 
     The "Desktop" is Flame's working surface — distinct from a library.
     Returns reel groups with nested reels and clip/sequence counts, plus
-    batch group names. Set include_names=True to add top-level clip/sequence
-    names for each reel without expanding tracks or segment metadata.
+    batch group names.
 
     Use this tool ONLY when:
     - the user asks about the *Flame Desktop* specifically
@@ -196,41 +185,62 @@ async def list_desktop(params: Optional[ListDesktopInput] = None) -> str:
     This tool is specific to Flame's Desktop view; it does not see
     library, project, or pipeline-registry content.
     """
-    if params is None:
-        params = ListDesktopInput()
+    data = await bridge.execute_json("""
+        import flame, json
+        ws = flame.project.current_project.current_workspace
+        desk = ws.desktop
+        reel_groups = []
+        for rg in desk.reel_groups:
+            rg_name = rg.name.get_value() if hasattr(rg.name, 'get_value') else str(rg.name)
+            reels = []
+            for r in rg.reels:
+                r_name = r.name.get_value() if hasattr(r.name, 'get_value') else str(r.name)
+                reels.append({
+                    'name': r_name,
+                    'clips': len(r.clips),
+                    'sequences': len(r.sequences),
+                })
+            reel_groups.append({'name': rg_name, 'reels': reels})
 
-    if not params.include_names:
-        data = await bridge.execute_json("""
-            import flame, json
-            ws = flame.project.current_project.current_workspace
-            desk = ws.desktop
-            reel_groups = []
-            for rg in desk.reel_groups:
-                rg_name = rg.name.get_value() if hasattr(rg.name, 'get_value') else str(rg.name)
-                reels = []
-                for r in rg.reels:
-                    r_name = r.name.get_value() if hasattr(r.name, 'get_value') else str(r.name)
-                    reels.append({
-                        'name': r_name,
-                        'clips': len(r.clips),
-                        'sequences': len(r.sequences),
-                    })
-                reel_groups.append({'name': rg_name, 'reels': reels})
+        batch_groups = []
+        for bg in desk.batch_groups:
+            bg_name = bg.name.get_value() if hasattr(bg.name, 'get_value') else str(bg.name)
+            batch_groups.append({'name': bg_name})
 
-            batch_groups = []
-            for bg in desk.batch_groups:
-                bg_name = bg.name.get_value() if hasattr(bg.name, 'get_value') else str(bg.name)
-                batch_groups.append({'name': bg_name})
+        result = {
+            'reel_groups': reel_groups,
+            'batch_groups': batch_groups,
+        }
+        print(json.dumps(result))
+    """)
+    return json.dumps(data, indent=2)
 
-            result = {
-                'reel_groups': reel_groups,
-                'batch_groups': batch_groups,
-            }
-            print(json.dumps(result))
-        """)
-        return json.dumps(data, indent=2)
 
-    code = """
+# ── Tool: flame_list_reel_groups ────────────────────────────────────────
+
+
+async def list_reel_groups() -> str:
+    """Flame: list all reel groups on the current desktop with their reels.
+
+    Returns the top-level reel group structure of the Flame Desktop:
+    each reel group name and its reels with clip/sequence counts.
+
+    Use this tool ONLY when:
+    - the user wants to know what reel groups exist on the desktop
+    - the user needs reel names to pass to flame_list_reel_contents
+
+    Do NOT use this tool for:
+    - item names inside a reel → use flame_list_reel_contents
+    - full desktop snapshot → use flame_context
+    - libraries → use flame_list_libraries
+
+    Note: output shape includes reels one level deep, consistent with
+    flame_list_desktop. This is a conscious asymmetry with
+    flame_list_libraries (names-only default) — reel groups are
+    inherently shallow and the reel list is the primary operator-useful
+    payload.
+    """
+    data = await bridge.execute_json("""
         import flame, json
 
         def _name(obj):
@@ -244,38 +254,17 @@ async def list_desktop(params: Optional[ListDesktopInput] = None) -> str:
         desk = ws.desktop
         reel_groups = []
         for rg in desk.reel_groups:
-            rg_name = _name(rg)
             reels = []
-            for r in rg.reels:
-                r_name = _name(r)
-                entry = {
-                    'name': r_name,
-                    'clips': len(r.clips),
-                    'sequences': len(r.sequences),
-                }
-    """
-    if params.include_names:
-        code += """
-                items = []
-                for item in list(r.clips) + list(r.sequences):
-                    items.append({'name': _name(item), 'type': type(item).__name__})
-                entry['items'] = items
-        """
-    code += """
-                reels.append(entry)
-            reel_groups.append({'name': rg_name, 'reels': reels})
+            for reel in rg.reels:
+                reels.append({
+                    'name': _name(reel),
+                    'clips': len(reel.clips),
+                    'sequences': len(reel.sequences),
+                })
+            reel_groups.append({'name': _name(rg), 'reels': reels})
 
-        batch_groups = []
-        for bg in desk.batch_groups:
-            batch_groups.append({'name': _name(bg)})
-
-        result = {
-            'reel_groups': reel_groups,
-            'batch_groups': batch_groups,
-        }
-        print(json.dumps(result))
-    """
-    data = await bridge.execute_json(code)
+        print(json.dumps(reel_groups))
+    """)
     return json.dumps(data, indent=2)
 
 
