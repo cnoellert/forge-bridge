@@ -552,6 +552,21 @@ async def set_start_frames(params: SetStartFramesInput) -> str:
     exceptions: {'noise_010': 1001, 'noise_020': 1101}
 
     Runs on Flame's main thread. Returns results per shot.
+
+    Known limitation (empirically observed 2026-05-20):
+    change_start_frame() causes a hard Flame crash on multi-track
+    sequences with the current Flame Python API. The method exists
+    and returns the correct value, but destabilizes Flame's internal
+    state on sequences with multiple versions and tracks.
+
+    Until this is resolved upstream or a safer invocation pattern
+    is identified, flame_set_start_frames should be used with
+    caution on complex multi-track sequences. Single-track sequences
+    or sequences opened in the timeline viewer may behave differently.
+
+    Suggested workaround pending verification:
+    use flame_execute_python for start-frame operations on
+    complex sequences until this limitation is understood.
     """
     data = await bridge.execute_json(f"""
 import flame, json, threading
