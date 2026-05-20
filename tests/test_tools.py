@@ -56,6 +56,13 @@ def test_batch_exports():
     from forge_bridge.tools import batch
 
     expected = [
+        "list_batch_groups",
+        "get_node_types",
+        "get_batch_iterations",
+        "get_batch_reels",
+        "open_batch_group",
+        "delete_node",
+        "disconnect_nodes",
         "list_batch_nodes",
         "get_node_attributes",
         "create_node",
@@ -70,6 +77,415 @@ def test_batch_exports():
     for name in expected:
         assert hasattr(batch, name), f"batch is missing export: {name}"
         assert callable(getattr(batch, name)), f"batch.{name} is not callable"
+
+
+def test_flame_list_batch_groups_happy_path(monkeypatch):
+    """Batch group enumeration returns names plus is_open state."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import batch as batch_tools
+
+    fixture = [
+        {"name": "Comp A", "is_open": True},
+        {"name": "Comp B", "is_open": False},
+    ]
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        assert "is_open" in code
+        assert "desk.batch_groups" in code
+        return fixture
+
+    monkeypatch.setattr(batch_tools.bridge, "execute_json", _fake_execute_json)
+
+    out = asyncio.run(batch_tools.list_batch_groups())
+    assert json.loads(out) == fixture
+
+
+def test_flame_get_node_types_happy_path(monkeypatch):
+    """Node type enumeration returns live Flame node type strings."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import batch as batch_tools
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        assert "flame.batch.node_types" in code
+        return {"node_types": ["Action", "Write File", "Colour Source"]}
+
+    monkeypatch.setattr(batch_tools.bridge, "execute_json", _fake_execute_json)
+
+    out = asyncio.run(batch_tools.get_node_types())
+    parsed = json.loads(out)
+    assert parsed["node_types"]
+    assert "Action" in parsed["node_types"]
+
+
+def test_flame_get_batch_iterations_happy_path(monkeypatch):
+    """Iteration enumeration returns current, total, and state list."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import batch as batch_tools
+
+    fixture = {
+        "current_iteration": 1,
+        "total_iterations": 2,
+        "iterations": [
+            {"index": 0, "name": "Iteration 1", "render_state": "rendered"},
+            {"index": 1, "name": "Iteration 2", "render_state": "unrendered"},
+        ],
+    }
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        assert "current_iteration_number" in code
+        return fixture
+
+    monkeypatch.setattr(batch_tools.bridge, "execute_json", _fake_execute_json)
+
+    out = asyncio.run(batch_tools.get_batch_iterations())
+    assert json.loads(out) == fixture
+
+
+def test_flame_get_batch_iterations_no_batch_open_structured_error(monkeypatch):
+    """Iteration reads require an open batch group and fail structurally."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import batch as batch_tools
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        assert "no_batch_open" in code
+        return {
+            "error": "no_batch_open",
+            "message": "Open a batch group first via flame_open_batch_group",
+        }
+
+    monkeypatch.setattr(batch_tools.bridge, "execute_json", _fake_execute_json)
+
+    out = asyncio.run(batch_tools.get_batch_iterations())
+    parsed = json.loads(out)
+    assert parsed["error"] == "no_batch_open"
+
+
+def test_flame_get_batch_reels_happy_path(monkeypatch):
+    """Batch reel enumeration returns minimum filter-ready clip payload."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import batch as batch_tools
+
+    fixture = {
+        "reels": [
+            {
+                "name": "Batch Reel",
+                "type": "reel",
+                "clips": [{"name": "plate_A", "duration": 120}],
+            },
+            {
+                "name": "Shelf",
+                "type": "shelf_reel",
+                "clips": [],
+            },
+        ]
+    }
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        assert "shelf_reels" in code
+        assert "colourspace" not in code
+        return fixture
+
+    monkeypatch.setattr(batch_tools.bridge, "execute_json", _fake_execute_json)
+
+    out = asyncio.run(batch_tools.get_batch_reels())
+    assert json.loads(out) == fixture
+
+
+def test_flame_get_batch_reels_no_batch_open_structured_error(monkeypatch):
+    """Batch reel reads require an open batch group and fail structurally."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import batch as batch_tools
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        assert "no_batch_open" in code
+        return {
+            "error": "no_batch_open",
+            "message": "Open a batch group first via flame_open_batch_group",
+        }
+
+    monkeypatch.setattr(batch_tools.bridge, "execute_json", _fake_execute_json)
+
+    out = asyncio.run(batch_tools.get_batch_reels())
+    parsed = json.loads(out)
+    assert parsed["error"] == "no_batch_open"
+
+
+def test_flame_open_batch_group_dry_run_preview(monkeypatch):
+    """Opening dry_run previews current and proposed batch context."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import batch as batch_tools
+
+    fixture = {
+        "dry_run": True,
+        "action": "open_batch_group",
+        "proposed": "Comp B",
+        "current": "Comp A",
+    }
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        assert "flame.schedule_idle_event" not in code
+        assert "current" in code
+        assert "proposed" in code
+        return fixture
+
+    monkeypatch.setattr(batch_tools.bridge, "execute_json", _fake_execute_json)
+
+    params = batch_tools.OpenBatchGroupInput(batch_group_name="Comp B", dry_run=True)
+    out = asyncio.run(batch_tools.open_batch_group(params))
+    assert json.loads(out) == fixture
+
+
+def test_flame_open_batch_group_executes_context_switch(monkeypatch):
+    """Opening dry_run=False schedules a UI context switch and confirms previous context."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import batch as batch_tools
+
+    fixture = {"opened": "Comp B", "previous": "Comp A"}
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        assert "flame.schedule_idle_event" in code
+        return fixture
+
+    monkeypatch.setattr(batch_tools.bridge, "execute_json", _fake_execute_json)
+
+    params = batch_tools.OpenBatchGroupInput(batch_group_name="Comp B")
+    out = asyncio.run(batch_tools.open_batch_group(params))
+    assert json.loads(out) == fixture
+
+
+def test_flame_delete_node_dry_run_preview(monkeypatch):
+    """Node deletion dry_run returns preview metadata without scheduling a write."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import batch as batch_tools
+
+    fixture = {
+        "dry_run": True,
+        "action": "delete_node",
+        "node_name": "Blur 1",
+        "node_type": "Blur",
+        "connected_inputs": 1,
+        "connected_outputs": 1,
+    }
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        compile(code, "<flame-delete-dry-run>", "exec")
+        assert "flame.schedule_idle_event" not in code
+        assert ".set_value" not in code
+        return fixture
+
+    monkeypatch.setattr(batch_tools.bridge, "execute_json", _fake_execute_json)
+
+    params = batch_tools.DeleteNodeInput(node_name="Blur 1", dry_run=True)
+    out = asyncio.run(batch_tools.delete_node(params))
+    assert json.loads(out) == fixture
+
+
+def test_flame_delete_node_dry_run_does_not_invoke_main_thread(monkeypatch):
+    """Policy retention: delete dry_run must not schedule real mutation code."""
+    import asyncio
+
+    from forge_bridge.tools import batch as batch_tools
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        compile(code, "<flame-delete-dry-run-policy>", "exec")
+        assert "flame.schedule_idle_event" not in code
+        assert ".set_value" not in code
+        return {"dry_run": True}
+
+    monkeypatch.setattr(batch_tools.bridge, "execute_json", _fake_execute_json)
+
+    params = batch_tools.DeleteNodeInput(node_name="Blur 1", dry_run=True)
+    asyncio.run(batch_tools.delete_node(params))
+
+
+def test_flame_delete_node_executes_and_confirms(monkeypatch):
+    """Node deletion dry_run=False schedules a graph mutation and returns confirmation."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import batch as batch_tools
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        compile(code, "<flame-delete-exec>", "exec")
+        assert "flame.schedule_idle_event" in code
+        return {"deleted": "Blur 1"}
+
+    monkeypatch.setattr(batch_tools.bridge, "execute_json", _fake_execute_json)
+
+    params = batch_tools.DeleteNodeInput(node_name="Blur 1")
+    out = asyncio.run(batch_tools.delete_node(params))
+    assert json.loads(out) == {"deleted": "Blur 1"}
+
+
+def test_flame_delete_node_no_batch_open_structured_error(monkeypatch):
+    """Delete requires explicit open batch scope."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import batch as batch_tools
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        assert "no_batch_open" in code
+        return {
+            "error": "no_batch_open",
+            "message": "Open a batch group first via flame_open_batch_group",
+        }
+
+    monkeypatch.setattr(batch_tools.bridge, "execute_json", _fake_execute_json)
+
+    params = batch_tools.DeleteNodeInput(node_name="Blur 1")
+    out = asyncio.run(batch_tools.delete_node(params))
+    parsed = json.loads(out)
+    assert parsed["error"] == "no_batch_open"
+
+
+def test_flame_delete_node_ambiguous_node_name(monkeypatch):
+    """Duplicate node names return structured ambiguity with match count."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import batch as batch_tools
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        assert "ambiguous_node_name" in code
+        return {
+            "error": "ambiguous_node_name",
+            "matches": 2,
+            "message": "Multiple nodes share this name; rename or specify a unique node first.",
+        }
+
+    monkeypatch.setattr(batch_tools.bridge, "execute_json", _fake_execute_json)
+
+    params = batch_tools.DeleteNodeInput(node_name="Blur")
+    out = asyncio.run(batch_tools.delete_node(params))
+    parsed = json.loads(out)
+    assert parsed["error"] == "ambiguous_node_name"
+    assert parsed["matches"] == 2
+
+
+def test_flame_disconnect_nodes_dry_run_preview(monkeypatch):
+    """Node disconnect dry_run previews graph-state mutation."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import batch as batch_tools
+
+    fixture = {
+        "dry_run": True,
+        "action": "disconnect_nodes",
+        "from": "Blur 1",
+        "to": "Write File 1",
+        "output_socket": "Result",
+        "input_socket": "Front",
+        "connection_exists": True,
+    }
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        compile(code, "<flame-disconnect-dry-run>", "exec")
+        assert "flame.schedule_idle_event" not in code
+        assert ".set_value" not in code
+        return fixture
+
+    monkeypatch.setattr(batch_tools.bridge, "execute_json", _fake_execute_json)
+
+    params = batch_tools.DisconnectNodesInput(
+        output_node="Blur 1",
+        input_node="Write File 1",
+        output_socket="Result",
+        input_socket="Front",
+        dry_run=True,
+    )
+    out = asyncio.run(batch_tools.disconnect_nodes(params))
+    assert json.loads(out) == fixture
+
+
+def test_flame_disconnect_nodes_dry_run_does_not_invoke_main_thread(monkeypatch):
+    """Policy retention: disconnect dry_run must not schedule real mutation code."""
+    import asyncio
+
+    from forge_bridge.tools import batch as batch_tools
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        compile(code, "<flame-disconnect-dry-run-policy>", "exec")
+        assert "flame.schedule_idle_event" not in code
+        assert ".set_value" not in code
+        return {"dry_run": True}
+
+    monkeypatch.setattr(batch_tools.bridge, "execute_json", _fake_execute_json)
+
+    params = batch_tools.DisconnectNodesInput(
+        output_node="Blur 1",
+        input_node="Write File 1",
+        dry_run=True,
+    )
+    asyncio.run(batch_tools.disconnect_nodes(params))
+
+
+def test_flame_disconnect_nodes_executes_and_confirms(monkeypatch):
+    """Node disconnect dry_run=False schedules graph mutation and returns confirmation."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import batch as batch_tools
+
+    fixture = {
+        "disconnected": True,
+        "from": "Blur 1",
+        "to": "Write File 1",
+        "output_socket": "Default",
+        "input_socket": "Default",
+    }
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        compile(code, "<flame-disconnect-exec>", "exec")
+        assert "flame.schedule_idle_event" in code
+        return fixture
+
+    monkeypatch.setattr(batch_tools.bridge, "execute_json", _fake_execute_json)
+
+    params = batch_tools.DisconnectNodesInput(output_node="Blur 1", input_node="Write File 1")
+    out = asyncio.run(batch_tools.disconnect_nodes(params))
+    assert json.loads(out) == fixture
+
+
+def test_flame_disconnect_nodes_no_batch_open_structured_error(monkeypatch):
+    """Disconnect requires explicit open batch scope."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import batch as batch_tools
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        assert "no_batch_open" in code
+        return {
+            "error": "no_batch_open",
+            "message": "Open a batch group first via flame_open_batch_group",
+        }
+
+    monkeypatch.setattr(batch_tools.bridge, "execute_json", _fake_execute_json)
+
+    params = batch_tools.DisconnectNodesInput(output_node="Blur 1", input_node="Write File 1")
+    out = asyncio.run(batch_tools.disconnect_nodes(params))
+    parsed = json.loads(out)
+    assert parsed["error"] == "no_batch_open"
 
 
 # ── TOOL-07 — Publish exports ─────────────────────────────────────────────────

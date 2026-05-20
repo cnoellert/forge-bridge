@@ -1,11 +1,589 @@
 """Batch tools — node management, connections, attributes, rendering."""
 
 import json
-from typing import Optional, List
+import textwrap
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
 from forge_bridge import bridge
+
+
+# ── Tool: flame_list_batch_groups ───────────────────────────────────────
+
+
+async def list_batch_groups() -> str:
+    """List all batch groups on the current Flame Desktop.
+
+    Returns each batch group name and whether it is the currently open
+    batch context.
+
+    Note: uses is_open (not opened) for boolean clarity.
+    flame_list_libraries uses 'opened' as grandfathered field name.
+    Both refactor together when canonical boolean prefix pattern
+    matures (§11 follow-on).
+    """
+    data = await bridge.execute_json("""
+        import flame, json
+
+        def _name(obj):
+            try:
+                value = obj.name.get_value() if hasattr(obj.name, 'get_value') else obj.name
+                return str(value).strip("'")
+            except Exception:
+                return str(obj).strip("'")
+
+        batch = flame.batch
+        current_name = None
+        try:
+            if batch.opened:
+                current_name = _name(batch)
+        except Exception:
+            current_name = None
+
+        ws = flame.project.current_project.current_workspace
+        desk = ws.desktop
+        groups = []
+        for group in desk.batch_groups:
+            name = _name(group)
+            groups.append({
+                'name': name,
+                'is_open': bool(current_name and name == current_name),
+            })
+
+        print(json.dumps(groups))
+    """)
+    return json.dumps(data, indent=2)
+
+
+# ── Tool: flame_get_node_types ──────────────────────────────────────────
+
+
+async def get_node_types() -> str:
+    """List valid live Flame Batch node type strings.
+
+    Queries flame.batch.node_types from the current Flame session. Use this
+    before flame_create_node when the operator needs valid node type values.
+    """
+    data = await bridge.execute_json("""
+        import flame, json
+
+        node_types = []
+        for node_type in flame.batch.node_types:
+            node_types.append(str(node_type))
+
+        print(json.dumps({'node_types': node_types}))
+    """)
+    return json.dumps(data, indent=2)
+
+
+# ── Tool: flame_get_batch_iterations ────────────────────────────────────
+
+
+async def get_batch_iterations() -> str:
+    """List iterations for the currently open Flame Batch group.
+
+    Read-only. Returns the current iteration index, total count, and each
+    iteration's name and render state. If no batch group is open, returns a
+    structured no_batch_open error rather than raising.
+    """
+    data = await bridge.execute_json("""
+        import flame, json
+
+        def _name(obj):
+            try:
+                value = obj.name.get_value() if hasattr(obj.name, 'get_value') else obj.name
+                return str(value).strip("'")
+            except Exception:
+                return str(obj).strip("'")
+
+        def _render_state(iteration):
+            for attr in ('render_state', 'state', 'status'):
+                try:
+                    value = getattr(iteration, attr)
+                    if hasattr(value, 'get_value'):
+                        value = value.get_value()
+                    if value:
+                        return str(value).lower()
+                except Exception:
+                    pass
+            try:
+                return 'rendered' if bool(iteration.rendered) else 'unrendered'
+            except Exception:
+                return 'unknown'
+
+        batch = flame.batch
+        if not batch.opened:
+            print(json.dumps({
+                'error': 'no_batch_open',
+                'message': 'Open a batch group first via flame_open_batch_group',
+            }))
+        else:
+            iterations = []
+            for idx, iteration in enumerate(getattr(batch, 'iterations', [])):
+                state = _render_state(iteration)
+                if state not in ('rendered', 'unrendered'):
+                    state = 'unknown'
+                iterations.append({
+                    'index': idx,
+                    'name': _name(iteration),
+                    'render_state': state,
+                })
+
+            print(json.dumps({
+                'current_iteration': int(getattr(batch, 'current_iteration_number', 0)),
+                'total_iterations': len(iterations),
+                'iterations': iterations,
+            }))
+    """)
+    return json.dumps(data, indent=2)
+
+
+# ── Tool: flame_get_batch_reels ─────────────────────────────────────────
+
+
+async def get_batch_reels() -> str:
+    """List reels and shelf reels for the currently open Flame Batch group.
+
+    This tool exposes only the minimum structured payload required
+    for future filter predicates. For deeper metadata use
+    flame_execute_python.
+
+    Read-only. Returns reel/shelf-reel names and clip name/duration pairs.
+    Colourspace, reel paths, tape metadata, publish state, handles, and bit
+    depth are intentionally excluded.
+    """
+    data = await bridge.execute_json("""
+        import flame, json
+
+        def _name(obj):
+            try:
+                value = obj.name.get_value() if hasattr(obj.name, 'get_value') else obj.name
+                return str(value).strip("'")
+            except Exception:
+                return str(obj).strip("'")
+
+        def _duration_frames(obj):
+            try:
+                return int(obj.duration)
+            except Exception:
+                try:
+                    return int(obj.duration.frame)
+                except Exception:
+                    try:
+                        return int(float(str(obj.duration)))
+                    except Exception:
+                        return 0
+
+        def _reel_entry(reel, reel_type):
+            clips = []
+            for clip in getattr(reel, 'clips', []):
+                clips.append({
+                    'name': _name(clip),
+                    'duration': _duration_frames(clip),
+                })
+            return {
+                'name': _name(reel),
+                'type': reel_type,
+                'clips': clips,
+            }
+
+        batch = flame.batch
+        if not batch.opened:
+            print(json.dumps({
+                'error': 'no_batch_open',
+                'message': 'Open a batch group first via flame_open_batch_group',
+            }))
+        else:
+            reels = []
+            for reel in getattr(batch, 'reels', []):
+                reels.append(_reel_entry(reel, 'reel'))
+            for reel in getattr(batch, 'shelf_reels', []):
+                reels.append(_reel_entry(reel, 'shelf_reel'))
+
+            print(json.dumps({'reels': reels}))
+    """)
+    return json.dumps(data, indent=2)
+
+
+# ── Tool: flame_open_batch_group ────────────────────────────────────────
+
+
+class OpenBatchGroupInput(BaseModel):
+    """Input for opening a Flame Batch group."""
+
+    batch_group_name: str = Field(
+        ..., description="Exact batch group name to open in Flame's active UI session."
+    )
+    dry_run: bool = Field(
+        default=False,
+        description="If True, preview the context switch without opening the batch group.",
+    )
+
+
+async def open_batch_group(params: OpenBatchGroupInput) -> str:
+    """Open a named Flame Batch group, binding subsequent batch operation context.
+
+    Current shape: imperative context binding inside Flame's active
+    UI session, not persistent graph-level selection state. This is the
+    batch-domain instance of the select primitive (§11 item 12) — it
+    binds execution context to a named batch group before downstream
+    batch operations. Generic select primitive (cross-domain) remains
+    future work.
+
+    There is no close operation — opening a different batch group
+    switches context. This matches Flame's native UX.
+
+    dry_run=True returns a switch preview with current and proposed names.
+    current is null when no batch group is currently open
+    in the Flame session (e.g. fresh launch or no prior open call).
+    """
+    if params.dry_run:
+        data = await bridge.execute_json(f"""
+            import flame, json
+
+            target_name = {params.batch_group_name!r}
+
+            def _name(obj):
+                try:
+                    value = obj.name.get_value() if hasattr(obj.name, 'get_value') else obj.name
+                    return str(value).strip("'")
+                except Exception:
+                    return str(obj).strip("'")
+
+            def _current_name():
+                try:
+                    if flame.batch.opened:
+                        return _name(flame.batch)
+                except Exception:
+                    pass
+                return None
+
+            ws = flame.project.current_project.current_workspace
+            found = None
+            for group in ws.desktop.batch_groups:
+                if _name(group).casefold() == target_name.casefold():
+                    found = _name(group)
+                    break
+
+            if found is None:
+                print(json.dumps({{'error': 'batch_group_not_found',
+                                   'batch_group_name': target_name}}))
+            else:
+                print(json.dumps({{
+                    'dry_run': True,
+                    'action': 'open_batch_group',
+                    'proposed': found,
+                    'current': _current_name(),
+                }}))
+        """)
+        return json.dumps(data, indent=2)
+
+    data = await bridge.execute_json(f"""
+        import flame, json, threading
+
+        target_name = {params.batch_group_name!r}
+
+        def _name(obj):
+            try:
+                value = obj.name.get_value() if hasattr(obj.name, 'get_value') else obj.name
+                return str(value).strip("'")
+            except Exception:
+                return str(obj).strip("'")
+
+        def _current_name():
+            try:
+                if flame.batch.opened:
+                    return _name(flame.batch)
+            except Exception:
+                pass
+            return None
+
+        ws = flame.project.current_project.current_workspace
+        target = None
+        for group in ws.desktop.batch_groups:
+            if _name(group).casefold() == target_name.casefold():
+                target = group
+                break
+
+        if target is None:
+            print(json.dumps({{'error': 'batch_group_not_found',
+                               'batch_group_name': target_name}}))
+        else:
+            previous = _current_name()
+            event = threading.Event()
+            result = {{}}
+
+            def _do():
+                try:
+                    if hasattr(target, 'open'):
+                        target.open()
+                    elif hasattr(flame.batch, 'open'):
+                        flame.batch.open(target)
+                    else:
+                        raise RuntimeError('No Flame Batch open method available')
+                    result['opened'] = _name(target)
+                    result['previous'] = previous
+                except Exception as e:
+                    result['error'] = str(e)
+                event.set()
+
+            flame.schedule_idle_event(_do)
+            event.wait(timeout=10)
+            print(json.dumps(result))
+    """)
+    return json.dumps(data, indent=2)
+
+
+# ── Tool: flame_delete_node ─────────────────────────────────────────────
+
+
+class DeleteNodeInput(BaseModel):
+    """Input for deleting a node from the currently open Batch group."""
+
+    node_name: str = Field(..., description="Exact node name in the currently open batch.")
+    dry_run: bool = Field(
+        default=False,
+        description="If True, preview node deletion without mutating the graph.",
+    )
+
+
+def _indent_flame_body(body: str, spaces: int) -> str:
+    prefix = " " * spaces
+    return "\n".join(prefix + line if line else line for line in body.strip("\n").splitlines())
+
+
+def _delete_node_code(node_name: str, *, dry_run: bool) -> str:
+    schedule_prefix = "" if dry_run else "import threading"
+    if dry_run:
+        body = _indent_flame_body("""
+print(json.dumps({
+    'dry_run': True,
+    'action': 'delete_node',
+    'node_name': _name(node),
+    'node_type': _node_type(node),
+    'connected_inputs': _connected_count(node, 'input'),
+    'connected_outputs': _connected_count(node, 'output'),
+}))
+""", 16)
+    else:
+        body = _indent_flame_body("""
+event = threading.Event()
+result = {}
+
+def _do():
+    try:
+        if hasattr(batch, 'delete_node'):
+            batch.delete_node(node)
+        elif hasattr(node, 'delete'):
+            node.delete()
+        else:
+            raise RuntimeError('No Flame Batch node delete method available')
+        result['deleted'] = target_name
+    except Exception as e:
+        result['error'] = str(e)
+    event.set()
+
+flame.schedule_idle_event(_do)
+event.wait(timeout=10)
+print(json.dumps(result))
+""", 16)
+    return textwrap.dedent(f"""
+        import flame, json
+        {schedule_prefix}
+
+        target_name = {node_name!r}
+
+        def _name(obj):
+            try:
+                value = obj.name.get_value() if hasattr(obj.name, 'get_value') else obj.name
+                return str(value).strip("'")
+            except Exception:
+                return str(obj).strip("'")
+
+        def _node_type(node):
+            try:
+                value = node.type.get_value() if hasattr(node.type, 'get_value') else node.type
+                return str(value)
+            except Exception:
+                return type(node).__name__
+
+        def _connected_count(node, direction):
+            try:
+                sockets = node.sockets
+                if isinstance(sockets, dict):
+                    values = sockets.values()
+                else:
+                    values = sockets
+                return sum(1 for value in values if value)
+            except Exception:
+                pass
+            attr = 'input_sockets' if direction == 'input' else 'output_sockets'
+            try:
+                return len(getattr(node, attr))
+            except Exception:
+                return 0
+
+        batch = flame.batch
+        if not batch.opened:
+            print(json.dumps({{
+                'error': 'no_batch_open',
+                'message': 'Open a batch group first via flame_open_batch_group',
+            }}))
+        else:
+            matches = [node for node in batch.nodes if _name(node).casefold() == target_name.casefold()]
+            if len(matches) == 0:
+                print(json.dumps({{'error': 'node_not_found', 'node_name': target_name}}))
+            elif len(matches) > 1:
+                print(json.dumps({{
+                    'error': 'ambiguous_node_name',
+                    'matches': len(matches),
+                    'message': 'Multiple nodes share this name; rename or specify a unique node first.',
+                }}))
+            else:
+                node = matches[0]
+{body}
+    """)
+
+
+async def delete_node(params: DeleteNodeInput) -> str:
+    """Delete a node from the currently open Flame Batch group.
+
+    Operates on the currently open batch group. If no batch group is open,
+    returns {"error": "no_batch_open", "message": "Open a batch group first via flame_open_batch_group"}.
+    If multiple nodes share the requested name, returns ambiguous_node_name
+    with the match count. dry_run=True previews Tier 1 node metadata and
+    connection counts without scheduling a write.
+    """
+    data = await bridge.execute_json(_delete_node_code(params.node_name, dry_run=params.dry_run))
+    return json.dumps(data, indent=2)
+
+
+# ── Tool: flame_disconnect_nodes ────────────────────────────────────────
+
+
+class DisconnectNodesInput(BaseModel):
+    """Input for disconnecting two nodes in the currently open Batch group."""
+
+    output_node: str = Field(..., description="Name of the source node.")
+    input_node: str = Field(..., description="Name of the destination node.")
+    output_socket: str = Field(default="Default", description="Output socket name.")
+    input_socket: str = Field(default="Default", description="Input socket name.")
+    dry_run: bool = Field(
+        default=False,
+        description="If True, preview disconnection without mutating the graph.",
+    )
+
+
+def _disconnect_nodes_code(params: DisconnectNodesInput) -> str:
+    schedule_prefix = "" if params.dry_run else "import threading"
+    if params.dry_run:
+        body = _indent_flame_body("""
+print(json.dumps({
+    'dry_run': True,
+    'action': 'disconnect_nodes',
+    'from': _name(out_node),
+    'to': _name(in_node),
+    'output_socket': output_socket,
+    'input_socket': input_socket,
+    'connection_exists': _connection_exists(out_node, in_node, output_socket, input_socket),
+}))
+""", 20)
+    else:
+        body = _indent_flame_body("""
+event = threading.Event()
+result = {}
+
+def _do():
+    try:
+        if hasattr(batch, 'disconnect_nodes'):
+            ok = batch.disconnect_nodes(out_node, output_socket, in_node, input_socket)
+        elif hasattr(batch, 'disconnect'):
+            ok = batch.disconnect(out_node, output_socket, in_node, input_socket)
+        else:
+            raise RuntimeError('No Flame Batch node disconnect method available')
+        result['disconnected'] = bool(ok) if ok is not None else True
+        result['from'] = _name(out_node)
+        result['to'] = _name(in_node)
+        result['output_socket'] = output_socket
+        result['input_socket'] = input_socket
+    except Exception as e:
+        result['error'] = str(e)
+    event.set()
+
+flame.schedule_idle_event(_do)
+event.wait(timeout=10)
+print(json.dumps(result))
+""", 20)
+    return textwrap.dedent(f"""
+        import flame, json
+        {schedule_prefix}
+
+        output_name = {params.output_node!r}
+        input_name = {params.input_node!r}
+        output_socket = {params.output_socket!r}
+        input_socket = {params.input_socket!r}
+
+        def _name(obj):
+            try:
+                value = obj.name.get_value() if hasattr(obj.name, 'get_value') else obj.name
+                return str(value).strip("'")
+            except Exception:
+                return str(obj).strip("'")
+
+        def _find_unique(name):
+            matches = [node for node in batch.nodes if _name(node).casefold() == name.casefold()]
+            if len(matches) == 1:
+                return matches[0], None
+            if len(matches) == 0:
+                return None, {{'error': 'node_not_found', 'node_name': name}}
+            return None, {{
+                'error': 'ambiguous_node_name',
+                'matches': len(matches),
+                'message': 'Multiple nodes share this name; rename or specify a unique node first.',
+            }}
+
+        def _connection_exists(out_node, in_node, output_socket, input_socket):
+            try:
+                sockets = out_node.sockets
+                haystack = str(sockets)
+                return (
+                    _name(in_node) in haystack
+                    and (output_socket == 'Default' or output_socket in haystack)
+                    and (input_socket == 'Default' or input_socket in haystack)
+                )
+            except Exception:
+                return False
+
+        batch = flame.batch
+        if not batch.opened:
+            print(json.dumps({{
+                'error': 'no_batch_open',
+                'message': 'Open a batch group first via flame_open_batch_group',
+            }}))
+        else:
+            out_node, error = _find_unique(output_name)
+            if error:
+                print(json.dumps(error))
+            else:
+                in_node, error = _find_unique(input_name)
+                if error:
+                    print(json.dumps(error))
+                else:
+{body}
+    """)
+
+
+async def disconnect_nodes(params: DisconnectNodesInput) -> str:
+    """Disconnect two nodes in the currently open Flame Batch group.
+
+    Operates on the currently open batch group. If no batch group is open,
+    returns {"error": "no_batch_open", "message": "Open a batch group first via flame_open_batch_group"}.
+    dry_run=True previews the intended graph-state mutation and reports
+    whether a matching connection appears to exist.
+    """
+    data = await bridge.execute_json(_disconnect_nodes_code(params))
+    return json.dumps(data, indent=2)
 
 
 # ── Tool: flame_list_batch_nodes ────────────────────────────────────────

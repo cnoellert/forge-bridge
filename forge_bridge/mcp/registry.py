@@ -762,6 +762,70 @@ def register_builtins(mcp: FastMCP) -> None:
         # ── Batch ─────────────────────────────────────────────────
 
         register_tool(
+            mcp, flame_batch.list_batch_groups,
+            name="flame_list_batch_groups",
+            source="builtin",
+            annotations={"title": "List Flame Batch groups", "readOnlyHint": True},
+        )
+
+        register_tool(
+            mcp, flame_batch.get_node_types,
+            name="flame_get_node_types",
+            source="builtin",
+            annotations={"title": "List valid Flame Batch node types", "readOnlyHint": True},
+        )
+
+        register_tool(
+            mcp, flame_batch.get_batch_iterations,
+            name="flame_get_batch_iterations",
+            source="builtin",
+            annotations={"title": "List iterations for the currently open Batch group", "readOnlyHint": True},
+        )
+
+        register_tool(
+            mcp, flame_batch.get_batch_reels,
+            name="flame_get_batch_reels",
+            source="builtin",
+            annotations={"title": "List reels for the currently open Batch group", "readOnlyHint": True},
+        )
+
+        register_tool(
+            mcp, flame_batch.open_batch_group,
+            name="flame_open_batch_group",
+            source="builtin",
+            annotations={
+                "title": "Open a Flame Batch group as current context",
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": True,
+            },
+        )
+
+        register_tool(
+            mcp, flame_batch.delete_node,
+            name="flame_delete_node",
+            source="builtin",
+            annotations={
+                "title": "Delete a node from the currently open Batch group",
+                "readOnlyHint": False,
+                "destructiveHint": True,
+                "idempotentHint": False,
+            },
+        )
+
+        register_tool(
+            mcp, flame_batch.disconnect_nodes,
+            name="flame_disconnect_nodes",
+            source="builtin",
+            annotations={
+                "title": "Disconnect nodes in the currently open Batch group",
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": True,
+            },
+        )
+
+        register_tool(
             mcp, flame_batch.inspect_batch_xml,
             name="flame_inspect_batch_xml",
             source="builtin",
