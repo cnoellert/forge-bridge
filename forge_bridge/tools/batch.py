@@ -1,11 +1,208 @@
 """Batch tools — node management, connections, attributes, rendering."""
 
 import json
-from typing import Optional, List
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
 from forge_bridge import bridge
+
+
+# ── Tool: flame_list_batch_groups ───────────────────────────────────────
+
+
+async def list_batch_groups() -> str:
+    """List all batch groups on the current Flame Desktop.
+
+    Returns each batch group name and whether it is the currently open
+    batch context.
+
+    Note: uses is_open (not opened) for boolean clarity.
+    flame_list_libraries uses 'opened' as grandfathered field name.
+    Both refactor together when canonical boolean prefix pattern
+    matures (§11 follow-on).
+    """
+    data = await bridge.execute_json("""
+        import flame, json
+
+        def _name(obj):
+            try:
+                value = obj.name.get_value() if hasattr(obj.name, 'get_value') else obj.name
+                return str(value).strip("'")
+            except Exception:
+                return str(obj).strip("'")
+
+        batch = flame.batch
+        current_name = None
+        try:
+            if batch.opened:
+                current_name = _name(batch)
+        except Exception:
+            current_name = None
+
+        ws = flame.project.current_project.current_workspace
+        desk = ws.desktop
+        groups = []
+        for group in desk.batch_groups:
+            name = _name(group)
+            groups.append({
+                'name': name,
+                'is_open': bool(current_name and name == current_name),
+            })
+
+        print(json.dumps(groups))
+    """)
+    return json.dumps(data, indent=2)
+
+
+# ── Tool: flame_get_node_types ──────────────────────────────────────────
+
+
+async def get_node_types() -> str:
+    """List valid live Flame Batch node type strings.
+
+    Queries flame.batch.node_types from the current Flame session. Use this
+    before flame_create_node when the operator needs valid node type values.
+    """
+    data = await bridge.execute_json("""
+        import flame, json
+
+        node_types = []
+        for node_type in flame.batch.node_types:
+            node_types.append(str(node_type))
+
+        print(json.dumps({'node_types': node_types}))
+    """)
+    return json.dumps(data, indent=2)
+
+
+# ── Tool: flame_get_batch_iterations ────────────────────────────────────
+
+
+async def get_batch_iterations() -> str:
+    """List iterations for the currently open Flame Batch group.
+
+    Read-only. Returns the current iteration index, total count, and each
+    iteration's name and render state. If no batch group is open, returns a
+    structured no_batch_open error rather than raising.
+    """
+    data = await bridge.execute_json("""
+        import flame, json
+
+        def _name(obj):
+            try:
+                value = obj.name.get_value() if hasattr(obj.name, 'get_value') else obj.name
+                return str(value).strip("'")
+            except Exception:
+                return str(obj).strip("'")
+
+        def _render_state(iteration):
+            for attr in ('render_state', 'state', 'status'):
+                try:
+                    value = getattr(iteration, attr)
+                    if hasattr(value, 'get_value'):
+                        value = value.get_value()
+                    if value:
+                        return str(value).lower()
+                except Exception:
+                    pass
+            try:
+                return 'rendered' if bool(iteration.rendered) else 'unrendered'
+            except Exception:
+                return 'unknown'
+
+        batch = flame.batch
+        if not batch.opened:
+            print(json.dumps({
+                'error': 'no_batch_open',
+                'message': 'Open a batch group first via flame_open_batch_group',
+            }))
+        else:
+            iterations = []
+            for idx, iteration in enumerate(getattr(batch, 'iterations', [])):
+                state = _render_state(iteration)
+                if state not in ('rendered', 'unrendered'):
+                    state = 'unknown'
+                iterations.append({
+                    'index': idx,
+                    'name': _name(iteration),
+                    'render_state': state,
+                })
+
+            print(json.dumps({
+                'current_iteration': int(getattr(batch, 'current_iteration_number', 0)),
+                'total_iterations': len(iterations),
+                'iterations': iterations,
+            }))
+    """)
+    return json.dumps(data, indent=2)
+
+
+# ── Tool: flame_get_batch_reels ─────────────────────────────────────────
+
+
+async def get_batch_reels() -> str:
+    """List reels and shelf reels for the currently open Flame Batch group.
+
+    This tool exposes only the minimum structured payload required
+    for future filter predicates. For deeper metadata use
+    flame_execute_python.
+
+    Read-only. Returns reel/shelf-reel names and clip name/duration pairs.
+    Colourspace, reel paths, tape metadata, publish state, handles, and bit
+    depth are intentionally excluded.
+    """
+    data = await bridge.execute_json("""
+        import flame, json
+
+        def _name(obj):
+            try:
+                value = obj.name.get_value() if hasattr(obj.name, 'get_value') else obj.name
+                return str(value).strip("'")
+            except Exception:
+                return str(obj).strip("'")
+
+        def _duration_frames(obj):
+            try:
+                return int(obj.duration)
+            except Exception:
+                try:
+                    return int(obj.duration.frame)
+                except Exception:
+                    try:
+                        return int(float(str(obj.duration)))
+                    except Exception:
+                        return 0
+
+        def _reel_entry(reel, reel_type):
+            clips = []
+            for clip in getattr(reel, 'clips', []):
+                clips.append({
+                    'name': _name(clip),
+                    'duration': _duration_frames(clip),
+                })
+            return {
+                'name': _name(reel),
+                'type': reel_type,
+                'clips': clips,
+            }
+
+        batch = flame.batch
+        if not batch.opened:
+            print(json.dumps({
+                'error': 'no_batch_open',
+                'message': 'Open a batch group first via flame_open_batch_group',
+            }))
+        else:
+            reels = []
+            for reel in getattr(batch, 'reels', []):
+                reels.append(_reel_entry(reel, 'reel'))
+            for reel in getattr(batch, 'shelf_reels', []):
+                reels.append(_reel_entry(reel, 'shelf_reel'))
+
+            print(json.dumps({'reels': reels}))
+    """)
+    return json.dumps(data, indent=2)
 
 
 # ── Tool: flame_list_batch_nodes ────────────────────────────────────────

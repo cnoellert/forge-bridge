@@ -56,6 +56,10 @@ def test_batch_exports():
     from forge_bridge.tools import batch
 
     expected = [
+        "list_batch_groups",
+        "get_node_types",
+        "get_batch_iterations",
+        "get_batch_reels",
         "list_batch_nodes",
         "get_node_attributes",
         "create_node",
@@ -70,6 +74,149 @@ def test_batch_exports():
     for name in expected:
         assert hasattr(batch, name), f"batch is missing export: {name}"
         assert callable(getattr(batch, name)), f"batch.{name} is not callable"
+
+
+def test_flame_list_batch_groups_happy_path(monkeypatch):
+    """Batch group enumeration returns names plus is_open state."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import batch as batch_tools
+
+    fixture = [
+        {"name": "Comp A", "is_open": True},
+        {"name": "Comp B", "is_open": False},
+    ]
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        assert "is_open" in code
+        assert "desk.batch_groups" in code
+        return fixture
+
+    monkeypatch.setattr(batch_tools.bridge, "execute_json", _fake_execute_json)
+
+    out = asyncio.run(batch_tools.list_batch_groups())
+    assert json.loads(out) == fixture
+
+
+def test_flame_get_node_types_happy_path(monkeypatch):
+    """Node type enumeration returns live Flame node type strings."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import batch as batch_tools
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        assert "flame.batch.node_types" in code
+        return {"node_types": ["Action", "Write File", "Colour Source"]}
+
+    monkeypatch.setattr(batch_tools.bridge, "execute_json", _fake_execute_json)
+
+    out = asyncio.run(batch_tools.get_node_types())
+    parsed = json.loads(out)
+    assert parsed["node_types"]
+    assert "Action" in parsed["node_types"]
+
+
+def test_flame_get_batch_iterations_happy_path(monkeypatch):
+    """Iteration enumeration returns current, total, and state list."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import batch as batch_tools
+
+    fixture = {
+        "current_iteration": 1,
+        "total_iterations": 2,
+        "iterations": [
+            {"index": 0, "name": "Iteration 1", "render_state": "rendered"},
+            {"index": 1, "name": "Iteration 2", "render_state": "unrendered"},
+        ],
+    }
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        assert "current_iteration_number" in code
+        return fixture
+
+    monkeypatch.setattr(batch_tools.bridge, "execute_json", _fake_execute_json)
+
+    out = asyncio.run(batch_tools.get_batch_iterations())
+    assert json.loads(out) == fixture
+
+
+def test_flame_get_batch_iterations_no_batch_open_structured_error(monkeypatch):
+    """Iteration reads require an open batch group and fail structurally."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import batch as batch_tools
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        assert "no_batch_open" in code
+        return {
+            "error": "no_batch_open",
+            "message": "Open a batch group first via flame_open_batch_group",
+        }
+
+    monkeypatch.setattr(batch_tools.bridge, "execute_json", _fake_execute_json)
+
+    out = asyncio.run(batch_tools.get_batch_iterations())
+    parsed = json.loads(out)
+    assert parsed["error"] == "no_batch_open"
+
+
+def test_flame_get_batch_reels_happy_path(monkeypatch):
+    """Batch reel enumeration returns minimum filter-ready clip payload."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import batch as batch_tools
+
+    fixture = {
+        "reels": [
+            {
+                "name": "Batch Reel",
+                "type": "reel",
+                "clips": [{"name": "plate_A", "duration": 120}],
+            },
+            {
+                "name": "Shelf",
+                "type": "shelf_reel",
+                "clips": [],
+            },
+        ]
+    }
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        assert "shelf_reels" in code
+        assert "colourspace" not in code
+        return fixture
+
+    monkeypatch.setattr(batch_tools.bridge, "execute_json", _fake_execute_json)
+
+    out = asyncio.run(batch_tools.get_batch_reels())
+    assert json.loads(out) == fixture
+
+
+def test_flame_get_batch_reels_no_batch_open_structured_error(monkeypatch):
+    """Batch reel reads require an open batch group and fail structurally."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import batch as batch_tools
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        assert "no_batch_open" in code
+        return {
+            "error": "no_batch_open",
+            "message": "Open a batch group first via flame_open_batch_group",
+        }
+
+    monkeypatch.setattr(batch_tools.bridge, "execute_json", _fake_execute_json)
+
+    out = asyncio.run(batch_tools.get_batch_reels())
+    parsed = json.loads(out)
+    assert parsed["error"] == "no_batch_open"
 
 
 # ── TOOL-07 — Publish exports ─────────────────────────────────────────────────
