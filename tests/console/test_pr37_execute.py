@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from forge_bridge.console._constants import CHAIN_MAX_STEPS
 from forge_bridge.console._execute import execute_command
 from tests.console.test_pr30_chain import (
     _single_project_payload,
@@ -116,7 +117,7 @@ async def test_execute_chain_too_long():
     mcp.list_tools = AsyncMock(return_value=tools)
     mcp.call_tool = AsyncMock(return_value=_text_block("{}"))
 
-    msg = " -> ".join(["list forge projects"] * 4)
+    msg = " -> ".join(["list forge projects"] * (CHAIN_MAX_STEPS + 1))
 
     with patch(
         "forge_bridge.console._tool_filter.filter_tools_by_reachable_backends",
@@ -126,6 +127,8 @@ async def test_execute_chain_too_long():
 
     assert result["status"] == "error"
     assert result["error"]["code"] == "CHAIN_TOO_LONG"
+    assert "runaway guard" in result["error"]["message"]
+    assert "pathological loop" in result["error"]["message"]
 
 
 @pytest.mark.asyncio

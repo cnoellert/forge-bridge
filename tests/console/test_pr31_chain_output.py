@@ -198,6 +198,8 @@ def test_chain_too_long_uses_structured_envelope():
     assert payload["status"] == "error"
     assert payload["chain"] == []
     assert payload["error"]["code"] == "CHAIN_TOO_LONG"
+    assert "runaway guard" in payload["error"]["message"]
+    assert "pathological loop" in payload["error"]["message"]
     assert payload["error"]["step_index"] is None
     assert payload["error"]["original_error"] is None
     assert isinstance(payload["request_id"], str)

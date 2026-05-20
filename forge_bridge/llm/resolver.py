@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 
-ResolvedEntity = dict[str, str | int | bool]
+ResolvedEntity = dict[str, str | int | bool | dict[str, Any]]
 ResolvedEntities = dict[str, ResolvedEntity]
 
 _PREVIEW_INTENT_RE = re.compile(
@@ -17,8 +17,8 @@ _SEQ_CANDIDATE_RE = re.compile(
     r"\b(?P<head>\d+[A-Za-z]{2,})[ _-]?(?P<tail>\d{1,4})\b"
 )
 _EXPLICIT_ENTITY_RE = re.compile(
-    r"\b(?P<label>sequence|reel)\s+"
-    r"(?:named\s+|called\s+)?"
+    r"\b(?P<label>sequence|reel|library)\s+"
+    r"(?:named\s+|called\s+|contents?\s+(?:of\s+|on\s+|in\s+)?)?"
     r"(?P<value>[A-Za-z0-9][A-Za-z0-9_ -]*?[A-Za-z0-9])"
     r"(?=\s+(?:to|with|by|and|,)|[?.!]|$)",
     re.IGNORECASE,
@@ -64,13 +64,36 @@ def resolve_query_entities(
         return {}
 
     resolved: ResolvedEntities = {}
+    if _looks_like_filter_step(query):
+        try:
+            from forge_bridge.graph import parse_filter_step
+
+            predicate = parse_filter_step(query)
+            resolved["filter_predicate"] = _entity(
+                value=predicate.to_dict(),
+                source=query.strip(),
+            )
+        except Exception as exc:  # noqa: BLE001 - structured failure, not pass-through
+            code = getattr(exc, "code", "unknown_predicate")
+            message = getattr(exc, "message", str(exc))
+            resolved["filter_error"] = _entity(
+                value={"code": code, "message": message},
+                source=query.strip(),
+            )
+
     preview_match = _PREVIEW_INTENT_RE.search(query)
     if preview_match:
         resolved["dry_run"] = _entity(value=True, source=preview_match.group(0))
 
     for match in _EXPLICIT_ENTITY_RE.finditer(query):
         label = match.group("label").casefold()
-        key = "sequence_name" if label == "sequence" else "reel_name"
+        key = (
+            "sequence_name"
+            if label == "sequence"
+            else "reel_name"
+            if label == "reel"
+            else "library_name"
+        )
         source = _clean_source(match.group("value"))
         seq_match = _SEQ_CANDIDATE_RE.search(source)
         if key == "sequence_name":
@@ -121,10 +144,10 @@ def resolve_query_entities(
 
 
 def resolved_entity_params(
-    resolved: Mapping[str, Mapping[str, str | int | bool]],
-) -> dict[str, str | int | bool]:
+    resolved: Mapping[str, Mapping[str, str | int | bool | dict[str, Any]]],
+) -> dict[str, str | int | bool | dict[str, Any]]:
     """Return the flat argument map suitable for forced tool execution."""
-    params: dict[str, str | int | bool] = {}
+    params: dict[str, str | int | bool | dict[str, Any]] = {}
     for key, item in resolved.items():
         value = item.get("value")
         if value not in (None, ""):
@@ -134,7 +157,7 @@ def resolved_entity_params(
 
 def enrich_user_message_with_resolved_entities(
     user_query: str,
-    resolved: Mapping[str, Mapping[str, str | int | bool]],
+    resolved: Mapping[str, Mapping[str, str | int | bool | dict[str, Any]]],
 ) -> str:
     """Prepend the resolved-entities context block to a user message."""
     if not resolved:
@@ -155,7 +178,7 @@ def enrich_user_message_with_resolved_entities(
 
 def enrich_messages_with_resolved_entities(
     messages: list[dict[str, Any]],
-    resolved: Mapping[str, Mapping[str, str | int | bool]],
+    resolved: Mapping[str, Mapping[str, str | int | bool | dict[str, Any]]],
 ) -> list[dict[str, Any]]:
     """Return a copy with the last user message enriched for the LLM path."""
     if not resolved:
@@ -173,8 +196,18 @@ def enrich_messages_with_resolved_entities(
     return enriched
 
 
-def _entity(*, value: str | int | bool, source: str) -> ResolvedEntity:
+def _entity(*, value: str | int | bool | dict[str, Any], source: str) -> ResolvedEntity:
     return {"value": value, "source": source}
+
+
+def _looks_like_filter_step(query: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(filter|where)\b|(?<![=])\bonly\b",
+            query,
+            re.IGNORECASE,
+        ),
+    )
 
 
 def _first_int_match(
@@ -231,6 +264,9 @@ def _known_names_for(key: str, desktop: Mapping[str, Any]) -> list[Any]:
     elif key == "reel_name":
         candidates.extend(_extract_names(desktop.get("reels")))
         candidates.extend(_extract_names(desktop.get("reel_names")))
+    elif key == "library_name":
+        candidates.extend(_extract_names(desktop.get("libraries")))
+        candidates.extend(_extract_names(desktop.get("library_names")))
     return candidates
 
 
@@ -240,7 +276,12 @@ def _extract_names(value: Any) -> list[Any]:
     if isinstance(value, str):
         return [value]
     if isinstance(value, Mapping):
-        name = value.get("name") or value.get("sequence_name") or value.get("reel_name")
+        name = (
+            value.get("name")
+            or value.get("sequence_name")
+            or value.get("reel_name")
+            or value.get("library_name")
+        )
         return [name] if name else []
     if isinstance(value, (list, tuple)):
         names: list[Any] = []

@@ -35,6 +35,42 @@ def test_resolves_reel_name_with_same_normalization_pattern():
     }
 
 
+def test_resolves_reel_contents_on_phrase():
+    resolved = resolve_query_entities("list reel contents on Sequences")
+
+    assert resolved["reel_name"] == {
+        "value": "Sequences",
+        "source": "Sequences",
+    }
+
+
+def test_resolves_reel_contents_without_preposition_phrase():
+    resolved = resolve_query_entities("reel contents Sequences")
+
+    assert resolved["reel_name"] == {
+        "value": "Sequences",
+        "source": "Sequences",
+    }
+
+
+def test_resolves_reel_contents_of_phrase():
+    resolved = resolve_query_entities("reel contents of Sequences")
+
+    assert resolved["reel_name"] == {
+        "value": "Sequences",
+        "source": "Sequences",
+    }
+
+
+def test_resolves_library_contents_on_phrase():
+    resolved = resolve_query_entities("list library contents on Commercials")
+
+    assert resolved["library_name"] == {
+        "value": "Commercials",
+        "source": "Commercials",
+    }
+
+
 def test_passes_operator_prefix_through_for_rename_query():
     resolved = resolve_query_entities(
         "Rename the shots on 30sec 21 to genesis, 4-digit padding, by 10s",
@@ -143,6 +179,32 @@ def test_resolved_entity_params_preserves_string_and_int_types():
 
     assert isinstance(params["prefix"], str)
     assert isinstance(params["padding"], int)
+
+
+def test_resolver_projects_filter_predicate_as_structured_ast():
+    params = resolved_entity_params(resolve_query_entities("filter(duration > 1)"))
+
+    assert params["filter_predicate"] == {
+        "field": "duration",
+        "operator": ">",
+        "value": 1,
+    }
+
+
+def test_resolver_projects_unknown_filter_as_structured_error():
+    params = resolved_entity_params(
+        resolve_query_entities("filter only the comp segments"),
+    )
+
+    assert params["filter_error"]["code"] == "unknown_predicate"
+    assert "Could not parse filter predicate" in params["filter_error"]["message"]
+
+
+def test_resolver_does_not_treat_keyed_value_only_as_filter():
+    params = resolved_entity_params(resolve_query_entities("list versions project_name=Only"))
+
+    assert "filter_predicate" not in params
+    assert "filter_error" not in params
 
 
 def test_enrichment_block_uses_resolved_context_shape():

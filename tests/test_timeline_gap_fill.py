@@ -59,6 +59,67 @@ def test_gap_fills_set_present_in_rename_shots_code():
     assert "gap_fills" in src
 
 
+def test_sequence_segment_collection_emits_raw_timecodes_for_wrapper_duration():
+    src = timeline._COLLECT_CODE
+
+    assert "'record_in':   str(seg.record_in)" in src
+    assert "'record_out':  str(seg.record_out)" in src
+    assert "forge_bridge.utils" not in src
+    assert "timecode_to_frames" not in src
+    assert "'duration'" not in src
+
+
+def test_get_sequence_segments_wrapper_computes_graph_native_duration(monkeypatch):
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        assert "'frame_rate': str(seq.frame_rate)" in code
+        return {
+            "sequence": "30sec_21",
+            "frame_rate": "24 fps",
+            "segments": [
+                {
+                    "record_in": "00:00:00+00",
+                    "record_out": "00:00:04+03",
+                },
+            ],
+            "count": 1,
+        }
+
+    monkeypatch.setattr(timeline.bridge, "execute_json", _fake_execute_json)
+
+    import asyncio
+
+    out = asyncio.run(
+        timeline.get_sequence_segments(timeline.GetSegmentsInput(sequence_name="30sec_21")),
+    )
+
+    assert json.loads(out)["segments"][0]["duration"] == 99
+
+
+def test_flame_get_sequence_segments_does_not_import_utils_in_flame_body():
+    """The Flame body executes in /opt/Autodesk/shared/python/forge_bridge/
+    which lacks forge_bridge.utils. Timecode conversion must happen in the
+    Python wrapper, not inside the bridge.execute_json template.
+
+    Discipline-policy enforcement test — fourth instance of this pattern.
+    Siblings: assert 'include_names' not in code (PR #19),
+              dry_run main-thread retention tests x2 (PR #20).
+    """
+    src = inspect.getsource(timeline.get_sequence_segments)
+    flame_body_start = src.find('bridge.execute_json(f"""')
+    flame_body_end = src.find('""")', flame_body_start)
+    flame_body = src[flame_body_start:flame_body_end]
+
+    assert "forge_bridge.utils" not in flame_body, (
+        "forge_bridge.utils import found inside Flame execution body — "
+        "will fail at runtime because Flame's Python context lacks the "
+        "utils package. Move conversion to Python wrapper layer."
+    )
+    assert "timecode_to_frames" not in flame_body, (
+        "timecode_to_frames call inside Flame body — same issue. "
+        "Move conversion to Python wrapper layer."
+    )
+
+
 def test_gap_fills_tracks_segments_by_id():
     """The set stores id(seg) (not the segment itself) because Flame
     PySegment objects are not hashable by identity semantics we want."""
@@ -323,3 +384,41 @@ def test_rename_shots_uses_provided_padding_when_no_existing_pattern(monkeypatch
     assert "if existing_padding_widths and len(set(existing_padding_widths)) == 1" in (
         captured["code"]
     )
+
+
+def test_rename_shots_accepts_graph_filtered_selected_segments(monkeypatch):
+    captured: dict = {}
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        captured["code"] = code
+        return {"renamed": 0, "changes": []}
+
+    monkeypatch.setattr(timeline.bridge, "execute_json", _fake_execute_json)
+
+    import asyncio
+
+    asyncio.run(
+        timeline.rename_shots(
+            timeline.RenameInput(
+                sequence_name="30sec_21",
+                prefix="genesis",
+                selected_segments=[],
+            ),
+        ),
+    )
+
+    assert "selected_segments   = []" in captured["code"]
+    assert "def _is_selected(track_idx, seg):" in captured["code"]
+    assert "if selected_keys is None:" in captured["code"]
+
+
+def test_rename_shots_keeps_unfiltered_default_distinct_from_empty_selection():
+    assert timeline.RenameInput(
+        sequence_name="30sec_21",
+        prefix="genesis",
+    ).selected_segments is None
+    assert timeline.RenameInput(
+        sequence_name="30sec_21",
+        prefix="genesis",
+        selected_segments=[],
+    ).selected_segments == []

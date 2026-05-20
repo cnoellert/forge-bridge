@@ -150,6 +150,13 @@ async def execute_chain_step(
         resolve_required_params,
     )
 
+    graph_outcome = _maybe_execute_filter_step(
+        step_text=step_text,
+        inherited_context=inherited_context,
+    )
+    if graph_outcome is not None:
+        return graph_outcome
+
     # PR 5 §4.1 — deployment identity snapshot. Per framing §2.1:
     # the chain-step's deployment identity is the caller's view, not
     # the global daemon registry view. Bound at function entry,
@@ -167,13 +174,14 @@ async def execute_chain_step(
     tools_post_reachability = tools
 
     user_params = extract_explicit_params(step_text)
+    semantic_params = _extract_semantic_step_params(step_text)
 
     inherited = inherited_context or {}
     public_inherited = {
         key: value for key, value in inherited.items()
         if not str(key).startswith("__")
     }
-    merged: dict = {**public_inherited, **user_params}
+    merged: dict = {**public_inherited, **semantic_params, **user_params}
     requested_name = merged.get("project_name")
     resolver_input = {k: v for k, v in merged.items() if k != "project_name"}
 
@@ -284,6 +292,11 @@ async def execute_chain_step(
             format_class = _extract_format_class(step_text)
             if format_class:
                 params["format"] = format_class
+    if tool_name in {"flame_rename_shots", "flame_preview_rename"}:
+        selected = inherited.get("__filtered_collection__")
+        if selected is not None and "selected_segments" not in params:
+            params = dict(params)
+            params["selected_segments"] = selected
 
     if DISAMBIGUATION_KEY in params:
         candidates = (params[DISAMBIGUATION_KEY] or {}).get("candidates", []) or []
@@ -354,3 +367,88 @@ def _extract_format_class(step_text: str) -> str | None:
         return None
     value = match.group("format").lower().replace("-", "_").replace(" ", "_")
     return "bullets" if value in {"bullet", "bullets", "bullet_list"} else value
+
+
+def _extract_semantic_step_params(step_text: str) -> dict[str, Any]:
+    """Project deterministic resolver entities into chain-step params.
+
+    This is the chain-step instance of the resolver's broader role: entity,
+    numeric, format, and intent directives are semantic projections, not LLM
+    guesses. Filter predicates remain graph-node inputs and are consumed by
+    ``_maybe_execute_filter_step`` before tool selection reaches this path.
+    """
+    from forge_bridge.llm.resolver import (
+        resolve_query_entities,
+        resolved_entity_params,
+    )
+
+    params = resolved_entity_params(resolve_query_entities(step_text))
+    params.pop("filter_predicate", None)
+    params.pop("filter_error", None)
+    return params
+
+
+def _maybe_execute_filter_step(
+    *,
+    step_text: str,
+    inherited_context: dict,
+) -> dict | None:
+    from forge_bridge.graph import (
+        FilterNode,
+        FilterPredicate,
+        GraphInputError,
+        is_filter_step,
+    )
+    from forge_bridge.llm.resolver import resolve_query_entities
+
+    if not is_filter_step(step_text):
+        return None
+
+    inherited_context = inherited_context or {}
+    resolved = resolve_query_entities(step_text)
+    filter_error = resolved.get("filter_error")
+    if isinstance(filter_error, dict) and isinstance(filter_error.get("value"), dict):
+        return {"error": {
+            "type": "UNKNOWN_FILTER_PREDICATE",
+            "message": filter_error["value"].get("message", "Unknown filter predicate."),
+            "details": filter_error["value"],
+        }}
+
+    entity = resolved.get("filter_predicate")
+    predicate_value = entity.get("value") if isinstance(entity, dict) else None
+    if not isinstance(predicate_value, dict):
+        return {"error": {
+            "type": "UNKNOWN_FILTER_PREDICATE",
+            "message": "Unknown filter predicate.",
+        }}
+
+    if "__previous_result__" not in inherited_context:
+        return {"error": {
+            "type": "GRAPH_INPUT_REQUIRED",
+            "message": "FilterNode requires a previous enumeration result.",
+        }}
+
+    try:
+        predicate = FilterPredicate.from_dict(predicate_value)
+        node = FilterNode(predicate)
+        prior = inherited_context["__previous_result__"]
+        result = node.run(prior)
+        selected = node.selected_collection(prior)
+    except (GraphInputError, ValueError) as exc:
+        return {"error": {
+            "type": getattr(exc, "code", type(exc).__name__),
+            "message": getattr(exc, "message", str(exc)),
+        }}
+
+    extracted: dict[str, Any] = {"__filtered_collection__": selected}
+    if isinstance(result, dict):
+        sequence = result.get("sequence") or result.get("sequence_name")
+        if isinstance(sequence, str) and sequence:
+            extracted["sequence_name"] = sequence
+
+    return {
+        "result": result,
+        "extracted_context": extracted,
+        "tool": "graph_filter",
+        "params": {"predicate": predicate.to_dict()},
+    }

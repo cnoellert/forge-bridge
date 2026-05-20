@@ -149,7 +149,7 @@ async def get_sequence_segments(params: GetSegmentsInput) -> str:
                      [{"track_idx": 0, "seg_name": "...", "shot_name": "...",
                      "role": "source", "source_name": "...", "file_path": "...",
                      "record_in": "...", "record_out": "...",
-                     "start_frame": 1001, "head": 8,
+                     "duration": 99, "start_frame": 1001, "head": 8,
                      "forge_shot": "noise_010", "forge_role": "source",
                      "forge_layer": 1}, ...]}
 
@@ -157,12 +157,15 @@ async def get_sequence_segments(params: GetSegmentsInput) -> str:
     - Parsed FORGE name (shot_name, role, layer from segment name)
     - Source metadata: file_path, source_name, head handles
     - Edit position: record_in, record_out
+    - Duration in integer frames, normalized from Flame timecode strings
     - Start frame (for start frame workflow)
     - Role auto-detected from footage/{role}/ path pattern
 
     This is the primary inspection tool before running rename or
     set_start_frames. The metadata here drives both workflows.
     """
+    from forge_bridge.utils.timecode import TimecodeParseError, timecode_to_frames
+
     data = await bridge.execute_json(f"""
 import flame, json
 {_COLLECT_CODE}
@@ -179,8 +182,25 @@ else:
         s['forge_shot']  = m.group(1) if m else ''
         s['forge_role']  = m.group(2) if m else ''
         s['forge_layer'] = int(m.group(3)) if m else 0
-    print(json.dumps({{'sequence': {params.sequence_name!r}, 'segments': segs, 'count': len(segs)}}))
+    print(json.dumps({{
+        'sequence': {params.sequence_name!r},
+        'frame_rate': str(seq.frame_rate),
+        'segments': segs,
+        'count': len(segs),
+    }}))
 """)
+    if isinstance(data, dict) and "segments" in data:
+        seq_frame_rate = data.get("frame_rate")
+        fps = float(str(seq_frame_rate).split()[0])
+        for segment in data["segments"]:
+            try:
+                duration = (
+                    timecode_to_frames(segment["record_out"], fps)
+                    - timecode_to_frames(segment["record_in"], fps)
+                )
+                segment["duration"] = duration
+            except TimecodeParseError:
+                raise
     return json.dumps(data, indent=2)
 
 
@@ -236,6 +256,10 @@ class RenameInput(BaseModel):
         False,
         description="When true, return proposed changes without mutating Flame.",
     )
+    selected_segments: Optional[list[dict]] = Field(
+        default=None,
+        description="Graph-filtered segment collection. None means all segments; [] means no selected segments.",
+    )
 
 
 async def rename_shots(params: RenameInput) -> str:
@@ -274,6 +298,7 @@ else:
     role_overrides      = {{{', '.join(f'{int(k)}: {v!r}' for k, v in params.role_overrides.items())}}}
     qualifier_overrides = {{{', '.join(f'{int(k)}: {v!r}' for k, v in params.qualifier_overrides.items())}}}
     dry_run             = {params.dry_run!r}
+    selected_segments   = {params.selected_segments!r}
 
     result = {{'shots_assigned': 0, 'propagated': 0, 'renamed': 0, 'skipped': 0, 'changes': []}}
     event  = threading.Event()
@@ -284,6 +309,39 @@ else:
             for ver in seq.versions:
                 for track in ver.tracks:
                     tracks.append(track)
+
+            def _seg_name(seg):
+                try:
+                    return seg.name.get_value() if hasattr(seg.name, 'get_value') else str(seg.name)
+                except Exception:
+                    return ''
+
+            def _seg_key(track_idx, seg):
+                src = str(seg.source_name) if seg.source_name else ''
+                return '|'.join([
+                    str(track_idx),
+                    str(seg.record_in),
+                    _seg_name(seg),
+                    src,
+                ])
+
+            selected_keys = None
+            if selected_segments is not None:
+                selected_keys = set()
+                for item in selected_segments:
+                    if not isinstance(item, dict):
+                        continue
+                    selected_keys.add('|'.join([
+                        str(item.get('track_idx', '')),
+                        str(item.get('record_in', '')),
+                        str(item.get('seg_name') or item.get('name') or ''),
+                        str(item.get('source_name', '')),
+                    ]))
+
+            def _is_selected(track_idx, seg):
+                if selected_keys is None:
+                    return True
+                return _seg_key(track_idx, seg) in selected_keys
 
             # State-aware deterministic default resolution: preserve a
             # coherent existing numbering grammar. The schema padding
@@ -312,6 +370,8 @@ else:
             proposed_shots = {{}}
             shot_num   = start
             for seg in tracks[0].segments:
+                if not _is_selected(0, seg):
+                    continue
                 src = str(seg.source_name) if seg.source_name else ''
                 if not src:
                     # Gap on T0 — scan upward tracks for a real segment
@@ -320,6 +380,8 @@ else:
                     fill_seg = None
                     for fti in range(1, len(tracks)):
                         for fseg in tracks[fti].segments:
+                            if not _is_selected(fti, fseg):
+                                continue
                             fsrc = str(fseg.source_name) if fseg.source_name else ''
                             if not fsrc:
                                 continue
@@ -353,6 +415,8 @@ else:
             # Pass 2: propagate shot names to upper tracks
             for ti in range(1, len(tracks)):
                 for seg in tracks[ti].segments:
+                    if not _is_selected(ti, seg):
+                        continue
                     src = str(seg.source_name) if seg.source_name else ''
                     if not src:
                         continue
@@ -374,6 +438,8 @@ else:
                 layer_num = str(ti + 1).zfill(2)
                 for seg in track.segments:
                     src = str(seg.source_name) if seg.source_name else ''
+                    if not _is_selected(ti, seg):
+                        continue
                     if not src:
                         result['skipped'] += 1
                         continue
