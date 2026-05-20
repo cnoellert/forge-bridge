@@ -4,6 +4,12 @@ Sends a single user message to ``http://<console_host>:<console_port>/api/v1/cha
 (the same endpoint the Artist Console UI uses) and renders the timeout /
 retry / response-timing messaging from ``llm.call_wrapper``.
 
+The terminal step's operator-meaningful output IS the chat answer.
+Prior chain steps are execution plumbing. The CLI render layer
+exists to surface the terminal step's operator-meaningful output
+in the form most useful to the operator, not to expose execution
+structure.
+
 This is *not* a parallel chat path — it consumes the same shared endpoint
 and therefore benefits from any improvements made there.
 """
@@ -11,7 +17,6 @@ from __future__ import annotations
 
 import json
 import sys
-import time
 from typing import Annotated, Optional
 
 import typer
@@ -30,6 +35,10 @@ _KIND_TO_EXIT = {
     "timeout": _EXIT_TIMEOUT,
     "invalid_response": _EXIT_FAIL,
 }
+_FORMAT_RESULT_EGRESS_WARNING = (
+    "format_result sends condensed data to Anthropic cloud model. "
+    "Ensure ANTHROPIC_API_KEY is set and data-egress policy permits."
+)
 
 
 def chat_cmd(
@@ -51,7 +60,24 @@ def chat_cmd(
     ] = call_wrapper.DEFAULT_BACKOFF_SECONDS,
     verbose: Annotated[
         bool,
-        typer.Option("--verbose", "-v", help="Show model, provider, and timing."),
+        typer.Option(
+            "--verbose",
+            "-v",
+            help=(
+                "Dump full chain JSON after completion. "
+                "For debugging chain composition or step output."
+            ),
+        ),
+    ] = False,
+    trace: Annotated[
+        bool,
+        typer.Option(
+            "--trace",
+            help=(
+                "Show per-step summaries during chain execution. "
+                "For monitoring long-running chains. Output to stderr."
+            ),
+        ),
     ] = False,
     quiet: Annotated[
         bool,
@@ -66,9 +92,9 @@ def chat_cmd(
     url = f"{config.console_url()}/api/v1/chat"
     payload = {"messages": [{"role": "user", "content": message}]}
 
-    # P-01 stdout purity: progress messages go to stderr; suppressed in --json
-    # and --quiet modes.
-    reporter = None if (as_json or quiet) else _stderr_reporter
+    # P-01 stdout purity: default chat output is the operator answer only.
+    # Retry/progress chatter would corrupt pipe targets such as formatted CSV.
+    reporter = None
 
     result = call_wrapper.call_with_retry(
         url, payload,
@@ -97,7 +123,7 @@ def chat_cmd(
         )
 
     if not result.ok:
-        if verbose:
+        if trace:
             _write_trace_block(result.trace)
             meta = _extract_metadata(result.data)
             sys.stderr.write(
@@ -114,6 +140,12 @@ def chat_cmd(
             sys.stderr.write(f"fix: {result.fix}\n")
         raise typer.Exit(code=_KIND_TO_EXIT.get(result.error_kind, _EXIT_FAIL))
 
+    if verbose:
+        sys.stdout.write(
+            json.dumps(result.data, ensure_ascii=False, indent=2, default=str) + "\n"
+        )
+        raise typer.Exit(code=_EXIT_OK)
+
     # Phase 24.5: orchestration_terminated is its own consumer taxon.
     # Detect BEFORE _extract_reply runs — otherwise the K-th tool
     # result's content gets rendered as if the model authored it, which
@@ -123,28 +155,304 @@ def chat_cmd(
     # §4 contract (provenance / trigger / reason / iterations /
     # accumulated_results) without paraphrase or synthesis.
     if _is_orchestration_terminated(result.data):
-        _render_orchestration_terminated(result.data, verbose, retries, result)
+        _render_orchestration_terminated(result.data, trace, retries, result)
         raise typer.Exit(code=_EXIT_OK)
 
-    # Success path. Extract reply text defensively — the chat endpoint's
-    # response shape is owned by chat_handler; we don't enshrine it here.
-    reply = _extract_reply(result.data)
-    if verbose:
+    if trace:
+        _write_chain_trace(result.data)
         _write_trace_block(result.trace)
-        meta = _extract_metadata(result.data)
-        sys.stderr.write(
-            f"[chat] elapsed={result.elapsed_seconds:.2f}s  "
-            f"attempts={result.attempts}/{retries + 1}  "
-            f"model={meta.get('model', '?')}  "
-            f"provider={meta.get('provider', '?')}  "
-            f"tools={_format_tools(meta, result)}\n"
+    output = _render_operator_output(result.data)
+    sys.stdout.write(output + ("\n" if output and not output.endswith("\n") else ""))
+
+
+def _render_operator_output(data: Optional[dict]) -> str:
+    """Project chat data into the operator-facing default stdout surface."""
+    if _is_chain_envelope(data):
+        assert isinstance(data, dict)
+        if data.get("status") == "error":
+            return _render_structured_error(data.get("error"))
+        chain = data.get("chain")
+        if not isinstance(chain, list) or not chain:
+            return ""
+        for entry in chain:
+            if not isinstance(entry, dict):
+                continue
+            error = entry.get("error")
+            if error:
+                return _render_structured_error(error)
+            result = entry.get("result")
+            if isinstance(result, dict) and _looks_like_structured_error(result):
+                return _render_structured_error(result)
+            if entry.get("status") == "error":
+                return _render_structured_error(entry)
+        terminal = chain[-1] if isinstance(chain[-1], dict) else {}
+        output, warnings = _project_terminal_result(
+            terminal.get("result"),
+            step_text=str(terminal.get("step") or ""),
         )
-    sys.stdout.write(reply + ("\n" if not reply.endswith("\n") else ""))
+        _write_render_warnings(warnings)
+        return output
+
+    if isinstance(data, dict) and data.get("status") == "error":
+        return _render_structured_error(data.get("error"))
+
+    reply = _extract_reply(data)
+    if reply is not None:
+        output, warnings = _split_render_warnings(reply)
+        _write_render_warnings(warnings)
+        return output
+
+    output, warnings = _project_terminal_result(data, step_text="")
+    _write_render_warnings(warnings)
+    return output
 
 
-def _stderr_reporter(message: str) -> None:
-    sys.stderr.write(message + "\n")
-    sys.stderr.flush()
+def _project_terminal_result(value: object, *, step_text: str) -> tuple[str, list[str]]:
+    _ = step_text  # Reserved for future projection refinements at this single point.
+    if isinstance(value, str):
+        return _split_render_warnings(value)
+    if isinstance(value, dict):
+        if _looks_like_structured_error(value):
+            return _render_structured_error(value), []
+        if _looks_like_mutation_result(value):
+            return _render_mutation_result(value), []
+        collection_key, collection = _find_collection(value)
+        if collection_key and collection is not None:
+            return _render_enumeration(collection), []
+        return _render_inspection(value), []
+    if isinstance(value, list):
+        return _render_enumeration(value), []
+    if value is None:
+        return "", []
+    return str(value), []
+
+
+def _write_render_warnings(warnings: list[str]) -> None:
+    for warning in warnings:
+        sys.stderr.write(warning + "\n")
+
+
+def _split_render_warnings(text: str) -> tuple[str, list[str]]:
+    if text.startswith(_FORMAT_RESULT_EGRESS_WARNING):
+        rest = text[len(_FORMAT_RESULT_EGRESS_WARNING):].lstrip()
+        return rest, [_FORMAT_RESULT_EGRESS_WARNING]
+    return text, []
+
+
+def _looks_like_structured_error(value: dict) -> bool:
+    return any(key in value for key in ("error", "code", "message", "type")) and (
+        "error" in value or "original_error" in value or value.get("status") == "error"
+    )
+
+
+def _render_structured_error(error: object) -> str:
+    if not isinstance(error, dict):
+        return f"Error: {error}"
+    original = error.get("original_error")
+    if isinstance(original, dict):
+        error = original
+    code = error.get("code") or error.get("type") or error.get("error") or "unknown_error"
+    message = error.get("message") or error.get("detail") or error.get("reason")
+    lines = [f"Error: {code}"]
+    if message:
+        lines.append(str(message))
+    details = error.get("details")
+    if isinstance(details, dict):
+        advice = details.get("message") or details.get("advice")
+        if advice and advice != message:
+            lines.append(str(advice))
+    return "\n".join(lines)
+
+
+def _looks_like_mutation_result(value: dict) -> bool:
+    mutation_keys = {
+        "renamed",
+        "skipped",
+        "applied",
+        "errors",
+        "shots_assigned",
+        "propagated",
+        "deleted",
+        "disconnected",
+        "opened",
+        "dry_run",
+        "proposed_changes",
+    }
+    return bool(mutation_keys & set(value))
+
+
+def _render_mutation_result(value: dict) -> str:
+    preferred = [
+        "renamed",
+        "skipped",
+        "applied",
+        "errors",
+        "shots_assigned",
+        "propagated",
+        "deleted",
+        "disconnected",
+        "opened",
+        "count",
+    ]
+    parts = []
+    for key in preferred:
+        item = value.get(key)
+        if isinstance(item, (int, float, str)) and not isinstance(item, bool):
+            parts.append(f"{key}={item}")
+        elif isinstance(item, list):
+            parts.append(f"{key}={len(item)}")
+    lines = [" ".join(parts) if parts else _render_inspection(value)]
+    changes = value.get("changes") or value.get("proposed_changes")
+    if isinstance(changes, list) and changes:
+        names = [
+            _first_string(change, ("new", "proposed", "shot_name", "name"))
+            for change in changes
+            if isinstance(change, dict)
+        ]
+        names = [name for name in names if name]
+        if names:
+            lines.append(f"{names[0]} ... {names[-1]}" if len(names) > 1 else names[0])
+    return "\n".join(lines)
+
+
+def _find_collection(value: dict) -> tuple[str | None, list | None]:
+    for key in (
+        "segments",
+        "clips",
+        "reels",
+        "items",
+        "iterations",
+        "nodes",
+        "projects",
+        "shots",
+        "versions",
+        "results",
+    ):
+        item = value.get(key)
+        if isinstance(item, list):
+            return key, item
+    return None, None
+
+
+def _render_enumeration(items: list) -> str:
+    lines = []
+    for item in items:
+        if isinstance(item, dict):
+            lines.append(_render_enumeration_item(item))
+        else:
+            lines.append(str(item))
+    return "\n".join(lines)
+
+
+def _render_enumeration_item(item: dict) -> str:
+    name = _first_string(
+        item,
+        ("name", "sequence", "sequence_name", "shot_name", "seg_name", "source_name", "node_name"),
+    ) or "(unnamed)"
+    fields = []
+    type_value = item.get("type") or item.get("role")
+    if type_value:
+        fields.append(str(type_value))
+    duration = item.get("duration")
+    if isinstance(duration, (int, float)) and not isinstance(duration, bool):
+        fields.append(f"{duration:g} frames")
+    if isinstance(item.get("track_count"), int):
+        fields.append(f"{item['track_count']} tracks")
+    elif isinstance(item.get("track_idx"), int):
+        fields.append(f"track {item['track_idx']}")
+    if isinstance(item.get("is_open"), bool):
+        fields.append("open" if item["is_open"] else "closed")
+    return f"{name}  ({', '.join(fields)})" if fields else name
+
+
+def _render_inspection(value: dict) -> str:
+    lines = []
+    for key, item in value.items():
+        if str(key).startswith("_"):
+            continue
+        lines.append(f"{key:<12} {_format_scalar_for_operator(item)}")
+    return "\n".join(lines)
+
+
+def _format_scalar_for_operator(value: object) -> str:
+    if isinstance(value, dict):
+        return f"{len(value)} fields"
+    if isinstance(value, list):
+        return f"{len(value)} items"
+    return str(value)
+
+
+def _first_string(mapping: dict, keys: tuple[str, ...]) -> str | None:
+    for key in keys:
+        value = mapping.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _is_chain_envelope(data: object) -> bool:
+    return isinstance(data, dict) and isinstance(data.get("chain"), list) and "status" in data
+
+
+def _write_chain_trace(data: Optional[dict]) -> None:
+    if not _is_chain_envelope(data):
+        return
+    assert isinstance(data, dict)
+    chain = data.get("chain") or []
+    total = len(chain)
+    for index, entry in enumerate(chain, start=1):
+        if not isinstance(entry, dict):
+            continue
+        label = _trace_step_label(str(entry.get("step") or ""), entry.get("result"))
+        summary = _brief_result_summary(entry.get("result"))
+        sys.stderr.write(f"[{index}/{total}] {label} → {summary}\n")
+
+
+def _trace_step_label(step: str, result: object) -> str:
+    lowered = step.lower()
+    if "filter" in lowered or lowered.startswith("where") or lowered.startswith("only"):
+        return step.strip()
+    if "format" in lowered:
+        for name in ("table", "email", "bullets", "bullet list"):
+            if name in lowered:
+                return f"format {name.replace('bullet list', 'bullets')}"
+        return "format"
+    if "rename" in lowered:
+        return "rename shots"
+    if "segment" in lowered:
+        return "get sequence segments"
+    if isinstance(result, dict):
+        key, _ = _find_collection(result)
+        if key:
+            return f"get {key}"
+    return step.strip() or "step"
+
+
+def _brief_result_summary(value: object) -> str:
+    if isinstance(value, str):
+        return "rendered"
+    if isinstance(value, dict):
+        if _looks_like_mutation_result(value):
+            keys = [
+                f"{key}={value[key]}"
+                for key in ("renamed", "skipped", "applied", "count")
+                if isinstance(value.get(key), int)
+            ]
+            return " ".join(keys) if keys else "mutation result"
+        key, collection = _find_collection(value)
+        if collection is not None:
+            before = value.get("_input_count")
+            after = len(collection)
+            if isinstance(before, int):
+                return f"{before} → {after} items"
+            suffix = ""
+            frame_rate = value.get("frame_rate")
+            if frame_rate:
+                suffix = f" ({frame_rate})"
+            return f"{after} {key}{suffix}"
+    if isinstance(value, list):
+        return f"{len(value)} items"
+    return "done"
 
 
 def _write_trace_block(trace: dict) -> None:
@@ -249,7 +557,7 @@ def _is_orchestration_terminated(data: Optional[dict]) -> bool:
 
 def _render_orchestration_terminated(
     data: dict,
-    verbose: bool,
+    trace: bool,
     retries: int,
     result,
 ) -> None:
@@ -313,7 +621,7 @@ def _render_orchestration_terminated(
 
     sys.stdout.write("\n".join(lines) + "\n")
 
-    if verbose:
+    if trace:
         _write_trace_block(result.trace)
         meta = _extract_metadata(data)
         sys.stderr.write(
@@ -326,10 +634,10 @@ def _render_orchestration_terminated(
         )
 
 
-def _extract_reply(data: Optional[dict]) -> str:
+def _extract_reply(data: Optional[dict]) -> str | None:
     """Pull a renderable text reply out of the chat response."""
     if not isinstance(data, dict):
-        return json.dumps(data)
+        return None
     for key in ("response", "reply", "text", "content", "message"):
         v = data.get(key)
         if isinstance(v, str) and v:
@@ -341,7 +649,7 @@ def _extract_reply(data: Optional[dict]) -> str:
             content = last.get("content")
             if isinstance(content, str):
                 return content
-    return json.dumps(data)
+    return None
 
 
 def _extract_metadata(data: Optional[dict]) -> dict:

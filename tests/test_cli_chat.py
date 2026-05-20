@@ -93,12 +93,13 @@ def test_chat_success_prints_reply_to_stdout():
     assert "hi from llm" in result.stdout
 
 
-def test_chat_success_progress_messages_go_to_stderr():
+def test_chat_default_is_silent_during_execution():
     with _patch_httpx([_Resp(200, {"response": "ok"})]):
         result = runner.invoke(app, ["chat", "ping"])
     err = getattr(result, "stderr", "") or ""
-    assert "Sending request..." in err
-    assert "Response received" in err
+    assert "Sending request" not in err
+    assert "Response received" not in err
+    assert result.stdout == "ok\n"
 
 
 def test_chat_quiet_suppresses_progress_messages():
@@ -109,29 +110,26 @@ def test_chat_quiet_suppresses_progress_messages():
     assert "ok" in result.stdout
 
 
-def test_chat_verbose_shows_model_and_timing():
+def test_chat_verbose_dumps_full_response_json_to_stdout():
     body = {"response": "hi", "model": "qwen2.5-coder:14b", "provider": "ollama"}
     with _patch_httpx([_Resp(200, body)]):
         result = runner.invoke(app, ["chat", "--verbose", "ping"])
     assert result.exit_code == 0
     err = getattr(result, "stderr", "") or ""
-    assert "qwen2.5-coder:14b" in err
-    assert "ollama" in err
-    assert "elapsed=" in err
+    assert err == ""
+    assert json.loads(result.stdout) == body
 
 
 # ── timeout + retry behavior ──────────────────────────────────────────────
 
-def test_chat_timeout_then_success_shows_retry_message():
+def test_chat_timeout_then_success_keeps_default_stderr_quiet():
     outcomes = [httpx.TimeoutException("t1"), _Resp(200, {"response": "ok"})]
     with _patch_httpx(outcomes):
         result = runner.invoke(app, ["chat", "--retries", "1", "ping"])
     assert result.exit_code == 0
     err = getattr(result, "stderr", "") or ""
-    assert "timed out" in err
-    # PR10: reporter line now embeds the sleep duration ("sleeping Xs").
-    assert "Retrying (attempt 2/2" in err
-    assert "Response received" in err
+    assert err == ""
+    assert result.stdout == "ok\n"
 
 
 def test_chat_timeout_exhausted_returns_actionable_fix():
@@ -200,10 +198,161 @@ def test_chat_json_does_not_emit_progress_messages():
     json.loads(result.stdout.strip())  # must parse
 
 
-# ── PR10: verbose output on both success and failure ────────────────────
+def test_chat_default_output_contains_no_raw_json():
+    """Default fbridge chat output must never leak raw JSON.
+    Default mode is operator-facing; raw JSON belongs to --verbose.
+    Discipline-policy enforcement test — 5th instance of pattern.
+    Siblings: include_names (PR #19), dry_run x2 (PR #20),
+              utils-in-flame-body (PR #21)."""
+    body = {
+        "status": "success",
+        "request_id": "rid",
+        "chain": [
+            {
+                "step": "get sequence segments on 30sec 21",
+                "result": {
+                    "sequence": "30sec_21",
+                    "segments": [
+                        {
+                            "shot_name": "genesis_0010",
+                            "role": "source",
+                            "duration": 99,
+                            "track_idx": 0,
+                        },
+                    ],
+                    "count": 1,
+                },
+            },
+        ],
+        "error": None,
+    }
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "get sequence segments on 30sec 21"])
+
+    output = result.stdout
+    assert "{" not in output, (
+        "Raw JSON leaked into chat default output. "
+        "Default mode is operator-facing; use --verbose for JSON."
+    )
+    assert "}" not in output
+    assert "\\n" not in output
+    assert "genesis_0010" in output
+    assert "99 frames" in output
 
 
-def test_chat_verbose_success_block_includes_attempts_and_tool_calls():
+def test_chat_default_format_terminal_moves_egress_warning_to_stderr():
+    warning = (
+        "format_result sends condensed data to Anthropic cloud model. "
+        "Ensure ANTHROPIC_API_KEY is set and data-egress policy permits."
+    )
+    body = {
+        "status": "success",
+        "request_id": "rid",
+        "chain": [
+            {"step": "format as table", "result": f"{warning}\n\nSHOT       STATUS\n0010       ok"},
+        ],
+        "error": None,
+    }
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "format as table"])
+
+    assert result.stdout == "SHOT       STATUS\n0010       ok\n"
+    assert warning in result.stderr
+
+
+def test_chat_default_mutation_terminal_projects_summary():
+    body = {
+        "status": "success",
+        "request_id": "rid",
+        "chain": [
+            {
+                "step": "rename shots",
+                "result": {
+                    "renamed": 2,
+                    "skipped": 0,
+                    "changes": [
+                        {"new": "genesis_0010_source_L01"},
+                        {"new": "genesis_0020_source_L01"},
+                    ],
+                },
+            },
+        ],
+        "error": None,
+    }
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "rename shots"])
+
+    assert "renamed=2 skipped=0" in result.stdout
+    assert "genesis_0010_source_L01 ... genesis_0020_source_L01" in result.stdout
+
+
+def test_chat_default_error_step_projection_wins_over_terminal_result():
+    body = {
+        "status": "success",
+        "request_id": "rid",
+        "chain": [
+            {
+                "step": "open batch group",
+                "result": {
+                    "error": "no_batch_open",
+                    "message": "Open a batch group first via flame_open_batch_group.",
+                },
+            },
+            {"step": "format as table", "result": "SHOULD NOT RENDER"},
+        ],
+        "error": None,
+    }
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "chain with failed step"])
+
+    assert "Error: no_batch_open" in result.stdout
+    assert "Open a batch group first" in result.stdout
+    assert "SHOULD NOT RENDER" not in result.stdout
+
+
+def test_chat_trace_outputs_chain_summaries_to_stderr():
+    body = {
+        "status": "success",
+        "request_id": "rid",
+        "chain": [
+            {
+                "step": "get sequence segments on 30sec 21",
+                "result": {"segments": [{"duration": 99}], "frame_rate": "23.976 fps"},
+            },
+            {"step": "filter where duration > 1", "result": {"segments": [{"duration": 99}]}},
+            {"step": "rename shots", "result": {"renamed": 1, "skipped": 0}},
+            {"step": "format as table", "result": "SHOT STATUS\n0010 ok"},
+        ],
+        "error": None,
+    }
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "--trace", "chain"])
+
+    assert "[1/4] get sequence segments" in result.stderr
+    assert "[2/4] filter where duration > 1" in result.stderr
+    assert "[3/4] rename shots → renamed=1 skipped=0" in result.stderr
+    assert "[4/4] format table → rendered" in result.stderr
+    assert result.stdout == "SHOT STATUS\n0010 ok\n"
+
+
+def test_chat_verbose_chain_dumps_full_json_to_stdout():
+    body = {
+        "status": "success",
+        "request_id": "rid",
+        "chain": [{"step": "format as table", "result": "table"}],
+        "error": None,
+    }
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "--verbose", "chain"])
+
+    assert json.loads(result.stdout) == body
+    assert result.stderr == ""
+
+
+# ── operator rendering modes ─────────────────────────────────────────────
+
+
+def test_chat_verbose_success_dumps_tool_metadata_json():
     payload = {"response": "hi", "model": "qwen2.5-coder:14b",
                "provider": "ollama", "tool_calls": [{"name": "flame_ping"}],
                "tool_duration": 0.42}
@@ -211,20 +360,16 @@ def test_chat_verbose_success_block_includes_attempts_and_tool_calls():
         result = runner.invoke(app, ["chat", "--verbose", "ping"])
     assert result.exit_code == 0
     err = getattr(result, "stderr", "") or ""
-    assert "[chat]" in err
-    assert "elapsed=" in err
-    assert "attempts=" in err
-    assert "model=qwen2.5-coder:14b" in err
-    # PR13-B: verbose tools field renders as ``tools=N (Xs)``.
-    assert "tools=1 (0.4s)" in err
+    assert err == ""
+    assert json.loads(result.stdout) == payload
 
 
-def test_chat_verbose_failure_block_emitted_on_error_path():
-    """PR10: verbose must surface the diagnostic block on failure too."""
+def test_chat_trace_failure_block_emitted_on_error_path():
+    """--trace surfaces the diagnostic block on failure."""
     outcomes = [httpx.TimeoutException("t1"), httpx.TimeoutException("t2")]
     with _patch_httpx(outcomes):
         result = runner.invoke(
-            app, ["chat", "--verbose", "--retries", "1", "ping"],
+            app, ["chat", "--trace", "--retries", "1", "ping"],
         )
     assert result.exit_code == 3  # timeout exit code
     err = getattr(result, "stderr", "") or ""
@@ -234,13 +379,13 @@ def test_chat_verbose_failure_block_emitted_on_error_path():
     assert "attempts=2" in err
 
 
-def test_pr13b_verbose_failure_shows_tools_zero_when_skipped():
+def test_pr13b_trace_failure_shows_tools_zero_when_skipped():
     """PR13-B: a fast-fail short-circuit (e.g. 4xx invalid_response) must
-    render ``tools=0`` in the verbose failure block — derived from the
+    render ``tools=0`` in the trace failure block — derived from the
     last attempt event, not the missing response body."""
     with _patch_httpx([_Resp(400, {"error": {"message": "bad"}})]):
         result = runner.invoke(
-            app, ["chat", "--verbose", "--retries", "2", "ping"],
+            app, ["chat", "--trace", "--retries", "2", "ping"],
         )
     err = getattr(result, "stderr", "") or ""
     assert "[chat] FAILED" in err
@@ -266,12 +411,12 @@ def test_chat_json_failure_envelope_carries_attempts_and_elapsed():
 # ── PR11: structured trace in CLI ─────────────────────────────────────────
 
 
-def test_chat_verbose_prints_trace_block_on_success():
-    """--verbose must emit the [trace] block, derived from result.trace."""
+def test_chat_trace_prints_trace_block_on_success():
+    """--trace must emit the [trace] block, derived from result.trace."""
     outcomes = [httpx.TimeoutException("t1"), _Resp(200, {"response": "ok"})]
     with _patch_httpx(outcomes):
         result = runner.invoke(
-            app, ["chat", "--verbose", "--retries", "1", "ping"],
+            app, ["chat", "--trace", "--retries", "1", "ping"],
         )
     assert result.exit_code == 0
     err = getattr(result, "stderr", "") or ""
@@ -282,10 +427,10 @@ def test_chat_verbose_prints_trace_block_on_success():
     assert "total →" in err
 
 
-def test_chat_verbose_trace_does_not_dump_timeline_json():
+def test_chat_trace_does_not_dump_timeline_json():
     """The [trace] block is human-readable lines — no raw JSON in human mode."""
     with _patch_httpx([_Resp(200, {"response": "ok"})]):
-        result = runner.invoke(app, ["chat", "--verbose", "ping"])
+        result = runner.invoke(app, ["chat", "--trace", "ping"])
     err = getattr(result, "stderr", "") or ""
     assert "[trace]" in err
     # If we ever dump the trace dict, this would slip in.
@@ -293,12 +438,12 @@ def test_chat_verbose_trace_does_not_dump_timeline_json():
     assert '"kind"' not in err
 
 
-def test_chat_verbose_failure_emits_trace_before_diagnostic():
-    """On failure, --verbose still shows the [trace] block."""
+def test_chat_trace_failure_emits_trace_before_diagnostic():
+    """On failure, --trace still shows the [trace] block."""
     outcomes = [httpx.TimeoutException("t1"), httpx.TimeoutException("t2")]
     with _patch_httpx(outcomes):
         result = runner.invoke(
-            app, ["chat", "--verbose", "--retries", "1", "ping"],
+            app, ["chat", "--trace", "--retries", "1", "ping"],
         )
     assert result.exit_code == 3
     err = getattr(result, "stderr", "") or ""
@@ -308,8 +453,8 @@ def test_chat_verbose_failure_emits_trace_before_diagnostic():
     assert "[chat] FAILED" in err
 
 
-def test_chat_non_verbose_does_not_emit_trace_block():
-    """Default mode stays quiet — trace is opt-in via --verbose."""
+def test_chat_non_trace_does_not_emit_trace_block():
+    """Default mode stays quiet — trace is opt-in via --trace."""
     with _patch_httpx([_Resp(200, {"response": "ok"})]):
         result = runner.invoke(app, ["chat", "ping"])
     err = getattr(result, "stderr", "") or ""
@@ -500,15 +645,15 @@ def test_chat_orchestration_terminated_quiet_mode():
     assert "[chat] orchestration_terminated" not in result.stderr
 
 
-def test_chat_orchestration_terminated_verbose_mode_distinguishes_from_done():
-    """--verbose emits a verbose line naming orchestration_terminated explicitly.
+def test_chat_orchestration_terminated_trace_mode_distinguishes_from_done():
+    """--trace emits a diagnostic line naming orchestration_terminated explicitly.
 
     The done path emits ``[chat] elapsed=...``; the termination path emits
     ``[chat] orchestration_terminated elapsed=...``. Different leading
-    token = operator-visible distinction at the verbose surface.
+    token = operator-visible distinction at the trace surface.
     """
     with _patch_httpx([_Resp(200, _OT_ENVELOPE)]):
-        result = runner.invoke(app, ["chat", "--verbose", "ping"])
+        result = runner.invoke(app, ["chat", "--trace", "ping"])
     assert result.exit_code == 0
     assert "[orchestration termination]" in result.stdout
     assert "[chat] orchestration_terminated" in result.stderr

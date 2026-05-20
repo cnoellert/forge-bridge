@@ -125,7 +125,8 @@ isn't running; start it with `fbridge up`. Override the daemon URL with
 _CHAT_EPILOG = """\
 Examples:
   fbridge chat "explain this batch setup"
-  fbridge chat "hi" --verbose            Show model + provider + timing.
+  fbridge chat "hi" --trace              Show per-step summaries on stderr.
+  fbridge chat "hi" --verbose            Dump full chain JSON.
   fbridge chat "hi" --timeout 30         Short timeout, fail fast.
   fbridge chat "hi" --retries 0          Single attempt, no auto-retry.
   fbridge chat "hi" --json               JSON envelope (parseable).
@@ -157,9 +158,9 @@ app.command(
 app.command(
     "chat",
     help=(
-        "Send a question through the shared chat endpoint to exercise the "
-        "LLM end-to-end. Wraps the call with timeout, retry, and timing "
-        "feedback so you can tell what failed and why."
+        "Exercise the LLM end-to-end through the shared chat endpoint. "
+        "Wraps the call with timeout, retry, and timing feedback so you "
+        "can tell what failed and why."
     ),
     epilog=_CHAT_EPILOG,
 )(_chat.chat_cmd)
