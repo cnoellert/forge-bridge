@@ -797,7 +797,11 @@ async def _stub_call_tool(name: str, params: dict, /) -> Any:
 
 
 async def _stub_resolve_required_params(
-    tool_name: str, resolver_input: dict, mcp: Any, /,
+    tool_name: str,
+    resolver_input: dict,
+    mcp: Any,
+    /,
+    **_kwargs: Any,
 ) -> dict:
     """Default ``resolve_required_params`` mock — returns empty params.
 
