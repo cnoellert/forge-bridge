@@ -64,6 +64,7 @@ async def run_chain_steps(
             "result": outcome["result"],
         })
         context = outcome.get("extracted_context", {}) or {}
+        context["__previous_result__"] = outcome["result"]
 
     elapsed_ms = int((time.monotonic() - started) * 1000)
     logger.info(

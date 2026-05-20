@@ -661,6 +661,9 @@ class TestInvokeTool:
             assert name in tools
             assert requires_params_wrapper(tools[name].inputSchema) is True
 
+        assert "format_result" in tools
+        assert requires_params_wrapper(tools["format_result"].inputSchema) is True
+
     def test_invoke_tool_exported_from_mcp_package(self):
         """D-21 module re-export: planner-locked YES — mirror register_tools symmetry."""
         import forge_bridge.mcp

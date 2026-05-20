@@ -288,7 +288,7 @@ def _stringify_tool_result(raw: Any) -> str:
 
 
 def register_builtins(mcp: FastMCP) -> None:
-    """Register all builtin flame_* and forge_* tools.
+    """Register all builtin flame_*, forge_*, and format_* tools.
 
     This function is called by server.py at import time and routes every
     builtin tool registration through register_tool(), enforcing namespace
@@ -528,6 +528,22 @@ def register_builtins(mcp: FastMCP) -> None:
             "title": "List media entities with status filter — find unverified or failed plates",
             "readOnlyHint": True,
             "idempotentHint": True,
+        },
+    )
+
+    # ── Formatting tools (chain terminals) ────────────────────────
+
+    from forge_bridge.formatters.format_result import format_result
+
+    register_tool(
+        mcp,
+        format_result,
+        name="format_result",
+        source="builtin",
+        annotations={
+            "title": "Format a preceding chain result for human consumption",
+            "readOnlyHint": True,
+            "idempotentHint": False,
         },
     )
 

@@ -181,7 +181,7 @@ async def filter_tools_by_reachable_backends(tools: list[Any]) -> list[Any]:
     always pass through.
     Everything else with `flame_` or `forge_` prefix requires the Flame bridge :9999.
     Unknown-prefix tools (defense-in-depth) are dropped — registry only allows
-    the three known prefixes anyway.
+    the known prefixes anyway.
     """
     reachability = await _get_backend_reachability()
     flame_ok = reachability.get("flame_bridge", False)

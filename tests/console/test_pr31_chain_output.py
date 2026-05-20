@@ -311,3 +311,114 @@ def test_chain_step_stops_before_call_when_sequence_unresolved():
         },
     }}
     assert calls == []
+
+
+def test_chain_step_injects_previous_result_into_format_terminal():
+    from forge_bridge.console._step import execute_chain_step
+
+    calls = []
+    tool = SimpleNamespace(
+        name="format_result",
+        inputSchema={
+            "$defs": {
+                "FormatInput": {
+                    "type": "object",
+                    "properties": {
+                        "data": {},
+                        "format": {
+                            "type": "string",
+                            "enum": ["email", "table", "bullet_list"],
+                        },
+                    },
+                    "required": ["data", "format"],
+                },
+            },
+            "type": "object",
+            "properties": {"params": {"$ref": "#/$defs/FormatInput"}},
+            "required": ["params"],
+        },
+    )
+    prior = {"sequence": "30sec_21", "segments": [{"shot_name": "genesis_0010"}]}
+
+    class FakeMCP:
+        async def call_tool(self, name, arguments):
+            calls.append((name, arguments))
+            return _text_block("Subject: 30sec_21 summary")
+
+    result = asyncio.run(execute_chain_step(
+        step_text="format as email summary",
+        tools=[tool],
+        mcp=FakeMCP(),
+        inherited_context={"__previous_result__": prior},
+    ))
+
+    assert result["tool"] == "format_result"
+    assert calls == [
+        (
+            "format_result",
+            {"params": {"data": prior, "format": "email"}},
+        ),
+    ]
+    assert result["result"] == "Subject: 30sec_21 summary"
+
+
+def test_chain_engine_passes_prior_result_to_format_terminal():
+    from forge_bridge.console._engine import run_chain_steps
+
+    calls = []
+    segment_tool = SimpleNamespace(
+        name="flame_get_sequence_segments",
+        inputSchema={
+            "$defs": {
+                "WrappedInput": {
+                    "type": "object",
+                    "properties": {"sequence_name": {"type": "string"}},
+                    "required": ["sequence_name"],
+                },
+            },
+            "type": "object",
+            "properties": {"params": {"$ref": "#/$defs/WrappedInput"}},
+            "required": ["params"],
+        },
+    )
+    format_tool = SimpleNamespace(
+        name="format_result",
+        inputSchema={
+            "$defs": {
+                "FormatInput": {
+                    "type": "object",
+                    "properties": {"data": {}, "format": {"type": "string"}},
+                    "required": ["data", "format"],
+                },
+            },
+            "type": "object",
+            "properties": {"params": {"$ref": "#/$defs/FormatInput"}},
+            "required": ["params"],
+        },
+    )
+    segment_payload = {"sequence": "30sec_21", "segments": [{"shot_name": "genesis_0010"}]}
+
+    class FakeMCP:
+        async def call_tool(self, name, arguments):
+            calls.append((name, arguments))
+            if name == "flame_get_sequence_segments":
+                return _text_block(json.dumps(segment_payload))
+            if name == "format_result":
+                return _text_block("Subject: 30sec_21 summary")
+            return _text_block("{}")
+
+    result = asyncio.run(run_chain_steps(
+        steps=["get segments on 30sec 21", "format as email summary"],
+        tools=[segment_tool, format_tool],
+        mcp=FakeMCP(),
+        request_id="rid",
+        client_ip="127.0.0.1",
+        started=0.0,
+    ))
+
+    assert result["status"] == "success"
+    assert result["chain"][-1]["result"] == "Subject: 30sec_21 summary"
+    assert calls[-1] == (
+        "format_result",
+        {"params": {"data": segment_payload, "format": "email"}},
+    )

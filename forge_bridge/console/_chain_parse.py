@@ -23,6 +23,9 @@ Rules (mirror the strict-determinism ethos of PR25–PR29):
      when that list holds exactly one well-formed ``{id: str}``.
      Multi-value lists emit no context for that key — better to let
      the next step disambiguate via PR27 than to guess.
+     Formatter terminal steps are the one additional path: the immediate
+     previous result is passed privately as ``format_result.data`` only when
+     the next selected tool is ``format_result``.
   5. **No memory writes from chain context.** Inherited context flows
      through the resolver as caller params; PR26's "explicit never
      writes memory" contract carries through unchanged.

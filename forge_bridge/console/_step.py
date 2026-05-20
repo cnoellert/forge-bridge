@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import Any
 
@@ -55,6 +56,11 @@ except ImportError as _corpus_import_error:
         pass
 
 logger = logging.getLogger(__name__)
+
+_FORMAT_STEP_RE = re.compile(
+    r"\bformat\s+as\s+(?P<format>email|table|bullet[_ -]?list)\b",
+    re.IGNORECASE,
+)
 
 
 def serialize_forced_tool_result(raw: Any) -> str:
@@ -162,7 +168,12 @@ async def execute_chain_step(
 
     user_params = extract_explicit_params(step_text)
 
-    merged: dict = {**(inherited_context or {}), **user_params}
+    inherited = inherited_context or {}
+    public_inherited = {
+        key: value for key, value in inherited.items()
+        if not str(key).startswith("__")
+    }
+    merged: dict = {**public_inherited, **user_params}
     requested_name = merged.get("project_name")
     resolver_input = {k: v for k, v in merged.items() if k != "project_name"}
 
@@ -265,6 +276,14 @@ async def execute_chain_step(
     params = await resolve_required_params(
         tool_name, resolver_input, mcp, message=step_text,
     )
+    if tool_name == "format_result":
+        params = dict(params)
+        if "data" not in params and "__previous_result__" in inherited:
+            params["data"] = inherited["__previous_result__"]
+        if "format" not in params:
+            format_class = _extract_format_class(step_text)
+            if format_class:
+                params["format"] = format_class
 
     if DISAMBIGUATION_KEY in params:
         candidates = (params[DISAMBIGUATION_KEY] or {}).get("candidates", []) or []
@@ -327,3 +346,11 @@ async def execute_chain_step(
         "tool": tool_name,
         "params": params,
     }
+
+
+def _extract_format_class(step_text: str) -> str | None:
+    match = _FORMAT_STEP_RE.search(step_text or "")
+    if not match:
+        return None
+    value = match.group("format").lower().replace("-", "_").replace(" ", "_")
+    return "bullet_list" if value == "bullet_list" else value

@@ -214,7 +214,7 @@ curl -s   http://localhost:9999/status                                  # Flame 
 forge-bridge console doctor                                             # CLI + post-install diagnostic
 ```
 
-`ANTHROPIC_API_KEY` is **optional** — the chat endpoint hardcodes `sensitive=True`, which routes through local Ollama (`qwen2.5-coder:14b` since Phase 24.3). The key is only needed for `sensitive=False` cloud routing (not the daily operator workflow).
+`ANTHROPIC_API_KEY` is **optional for ordinary chat** — the chat endpoint hardcodes `sensitive=True`, which routes through local Ollama (`qwen2.5-coder:14b` since Phase 24.3). It is **required for format chains** that end in `format_result` (for example, `get segments on 30sec 21 -> format as email summary`), because that tool sends a condensed payload to the Anthropic cloud model via `sensitive=False`.
 
 **Do not use `qwen3:32b` as the default model.** It exceeds the 60s wall-clock budget due to thinking-mode token verbosity (SEED-DEFAULT-MODEL-BUMP-V1.4.x).
 
