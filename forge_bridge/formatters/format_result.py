@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
-FormatClass = Literal["email", "table", "bullet_list"]
+FormatClass = Literal["email", "table", "bullets"]
 
 MAX_CLOUD_TOKENS_EQUIVALENT = 2000
 _CHARS_PER_TOKEN_EQUIVALENT = 4
@@ -123,7 +123,7 @@ def build_format_prompt(
             "Render a column-aligned plain-text table suitable for verification. "
             "Use stable columns and keep values scannable."
         ),
-        "bullet_list": (
+        "bullets": (
             "Render a flat bullet list in readable prose. Do not nest bullets."
         ),
     }

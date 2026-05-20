@@ -327,7 +327,7 @@ def test_chain_step_injects_previous_result_into_format_terminal():
                         "data": {},
                         "format": {
                             "type": "string",
-                            "enum": ["email", "table", "bullet_list"],
+                            "enum": ["email", "table", "bullets"],
                         },
                     },
                     "required": ["data", "format"],
@@ -360,6 +360,46 @@ def test_chain_step_injects_previous_result_into_format_terminal():
         ),
     ]
     assert result["result"] == "Subject: 30sec_21 summary"
+
+
+def test_chain_step_maps_bullet_list_phrase_to_bullets_format():
+    from forge_bridge.console._step import execute_chain_step
+
+    calls = []
+    tool = SimpleNamespace(
+        name="format_result",
+        inputSchema={
+            "$defs": {
+                "FormatInput": {
+                    "type": "object",
+                    "properties": {"data": {}, "format": {"type": "string"}},
+                    "required": ["data", "format"],
+                },
+            },
+            "type": "object",
+            "properties": {"params": {"$ref": "#/$defs/FormatInput"}},
+            "required": ["params"],
+        },
+    )
+
+    class FakeMCP:
+        async def call_tool(self, name, arguments):
+            calls.append((name, arguments))
+            return _text_block("- genesis_0010")
+
+    asyncio.run(execute_chain_step(
+        step_text="format as bullet list",
+        tools=[tool],
+        mcp=FakeMCP(),
+        inherited_context={"__previous_result__": {"sequence": "30sec_21"}},
+    ))
+
+    assert calls == [
+        (
+            "format_result",
+            {"params": {"data": {"sequence": "30sec_21"}, "format": "bullets"}},
+        ),
+    ]
 
 
 def test_chain_engine_passes_prior_result_to_format_terminal():

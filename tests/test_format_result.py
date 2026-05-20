@@ -58,7 +58,7 @@ def test_condense_hard_caps_cloud_payload(caplog):
     data = {"segments": [{"shot_name": f"shot_{i:04d}"} for i in range(3000)]}
 
     with caplog.at_level("WARNING", logger="forge_bridge.formatters.format_result"):
-        condensed = condense_payload(data, "bullet_list")
+        condensed = condense_payload(data, "bullets")
 
     assert condensed.truncated is True
     assert condensed.data["truncated"] is True
