@@ -225,13 +225,45 @@ async def _resolve_sequence_name(message: str, mcp: Any) -> Optional[str]:
     return value if isinstance(value, str) and value else None
 
 
+async def _resolve_rename_params(message: str, mcp: Any) -> Optional[dict]:
+    """Resolve full rename parameter set from an operator utterance.
+
+    First structured multi-param resolver in the chain engine. Returns a
+    dict of pydantic-required + optionally-resolved tool params, or None
+    if any pydantic-required field cannot be resolved.
+    """
+    from forge_bridge.llm.resolver import resolve_query_entities
+
+    entities = resolve_query_entities(message)
+    sequence = entities.get("sequence_name")
+    prefix = entities.get("prefix")
+    if not isinstance(sequence, dict) or not isinstance(prefix, dict):
+        return None
+
+    seq_val = sequence.get("value")
+    prefix_val = prefix.get("value")
+    if not seq_val or not prefix_val:
+        return None
+
+    result: dict = {"sequence_name": seq_val, "prefix": prefix_val}
+    for key in ("increment", "padding", "start"):
+        entity = entities.get(key)
+        if isinstance(entity, dict) and entity.get("value") is not None:
+            result[key] = entity["value"]
+    return result
+
+
 # Resolver dispatch table — keys match ``_PR25_CHAINS[*]["resolver"]``.
 # Decoupling the chain entry from the function reference keeps the
 # registry data-shaped (easier to extend/inspect) and avoids forward
 # references to async functions that the registry has to know about.
-_RESOLVERS: dict[str, Callable[..., Awaitable[Optional[Union[str, list[dict]]]]]] = {
+_RESOLVERS: dict[
+    str,
+    Callable[..., Awaitable[Optional[Union[str, list[dict], dict]]]],
+] = {
     "_resolve_project_id": _resolve_project_id,
     "_resolve_sequence_name": _resolve_sequence_name,
+    "_resolve_rename_params": _resolve_rename_params,
 }
 
 
@@ -266,8 +298,8 @@ _PR25_CHAINS: dict[str, dict] = {
         "resolver": "_resolve_sequence_name",
     },
     "flame_rename_shots": {
-        "requires": frozenset({"sequence_name"}),
-        "resolver": "_resolve_sequence_name",
+        "requires": frozenset({"sequence_name", "prefix"}),
+        "resolver": "_resolve_rename_params",
     },
 }
 
@@ -446,16 +478,44 @@ async def resolve_required_params(
         # ``None`` — zero candidates or error. Fall through to return
         # the un-injected working copy; PR22 contract surfaces
         # MISSING_PROJECT_ID downstream.
-    elif resolver_name == "_resolve_sequence_name":
-        result = await resolver(message, mcp)
-        if isinstance(result, str):
-            return {**resolved, "sequence_name": result}
+        return resolved
 
+    result = await resolver(message, mcp)
+    if isinstance(result, dict):
+        merged = {**resolved, **result}
+        missing_key = _first_missing_required(required, merged)
+        if missing_key is None:
+            return merged
         return {
             UNRESOLVED_KEY: {
-                "key": "sequence_name",
+                "key": missing_key,
                 "tool": tool_name,
             }
         }
 
-    return resolved
+    if isinstance(result, str):
+        if len(required) == 1:
+            required_key = next(iter(required))
+            return {**resolved, required_key: result}
+        missing_key = _first_missing_required(required, resolved) or sorted(required)[0]
+        return {
+            UNRESOLVED_KEY: {
+                "key": missing_key,
+                "tool": tool_name,
+            }
+        }
+
+    missing_key = _first_missing_required(required, resolved) or sorted(required)[0]
+    return {
+        UNRESOLVED_KEY: {
+            "key": missing_key,
+            "tool": tool_name,
+        }
+    }
+
+
+def _first_missing_required(required: frozenset, params: dict) -> str | None:
+    for key in sorted(required):
+        if params.get(key) in (None, ""):
+            return key
+    return None

@@ -25,7 +25,9 @@ import pytest
 from forge_bridge.console._tool_chain import (
     _PR25_CHAINS,
     _resolve_project_id,
+    _resolve_rename_params,
     _resolve_sequence_name,
+    _RESOLVERS,
     UNRESOLVED_KEY,
     resolve_required_params,
 )
@@ -249,11 +251,13 @@ def test_pr25_chains_covers_project_and_sequence_resolution_tools():
         "flame_inspect_sequence_versions",
         "flame_get_sequence_segments",
         "flame_preview_start_frames",
-        "flame_rename_shots",
     ):
         chain = _PR25_CHAINS[tool]
         assert chain["requires"] == frozenset({"sequence_name"}), tool
         assert chain["resolver"] == "_resolve_sequence_name", tool
+    rename_chain = _PR25_CHAINS["flame_rename_shots"]
+    assert rename_chain["requires"] == frozenset({"sequence_name", "prefix"})
+    assert rename_chain["resolver"] == "_resolve_rename_params"
 
 
 @pytest.mark.asyncio
@@ -300,4 +304,134 @@ async def test_pr25_sequence_tool_unresolved_returns_sentinel():
             "tool": "flame_get_sequence_segments",
         }
     }
+    mcp.call_tool.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pr25_rename_resolver_returns_full_structured_payload():
+    mcp = _make_mcp(project_count=0)
+
+    resolved = await _resolve_rename_params(
+        "Rename the shots on 30sec 21 using prefix genesis "
+        "4-digit padding increment 10 starting at 10",
+        mcp,
+    )
+
+    assert resolved == {
+        "sequence_name": "30sec_21",
+        "prefix": "genesis",
+        "padding": 4,
+        "increment": 10,
+        "start": 10,
+    }
+    mcp.call_tool.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pr25_rename_tool_merges_structured_resolver_payload():
+    mcp = _make_mcp(project_count=0)
+
+    out = await resolve_required_params(
+        "flame_rename_shots",
+        {},
+        mcp,
+        message=(
+            "Rename the shots on 30sec 21 using prefix genesis "
+            "4-digit padding increment 10 starting at 10"
+        ),
+    )
+
+    assert out == {
+        "sequence_name": "30sec_21",
+        "prefix": "genesis",
+        "padding": 4,
+        "increment": 10,
+        "start": 10,
+    }
+    mcp.call_tool.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pr25_rename_tool_missing_prefix_returns_unresolved_sentinel():
+    mcp = _make_mcp(project_count=0)
+
+    out = await resolve_required_params(
+        "flame_rename_shots",
+        {},
+        mcp,
+        message="Rename the shots on 30sec 21",
+    )
+
+    assert out == {
+        UNRESOLVED_KEY: {
+            "key": "prefix",
+            "tool": "flame_rename_shots",
+        }
+    }
+    mcp.call_tool.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pr25_rename_tool_omits_numeric_defaults_when_absent():
+    mcp = _make_mcp(project_count=0)
+
+    out = await resolve_required_params(
+        "flame_rename_shots",
+        {},
+        mcp,
+        message="Rename the shots on 30sec 21 using prefix genesis",
+    )
+
+    assert out == {"sequence_name": "30sec_21", "prefix": "genesis"}
+    assert "increment" not in out
+    assert "padding" not in out
+    assert "start" not in out
+    mcp.call_tool.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pr25_polymorphic_dispatch_handles_scalar_and_dict_resolvers(
+    monkeypatch,
+):
+    async def scalar_resolver(message, mcp):
+        return "scalar-value"
+
+    async def dict_resolver(message, mcp):
+        return {"alpha": "a", "beta": "b"}
+
+    chains = {
+        **_PR25_CHAINS,
+        "test_scalar_tool": {
+            "requires": frozenset({"alpha"}),
+            "resolver": "_test_scalar_resolver",
+        },
+        "test_dict_tool": {
+            "requires": frozenset({"alpha", "beta"}),
+            "resolver": "_test_dict_resolver",
+        },
+    }
+    resolvers = {
+        **_RESOLVERS,
+        "_test_scalar_resolver": scalar_resolver,
+        "_test_dict_resolver": dict_resolver,
+    }
+    monkeypatch.setattr("forge_bridge.console._tool_chain._PR25_CHAINS", chains)
+    monkeypatch.setattr("forge_bridge.console._tool_chain._RESOLVERS", resolvers)
+    mcp = _make_mcp(project_count=0)
+
+    scalar_out = await resolve_required_params(
+        "test_scalar_tool",
+        {},
+        mcp,
+        message="scalar",
+    )
+    dict_out = await resolve_required_params(
+        "test_dict_tool",
+        {},
+        mcp,
+        message="dict",
+    )
+
+    assert scalar_out == {"alpha": "scalar-value"}
+    assert dict_out == {"alpha": "a", "beta": "b"}
     mcp.call_tool.assert_not_called()
