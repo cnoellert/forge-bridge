@@ -323,3 +323,41 @@ def test_rename_shots_uses_provided_padding_when_no_existing_pattern(monkeypatch
     assert "if existing_padding_widths and len(set(existing_padding_widths)) == 1" in (
         captured["code"]
     )
+
+
+def test_rename_shots_accepts_graph_filtered_selected_segments(monkeypatch):
+    captured: dict = {}
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        captured["code"] = code
+        return {"renamed": 0, "changes": []}
+
+    monkeypatch.setattr(timeline.bridge, "execute_json", _fake_execute_json)
+
+    import asyncio
+
+    asyncio.run(
+        timeline.rename_shots(
+            timeline.RenameInput(
+                sequence_name="30sec_21",
+                prefix="genesis",
+                selected_segments=[],
+            ),
+        ),
+    )
+
+    assert "selected_segments   = []" in captured["code"]
+    assert "def _is_selected(track_idx, seg):" in captured["code"]
+    assert "if selected_keys is None:" in captured["code"]
+
+
+def test_rename_shots_keeps_unfiltered_default_distinct_from_empty_selection():
+    assert timeline.RenameInput(
+        sequence_name="30sec_21",
+        prefix="genesis",
+    ).selected_segments is None
+    assert timeline.RenameInput(
+        sequence_name="30sec_21",
+        prefix="genesis",
+        selected_segments=[],
+    ).selected_segments == []

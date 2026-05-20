@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 
-ResolvedEntity = dict[str, str | int | bool]
+ResolvedEntity = dict[str, str | int | bool | dict[str, Any]]
 ResolvedEntities = dict[str, ResolvedEntity]
 
 _PREVIEW_INTENT_RE = re.compile(
@@ -64,6 +64,23 @@ def resolve_query_entities(
         return {}
 
     resolved: ResolvedEntities = {}
+    if _looks_like_filter_step(query):
+        try:
+            from forge_bridge.graph import parse_filter_step
+
+            predicate = parse_filter_step(query)
+            resolved["filter_predicate"] = _entity(
+                value=predicate.to_dict(),
+                source=query.strip(),
+            )
+        except Exception as exc:  # noqa: BLE001 - structured failure, not pass-through
+            code = getattr(exc, "code", "unknown_predicate")
+            message = getattr(exc, "message", str(exc))
+            resolved["filter_error"] = _entity(
+                value={"code": code, "message": message},
+                source=query.strip(),
+            )
+
     preview_match = _PREVIEW_INTENT_RE.search(query)
     if preview_match:
         resolved["dry_run"] = _entity(value=True, source=preview_match.group(0))
@@ -121,10 +138,10 @@ def resolve_query_entities(
 
 
 def resolved_entity_params(
-    resolved: Mapping[str, Mapping[str, str | int | bool]],
-) -> dict[str, str | int | bool]:
+    resolved: Mapping[str, Mapping[str, str | int | bool | dict[str, Any]]],
+) -> dict[str, str | int | bool | dict[str, Any]]:
     """Return the flat argument map suitable for forced tool execution."""
-    params: dict[str, str | int | bool] = {}
+    params: dict[str, str | int | bool | dict[str, Any]] = {}
     for key, item in resolved.items():
         value = item.get("value")
         if value not in (None, ""):
@@ -134,7 +151,7 @@ def resolved_entity_params(
 
 def enrich_user_message_with_resolved_entities(
     user_query: str,
-    resolved: Mapping[str, Mapping[str, str | int | bool]],
+    resolved: Mapping[str, Mapping[str, str | int | bool | dict[str, Any]]],
 ) -> str:
     """Prepend the resolved-entities context block to a user message."""
     if not resolved:
@@ -155,7 +172,7 @@ def enrich_user_message_with_resolved_entities(
 
 def enrich_messages_with_resolved_entities(
     messages: list[dict[str, Any]],
-    resolved: Mapping[str, Mapping[str, str | int | bool]],
+    resolved: Mapping[str, Mapping[str, str | int | bool | dict[str, Any]]],
 ) -> list[dict[str, Any]]:
     """Return a copy with the last user message enriched for the LLM path."""
     if not resolved:
@@ -173,8 +190,18 @@ def enrich_messages_with_resolved_entities(
     return enriched
 
 
-def _entity(*, value: str | int | bool, source: str) -> ResolvedEntity:
+def _entity(*, value: str | int | bool | dict[str, Any], source: str) -> ResolvedEntity:
     return {"value": value, "source": source}
+
+
+def _looks_like_filter_step(query: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(filter|where)\b|(?<![=])\bonly\b",
+            query,
+            re.IGNORECASE,
+        ),
+    )
 
 
 def _first_int_match(

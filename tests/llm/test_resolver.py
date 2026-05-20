@@ -145,6 +145,32 @@ def test_resolved_entity_params_preserves_string_and_int_types():
     assert isinstance(params["padding"], int)
 
 
+def test_resolver_projects_filter_predicate_as_structured_ast():
+    params = resolved_entity_params(resolve_query_entities("filter(duration > 1)"))
+
+    assert params["filter_predicate"] == {
+        "field": "duration",
+        "operator": ">",
+        "value": 1,
+    }
+
+
+def test_resolver_projects_unknown_filter_as_structured_error():
+    params = resolved_entity_params(
+        resolve_query_entities("filter only the comp segments"),
+    )
+
+    assert params["filter_error"]["code"] == "unknown_predicate"
+    assert "Could not parse filter predicate" in params["filter_error"]["message"]
+
+
+def test_resolver_does_not_treat_keyed_value_only_as_filter():
+    params = resolved_entity_params(resolve_query_entities("list versions project_name=Only"))
+
+    assert "filter_predicate" not in params
+    assert "filter_error" not in params
+
+
 def test_enrichment_block_uses_resolved_context_shape():
     resolved = resolve_query_entities(
         "Preview the start frames for the sequence 30sec 21",
