@@ -59,8 +59,8 @@ _FILTER_INTENT_RE = re.compile(
     re.IGNORECASE,
 )
 _FILTER_CALL_RE = re.compile(
-    r"(?:\b(?:filter|where)\b|(?<![=])\bonly\b)"
-    r"\s*(?:\(\s*)?(?P<body>[^)]*?)(?:\s*\))?\s*$",
+    r"(?:\b(?:filter|where|only)\b\s*)+"
+    r"(?:\(\s*)?(?P<body>[^)]*?)(?:\s*\))?\s*$",
     re.IGNORECASE,
 )
 _EXISTS_RE = re.compile(

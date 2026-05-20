@@ -32,6 +32,24 @@ def test_parse_filter_step_supports_not_equal_exemplar():
     }
 
 
+def test_parse_filter_step_consumes_stacked_intent_keywords():
+    assert parse_filter_step("filter where duration > 1").to_dict() == {
+        "field": "duration",
+        "operator": ">",
+        "value": 1,
+    }
+    assert parse_filter_step("filter where is_open == true").to_dict() == {
+        "field": "is_open",
+        "operator": "==",
+        "value": True,
+    }
+    assert parse_filter_step("filter where version_index != 0").to_dict() == {
+        "field": "version_index",
+        "operator": "!=",
+        "value": 0,
+    }
+
+
 def test_parse_filter_step_rejects_or_semantics():
     with pytest.raises(PredicateParseError) as exc:
         parse_filter_step("filter(duration > 1 or version_index != 0)")
