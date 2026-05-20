@@ -1,4 +1,5 @@
 import json
+import inspect
 
 import pytest
 
@@ -81,7 +82,7 @@ def test_build_prompt_names_vfx_context_and_audit():
 
 
 @pytest.mark.asyncio
-async def test_format_result_calls_cloud_router_and_warns_once(monkeypatch):
+async def test_format_result_calls_cloud_router(monkeypatch):
     class FakeRouter:
         def __init__(self):
             self.calls = []
@@ -95,7 +96,6 @@ async def test_format_result_calls_cloud_router_and_warns_once(monkeypatch):
             return "Producer-ready summary"
 
     router = FakeRouter()
-    format_module._reset_for_tests()
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setattr("forge_bridge.llm.router.get_router", lambda: router)
 
@@ -106,16 +106,29 @@ async def test_format_result_calls_cloud_router_and_warns_once(monkeypatch):
         FormatResultInput(data={"sequence": "30sec_21"}, format="email"),
     )
 
-    assert first.startswith("format_result sends condensed data")
-    assert first.endswith("Producer-ready summary")
+    assert first == "Producer-ready summary"
     assert second == "Producer-ready summary"
     assert router.calls[0]["sensitive"] is False
     assert router.calls[0]["temperature"] == 0.1
 
 
+def test_format_result_does_not_prepend_warning_to_rendered_string():
+    """Tool layer must not emit CLI-formatted warnings.
+    Stdout/stderr discipline is a CLI concern.
+    Sixth instance of discipline-policy enforcement test pattern.
+    Siblings: include_names (PR #19), dry_run x2 (PR #20),
+              utils-in-flame-body (PR #21), no-raw-json (chat)."""
+    src = inspect.getsource(format_module)
+    for line in src.splitlines():
+        if line.lstrip().startswith("return"):
+            assert "_EGRESS_WARNING" not in line, (
+                "format_result tool is prepending CLI-formatted warning to "
+                "rendered output. Warning emission belongs in CLI render layer."
+            )
+
+
 @pytest.mark.asyncio
 async def test_format_result_requires_anthropic_api_key(monkeypatch):
-    format_module._reset_for_tests()
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
     with pytest.raises(RuntimeError, match="requires ANTHROPIC_API_KEY"):

@@ -9,6 +9,7 @@ import pytest
 from typer.testing import CliRunner
 
 from forge_bridge.__main__ import app
+from forge_bridge.cli import chat as chat_module
 from forge_bridge.llm import call_wrapper as cw
 
 # CliRunner needs mix_stderr=False to inspect stderr separately. Recent typer
@@ -67,6 +68,13 @@ def _reset_breaker():
     cw._reset_breaker_for_tests()
     yield
     cw._reset_breaker_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _reset_chat_render_state():
+    chat_module._warned_egress = False
+    yield
+    chat_module._warned_egress = False
 
 
 @pytest.fixture(autouse=True)
@@ -249,7 +257,11 @@ def test_chat_default_format_terminal_moves_egress_warning_to_stderr():
         "status": "success",
         "request_id": "rid",
         "chain": [
-            {"step": "format as table", "result": f"{warning}\n\nSHOT       STATUS\n0010       ok"},
+            {
+                "step": "please make this producer-friendly",
+                "tool": "format_result",
+                "result": "SHOT       STATUS\n0010       ok",
+            },
         ],
         "error": None,
     }
@@ -258,6 +270,28 @@ def test_chat_default_format_terminal_moves_egress_warning_to_stderr():
 
     assert result.stdout == "SHOT       STATUS\n0010       ok\n"
     assert warning in result.stderr
+
+
+def test_format_result_egress_warning_appears_only_on_stderr():
+    """egress warning must not appear on stdout."""
+    body = {
+        "status": "success",
+        "request_id": "rid",
+        "chain": [
+            {
+                "step": "format this as something useful",
+                "tool": "format_result",
+                "result": "SHOT       STATUS\n0010       ok",
+            },
+        ],
+        "error": None,
+    }
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "format as table"])
+
+    assert "ANTHROPIC_API_KEY" not in result.stdout
+    assert "egress" not in result.stdout.lower()
+    assert "ANTHROPIC_API_KEY" in result.stderr
 
 
 def test_chat_default_mutation_terminal_projects_summary():
@@ -321,7 +355,7 @@ def test_chat_trace_outputs_chain_summaries_to_stderr():
             },
             {"step": "filter where duration > 1", "result": {"segments": [{"duration": 99}]}},
             {"step": "rename shots", "result": {"renamed": 1, "skipped": 0}},
-            {"step": "format as table", "result": "SHOT STATUS\n0010 ok"},
+            {"step": "format as table", "tool": "format_result", "result": "SHOT STATUS\n0010 ok"},
         ],
         "error": None,
     }
@@ -335,11 +369,42 @@ def test_chat_trace_outputs_chain_summaries_to_stderr():
     assert result.stdout == "SHOT STATUS\n0010 ok\n"
 
 
+def test_verbose_alone_emits_no_trace():
+    """--verbose without --trace: JSON on stdout, no trace on stderr."""
+    body = {
+        "status": "success",
+        "request_id": "rid",
+        "chain": [{"step": "format as table", "tool": "format_result", "result": "table"}],
+        "error": None,
+    }
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "--verbose", "chain"])
+
+    assert json.loads(result.stdout) == body
+    assert "[trace]" not in result.stderr
+    assert "[1/" not in result.stderr
+
+
+def test_verbose_with_trace_emits_both():
+    """--verbose + --trace: JSON on stdout, trace on stderr."""
+    body = {
+        "status": "success",
+        "request_id": "rid",
+        "chain": [{"step": "format as table", "tool": "format_result", "result": "table"}],
+        "error": None,
+    }
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "--verbose", "--trace", "chain"])
+
+    assert json.loads(result.stdout) == body
+    assert "[trace]" in result.stderr
+
+
 def test_chat_verbose_chain_dumps_full_json_to_stdout():
     body = {
         "status": "success",
         "request_id": "rid",
-        "chain": [{"step": "format as table", "result": "table"}],
+        "chain": [{"step": "format as table", "tool": "format_result", "result": "table"}],
         "error": None,
     }
     with _patch_httpx([_Resp(200, body)]):

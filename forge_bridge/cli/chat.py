@@ -39,6 +39,7 @@ _FORMAT_RESULT_EGRESS_WARNING = (
     "format_result sends condensed data to Anthropic cloud model. "
     "Ensure ANTHROPIC_API_KEY is set and data-egress policy permits."
 )
+_warned_egress = False
 
 
 def chat_cmd(
@@ -141,6 +142,9 @@ def chat_cmd(
         raise typer.Exit(code=_KIND_TO_EXIT.get(result.error_kind, _EXIT_FAIL))
 
     if verbose:
+        if trace:
+            _write_chain_trace(result.data)
+            _write_trace_block(result.trace)
         sys.stdout.write(
             json.dumps(result.data, ensure_ascii=False, indent=2, default=str) + "\n"
         )
@@ -186,11 +190,10 @@ def _render_operator_output(data: Optional[dict]) -> str:
             if entry.get("status") == "error":
                 return _render_structured_error(entry)
         terminal = chain[-1] if isinstance(chain[-1], dict) else {}
-        output, warnings = _project_terminal_result(
+        output = _project_terminal_result(
             terminal.get("result"),
-            step_text=str(terminal.get("step") or ""),
+            is_format_result=terminal.get("tool") == "format_result",
         )
-        _write_render_warnings(warnings)
         return output
 
     if isinstance(data, dict) and data.get("status") == "error":
@@ -198,45 +201,38 @@ def _render_operator_output(data: Optional[dict]) -> str:
 
     reply = _extract_reply(data)
     if reply is not None:
-        output, warnings = _split_render_warnings(reply)
-        _write_render_warnings(warnings)
-        return output
+        return reply
 
-    output, warnings = _project_terminal_result(data, step_text="")
-    _write_render_warnings(warnings)
-    return output
+    return _project_terminal_result(data, is_format_result=False)
 
 
-def _project_terminal_result(value: object, *, step_text: str) -> tuple[str, list[str]]:
-    _ = step_text  # Reserved for future projection refinements at this single point.
+def _project_terminal_result(value: object, *, is_format_result: bool) -> str:
+    if is_format_result:
+        _write_format_result_egress_warning_once()
     if isinstance(value, str):
-        return _split_render_warnings(value)
+        return value
     if isinstance(value, dict):
         if _looks_like_structured_error(value):
-            return _render_structured_error(value), []
+            return _render_structured_error(value)
         if _looks_like_mutation_result(value):
-            return _render_mutation_result(value), []
+            return _render_mutation_result(value)
         collection_key, collection = _find_collection(value)
         if collection_key and collection is not None:
-            return _render_enumeration(collection), []
-        return _render_inspection(value), []
+            return _render_enumeration(collection)
+        return _render_inspection(value)
     if isinstance(value, list):
-        return _render_enumeration(value), []
+        return _render_enumeration(value)
     if value is None:
-        return "", []
-    return str(value), []
+        return ""
+    return str(value)
 
 
-def _write_render_warnings(warnings: list[str]) -> None:
-    for warning in warnings:
-        sys.stderr.write(warning + "\n")
-
-
-def _split_render_warnings(text: str) -> tuple[str, list[str]]:
-    if text.startswith(_FORMAT_RESULT_EGRESS_WARNING):
-        rest = text[len(_FORMAT_RESULT_EGRESS_WARNING):].lstrip()
-        return rest, [_FORMAT_RESULT_EGRESS_WARNING]
-    return text, []
+def _write_format_result_egress_warning_once() -> None:
+    global _warned_egress
+    if _warned_egress:
+        return
+    _warned_egress = True
+    sys.stderr.write(_FORMAT_RESULT_EGRESS_WARNING + "\n")
 
 
 def _looks_like_structured_error(value: dict) -> bool:

@@ -25,7 +25,6 @@ _HASH_RE = re.compile(r"(^|_)(hash|sha|sha256|md5|checksum|digest)($|_)", re.I)
 _PATH_RE = re.compile(r"(^|_)(path|file_path|source_path|media_path)($|_)", re.I)
 _FRAME_RE = re.compile(r"(^|_)(frame|frames|record_in|record_out|source_in|source_out|head|tail)($|_)", re.I)
 _INTERNAL_RE = re.compile(r"^_|(^|_)(trace|debug|raw|payload|stdout|stderr|traceback)($|_)", re.I)
-_warned_egress = False
 
 
 class FormatResultInput(BaseModel):
@@ -48,7 +47,6 @@ async def format_result(params: FormatResultInput) -> str:
     formatter, not a data-fetching tool.
     """
     _require_cloud_key()
-    warning = _operator_warning_once()
     condensed = condense_payload(params.data, params.format)
     prompt = build_format_prompt(
         format_class=params.format,
@@ -65,7 +63,7 @@ async def format_result(params: FormatResultInput) -> str:
         temperature=0.1,
     )
     rendered = rendered.strip()
-    return f"{warning}\n\n{rendered}" if warning else rendered
+    return rendered
 
 
 def condense_payload(data: Any, format_class: FormatClass) -> CondensedPayload:
@@ -181,17 +179,3 @@ def _require_cloud_key() -> None:
             "format_result requires ANTHROPIC_API_KEY because it sends "
             "condensed data to the Anthropic cloud model."
         )
-
-
-def _operator_warning_once() -> str:
-    global _warned_egress
-    if _warned_egress:
-        return ""
-    _warned_egress = True
-    logger.warning(_EGRESS_WARNING)
-    return _EGRESS_WARNING
-
-
-def _reset_for_tests() -> None:
-    global _warned_egress
-    _warned_egress = False
