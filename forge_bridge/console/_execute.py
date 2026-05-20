@@ -108,8 +108,10 @@ async def execute_command(text: str, *, mcp: Any | None = None) -> dict:
             "error": {
                 "code": "CHAIN_TOO_LONG",
                 "message": (
-                    f"Chain exceeds maximum {CHAIN_MAX_STEPS} steps "
-                    f"(received {len(chain_steps)})."
+                    f"Chain hit runaway guard at {CHAIN_MAX_STEPS} steps — "
+                    f"chain length is normally unconstrained, this likely "
+                    f"indicates a pathological loop. Check for runaway "
+                    f"recursion or chain misexpansion."
                 ),
                 "step_index": None,
                 "original_error": None,

@@ -10,8 +10,9 @@ import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from starlette.testclient import TestClient
+
+from forge_bridge.console._constants import CHAIN_MAX_STEPS
 
 from forge_bridge.console._chain_parse import parse_chain
 from forge_bridge.console._macros import register_macro
@@ -109,10 +110,7 @@ def _make_chain_chat_app(
 
 _MSG_TWO_STEP = "list forge projects -> list versions project_name=chatTest"
 _MSG_PROPAGATE = "list forge projects -> list versions"
-_MSG_TOO_LONG = (
-    "list forge projects -> list versions -> "
-    "list forge projects -> list versions"
-)
+_MSG_TOO_LONG = " -> ".join(["list forge projects"] * (CHAIN_MAX_STEPS + 1))
 _MSG_MULTI_THEN_VERSIONS = "list forge projects -> list versions"
 _MSG_MEMORY = _MSG_PROPAGATE
 
@@ -262,6 +260,8 @@ def test_chain_rejects_long_chain():
     assert payload["status"] == "error"
     assert payload["chain"] == []
     assert payload["error"]["code"] == "CHAIN_TOO_LONG"
+    assert "runaway guard" in payload["error"]["message"]
+    assert "pathological loop" in payload["error"]["message"]
     assert payload["error"]["step_index"] is None
     assert payload["error"]["original_error"] is None
     assert isinstance(payload["request_id"], str)
