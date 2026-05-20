@@ -23,8 +23,6 @@ Requirements covered:
 
 import tomllib
 
-import pytest
-
 
 # ── TOOL-01..05 — Timeline exports ────────────────────────────────────────────
 
@@ -234,6 +232,272 @@ def test_run_flame_list_libraries_explicit_args_still_work(monkeypatch):
     assert parsed[0]["clips"] == 4
     # include_contents=True path must inject the folder_details block.
     assert "folder_details" in captured["code"]
+
+
+def test_flame_list_desktop_signature_is_original_no_args():
+    """flame_list_desktop remains a no-arg tool with unchanged wire shape."""
+    import inspect
+
+    from forge_bridge.tools.project import list_desktop
+
+    assert inspect.signature(list_desktop).parameters == {}
+
+
+def test_flame_list_desktop_preserves_original_shape(monkeypatch):
+    """Default desktop listing remains the compact count-only response."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import project as project_tools
+
+    old_shape = {
+        "reel_groups": [
+            {"name": "Default", "reels": [{"name": "Sequences", "clips": 1, "sequences": 1}]}
+        ],
+        "batch_groups": [{"name": "Batch 1"}],
+    }
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        assert "entry['items']" not in code
+        assert "include_names" not in code
+        return old_shape
+
+    monkeypatch.setattr(project_tools.bridge, "execute_json", _fake_execute_json)
+
+    out = asyncio.run(project_tools.list_desktop())
+    assert json.loads(out) == old_shape
+
+
+def test_flame_list_reel_groups_happy_path(monkeypatch):
+    """Reel group enumeration returns groups with one-level reel counts."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import project as project_tools
+
+    fixture = [
+        {
+            "name": "Default",
+            "reels": [
+                {"name": "Sequences", "clips": 1, "sequences": 2},
+                {"name": "Plates", "clips": 12, "sequences": 0},
+            ],
+        }
+    ]
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        assert "desk.reel_groups" in code
+        assert "batch_groups" not in code
+        return fixture
+
+    monkeypatch.setattr(project_tools.bridge, "execute_json", _fake_execute_json)
+
+    out = asyncio.run(project_tools.list_reel_groups())
+    assert json.loads(out) == fixture
+
+
+def test_flame_list_reel_groups_empty_desktop(monkeypatch):
+    """A desktop with no reel groups returns [] rather than an error."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import project as project_tools
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        return []
+
+    monkeypatch.setattr(project_tools.bridge, "execute_json", _fake_execute_json)
+
+    out = asyncio.run(project_tools.list_reel_groups())
+    assert json.loads(out) == []
+
+
+def test_flame_list_reel_groups_allows_empty_reels(monkeypatch):
+    """A reel group with no reels is represented cleanly."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import project as project_tools
+
+    fixture = [{"name": "Empty Group", "reels": []}]
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        return fixture
+
+    monkeypatch.setattr(project_tools.bridge, "execute_json", _fake_execute_json)
+
+    out = asyncio.run(project_tools.list_reel_groups())
+    assert json.loads(out) == fixture
+
+
+def test_flame_list_reel_contents_happy_path(monkeypatch):
+    """Reel enumeration returns flat clip/sequence entries."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import project as project_tools
+
+    fixture = [
+        {"name": "plate_A", "type": "PyClip", "duration": 120, "track_count": 0},
+        {"name": "30sec_21", "type": "PySequence", "duration": 720, "track_count": 3},
+    ]
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        assert "target_reel = 'Sequences'" in code
+        return fixture
+
+    monkeypatch.setattr(project_tools.bridge, "execute_json", _fake_execute_json)
+
+    params = project_tools.ListReelContentsInput(reel_name="Sequences")
+    out = asyncio.run(project_tools.list_reel_contents(params))
+    assert json.loads(out) == fixture
+
+
+def test_flame_list_reel_contents_empty_reel(monkeypatch):
+    """An existing empty reel returns [] rather than an error."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import project as project_tools
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        return []
+
+    monkeypatch.setattr(project_tools.bridge, "execute_json", _fake_execute_json)
+
+    params = project_tools.ListReelContentsInput(reel_name="Empty Reel")
+    out = asyncio.run(project_tools.list_reel_contents(params))
+    assert json.loads(out) == []
+
+
+def test_flame_list_reel_contents_not_found_structured_error(monkeypatch):
+    """Missing reels return a structured error payload."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import project as project_tools
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        return {"error": "Reel not found", "reel_name": "Missing", "reel_group": ""}
+
+    monkeypatch.setattr(project_tools.bridge, "execute_json", _fake_execute_json)
+
+    params = project_tools.ListReelContentsInput(reel_name="Missing")
+    out = asyncio.run(project_tools.list_reel_contents(params))
+    parsed = json.loads(out)
+    assert parsed["error"] == "Reel not found"
+    assert parsed["reel_name"] == "Missing"
+
+
+def test_flame_get_clip_happy_path(monkeypatch):
+    """Clip inspection returns Tier 1 operator-decision metadata."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import project as project_tools
+
+    fixture = {
+        "name": "plate_A",
+        "type": "PyClip",
+        "duration": 120,
+        "duration_tc": "00:00:05:00",
+        "width": 3840,
+        "height": 2160,
+        "frame_rate": "23.976 fps",
+        "colour_space": "ACEScg",
+        "bit_depth": "16-bit",
+        "track_count": 0,
+        "file_path": "/show/plates/plate_A.exr",
+    }
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        assert "target_clip = 'plate_A'" in code
+        return fixture
+
+    monkeypatch.setattr(project_tools.bridge, "execute_json", _fake_execute_json)
+
+    params = project_tools.GetClipInput(clip_name="plate_A")
+    out = asyncio.run(project_tools.get_clip(params))
+    assert json.loads(out) == fixture
+
+
+def test_flame_get_clip_empty_or_missing_reel_not_found(monkeypatch):
+    """A clip lookup narrowed to an empty/missing reel returns structured not found."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import project as project_tools
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        return {"error": "Clip not found", "clip_name": "plate_A", "reel_name": "Empty Reel"}
+
+    monkeypatch.setattr(project_tools.bridge, "execute_json", _fake_execute_json)
+
+    params = project_tools.GetClipInput(clip_name="plate_A", reel_name="Empty Reel")
+    out = asyncio.run(project_tools.get_clip(params))
+    parsed = json.loads(out)
+    assert parsed["error"] == "Clip not found"
+    assert parsed["reel_name"] == "Empty Reel"
+
+
+def test_flame_list_library_contents_happy_path(monkeypatch):
+    """Library enumeration returns one-level top-level entries."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import project as project_tools
+
+    fixture = [
+        {"name": "Reel 1", "type": "PyReel", "count": 3},
+        {"name": "Folder A", "type": "PyFolder", "count": 2},
+        {"name": "loose_clip", "type": "PyClip", "count": 0},
+    ]
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        assert "target_library = 'Library 1'" in code
+        return fixture
+
+    monkeypatch.setattr(project_tools.bridge, "execute_json", _fake_execute_json)
+
+    params = project_tools.ListLibraryContentsInput(library_name="Library 1")
+    out = asyncio.run(project_tools.list_library_contents(params))
+    assert json.loads(out) == fixture
+
+
+def test_flame_list_library_contents_empty_library(monkeypatch):
+    """An existing empty library returns [] rather than an error."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import project as project_tools
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        return []
+
+    monkeypatch.setattr(project_tools.bridge, "execute_json", _fake_execute_json)
+
+    params = project_tools.ListLibraryContentsInput(library_name="Empty Library")
+    out = asyncio.run(project_tools.list_library_contents(params))
+    assert json.loads(out) == []
+
+
+def test_flame_list_library_contents_not_found_structured_error(monkeypatch):
+    """Missing libraries return a structured error payload."""
+    import asyncio
+    import json
+
+    from forge_bridge.tools import project as project_tools
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        return {"error": "Library not found", "library_name": "Missing"}
+
+    monkeypatch.setattr(project_tools.bridge, "execute_json", _fake_execute_json)
+
+    params = project_tools.ListLibraryContentsInput(library_name="Missing")
+    out = asyncio.run(project_tools.list_library_contents(params))
+    parsed = json.loads(out)
+    assert parsed["error"] == "Library not found"
+    assert parsed["library_name"] == "Missing"
 
 
 def test_utility_models():
