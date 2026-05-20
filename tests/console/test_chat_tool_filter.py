@@ -94,6 +94,23 @@ async def test_filter_keeps_synth_when_all_backends_down():
     assert [t.name for t in result] == ["synth_x"]
 
 
+@pytest.mark.asyncio
+async def test_filter_keeps_format_tools_when_all_backends_down():
+    """format_* tools are in-process for reachability; cloud errors happen at runtime."""
+    import forge_bridge.console._tool_filter as _tool_filter
+
+    tools = [
+        _make_tool("format_result"),
+        _make_tool("forge_list_projects"),
+        _make_tool("flame_ping"),
+    ]
+
+    with patch.object(_tool_filter, "_probe_backend", new=AsyncMock(return_value=False)):
+        result = await _tool_filter.filter_tools_by_reachable_backends(tools)
+
+    assert [t.name for t in result] == ["format_result"]
+
+
 # ── Test 3: In-process forge_* stays when Flame is down ──────────────────────
 
 @pytest.mark.asyncio
@@ -726,6 +743,19 @@ def test_pr18_ignores_namespace_prefix_for_exact_subset_cap_survival():
 
     narrowed = deterministic_narrow(filtered, msg)
     assert _names(narrowed) == ["flame_rename_shots"]
+
+
+def test_pr18_ignores_format_namespace_prefix_for_exact_subset():
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [
+        _make_tool("forge_list_projects"),
+        _make_tool("format_result"),
+    ]
+
+    result = filter_tools_by_message(tools, "result")
+
+    assert [t.name for t in result] == ["format_result"]
 
 
 def test_pr18_namespace_prefix_change_preserves_get_sequence_segments_exact_match():

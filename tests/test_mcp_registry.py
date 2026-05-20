@@ -71,14 +71,25 @@ def test_synth_name_enforcement():
     assert "synth_foo" in mcp._tool_manager._tools
 
 
+def test_format_prefix_accepted_from_builtin_source():
+    """format_* names are builtin formatter namespace tools, not synth tools."""
+    mcp = _fresh_mcp()
+    fn = _make_fn("format_foo")
+
+    register_tool(mcp, fn, name="format_foo", source="builtin")
+
+    assert "format_foo" in mcp._tool_manager._tools
+    assert mcp._tool_manager._tools["format_foo"].meta == {"_source": "builtin"}
+
+
 def test_invalid_prefix_rejected():
     """register_tool with a name that has no valid prefix must raise ValueError.
 
-    The error must reference 'must start with flame_, forge_, or synth_'.
+    The error must reference the accepted namespace prefixes.
     """
     mcp = _fresh_mcp()
     fn = _make_fn("bad_name")
-    with pytest.raises(ValueError, match="must start with flame_, forge_, or synth_"):
+    with pytest.raises(ValueError, match="must start with flame_, forge_, format_, or synth_"):
         register_tool(mcp, fn, name="bad_name", source="builtin")
 
 

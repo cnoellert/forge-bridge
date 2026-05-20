@@ -2,7 +2,7 @@
 forge_bridge.mcp.registry — Namespace enforcement and source tagging for MCP tools.
 
 Every tool registration (builtins, synthesized, user-taught) routes through this
-module. It enforces the flame_*/forge_*/synth_* prefix rules and attaches
+module. It enforces the flame_*/forge_*/format_*/synth_* prefix rules and attaches
 _source metadata to every registered tool.
 
 Public API:
@@ -35,7 +35,12 @@ logger = logging.getLogger(__name__)
 _SYNTH_RESERVED_PREFIXES: frozenset[str] = frozenset({"synth_"})
 
 # All valid prefixes for this server.
-_VALID_PREFIXES: frozenset[str] = frozenset({"flame_", "forge_", "synth_"})
+_VALID_PREFIXES: frozenset[str] = frozenset({
+    "flame_",
+    "forge_",
+    "format_",
+    "synth_",
+})
 
 
 def _validate_name(name: str, source: str) -> None:
@@ -47,7 +52,7 @@ def _validate_name(name: str, source: str) -> None:
     """
     if not any(name.startswith(p) for p in _VALID_PREFIXES):
         raise ValueError(
-            f"Tool name {name!r} must start with flame_, forge_, or synth_. "
+            f"Tool name {name!r} must start with flame_, forge_, format_, or synth_. "
             f"Got source={source!r}."
         )
     if source != "synthesized" and any(name.startswith(p) for p in _SYNTH_RESERVED_PREFIXES):
@@ -70,7 +75,7 @@ def register_tool(
     Args:
         mcp:         The live FastMCP instance to register against.
         fn:          The callable to register as an MCP tool.
-        name:        Tool name — must start with flame_, forge_, or synth_.
+        name:        Tool name — must start with flame_, forge_, format_, or synth_.
         source:      One of "builtin", "synthesized", or "user-taught".
         annotations: Optional MCP tool annotations dict (readOnlyHint, etc.).
                      For source="synthesized", readOnlyHint defaults to False

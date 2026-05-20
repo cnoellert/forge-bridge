@@ -29,6 +29,11 @@ BACKEND CLASSIFICATION (NOT prefix-based — see in-process exception list):
 
 3. synth_* tools — ALWAYS reachable (synthesizer runs in-process).
 
+4. format_* tools — ALWAYS reachable from the Flame/backend pre-filter's
+   point of view. They run in-process until their own implementation calls a
+   formatter backend; cloud/router failures surface as runtime tool errors,
+   not reachability drops.
+
 Cache: monotonic-clock cache keyed by backend identity, with a TTL
 chosen to reduce hot-path tool-topology churn across conversational
 interactions. Reachability state is intentionally cached across
@@ -161,6 +166,8 @@ def _is_in_process_tool(name: str) -> bool:
     """True iff the tool runs in the bridge process and needs no remote backend."""
     if name.startswith("synth_"):
         return True
+    if name.startswith("format_"):
+        return True
     if name in _IN_PROCESS_FORGE_TOOLS:
         return True
     return False
@@ -170,7 +177,8 @@ async def filter_tools_by_reachable_backends(tools: list[Any]) -> list[Any]:
     """Return the subset of `tools` whose runtime backend is reachable.
 
     `tools` is `list[mcp.types.Tool]` (Pydantic; has `.name: str`).
-    In-process tools (`synth_*` + `_IN_PROCESS_FORGE_TOOLS`) always pass through.
+    In-process tools (`synth_*`, `format_*`, and `_IN_PROCESS_FORGE_TOOLS`)
+    always pass through.
     Everything else with `flame_` or `forge_` prefix requires the Flame bridge :9999.
     Unknown-prefix tools (defense-in-depth) are dropped — registry only allows
     the three known prefixes anyway.
@@ -253,7 +261,12 @@ NORMALIZATION_MAP: dict[str, str] = {
 # a future PR adds another verb-cluster (e.g., a "create" cluster mapping
 # add/new/make→create), add the new canonical form here as well.
 _VERB_TOKENS: frozenset[str] = frozenset({"list"})
-_NAMESPACE_PREFIXES: frozenset[str] = frozenset({"flame", "forge", "synth"})
+_NAMESPACE_PREFIXES: frozenset[str] = frozenset({
+    "flame",
+    "forge",
+    "format",
+    "synth",
+})
 
 
 def normalize_token(token: str) -> str:
