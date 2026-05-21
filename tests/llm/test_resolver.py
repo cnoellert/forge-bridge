@@ -143,6 +143,51 @@ def test_resolves_dry_run_and_commit_as_explicit_intent_modifiers():
     assert commit_params["dry_run"] is False
 
 
+def test_commit_in_prefix_value_position_does_not_fire_commit_directive():
+    params = resolved_entity_params(
+        resolve_query_entities("rename shots with prefix commit"),
+    )
+
+    assert params["prefix"] == "commit"
+    assert "dry_run" not in params
+
+
+def test_commit_directive_fires_only_in_terminal_directive_position():
+    params = resolved_entity_params(
+        resolve_query_entities("rename shots with prefix genesis commit"),
+    )
+
+    assert params["prefix"] == "genesis"
+    assert params["dry_run"] is False
+
+
+def test_dry_run_directive_fires_only_in_modifier_position():
+    params = resolved_entity_params(
+        resolve_query_entities("rename shots with prefix genesis dry_run"),
+    )
+
+    assert params["prefix"] == "genesis"
+    assert params["dry_run"] is True
+
+
+def test_dry_run_in_prefix_value_position_does_not_fire_modifier():
+    params = resolved_entity_params(
+        resolve_query_entities("rename shots with prefix dry_run"),
+    )
+
+    assert params["prefix"] == "dry_run"
+    assert "dry_run" not in params
+
+
+def test_spaced_dry_run_directive_fires_in_terminal_modifier_position():
+    params = resolved_entity_params(
+        resolve_query_entities("rename shots with prefix genesis dry run"),
+    )
+
+    assert params["prefix"] == "genesis"
+    assert params["dry_run"] is True
+
+
 def test_resolves_rename_directive_phrase_variants():
     assert resolved_entity_params(
         resolve_query_entities("Rename shots on 30sec 21 with prefix genesis"),
