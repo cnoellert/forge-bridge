@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from forge_bridge.graph.ports import (
-    ChainWireCompatibilityError,
     PortContract,
     PortTopology,
     infer_topology,
@@ -56,6 +55,7 @@ class CollectNode:
         outputs = [_iteration_result(iteration) for iteration in iterations]
         reconciled = _reconcile_outputs(outputs)
         result = dict(reconciled)
+        result["iterations"] = iterations
         topology_probe = dict(result)
         topology_probe["collect"] = {}
         result["collect"] = {
@@ -106,6 +106,9 @@ def _reconcile_outputs(outputs: list[dict[str, Any]]) -> dict[str, Any]:
     keys = sorted({key for output in outputs for key in output})
     for key in keys:
         values = [output[key] for output in outputs if key in output]
+        if len(values) != len(outputs):
+            continue
+
         if all(isinstance(value, list) for value in values):
             merged: list[Any] = []
             for value in values:
@@ -118,11 +121,10 @@ def _reconcile_outputs(outputs: list[dict[str, Any]]) -> dict[str, Any]:
             reconciled[key] = first
             continue
 
-        raise ChainWireCompatibilityError(
-            step_index=-1,
-            step_text="collect",
-            expected=(infer_topology(first),),
-            actual=infer_topology(values[-1]),
-        )
+        # Scalar variance across iterations is the dominant reconciliation case,
+        # not an error. Varying scalars are dropped from the reconciled top-level;
+        # full per-iteration detail remains structurally available in iterations[].
+        # The reconciled manifest is "what the chain agrees on across iterations."
+        continue
 
     return reconciled

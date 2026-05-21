@@ -76,7 +76,7 @@ def test_collect_one_item_reconciles_body_output():
     assert result["collect"]["input_count"] == 1
 
 
-def test_collect_n_items_merges_list_fields():
+def test_collect_merges_list_fields():
     result = CollectNode().run({
         "iterations": [
             _iteration(0, {"values": [1]}),
@@ -124,17 +124,18 @@ def test_collect_over_empty_collection_propagates_valid_manifest():
     assert result["collect"]["output_topology"] == {"kind": "manifest"}
 
 
-def test_collect_mixed_shape_raises_chain_wire_compatibility_error():
-    with pytest.raises(ChainWireCompatibilityError):
-        CollectNode().run({
-            "iterations": [
-                _iteration(0, {"status": "ok"}),
-                _iteration(1, {"status": "changed"}),
-            ],
-        })
+def test_collect_drops_varying_scalar_field_from_reconciled_top_level():
+    result = CollectNode().run({
+        "iterations": [
+            _iteration(0, {"status": "ok"}),
+            _iteration(1, {"status": "changed"}),
+        ],
+    })
+
+    assert "status" not in result
 
 
-def test_collect_compatible_scalar_fields_pass():
+def test_collect_retains_constant_scalar_field_as_scalar():
     result = CollectNode().run({
         "iterations": [
             _iteration(0, {"status": "ok"}),
@@ -143,6 +144,59 @@ def test_collect_compatible_scalar_fields_pass():
     })
 
     assert result["status"] == "ok"
+
+
+def test_collect_reconciled_manifest_contains_only_fields_stable_across_all_iterations():
+    result = CollectNode().run({
+        "iterations": [
+            _iteration(0, {"stable": "same", "varies": "a", "items": [1]}),
+            _iteration(1, {"stable": "same", "varies": "b", "items": [2]}),
+        ],
+    })
+
+    assert result["stable"] == "same"
+    assert result["items"] == [1, 2]
+    assert "varies" not in result
+
+
+def test_collect_iterations_array_carries_full_per_item_detail():
+    iterations = [
+        _iteration(0, {"status": "ok", "detail": "first"}),
+        _iteration(1, {"status": "changed", "detail": "second"}),
+    ]
+
+    result = CollectNode().run({"iterations": iterations})
+
+    assert result["iterations"] == iterations
+    assert result["iterations"][0]["result"]["detail"] == "first"
+    assert result["iterations"][1]["result"]["detail"] == "second"
+
+
+def test_collect_drops_partially_present_field_from_reconciled_top_level():
+    result = CollectNode().run({
+        "iterations": [
+            _iteration(0, {"stable": "same", "optional": "present"}),
+            _iteration(1, {"stable": "same"}),
+        ],
+    })
+
+    assert result["stable"] == "same"
+    assert "optional" not in result
+
+
+def test_collect_does_not_raise_chain_wire_compatibility_error_for_scalar_variance():
+    """16th discipline-policy enforcement test: scalar variance is not topology."""
+    try:
+        result = CollectNode().run({
+            "iterations": [
+                _iteration(0, {"status": "ok"}),
+                _iteration(1, {"status": "changed"}),
+            ],
+        })
+    except ChainWireCompatibilityError as exc:  # pragma: no cover - assertion path
+        pytest.fail(f"Scalar variance raised wire compatibility error: {exc}")
+
+    assert "status" not in result
 
 
 def test_collect_list_field_uses_generic_list_merge_rule():

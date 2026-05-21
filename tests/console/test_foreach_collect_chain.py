@@ -306,7 +306,7 @@ def test_collect_chain_step_converges_foreach_results():
     assert result["result"]["status"] == "ok"
 
 
-def test_collect_chain_step_reports_mixed_shape_as_chain_wire_error():
+def test_collect_chain_step_drops_mixed_scalar_shape_from_reconciled_output():
     result = asyncio.run(execute_chain_step(
         step_text="collect",
         tools=[],
@@ -336,8 +336,9 @@ def test_collect_chain_step_reports_mixed_shape_as_chain_wire_error():
         step_index=3,
     ))
 
-    assert result["error"]["type"] == "CHAIN_WIRE_COMPATIBILITY_ERROR"
-    assert result["error"]["step_index"] == 3
+    assert result["tool"] == "graph_collect"
+    assert "status" not in result["result"]
+    assert result["result"]["collect"]["input_count"] == 2
 
 
 def test_foreach_body_uses_standard_resolver_categories():
