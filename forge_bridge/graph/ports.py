@@ -16,6 +16,7 @@ class PortTopology:
 
     kind: str
     item_type: str = "any"
+    cardinality: str = "many"
 
     @classmethod
     def any(cls) -> "PortTopology":
@@ -32,6 +33,10 @@ class PortTopology:
     @classmethod
     def list_of(cls, item_type: str = "any") -> "PortTopology":
         return cls("list", item_type or "any")
+
+    @classmethod
+    def single_item(cls, item_type: str = "any") -> "PortTopology":
+        return cls("list", item_type or "any", "single")
 
     @classmethod
     def iteration_results(cls) -> "PortTopology":
@@ -54,6 +59,8 @@ class PortTopology:
         data = {"kind": self.kind}
         if self.kind == "list":
             data["item_type"] = self.item_type
+            if self.cardinality != "many":
+                data["cardinality"] = self.cardinality
         return data
 
     @classmethod
@@ -61,6 +68,7 @@ class PortTopology:
         return cls(
             kind=str(data.get("kind", "any")),
             item_type=str(data.get("item_type", "any")),
+            cardinality=str(data.get("cardinality", "many")),
         )
 
 
@@ -108,7 +116,7 @@ class ChainWireCompatibilityError(ValueError):
     def __init__(
         self,
         *,
-        step_index: int,
+        step_index: int | str,
         step_text: str,
         expected: tuple[PortTopology, ...],
         actual: PortTopology,
@@ -139,6 +147,7 @@ class ChainWireCompatibilityError(ValueError):
 _MANIFEST_MARKERS = frozenset({
     "applied",
     "changes",
+    "collect",
     "deleted",
     "disconnected",
     "dry_run",
@@ -158,7 +167,7 @@ _COLLECTION_ITEM_TYPES = {
     "clips": "clip",
     "collection": "item",
     "items": "item",
-    "iterations": "iteration",
+    "iterations": "IterationResult",
     "nodes": "node",
     "projects": "project",
     "reels": "reel",
@@ -200,9 +209,22 @@ def infer_topology(value: Any) -> PortTopology:
     return PortTopology.manifest()
 
 
+def infer_iteration_item_topology(
+    *,
+    item: dict[str, Any],
+    collection_topology: PortTopology,
+) -> PortTopology:
+    """Infer the topology seen by a foreach body for one iteration item."""
+    if _MANIFEST_MARKERS & set(item):
+        return PortTopology.manifest()
+    if collection_topology.kind == "list":
+        return PortTopology.single_item(collection_topology.item_type)
+    return PortTopology.single_item("item")
+
+
 def validate_chain_wire(
     *,
-    step_index: int,
+    step_index: int | str,
     step_text: str,
     contract: PortContract,
     actual: PortTopology,

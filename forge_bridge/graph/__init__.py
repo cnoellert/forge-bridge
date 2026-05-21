@@ -13,6 +13,12 @@ Graph primitives must reject unsupported input shapes mechanically.
 They are not planners, parsers, or hidden domain tools.
 """
 
+from forge_bridge.graph.collect import (
+    CollectError,
+    CollectNode,
+    is_collect_step,
+    parse_collect_step,
+)
 from forge_bridge.graph.filter import (
     FilterNode,
     FilterPredicate,
@@ -21,6 +27,14 @@ from forge_bridge.graph.filter import (
     evaluate_predicate,
     is_filter_step,
     parse_filter_step,
+)
+from forge_bridge.graph.foreach import (
+    ForEachNode,
+    ForeachInputError,
+    ForeachParseError,
+    IterationResult,
+    is_foreach_step,
+    parse_foreach_step,
 )
 from forge_bridge.graph.if_gate import (
     IfGateNode,
@@ -31,6 +45,7 @@ from forge_bridge.graph.ports import (
     ChainWireCompatibilityError,
     PortContract,
     PortTopology,
+    infer_iteration_item_topology,
     infer_topology,
     validate_chain_wire,
 )
@@ -45,8 +60,14 @@ from forge_bridge.graph.select import (
 __all__ = [
     "FilterNode",
     "FilterPredicate",
+    "CollectError",
+    "CollectNode",
+    "ForEachNode",
+    "ForeachInputError",
+    "ForeachParseError",
     "GraphInputError",
     "IfGateNode",
+    "IterationResult",
     "PredicateParseError",
     "ChainWireCompatibilityError",
     "PortContract",
@@ -56,10 +77,15 @@ __all__ = [
     "SelectNode",
     "evaluate_predicate",
     "infer_topology",
+    "infer_iteration_item_topology",
+    "is_collect_step",
     "is_filter_step",
+    "is_foreach_step",
     "is_if_step",
     "is_select_step",
+    "parse_collect_step",
     "parse_filter_step",
+    "parse_foreach_step",
     "parse_if_step",
     "parse_select_step",
     "validate_chain_wire",
