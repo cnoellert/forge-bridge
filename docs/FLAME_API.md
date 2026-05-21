@@ -257,6 +257,14 @@ Layer suffix → role mapping: `L01=primary`, `L02=reference`, `L03=matte`
 
 ## Start Frame Workflow — Key API
 
+**Known limitation (2026-05-20):** `seg.change_start_frame()`
+causes a hard Flame crash on multi-track sequences with the current
+Flame Python API. The method exists and returns the correct value,
+but destabilizes Flame's internal state on sequences with multiple
+versions and tracks. See `flame_set_start_frames` docstring in
+`forge_bridge/tools/timeline.py` for operator guidance and the
+suggested workaround pending verification.
+
 ```
 seg.head                    → int, head handle frames before cut point
 seg.change_start_frame(n)   → sets clip start frame (call with n = target - head)
