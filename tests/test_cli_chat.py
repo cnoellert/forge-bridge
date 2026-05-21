@@ -477,6 +477,49 @@ def test_trace_for_normal_chain_renders_no_gate_strings():
     assert "rename shots → renamed=2 skipped=0" in result.stderr
 
 
+def test_trace_does_not_render_select_manifest_as_gate_decision():
+    body = {
+        "status": "success",
+        "request_id": "rid",
+        "chain": [
+            {
+                "step": "select genesis_0020_source_L01",
+                "result": {
+                    "dry_run": True,
+                    "proposed_changes": [
+                        {
+                            "seg_name": "genesis_0020_source_L01",
+                            "proposed": "archive_0020_source_L01",
+                        },
+                    ],
+                    "count": 1,
+                    "execution_state": "passed",
+                    "if_gate": {
+                        "matched": True,
+                        "predicate": {
+                            "field": "proposed_changes",
+                            "operator": "exists",
+                        },
+                    },
+                    "select": {
+                        "collection": "proposed_changes",
+                        "target": "genesis_0020_source_L01",
+                        "output_count": 1,
+                    },
+                },
+            },
+        ],
+        "error": None,
+    }
+
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "--trace", "chain"])
+
+    assert "gate open" not in result.stderr
+    assert "gate closed" not in result.stderr
+    assert "select genesis_0020_source_L01 → count=1" in result.stderr
+
+
 def test_verbose_alone_emits_no_trace():
     """--verbose without --trace: JSON on stdout, no trace on stderr."""
     body = {

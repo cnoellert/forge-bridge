@@ -418,7 +418,8 @@ def _maybe_render_gate_step(entry: dict, index: int, total: int) -> str | None:
         return f"[{index}/{total}] {label} → suppressed by upstream gate"
 
     gate = result.get("if_gate")
-    if isinstance(gate, dict):
+    step = str(entry.get("step") or "")
+    if isinstance(gate, dict) and step.lstrip().lower().startswith("if"):
         predicate = gate.get("predicate")
         predicate_echo = _format_if_predicate(predicate if isinstance(predicate, dict) else {})
         decision = (

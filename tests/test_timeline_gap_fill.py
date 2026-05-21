@@ -260,6 +260,16 @@ def test_rename_shots_dry_run_template_does_not_write_names():
     assert re.search(r"if not dry_run:\s+seg\.shot_name\.set_value", src)
 
 
+def test_rename_shots_dry_run_manifest_carries_segment_identity():
+    src = _source_of(timeline.rename_shots)
+
+    assert "'track_idx': ti" in src
+    assert "'record_in': str(seg.record_in)" in src
+    assert "'seg_name': old_name" in src
+    assert "'source_name': src" in src
+    assert "'shot_name': shot_name" in src
+
+
 def test_legacy_preview_rename_delegates_to_dry_run_rename(monkeypatch):
     captured = {}
 
