@@ -174,3 +174,156 @@ def test_chain_if_gate_miss_suppresses_exactly_next_step_with_skipped_manifest()
     assert result["chain"][2]["result"]["skipped_step"] == (
         "rename shots with prefix genesis commit"
     )
+
+
+def test_sequence_name_propagates_from_previous_result_when_step_text_lacks_it():
+    calls: list[tuple[str, dict]] = []
+    segment_tool = _wrapped_tool(
+        "flame_get_sequence_segments",
+        {"sequence_name": {"type": "string"}},
+        ["sequence_name"],
+    )
+    rename_tool = _wrapped_tool(
+        "flame_rename_shots",
+        {
+            "sequence_name": {"type": "string"},
+            "prefix": {"type": "string"},
+        },
+        ["sequence_name", "prefix"],
+    )
+
+    class FakeMCP:
+        async def call_tool(self, name, arguments):
+            calls.append((name, arguments))
+            if name == "flame_get_sequence_segments":
+                return _text_block(json.dumps({
+                    "sequence": "30sec_21",
+                    "segments": [],
+                    "count": 0,
+                }))
+            return _text_block(json.dumps({"renamed": 0, "skipped": 0}))
+
+    result = asyncio.run(run_chain_steps(
+        steps=[
+            "get segments on 30sec 21",
+            "rename shots with prefix genesis",
+        ],
+        tools=[segment_tool, rename_tool],
+        mcp=FakeMCP(),
+        request_id="rid",
+        client_ip="127.0.0.1",
+        started=time.monotonic(),
+    ))
+
+    assert result["status"] == "success"
+    assert calls[-1] == (
+        "flame_rename_shots",
+        {"params": {"sequence_name": "30sec_21", "prefix": "genesis"}},
+    )
+
+
+def test_explicit_sequence_name_in_step_text_wins_over_propagation():
+    calls: list[tuple[str, dict]] = []
+    rename_tool = _wrapped_tool(
+        "flame_rename_shots",
+        {
+            "sequence_name": {"type": "string"},
+            "prefix": {"type": "string"},
+        },
+        ["sequence_name", "prefix"],
+    )
+
+    class FakeMCP:
+        async def call_tool(self, name, arguments):
+            calls.append((name, arguments))
+            return _text_block(json.dumps({"renamed": 1, "skipped": 0}))
+
+    result = asyncio.run(execute_chain_step(
+        step_text="rename shots on 30sec 22 with prefix genesis",
+        tools=[rename_tool],
+        mcp=FakeMCP(),
+        inherited_context={
+            "__previous_result__": {
+                "sequence": "30sec_21",
+                "segments": [],
+            },
+        },
+    ))
+
+    assert result["result"] == {"renamed": 1, "skipped": 0}
+    assert calls == [
+        (
+            "flame_rename_shots",
+            {"params": {"sequence_name": "30sec_22", "prefix": "genesis"}},
+        ),
+    ]
+
+
+def test_propagation_uses_sequence_field_from_immediately_preceding_step():
+    calls: list[tuple[str, dict]] = []
+    rename_tool = _wrapped_tool(
+        "flame_rename_shots",
+        {
+            "sequence_name": {"type": "string"},
+            "prefix": {"type": "string"},
+        },
+        ["sequence_name", "prefix"],
+    )
+
+    class FakeMCP:
+        async def call_tool(self, name, arguments):
+            calls.append((name, arguments))
+            return _text_block(json.dumps({"renamed": 0, "skipped": 0}))
+
+    result = asyncio.run(execute_chain_step(
+        step_text="rename shots with prefix genesis",
+        tools=[rename_tool],
+        mcp=FakeMCP(),
+        inherited_context={
+            "__previous_result__": {
+                "sequence": "30sec_21",
+                "sequence_label": "not_a_sequence_name",
+            },
+        },
+    ))
+
+    assert result["result"] == {"renamed": 0, "skipped": 0}
+    assert calls == [
+        (
+            "flame_rename_shots",
+            {"params": {"sequence_name": "30sec_21", "prefix": "genesis"}},
+        ),
+    ]
+
+
+def test_no_propagation_when_previous_result_has_no_sequence_field():
+    rename_tool = _wrapped_tool(
+        "flame_rename_shots",
+        {
+            "sequence_name": {"type": "string"},
+            "prefix": {"type": "string"},
+        },
+        ["sequence_name", "prefix"],
+    )
+
+    class FakeMCP:
+        async def call_tool(self, name, arguments):
+            raise AssertionError("fallback should not execute without a sequence field")
+
+    result = asyncio.run(execute_chain_step(
+        step_text="rename shots with prefix genesis",
+        tools=[rename_tool],
+        mcp=FakeMCP(),
+        inherited_context={
+            "__previous_result__": {
+                "segments": [],
+                "count": 0,
+            },
+        },
+    ))
+
+    assert result["error"]["type"] == "UNRESOLVED_REQUIRED_PARAM"
+    assert result["error"]["details"] == {
+        "key": "sequence_name",
+        "tool": "flame_rename_shots",
+    }

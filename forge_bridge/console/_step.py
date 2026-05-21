@@ -328,6 +328,19 @@ async def execute_chain_step(
     if UNRESOLVED_KEY in params:
         unresolved = params[UNRESOLVED_KEY]
         key = unresolved.get("key")
+        if key == "sequence_name":
+            prev = inherited.get("__previous_result__")
+            if isinstance(prev, dict):
+                seq = prev.get("sequence") or prev.get("sequence_name")
+                if isinstance(seq, str) and seq:
+                    resolver_input["sequence_name"] = seq
+                    params = await resolve_required_params(
+                        tool_name, resolver_input, mcp, message=step_text,
+                    )
+
+    if UNRESOLVED_KEY in params:
+        unresolved = params[UNRESOLVED_KEY]
+        key = unresolved.get("key")
         message = (
             "Could not resolve sequence name from your query. "
             "Please specify the exact sequence name."
