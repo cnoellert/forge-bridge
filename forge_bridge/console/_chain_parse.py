@@ -59,7 +59,7 @@ def parse_chain(message: str) -> List[str]:
     """Split a message into ordered chain steps.
 
     Rules:
-      - Split on ``->``.
+      - Split on ``->`` only at top-level parenthesis depth.
       - Trim whitespace on each segment.
       - Drop empty segments (trailing ``->``, leading ``->``, doubled
         separators ``-> ->`` all collapse cleanly).
@@ -74,7 +74,33 @@ def parse_chain(message: str) -> List[str]:
     """
     if not isinstance(message, str) or not message:
         return []
-    return [s.strip() for s in message.split(_CHAIN_SEPARATOR) if s.strip()]
+    steps: list[str] = []
+    start = 0
+    depth = 0
+    index = 0
+    while index < len(message):
+        char = message[index]
+        if char == "(":
+            depth += 1
+            index += 1
+            continue
+        if char == ")":
+            depth = max(0, depth - 1)
+            index += 1
+            continue
+        if depth == 0 and message.startswith(_CHAIN_SEPARATOR, index):
+            step = message[start:index].strip()
+            if step:
+                steps.append(step)
+            index += len(_CHAIN_SEPARATOR)
+            start = index
+            continue
+        index += 1
+
+    step = message[start:].strip()
+    if step:
+        steps.append(step)
+    return steps
 
 
 # ── Chain context extraction ─────────────────────────────────────────────

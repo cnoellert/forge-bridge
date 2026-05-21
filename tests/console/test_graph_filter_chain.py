@@ -80,7 +80,7 @@ def test_chain_step_filter_rejects_mutation_manifest_input():
         },
     ))
 
-    assert result["error"]["type"] == "non_enumeration_input"
+    assert result["error"]["type"] == "CHAIN_WIRE_COMPATIBILITY_ERROR"
 
 
 def test_chain_filter_empty_result_propagates_to_downstream_rename():

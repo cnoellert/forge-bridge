@@ -464,6 +464,11 @@ else:
                     if dry_run:
                         result['changes'].append({{
                             'index': seg_idx,
+                            'track_idx': ti,
+                            'record_in': str(seg.record_in),
+                            'seg_name': old_name,
+                            'source_name': src,
+                            'shot_name': shot_name,
                             'current': old_name,
                             'proposed': new_name,
                             'type': 'shot_name',

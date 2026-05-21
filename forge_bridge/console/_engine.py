@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 from forge_bridge.console._step import execute_chain_step
+from forge_bridge.graph import infer_topology
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,10 @@ async def run_chain_steps(
                 "step": step_text,
                 "result": skipped_manifest,
             })
-            context = {"__previous_result__": skipped_manifest}
+            context = {
+                "__previous_result__": skipped_manifest,
+                "__previous_topology__": infer_topology(skipped_manifest).to_dict(),
+            }
             continue
 
         outcome = await execute_chain_step(
@@ -45,6 +49,7 @@ async def run_chain_steps(
             tools=tools,
             mcp=mcp,
             inherited_context=context,
+            step_index=step_idx,
         )
 
         if "error" in outcome:
@@ -77,6 +82,10 @@ async def run_chain_steps(
         })
         context = outcome.get("extracted_context", {}) or {}
         context["__previous_result__"] = outcome["result"]
+        context["__previous_topology__"] = (
+            outcome.get("emitted_topology")
+            or infer_topology(outcome["result"]).to_dict()
+        )
 
     elapsed_ms = int((time.monotonic() - started) * 1000)
     logger.info(

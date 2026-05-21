@@ -129,6 +129,7 @@ async def execute_chain_step(
     tools: list,
     mcp: Any,
     inherited_context: dict,
+    step_index: int | str = 0,
 ) -> dict:
     """Run a single chain step end-to-end.
 
@@ -151,7 +152,40 @@ async def execute_chain_step(
         resolve_required_params,
     )
 
+    wire_error = _validate_step_chain_wire(
+        step_text=step_text,
+        inherited_context=inherited_context,
+        step_index=step_index,
+    )
+    if wire_error is not None:
+        return {"error": wire_error}
+
+    graph_outcome = await _maybe_execute_foreach_step(
+        step_text=step_text,
+        tools=tools,
+        mcp=mcp,
+        inherited_context=inherited_context,
+        step_index=step_index,
+    )
+    if graph_outcome is not None:
+        return graph_outcome
+
+    graph_outcome = _maybe_execute_collect_step(
+        step_text=step_text,
+        inherited_context=inherited_context,
+        step_index=step_index,
+    )
+    if graph_outcome is not None:
+        return graph_outcome
+
     graph_outcome = _maybe_execute_if_step(
+        step_text=step_text,
+        inherited_context=inherited_context,
+    )
+    if graph_outcome is not None:
+        return graph_outcome
+
+    graph_outcome = _maybe_execute_select_step(
         step_text=step_text,
         inherited_context=inherited_context,
     )
@@ -377,9 +411,87 @@ async def execute_chain_step(
     return {
         "result": parsed,
         "extracted_context": extract_chain_context(parsed),
+        "emitted_topology": _topology_dict_for_value(parsed),
         "tool": tool_name,
         "params": params,
     }
+
+
+def _validate_step_chain_wire(
+    *,
+    step_text: str,
+    inherited_context: dict,
+    step_index: int | str,
+) -> dict[str, Any] | None:
+    """Validate typed graph ports at the next dispatch edge.
+
+    This is incremental local validation, not chain preflight. It fires only
+    when a step declares a typed input contract and a previous result exists.
+    """
+    from forge_bridge.graph import (
+        ChainWireCompatibilityError,
+        infer_topology,
+        validate_chain_wire,
+    )
+
+    inherited_context = inherited_context or {}
+    if "__previous_result__" not in inherited_context:
+        return None
+
+    contract = _port_contract_for_step(step_text)
+    if contract is None:
+        return None
+
+    encoded = inherited_context.get("__previous_topology__")
+    if isinstance(encoded, dict):
+        from forge_bridge.graph import PortTopology
+
+        actual = PortTopology.from_dict(encoded)
+    else:
+        actual = infer_topology(inherited_context["__previous_result__"])
+    try:
+        validate_chain_wire(
+            step_index=step_index,
+            step_text=step_text,
+            contract=contract,
+            actual=actual,
+        )
+    except ChainWireCompatibilityError as exc:
+        return exc.to_error()
+    return None
+
+
+def _port_contract_for_step(step_text: str):
+    from forge_bridge.graph import (
+        CollectNode,
+        FilterNode,
+        ForEachNode,
+        IfGateNode,
+        SelectNode,
+        is_collect_step,
+        is_filter_step,
+        is_foreach_step,
+        is_if_step,
+        is_select_step,
+    )
+
+    if is_foreach_step(step_text):
+        return ForEachNode.port_contract
+    if is_collect_step(step_text):
+        return CollectNode.port_contract
+    if is_if_step(step_text):
+        return IfGateNode.port_contract
+    if is_select_step(step_text):
+        return SelectNode.port_contract
+    if is_filter_step(step_text):
+        return FilterNode.port_contract
+    return None
+
+
+def _topology_dict_for_value(value: Any) -> dict[str, str]:
+    from forge_bridge.graph import infer_topology
+
+    return infer_topology(value).to_dict()
 
 
 def _extract_format_class(step_text: str) -> str | None:
@@ -408,7 +520,245 @@ def _extract_semantic_step_params(step_text: str) -> dict[str, Any]:
     params.pop("filter_error", None)
     params.pop("if_predicate", None)
     params.pop("if_error", None)
+    params.pop("select_identity", None)
+    params.pop("select_error", None)
     return params
+
+
+async def _maybe_execute_foreach_step(
+    *,
+    step_text: str,
+    tools: list,
+    mcp: Any,
+    inherited_context: dict,
+    step_index: int | str,
+) -> dict | None:
+    from forge_bridge.graph import (
+        ForeachInputError,
+        ForeachParseError,
+        ForEachNode,
+        PortTopology,
+        infer_iteration_item_topology,
+        infer_topology,
+        is_foreach_step,
+        parse_foreach_step,
+    )
+
+    if not is_foreach_step(step_text):
+        return None
+
+    inherited_context = inherited_context or {}
+    if "__previous_result__" not in inherited_context:
+        return {"error": {
+            "type": "GRAPH_INPUT_REQUIRED",
+            "message": "ForEachNode requires a previous collection result.",
+        }}
+
+    try:
+        body_step = parse_foreach_step(step_text)
+        node = ForEachNode(body_step)
+        prior = inherited_context["__previous_result__"]
+        items = node.items(prior)
+    except (ForeachInputError, ForeachParseError) as exc:
+        return {"error": {
+            "type": getattr(exc, "code", type(exc).__name__),
+            "message": getattr(exc, "message", str(exc)),
+        }}
+
+    encoded = inherited_context.get("__previous_topology__")
+    collection_topology = (
+        PortTopology.from_dict(encoded)
+        if isinstance(encoded, dict)
+        else infer_topology(prior)
+    )
+
+    public_inherited = {
+        key: value for key, value in inherited_context.items()
+        if not str(key).startswith("__")
+    }
+    sequence = public_inherited.get("sequence_name")
+    if not sequence and isinstance(prior, dict):
+        sequence = prior.get("sequence") or prior.get("sequence_name")
+    iterations = []
+    for iteration_index, item in enumerate(items):
+        iteration_payload = node.iteration_payload(prior, item)
+        item_topology = infer_iteration_item_topology(
+            item=item,
+            collection_topology=collection_topology,
+        )
+        iteration_context = dict(public_inherited)
+        if isinstance(sequence, str) and sequence:
+            iteration_context["sequence_name"] = sequence
+        iteration_context["__previous_result__"] = iteration_payload
+        iteration_context["__previous_topology__"] = item_topology.to_dict()
+        iteration_context["__filtered_collection__"] = [item]
+
+        outcome = await execute_chain_step(
+            step_text=body_step,
+            tools=tools,
+            mcp=mcp,
+            inherited_context=iteration_context,
+            step_index=f"{step_index}.{iteration_index}",
+        )
+        if "error" in outcome:
+            error = dict(outcome["error"])
+            error["foreach_step_index"] = step_index
+            error["iteration_index"] = iteration_index
+            error["body_step"] = body_step
+            return {"error": error}
+
+        body_result = outcome["result"]
+        if not isinstance(body_result, dict):
+            body_result = {"value": body_result}
+        iterations.append(node.wrap_result(
+            index=iteration_index,
+            item=item,
+            result=body_result,
+            emitted_topology=(
+                outcome.get("emitted_topology")
+                or _topology_dict_for_value(body_result)
+            ),
+        ))
+
+    result = node.envelope(iterations)
+    extracted: dict[str, Any] = {}
+    if isinstance(sequence, str) and sequence:
+        extracted["sequence_name"] = sequence
+
+    return {
+        "result": result,
+        "extracted_context": extracted,
+        "emitted_topology": _topology_dict_for_value(result),
+        "tool": "graph_foreach",
+        "params": {"body": body_step},
+    }
+
+
+def _maybe_execute_collect_step(
+    *,
+    step_text: str,
+    inherited_context: dict,
+    step_index: int | str,
+) -> dict | None:
+    from forge_bridge.graph import (
+        ChainWireCompatibilityError,
+        CollectError,
+        CollectNode,
+        is_collect_step,
+        parse_collect_step,
+    )
+
+    if not is_collect_step(step_text):
+        return None
+
+    inherited_context = inherited_context or {}
+    if "__previous_result__" not in inherited_context:
+        return {"error": {
+            "type": "GRAPH_INPUT_REQUIRED",
+            "message": "CollectNode requires previous iteration results.",
+        }}
+
+    try:
+        parse_collect_step(step_text)
+        result = CollectNode().run(inherited_context["__previous_result__"])
+    except ChainWireCompatibilityError as exc:
+        error = exc.to_error()
+        error["step_index"] = step_index
+        error["step"] = step_text
+        return {"error": error}
+    except CollectError as exc:
+        return {"error": {
+            "type": getattr(exc, "code", type(exc).__name__),
+            "message": getattr(exc, "message", str(exc)),
+        }}
+
+    extracted: dict[str, Any] = {}
+    sequence = result.get("sequence") or result.get("sequence_name")
+    if isinstance(sequence, str) and sequence:
+        extracted["sequence_name"] = sequence
+
+    return {
+        "result": result,
+        "extracted_context": extracted,
+        "emitted_topology": _topology_dict_for_value(result),
+        "tool": "graph_collect",
+        "params": {},
+    }
+
+
+def _maybe_execute_select_step(
+    *,
+    step_text: str,
+    inherited_context: dict,
+) -> dict | None:
+    from forge_bridge.graph import (
+        GraphInputError,
+        SelectError,
+        SelectIdentity,
+        SelectNode,
+        is_select_step,
+    )
+    from forge_bridge.llm.resolver import resolve_query_entities
+
+    if not is_select_step(step_text):
+        return None
+
+    inherited_context = inherited_context or {}
+    resolved = resolve_query_entities(step_text)
+    select_error = resolved.get("select_error")
+    if isinstance(select_error, dict) and isinstance(select_error.get("value"), dict):
+        return {"error": {
+            "type": select_error["value"].get("code", "INVALID_SELECT_IDENTITY"),
+            "message": select_error["value"].get("message", "Invalid select identity."),
+            "details": select_error["value"],
+        }}
+
+    entity = resolved.get("select_identity")
+    identity_value = entity.get("value") if isinstance(entity, dict) else None
+    if not isinstance(identity_value, dict):
+        return {"error": {
+            "type": "INVALID_SELECT_IDENTITY",
+            "message": "Invalid select identity.",
+        }}
+
+    if "__previous_result__" not in inherited_context:
+        return {"error": {
+            "type": "GRAPH_INPUT_REQUIRED",
+            "message": "SelectNode requires a previous collection or manifest result.",
+        }}
+
+    prior = inherited_context["__previous_result__"]
+    try:
+        identity = SelectIdentity.from_dict(identity_value)
+        node = SelectNode(identity)
+        result = node.run(prior)
+        selected = node.selected_collection(prior)
+    except (GraphInputError, SelectError, ValueError) as exc:
+        error = {
+            "type": getattr(exc, "code", type(exc).__name__),
+            "message": getattr(exc, "message", str(exc)),
+        }
+        details = getattr(exc, "details", None)
+        if isinstance(details, dict) and details:
+            error["details"] = details
+        return {"error": error}
+
+    extracted: dict[str, Any] = {"__filtered_collection__": selected}
+    sequence = None
+    if isinstance(result, dict):
+        sequence = result.get("sequence") or result.get("sequence_name")
+    if not sequence and isinstance(prior, dict):
+        sequence = prior.get("sequence") or prior.get("sequence_name")
+    if isinstance(sequence, str) and sequence:
+        extracted["sequence_name"] = sequence
+
+    return {
+        "result": result,
+        "extracted_context": extracted,
+        "emitted_topology": _topology_dict_for_value(result),
+        "tool": "graph_select",
+        "params": {"identity": identity.to_dict()},
+    }
 
 
 def _maybe_execute_if_step(
@@ -470,6 +820,7 @@ def _maybe_execute_if_step(
     return {
         "result": result,
         "extracted_context": extracted,
+        "emitted_topology": _topology_dict_for_value(result),
         "tool": "graph_if_gate",
         "params": {"predicate": predicate.to_dict()},
     }
@@ -536,6 +887,7 @@ def _maybe_execute_filter_step(
     return {
         "result": result,
         "extracted_context": extracted,
+        "emitted_topology": _topology_dict_for_value(result),
         "tool": "graph_filter",
         "params": {"predicate": predicate.to_dict()},
     }

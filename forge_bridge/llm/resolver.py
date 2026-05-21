@@ -10,11 +10,14 @@ ResolvedEntity = dict[str, str | int | bool | dict[str, Any]]
 ResolvedEntities = dict[str, ResolvedEntity]
 
 _PREVIEW_INTENT_RE = re.compile(
-    r"\bpreview\b|\bshow\s+me\s+what\s+would\s+change\b|\bwhat\s+would\s+happen\s+if\b",
+    r"^\s*preview\b|^\s*show\s+me\s+what\s+would\s+change\b|^\s*what\s+would\s+happen\s+if\b",
     re.IGNORECASE,
 )
-_DRY_RUN_MODIFIER_RE = re.compile(r"\bdry[_ -]?run\b", re.IGNORECASE)
-_COMMIT_MODIFIER_RE = re.compile(r"\bcommit\b", re.IGNORECASE)
+_TERMINAL_DIRECTIVE_RE = re.compile(
+    r"\b(?P<directive>commit|dry[_ -]?run)\s*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+_DIRECTIVE_VALUE_INTRODUCERS = frozenset({"prefix", "to", "named", "called"})
 _SEQ_CANDIDATE_RE = re.compile(
     r"\b(?P<head>\d+[A-Za-z]{2,})[ _-]?(?P<tail>\d{1,4})\b"
 )
@@ -100,14 +103,30 @@ def resolve_query_entities(
                 source=query.strip(),
             )
 
+    if _looks_like_select_step(query):
+        try:
+            from forge_bridge.graph import parse_select_step
+
+            identity = parse_select_step(query)
+            resolved["select_identity"] = _entity(
+                value=identity.to_dict(),
+                source=query.strip(),
+            )
+        except Exception as exc:  # noqa: BLE001 - structured failure, not pass-through
+            code = getattr(exc, "code", "INVALID_SELECT_IDENTITY")
+            message = getattr(exc, "message", str(exc))
+            resolved["select_error"] = _entity(
+                value={"code": code, "message": message},
+                source=query.strip(),
+            )
+
     preview_match = _PREVIEW_INTENT_RE.search(query)
-    dry_run_match = _DRY_RUN_MODIFIER_RE.search(query)
-    commit_match = _COMMIT_MODIFIER_RE.search(query)
-    if preview_match or dry_run_match:
-        source = (preview_match or dry_run_match).group(0)
+    terminal_directive = _terminal_directive(query)
+    if preview_match or terminal_directive == "dry_run":
+        source = preview_match.group(0) if preview_match else terminal_directive
         resolved["dry_run"] = _entity(value=True, source=source)
-    elif commit_match:
-        resolved["dry_run"] = _entity(value=False, source=commit_match.group(0))
+    elif terminal_directive == "commit":
+        resolved["dry_run"] = _entity(value=False, source=terminal_directive)
 
     for match in _EXPLICIT_ENTITY_RE.finditer(query):
         label = match.group("label").casefold()
@@ -236,6 +255,30 @@ def _looks_like_filter_step(query: str) -> bool:
 
 def _looks_like_if_step(query: str) -> bool:
     return bool(re.search(r"^\s*if(?:\s*\(|\s+)", query, re.IGNORECASE))
+
+
+def _looks_like_select_step(query: str) -> bool:
+    return bool(re.search(r"^\s*select\s+", query, re.IGNORECASE))
+
+
+def _terminal_directive(query: str) -> str | None:
+    """Return a terminal execution directive from bounded step text.
+
+    If the resolver still fundamentally operates as ordered bounded
+    extraction passes, you are in 25.3 scope. If you are building a
+    generalized syntax system, you have crossed into Phase N.
+    """
+    match = _TERMINAL_DIRECTIVE_RE.search(query)
+    if not match:
+        return None
+
+    before = query[:match.start()].strip()
+    tokens = re.findall(r"[A-Za-z_][A-Za-z0-9_-]*", before)
+    if tokens and tokens[-1].casefold() in _DIRECTIVE_VALUE_INTRODUCERS:
+        return None
+
+    directive = match.group("directive").casefold().replace("-", "_").replace(" ", "_")
+    return "dry_run" if directive == "dry_run" else directive
 
 
 def _first_int_match(
