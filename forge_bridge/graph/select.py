@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 from forge_bridge.graph.filter import GraphInputError
+from forge_bridge.graph.ports import PortContract
 
 
 _SELECT_INTENT_RE = re.compile(r"^\s*select\s+", re.IGNORECASE)
@@ -87,6 +88,8 @@ def parse_select_step(text: str) -> SelectIdentity:
 @dataclass(frozen=True)
 class SelectNode:
     """Generic select node over collection-shaped graph data."""
+
+    port_contract: ClassVar[PortContract] = PortContract.select()
 
     identity: SelectIdentity
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 from forge_bridge.graph.filter import (
     FilterPredicate,
@@ -18,6 +18,7 @@ from forge_bridge.graph.filter import (
     evaluate_predicate,
     parse_filter_step,
 )
+from forge_bridge.graph.ports import PortContract
 
 
 _IF_INTENT_RE = re.compile(r"^\s*if(?:\s*\(|\s+)", re.IGNORECASE)
@@ -51,6 +52,8 @@ def parse_if_step(text: str) -> FilterPredicate:
 @dataclass(frozen=True)
 class IfGateNode:
     """Unary manifest-level execution gate."""
+
+    port_contract: ClassVar[PortContract] = PortContract.manifest_gate()
 
     predicate: FilterPredicate
 

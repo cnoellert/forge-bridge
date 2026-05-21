@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
+
+from forge_bridge.graph.ports import PortContract
 
 
 class PredicateParseError(ValueError):
@@ -150,6 +152,8 @@ def parse_filter_step(text: str) -> FilterPredicate:
 @dataclass(frozen=True)
 class FilterNode:
     """Generic filter node over enumeration collections."""
+
+    port_contract: ClassVar[PortContract] = PortContract.passthrough_list()
 
     predicate: FilterPredicate
 

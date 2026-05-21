@@ -27,6 +27,13 @@ from forge_bridge.graph.if_gate import (
     is_if_step,
     parse_if_step,
 )
+from forge_bridge.graph.ports import (
+    ChainWireCompatibilityError,
+    PortContract,
+    PortTopology,
+    infer_topology,
+    validate_chain_wire,
+)
 from forge_bridge.graph.select import (
     SelectError,
     SelectIdentity,
@@ -41,14 +48,19 @@ __all__ = [
     "GraphInputError",
     "IfGateNode",
     "PredicateParseError",
+    "ChainWireCompatibilityError",
+    "PortContract",
+    "PortTopology",
     "SelectError",
     "SelectIdentity",
     "SelectNode",
     "evaluate_predicate",
+    "infer_topology",
     "is_filter_step",
     "is_if_step",
     "is_select_step",
     "parse_filter_step",
     "parse_if_step",
     "parse_select_step",
+    "validate_chain_wire",
 ]

@@ -129,6 +129,7 @@ async def execute_chain_step(
     tools: list,
     mcp: Any,
     inherited_context: dict,
+    step_index: int = 0,
 ) -> dict:
     """Run a single chain step end-to-end.
 
@@ -150,6 +151,14 @@ async def execute_chain_step(
         UNRESOLVED_KEY,
         resolve_required_params,
     )
+
+    wire_error = _validate_step_chain_wire(
+        step_text=step_text,
+        inherited_context=inherited_context,
+        step_index=step_index,
+    )
+    if wire_error is not None:
+        return {"error": wire_error}
 
     graph_outcome = _maybe_execute_if_step(
         step_text=step_text,
@@ -384,9 +393,79 @@ async def execute_chain_step(
     return {
         "result": parsed,
         "extracted_context": extract_chain_context(parsed),
+        "emitted_topology": _topology_dict_for_value(parsed),
         "tool": tool_name,
         "params": params,
     }
+
+
+def _validate_step_chain_wire(
+    *,
+    step_text: str,
+    inherited_context: dict,
+    step_index: int,
+) -> dict[str, Any] | None:
+    """Validate typed graph ports at the next dispatch edge.
+
+    This is incremental local validation, not chain preflight. It fires only
+    when a step declares a typed input contract and a previous result exists.
+    """
+    from forge_bridge.graph import (
+        ChainWireCompatibilityError,
+        infer_topology,
+        validate_chain_wire,
+    )
+
+    inherited_context = inherited_context or {}
+    if "__previous_result__" not in inherited_context:
+        return None
+
+    contract = _port_contract_for_step(step_text)
+    if contract is None:
+        return None
+
+    encoded = inherited_context.get("__previous_topology__")
+    if isinstance(encoded, dict):
+        from forge_bridge.graph import PortTopology
+
+        actual = PortTopology.from_dict(encoded)
+    else:
+        actual = infer_topology(inherited_context["__previous_result__"])
+    try:
+        validate_chain_wire(
+            step_index=step_index,
+            step_text=step_text,
+            contract=contract,
+            actual=actual,
+        )
+    except ChainWireCompatibilityError as exc:
+        return exc.to_error()
+    return None
+
+
+def _port_contract_for_step(step_text: str):
+    from forge_bridge.graph import (
+        FilterNode,
+        IfGateNode,
+        SelectNode,
+        is_filter_step,
+        is_if_step,
+        is_select_step,
+    )
+
+    if is_if_step(step_text):
+        return IfGateNode.port_contract
+    if is_select_step(step_text):
+        return SelectNode.port_contract
+    if is_filter_step(step_text):
+        return FilterNode.port_contract
+    return None
+
+
+def _topology_dict_for_value(value: Any) -> dict[str, str]:
+    from forge_bridge.graph import infer_topology
+
+    return infer_topology(value).to_dict()
 
 
 def _extract_format_class(step_text: str) -> str | None:
@@ -489,6 +568,7 @@ def _maybe_execute_select_step(
     return {
         "result": result,
         "extracted_context": extracted,
+        "emitted_topology": _topology_dict_for_value(result),
         "tool": "graph_select",
         "params": {"identity": identity.to_dict()},
     }
@@ -553,6 +633,7 @@ def _maybe_execute_if_step(
     return {
         "result": result,
         "extracted_context": extracted,
+        "emitted_topology": _topology_dict_for_value(result),
         "tool": "graph_if_gate",
         "params": {"predicate": predicate.to_dict()},
     }
@@ -619,6 +700,7 @@ def _maybe_execute_filter_step(
     return {
         "result": result,
         "extracted_context": extracted,
+        "emitted_topology": _topology_dict_for_value(result),
         "tool": "graph_filter",
         "params": {"predicate": predicate.to_dict()},
     }
