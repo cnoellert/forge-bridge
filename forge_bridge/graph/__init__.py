@@ -18,15 +18,25 @@ from forge_bridge.graph.filter import (
     FilterPredicate,
     GraphInputError,
     PredicateParseError,
+    evaluate_predicate,
     is_filter_step,
     parse_filter_step,
+)
+from forge_bridge.graph.if_gate import (
+    IfGateNode,
+    is_if_step,
+    parse_if_step,
 )
 
 __all__ = [
     "FilterNode",
     "FilterPredicate",
     "GraphInputError",
+    "IfGateNode",
     "PredicateParseError",
+    "evaluate_predicate",
     "is_filter_step",
+    "is_if_step",
     "parse_filter_step",
+    "parse_if_step",
 ]

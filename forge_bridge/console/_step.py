@@ -151,6 +151,13 @@ async def execute_chain_step(
         resolve_required_params,
     )
 
+    graph_outcome = _maybe_execute_if_step(
+        step_text=step_text,
+        inherited_context=inherited_context,
+    )
+    if graph_outcome is not None:
+        return graph_outcome
+
     graph_outcome = _maybe_execute_filter_step(
         step_text=step_text,
         inherited_context=inherited_context,
@@ -321,6 +328,19 @@ async def execute_chain_step(
     if UNRESOLVED_KEY in params:
         unresolved = params[UNRESOLVED_KEY]
         key = unresolved.get("key")
+        if key == "sequence_name":
+            prev = inherited.get("__previous_result__")
+            if isinstance(prev, dict):
+                seq = prev.get("sequence") or prev.get("sequence_name")
+                if isinstance(seq, str) and seq:
+                    resolver_input["sequence_name"] = seq
+                    params = await resolve_required_params(
+                        tool_name, resolver_input, mcp, message=step_text,
+                    )
+
+    if UNRESOLVED_KEY in params:
+        unresolved = params[UNRESOLVED_KEY]
+        key = unresolved.get("key")
         message = (
             "Could not resolve sequence name from your query. "
             "Please specify the exact sequence name."
@@ -374,9 +394,9 @@ def _extract_semantic_step_params(step_text: str) -> dict[str, Any]:
     """Project deterministic resolver entities into chain-step params.
 
     This is the chain-step instance of the resolver's broader role: entity,
-    numeric, format, and intent directives are semantic projections, not LLM
-    guesses. Filter predicates remain graph-node inputs and are consumed by
-    ``_maybe_execute_filter_step`` before tool selection reaches this path.
+    numeric, format, intent directives, and graph predicates are semantic
+    projections, not LLM guesses. Filter and if-gate predicates remain
+    graph-node inputs and are consumed before tool selection reaches this path.
     """
     from forge_bridge.llm.resolver import (
         resolve_query_entities,
@@ -386,7 +406,73 @@ def _extract_semantic_step_params(step_text: str) -> dict[str, Any]:
     params = resolved_entity_params(resolve_query_entities(step_text))
     params.pop("filter_predicate", None)
     params.pop("filter_error", None)
+    params.pop("if_predicate", None)
+    params.pop("if_error", None)
     return params
+
+
+def _maybe_execute_if_step(
+    *,
+    step_text: str,
+    inherited_context: dict,
+) -> dict | None:
+    from forge_bridge.graph import (
+        GraphInputError,
+        IfGateNode,
+        FilterPredicate,
+        is_if_step,
+    )
+    from forge_bridge.llm.resolver import resolve_query_entities
+
+    if not is_if_step(step_text):
+        return None
+
+    inherited_context = inherited_context or {}
+    resolved = resolve_query_entities(step_text)
+    if_error = resolved.get("if_error")
+    if isinstance(if_error, dict) and isinstance(if_error.get("value"), dict):
+        return {"error": {
+            "type": "UNKNOWN_IF_PREDICATE",
+            "message": if_error["value"].get("message", "Unknown if-gate predicate."),
+            "details": if_error["value"],
+        }}
+
+    entity = resolved.get("if_predicate")
+    predicate_value = entity.get("value") if isinstance(entity, dict) else None
+    if not isinstance(predicate_value, dict):
+        return {"error": {
+            "type": "UNKNOWN_IF_PREDICATE",
+            "message": "Unknown if-gate predicate.",
+        }}
+
+    if "__previous_result__" not in inherited_context:
+        return {"error": {
+            "type": "GRAPH_INPUT_REQUIRED",
+            "message": "IfGateNode requires a previous execution manifest.",
+        }}
+
+    try:
+        predicate = FilterPredicate.from_dict(predicate_value)
+        result = IfGateNode(predicate).run(inherited_context["__previous_result__"])
+    except (GraphInputError, ValueError) as exc:
+        return {"error": {
+            "type": getattr(exc, "code", type(exc).__name__),
+            "message": getattr(exc, "message", str(exc)),
+        }}
+
+    extracted: dict[str, Any] = {
+        "__if_gate_skip_next__": result.get("execution_state") == "skipped",
+    }
+    sequence = result.get("sequence") or result.get("sequence_name")
+    if isinstance(sequence, str) and sequence:
+        extracted["sequence_name"] = sequence
+
+    return {
+        "result": result,
+        "extracted_context": extracted,
+        "tool": "graph_if_gate",
+        "params": {"predicate": predicate.to_dict()},
+    }
 
 
 def _maybe_execute_filter_step(

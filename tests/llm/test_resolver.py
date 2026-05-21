@@ -131,6 +131,18 @@ def test_resolves_ecological_preview_intent_phrases():
     )["dry_run"] is True
 
 
+def test_resolves_dry_run_and_commit_as_explicit_intent_modifiers():
+    dry_run_params = resolved_entity_params(
+        resolve_query_entities("rename shots on 30sec 21 with prefix genesis dry_run"),
+    )
+    commit_params = resolved_entity_params(
+        resolve_query_entities("rename shots with prefix genesis commit"),
+    )
+
+    assert dry_run_params["dry_run"] is True
+    assert commit_params["dry_run"] is False
+
+
 def test_resolves_rename_directive_phrase_variants():
     assert resolved_entity_params(
         resolve_query_entities("Rename shots on 30sec 21 with prefix genesis"),
@@ -189,6 +201,22 @@ def test_resolver_projects_filter_predicate_as_structured_ast():
         "operator": ">",
         "value": 1,
     }
+
+
+def test_resolver_projects_if_gate_predicate_as_structured_ast():
+    params = resolved_entity_params(resolve_query_entities("if(proposed_changes exists)"))
+
+    assert params["if_predicate"] == {
+        "field": "proposed_changes",
+        "operator": "exists",
+    }
+
+
+def test_resolver_projects_unknown_if_gate_as_structured_error():
+    params = resolved_entity_params(resolve_query_entities("if(only the changed shots)"))
+
+    assert params["if_error"]["code"] == "unknown_predicate"
+    assert "Could not parse filter predicate" in params["if_error"]["message"]
 
 
 def test_resolver_projects_unknown_filter_as_structured_error():

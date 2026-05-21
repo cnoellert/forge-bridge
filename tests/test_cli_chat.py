@@ -369,6 +369,114 @@ def test_chat_trace_outputs_chain_summaries_to_stderr():
     assert result.stdout == "SHOT STATUS\n0010 ok\n"
 
 
+def test_trace_renders_matched_gate_as_gate_open():
+    body = {
+        "status": "success",
+        "request_id": "rid",
+        "chain": [
+            {
+                "step": "if(proposed_changes exists)",
+                "result": {
+                    "dry_run": True,
+                    "proposed_changes": [{"current": "old", "proposed": "new"}],
+                    "execution_state": "passed",
+                    "if_gate": {
+                        "matched": True,
+                        "predicate": {
+                            "field": "proposed_changes",
+                            "operator": "exists",
+                        },
+                    },
+                },
+            },
+        ],
+        "error": None,
+    }
+
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "--trace", "chain"])
+
+    assert "if(proposed_changes exists) → matched (gate open)" in result.stderr
+
+
+def test_trace_renders_unmatched_gate_as_gate_closed():
+    body = {
+        "status": "success",
+        "request_id": "rid",
+        "chain": [
+            {
+                "step": "if(proposed_changes exists)",
+                "result": {
+                    "dry_run": True,
+                    "proposed_changes": [],
+                    "execution_state": "skipped",
+                    "if_gate": {
+                        "matched": False,
+                        "predicate": {
+                            "field": "proposed_changes",
+                            "operator": "exists",
+                        },
+                    },
+                },
+            },
+        ],
+        "error": None,
+    }
+
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "--trace", "chain"])
+
+    assert "if(proposed_changes exists) → unmatched (gate closed)" in result.stderr
+
+
+def test_trace_renders_suppressed_step_as_suppressed_by_upstream_gate():
+    body = {
+        "status": "success",
+        "request_id": "rid",
+        "chain": [
+            {
+                "step": "rename shots with prefix genesis commit",
+                "result": {
+                    "dry_run": True,
+                    "proposed_changes": [],
+                    "renamed": 24,
+                    "skipped": 0,
+                    "count": 24,
+                    "execution_state": "skipped",
+                    "skipped_step": "rename shots with prefix genesis commit",
+                },
+            },
+        ],
+        "error": None,
+    }
+
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "--trace", "chain"])
+
+    assert "rename shots → suppressed by upstream gate" in result.stderr
+    assert "renamed=" not in result.stderr
+    assert "count=" not in result.stderr
+
+
+def test_trace_for_normal_chain_renders_no_gate_strings():
+    body = {
+        "status": "success",
+        "request_id": "rid",
+        "chain": [
+            {"step": "rename shots", "result": {"renamed": 2, "skipped": 0}},
+        ],
+        "error": None,
+    }
+
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "--trace", "rename shots"])
+
+    assert "gate open" not in result.stderr
+    assert "gate closed" not in result.stderr
+    assert "suppressed by upstream gate" not in result.stderr
+    assert "rename shots → renamed=2 skipped=0" in result.stderr
+
+
 def test_verbose_alone_emits_no_trace():
     """--verbose without --trace: JSON on stdout, no trace on stderr."""
     body = {

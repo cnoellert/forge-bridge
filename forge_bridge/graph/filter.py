@@ -182,29 +182,46 @@ class FilterNode:
         return [item for item in collection if self._matches(item)]
 
     def _matches(self, item: dict[str, Any]) -> bool:
-        value = item.get(self.predicate.field)
-        operator = self.predicate.operator
-        if operator == "exists":
-            return value not in (None, "")
-        if operator == "contains":
-            return str(self.predicate.value) in str(value or "")
-        if operator == "==":
-            return _coerce_comparable(value) == _coerce_comparable(self.predicate.value)
-        if operator == "!=":
-            return _coerce_comparable(value) != _coerce_comparable(self.predicate.value)
-        left = _coerce_number(value)
-        right = _coerce_number(self.predicate.value)
-        if left is None or right is None:
-            return False
-        if operator == ">":
-            return left > right
-        if operator == ">=":
-            return left >= right
-        if operator == "<":
-            return left < right
-        if operator == "<=":
-            return left <= right
-        raise PredicateParseError("unknown_operator", f"Unsupported filter operator: {operator!r}")
+        return evaluate_predicate(self.predicate, item)
+
+
+def evaluate_predicate(
+    predicate: FilterPredicate,
+    item: dict[str, Any],
+    *,
+    empty_values_absent: bool = False,
+) -> bool:
+    """Evaluate a flat predicate AST against a dict-shaped graph payload.
+
+    FilterNode keeps historical ``exists`` behavior: a present empty list is
+    still present. Manifest-level gates can opt into treating empty lists and
+    dicts as absent so ``proposed_changes exists`` means "there is something
+    to execute," not merely "the field name is present."
+    """
+    value = item.get(predicate.field)
+    operator = predicate.operator
+    if operator == "exists":
+        absent_values: tuple[Any, ...] = (None, "", [], {}) if empty_values_absent else (None, "")
+        return value not in absent_values
+    if operator == "contains":
+        return str(predicate.value) in str(value or "")
+    if operator == "==":
+        return _coerce_comparable(value) == _coerce_comparable(predicate.value)
+    if operator == "!=":
+        return _coerce_comparable(value) != _coerce_comparable(predicate.value)
+    left = _coerce_number(value)
+    right = _coerce_number(predicate.value)
+    if left is None or right is None:
+        return False
+    if operator == ">":
+        return left > right
+    if operator == ">=":
+        return left >= right
+    if operator == "<":
+        return left < right
+    if operator == "<=":
+        return left <= right
+    raise PredicateParseError("unknown_operator", f"Unsupported filter operator: {operator!r}")
 
 
 def _extract_enumeration(data: Any) -> tuple[str | None, list[dict[str, Any]]]:

@@ -28,6 +28,18 @@ async def run_chain_steps(
     context: dict = {}
 
     for step_idx, step_text in enumerate(steps):
+        if context.pop("__if_gate_skip_next__", False):
+            prior = context.get("__previous_result__")
+            skipped_manifest = dict(prior) if isinstance(prior, dict) else {}
+            skipped_manifest["execution_state"] = "skipped"
+            skipped_manifest["skipped_step"] = step_text
+            chain_trace.append({
+                "step": step_text,
+                "result": skipped_manifest,
+            })
+            context = {"__previous_result__": skipped_manifest}
+            continue
+
         outcome = await execute_chain_step(
             step_text=step_text,
             tools=tools,

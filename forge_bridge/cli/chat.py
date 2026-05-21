@@ -399,9 +399,47 @@ def _write_chain_trace(data: Optional[dict]) -> None:
     for index, entry in enumerate(chain, start=1):
         if not isinstance(entry, dict):
             continue
+        rendered = _maybe_render_gate_step(entry, index, total)
+        if rendered is not None:
+            sys.stderr.write(rendered + "\n")
+            continue
         label = _trace_step_label(str(entry.get("step") or ""), entry.get("result"))
         summary = _brief_result_summary(entry.get("result"))
         sys.stderr.write(f"[{index}/{total}] {label} → {summary}\n")
+
+
+def _maybe_render_gate_step(entry: dict, index: int, total: int) -> str | None:
+    result = entry.get("result")
+    if not isinstance(result, dict):
+        return None
+
+    if "skipped_step" in result:
+        label = _trace_step_label(str(entry.get("step") or ""), result)
+        return f"[{index}/{total}] {label} → suppressed by upstream gate"
+
+    gate = result.get("if_gate")
+    if isinstance(gate, dict):
+        predicate = gate.get("predicate")
+        predicate_echo = _format_if_predicate(predicate if isinstance(predicate, dict) else {})
+        decision = (
+            "matched (gate open)"
+            if gate.get("matched")
+            else "unmatched (gate closed)"
+        )
+        return f"[{index}/{total}] {predicate_echo} → {decision}"
+
+    return None
+
+
+def _format_if_predicate(predicate: dict) -> str:
+    field = str(predicate.get("field") or "predicate")
+    operator = predicate.get("operator")
+    value = predicate.get("value")
+    if operator and value is not None:
+        return f"if({field} {operator} {value})"
+    if operator:
+        return f"if({field} {operator})"
+    return f"if({field})"
 
 
 def _trace_step_label(step: str, result: object) -> str:
