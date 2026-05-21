@@ -188,6 +188,33 @@ def test_spaced_dry_run_directive_fires_in_terminal_modifier_position():
     assert params["dry_run"] is True
 
 
+def test_preview_directive_fires_in_leading_intent_position():
+    params = resolved_entity_params(
+        resolve_query_entities("preview rename shots on 30sec 21 with prefix genesis"),
+    )
+
+    assert params["prefix"] == "genesis"
+    assert params["dry_run"] is True
+
+
+def test_increment_directive_fires_in_modifier_position():
+    params = resolved_entity_params(
+        resolve_query_entities("rename shots on 30sec 21 with prefix genesis increment 10"),
+    )
+
+    assert params["prefix"] == "genesis"
+    assert params["increment"] == 10
+
+
+def test_padding_directive_fires_in_modifier_position():
+    params = resolved_entity_params(
+        resolve_query_entities("rename shots on 30sec 21 with prefix genesis padding 4"),
+    )
+
+    assert params["prefix"] == "genesis"
+    assert params["padding"] == 4
+
+
 def test_resolves_rename_directive_phrase_variants():
     assert resolved_entity_params(
         resolve_query_entities("Rename shots on 30sec 21 with prefix genesis"),
