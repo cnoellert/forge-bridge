@@ -13,6 +13,8 @@ _PREVIEW_INTENT_RE = re.compile(
     r"\bpreview\b|\bshow\s+me\s+what\s+would\s+change\b|\bwhat\s+would\s+happen\s+if\b",
     re.IGNORECASE,
 )
+_DRY_RUN_MODIFIER_RE = re.compile(r"\bdry[_ -]?run\b", re.IGNORECASE)
+_COMMIT_MODIFIER_RE = re.compile(r"\bcommit\b", re.IGNORECASE)
 _SEQ_CANDIDATE_RE = re.compile(
     r"\b(?P<head>\d+[A-Za-z]{2,})[ _-]?(?P<tail>\d{1,4})\b"
 )
@@ -81,9 +83,31 @@ def resolve_query_entities(
                 source=query.strip(),
             )
 
+    if _looks_like_if_step(query):
+        try:
+            from forge_bridge.graph import parse_if_step
+
+            predicate = parse_if_step(query)
+            resolved["if_predicate"] = _entity(
+                value=predicate.to_dict(),
+                source=query.strip(),
+            )
+        except Exception as exc:  # noqa: BLE001 - structured failure, not pass-through
+            code = getattr(exc, "code", "unknown_predicate")
+            message = getattr(exc, "message", str(exc))
+            resolved["if_error"] = _entity(
+                value={"code": code, "message": message},
+                source=query.strip(),
+            )
+
     preview_match = _PREVIEW_INTENT_RE.search(query)
-    if preview_match:
-        resolved["dry_run"] = _entity(value=True, source=preview_match.group(0))
+    dry_run_match = _DRY_RUN_MODIFIER_RE.search(query)
+    commit_match = _COMMIT_MODIFIER_RE.search(query)
+    if preview_match or dry_run_match:
+        source = (preview_match or dry_run_match).group(0)
+        resolved["dry_run"] = _entity(value=True, source=source)
+    elif commit_match:
+        resolved["dry_run"] = _entity(value=False, source=commit_match.group(0))
 
     for match in _EXPLICIT_ENTITY_RE.finditer(query):
         label = match.group("label").casefold()
@@ -208,6 +232,10 @@ def _looks_like_filter_step(query: str) -> bool:
             re.IGNORECASE,
         ),
     )
+
+
+def _looks_like_if_step(query: str) -> bool:
+    return bool(re.search(r"^\s*if(?:\s*\(|\s+)", query, re.IGNORECASE))
 
 
 def _first_int_match(
