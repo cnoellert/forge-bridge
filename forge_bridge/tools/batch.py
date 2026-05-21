@@ -105,7 +105,7 @@ async def get_batch_iterations() -> str:
             iterations = []
             for iteration in getattr(batch, 'batch_iterations', []):
                 iterations.append({
-                    'index': int(iteration.iteration_number),
+                    'iteration_number': int(iteration.iteration_number),
                 })
 
             print(json.dumps({
@@ -443,9 +443,21 @@ async def delete_node(params: DeleteNodeInput) -> str:
 class DisconnectNodesInput(BaseModel):
     """Input for disconnecting two nodes in the currently open Batch group."""
 
-    output_node: str = Field(..., description="Name of the source node.")
+    output_node: str = Field(
+        default="",
+        description=(
+            "Name of the source node. Informational only — accepted for "
+            "operator-query legibility, not used by the underlying Flame API call."
+        ),
+    )
     input_node: str = Field(..., description="Name of the destination node.")
-    output_socket: str = Field(default="Default", description="Output socket name.")
+    output_socket: str = Field(
+        default="Default",
+        description=(
+            "Output socket name. Accepted in schema for symmetry with "
+            "connect_nodes; not used by the underlying Flame API."
+        ),
+    )
     input_socket: str = Field(default="Default", description="Input socket name.")
     dry_run: bool = Field(
         default=False,
@@ -528,11 +540,8 @@ print(json.dumps(result))
 async def disconnect_nodes(params: DisconnectNodesInput) -> str:
     """Disconnect two nodes in the currently open Flame Batch group.
 
-    output_node is accepted in the schema for operator-query
-    legibility (matching the 'disconnect from X to Y' mental
-    model). The underlying Flame API only requires input_node
-    + input_socket. output_node is informational and does not
-    constrain behavior.
+    output_node is accepted for operator-query legibility only
+    and is not used by the underlying Flame API call.
 
     Operates on the currently open batch group. If no batch group is open,
     returns {"error": "no_batch_open", "message": "Open a batch group first via flame_open_batch_group"}.
