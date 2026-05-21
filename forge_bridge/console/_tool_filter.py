@@ -398,6 +398,12 @@ _PR21_DOMAIN_PRIORITIES: tuple[tuple[str, str], ...] = (
     ("shot", "preview"),     # preview is an intent modifier; shot names the op
 )
 
+# Intent-modifier tokens — tool names containing these tokens
+# are dropped when the message itself lacks the modifier.
+# Encodes the 25.0 thesis: preview is a mutation-gate modifier,
+# not an operation name.
+_PR21_INTENT_MODIFIERS: frozenset[str] = frozenset({"preview"})
+
 
 def _raw_message_tokens(message: str) -> set[str]:
     """PR23 — raw token set for tie-breaking, NO normalization.
@@ -474,6 +480,20 @@ def deterministic_narrow(tools: list[Any], message: str) -> list[Any]:
                 survivors = winners
                 if len(survivors) == 1:
                     return survivors
+
+    # Rule 2.5 — intent-modifier filter.
+    # When the message contains NONE of the intent-modifier tokens,
+    # drop survivors whose normalized name tokens contain any of them.
+    if not msg_tokens & _PR21_INTENT_MODIFIERS:
+        filtered = [
+            t for t in survivors
+            if not (
+                _pr14_tokens(getattr(t, "name", "") or "")
+                & _PR21_INTENT_MODIFIERS
+            )
+        ]
+        if filtered:
+            survivors = filtered
 
     # Rule 3 (PR23) — raw-token tie-breaker. When normalized rules leave
     # multiple survivors, fall back to the literal pre-normalization

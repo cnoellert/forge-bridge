@@ -19,11 +19,9 @@ from __future__ import annotations
 import asyncio
 import inspect
 import re
-import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
-import pytest_asyncio
 
 
 def _make_tool(name: str):
@@ -1353,6 +1351,30 @@ def test_pr21_rule2_preview_is_modifier_for_shot_rename():
         tools,
         "preview rename shots on 30sec 21 with prefix genesis",
     )
+    assert _names(out) == ["flame_rename_shots"]
+
+
+def test_pr21_rule25_drops_preview_survivor_when_message_lacks_preview():
+    """Rule 2.5: preview-named tools require explicit preview intent."""
+    from forge_bridge.console._tool_filter import deterministic_narrow
+
+    tools = [
+        _make_tool("flame_preview_rename"),
+        _make_tool("flame_rename_shots"),
+    ]
+    out = deterministic_narrow(tools, "rename to genesis prefix")
+    assert _names(out) == ["flame_rename_shots"]
+
+
+def test_pr21_rule25_keeps_preview_path_when_message_has_preview_modifier():
+    """Rule 2.5 does not fire when preview intent is present."""
+    from forge_bridge.console._tool_filter import deterministic_narrow
+
+    tools = [
+        _make_tool("flame_preview_rename"),
+        _make_tool("flame_rename_shots"),
+    ]
+    out = deterministic_narrow(tools, "preview rename shots on 30sec 21")
     assert _names(out) == ["flame_rename_shots"]
 
 
