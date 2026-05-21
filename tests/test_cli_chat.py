@@ -520,6 +520,241 @@ def test_trace_does_not_render_select_manifest_as_gate_decision():
     assert "select genesis_0020_source_L01 → count=1" in result.stderr
 
 
+def _foreach_trace_body(iterations):
+    return {
+        "status": "success",
+        "request_id": "rid",
+        "chain": [
+            {
+                "step": "foreach(rename shots with prefix genesis dry_run)",
+                "result": {
+                    "iterations": iterations,
+                    "foreach": {
+                        "body": "rename shots with prefix genesis dry_run",
+                        "input_count": len(iterations),
+                        "output_count": len(iterations),
+                    },
+                    "count": len(iterations),
+                },
+            },
+        ],
+        "error": None,
+    }
+
+
+def _iteration(index, result):
+    return {
+        "index": index,
+        "item": {"seg_name": f"seg_{index}"},
+        "result": result,
+        "emitted_topology": {"kind": "manifest"},
+    }
+
+
+def test_trace_renders_one_foreach_iteration_sub_line():
+    body = _foreach_trace_body([
+        _iteration(0, {"renamed": 1, "skipped": 0}),
+    ])
+
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "--trace", "chain"])
+
+    assert "[1/1] foreach(rename shots with prefix genesis dry_run) → 1 iterations" in result.stderr
+    assert "  [1.0] rename shots → renamed=1 skipped=0" in result.stderr
+
+
+def test_trace_renders_n_foreach_iteration_sub_lines():
+    body = _foreach_trace_body([
+        _iteration(0, {"renamed": 1, "skipped": 0}),
+        _iteration(1, {"renamed": 1, "skipped": 0}),
+    ])
+
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "--trace", "chain"])
+
+    assert "  [1.0] rename shots → renamed=1 skipped=0" in result.stderr
+    assert "  [1.1] rename shots → renamed=1 skipped=0" in result.stderr
+
+
+def test_trace_foreach_sub_lines_carry_iteration_specific_info():
+    body = _foreach_trace_body([
+        _iteration(0, {"proposed_changes": [{"segment": "seg_0"}], "count": 1}),
+        _iteration(1, {"proposed_changes": [{"segment": "seg_1"}], "count": 1}),
+    ])
+
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "--trace", "chain"])
+
+    assert "[1.0]" in result.stderr
+    assert "[1.1]" in result.stderr
+
+
+def test_trace_foreach_sub_lines_are_indented_under_parent():
+    body = _foreach_trace_body([
+        _iteration(0, {"count": 1}),
+    ])
+
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "--trace", "chain"])
+
+    assert "\n  [1.0] " in result.stderr
+
+
+def test_trace_non_foreach_step_inheriting_foreach_metadata_does_not_render_as_foreach():
+    """12th discipline-policy enforcement test: step kind anchors rendering.
+
+    Inherited foreach metadata and topology fields must not make a normal step
+    render as foreach.
+    """
+    body = {
+        "status": "success",
+        "request_id": "rid",
+        "chain": [
+            {
+                "step": "rename shots",
+                "result": {
+                    "renamed": 1,
+                    "skipped": 0,
+                    "foreach": {"body": "rename shots", "input_count": 1},
+                    "iterations": [_iteration(0, {"renamed": 1})],
+                    "__previous_topology__": {
+                        "kind": "list",
+                        "item_type": "IterationResult",
+                    },
+                },
+            },
+        ],
+        "error": None,
+    }
+
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "--trace", "chain"])
+
+    assert "iterations" not in result.stderr
+    assert "  [1.0]" not in result.stderr
+    assert "rename shots → renamed=1 skipped=0" in result.stderr
+
+
+def test_trace_foreach_step_renders_only_when_step_kind_matches():
+    body = _foreach_trace_body([
+        _iteration(0, {"count": 1}),
+    ])
+
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "--trace", "chain"])
+
+    assert "foreach(rename shots with prefix genesis dry_run) → 1 iterations" in result.stderr
+
+
+def test_trace_if_gate_downstream_of_foreach_renders_as_gate_not_foreach():
+    body = {
+        "status": "success",
+        "request_id": "rid",
+        "chain": [
+            {
+                "step": "if(proposed_changes exists)",
+                "result": {
+                    "proposed_changes": [{"segment": "seg_0"}],
+                    "foreach": {"body": "rename shots"},
+                    "__previous_topology__": {
+                        "kind": "list",
+                        "item_type": "IterationResult",
+                    },
+                    "execution_state": "passed",
+                    "if_gate": {
+                        "matched": True,
+                        "predicate": {
+                            "field": "proposed_changes",
+                            "operator": "exists",
+                        },
+                    },
+                },
+            },
+        ],
+        "error": None,
+    }
+
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "--trace", "chain"])
+
+    assert "if(proposed_changes exists) → matched (gate open)" in result.stderr
+    assert "iterations" not in result.stderr
+
+
+def test_trace_full_foreach_collect_gate_chain_ordering():
+    body = {
+        "status": "success",
+        "request_id": "rid",
+        "chain": [
+            {
+                "step": "foreach(rename shots with prefix genesis dry_run)",
+                "result": _foreach_trace_body([
+                    _iteration(0, {"count": 1}),
+                ])["chain"][0]["result"],
+            },
+            {
+                "step": "collect",
+                "result": {
+                    "proposed_changes": [{"segment": "seg_0"}],
+                    "collect": {"input_count": 1},
+                    "count": 1,
+                },
+            },
+            {
+                "step": "if(proposed_changes exists)",
+                "result": {
+                    "proposed_changes": [{"segment": "seg_0"}],
+                    "execution_state": "passed",
+                    "if_gate": {
+                        "matched": True,
+                        "predicate": {
+                            "field": "proposed_changes",
+                            "operator": "exists",
+                        },
+                    },
+                },
+            },
+        ],
+        "error": None,
+    }
+
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "--trace", "chain"])
+
+    assert "[1/3] foreach" in result.stderr
+    assert "  [1.0] rename shots" in result.stderr
+    assert "[2/3] collect" in result.stderr
+    assert "[3/3] if(proposed_changes exists) → matched (gate open)" in result.stderr
+
+
+def test_trace_foreach_iteration_lines_remain_under_parent_step():
+    body = _foreach_trace_body([
+        _iteration(3, {"count": 1}),
+    ])
+
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "--trace", "chain"])
+
+    assert result.stderr.index("[1/1] foreach") < result.stderr.index("  [1.3]")
+
+
+def test_trace_foreach_preserves_chain_order_with_following_step():
+    body = {
+        "status": "success",
+        "request_id": "rid",
+        "chain": [
+            _foreach_trace_body([_iteration(0, {"count": 1})])["chain"][0],
+            {"step": "collect", "result": {"collection": [], "collect": {"input_count": 0}}},
+        ],
+        "error": None,
+    }
+
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "--trace", "chain"])
+
+    assert result.stderr.index("  [1.0]") < result.stderr.index("[2/2] collect")
+
+
 def test_verbose_alone_emits_no_trace():
     """--verbose without --trace: JSON on stdout, no trace on stderr."""
     body = {

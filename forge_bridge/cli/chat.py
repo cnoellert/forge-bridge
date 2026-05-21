@@ -399,6 +399,10 @@ def _write_chain_trace(data: Optional[dict]) -> None:
     for index, entry in enumerate(chain, start=1):
         if not isinstance(entry, dict):
             continue
+        rendered = _maybe_render_foreach_step(entry, index, total)
+        if rendered is not None:
+            sys.stderr.write(rendered + "\n")
+            continue
         rendered = _maybe_render_gate_step(entry, index, total)
         if rendered is not None:
             sys.stderr.write(rendered + "\n")
@@ -406,6 +410,41 @@ def _write_chain_trace(data: Optional[dict]) -> None:
         label = _trace_step_label(str(entry.get("step") or ""), entry.get("result"))
         summary = _brief_result_summary(entry.get("result"))
         sys.stderr.write(f"[{index}/{total}] {label} → {summary}\n")
+
+
+def _maybe_render_foreach_step(entry: dict, index: int, total: int) -> str | None:
+    from forge_bridge.graph import is_foreach_step
+
+    step = str(entry.get("step") or "")
+    if not is_foreach_step(step):
+        return None
+
+    result = entry.get("result")
+    if not isinstance(result, dict):
+        return None
+
+    iterations = result.get("iterations")
+    if not isinstance(iterations, list):
+        return None
+
+    foreach_meta = result.get("foreach")
+    body_step = ""
+    if isinstance(foreach_meta, dict):
+        body = foreach_meta.get("body")
+        if isinstance(body, str):
+            body_step = body
+
+    parent = f"[{index}/{total}] {step.strip()} → {len(iterations)} iterations"
+    lines = [parent]
+    for iteration in iterations:
+        if not isinstance(iteration, dict):
+            continue
+        iteration_index = iteration.get("index")
+        iteration_result = iteration.get("result")
+        label = _trace_step_label(body_step, iteration_result)
+        summary = _brief_result_summary(iteration_result)
+        lines.append(f"  [{index}.{iteration_index}] {label} → {summary}")
+    return "\n".join(lines)
 
 
 def _maybe_render_gate_step(entry: dict, index: int, total: int) -> str | None:
