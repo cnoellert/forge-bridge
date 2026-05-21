@@ -103,6 +103,23 @@ def resolve_query_entities(
                 source=query.strip(),
             )
 
+    if _looks_like_select_step(query):
+        try:
+            from forge_bridge.graph import parse_select_step
+
+            identity = parse_select_step(query)
+            resolved["select_identity"] = _entity(
+                value=identity.to_dict(),
+                source=query.strip(),
+            )
+        except Exception as exc:  # noqa: BLE001 - structured failure, not pass-through
+            code = getattr(exc, "code", "INVALID_SELECT_IDENTITY")
+            message = getattr(exc, "message", str(exc))
+            resolved["select_error"] = _entity(
+                value={"code": code, "message": message},
+                source=query.strip(),
+            )
+
     preview_match = _PREVIEW_INTENT_RE.search(query)
     terminal_directive = _terminal_directive(query)
     if preview_match or terminal_directive == "dry_run":
@@ -238,6 +255,10 @@ def _looks_like_filter_step(query: str) -> bool:
 
 def _looks_like_if_step(query: str) -> bool:
     return bool(re.search(r"^\s*if(?:\s*\(|\s+)", query, re.IGNORECASE))
+
+
+def _looks_like_select_step(query: str) -> bool:
+    return bool(re.search(r"^\s*select\s+", query, re.IGNORECASE))
 
 
 def _terminal_directive(query: str) -> str | None:

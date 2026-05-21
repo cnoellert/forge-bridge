@@ -257,6 +257,21 @@ def test_resolver_projects_if_gate_predicate_as_structured_ast():
     }
 
 
+def test_resolver_projects_select_identity_as_sixth_protocol_category():
+    params = resolved_entity_params(resolve_query_entities("select genesis_0010"))
+
+    assert params["select_identity"] == {"target": "genesis_0010"}
+
+
+def test_resolver_does_not_treat_incidental_select_token_as_select_step():
+    params = resolved_entity_params(
+        resolve_query_entities("please select genesis_0010 after the rename"),
+    )
+
+    assert "select_identity" not in params
+    assert "select_error" not in params
+
+
 def test_resolver_projects_unknown_if_gate_as_structured_error():
     params = resolved_entity_params(resolve_query_entities("if(only the changed shots)"))
 

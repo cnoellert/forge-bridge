@@ -158,6 +158,13 @@ async def execute_chain_step(
     if graph_outcome is not None:
         return graph_outcome
 
+    graph_outcome = _maybe_execute_select_step(
+        step_text=step_text,
+        inherited_context=inherited_context,
+    )
+    if graph_outcome is not None:
+        return graph_outcome
+
     graph_outcome = _maybe_execute_filter_step(
         step_text=step_text,
         inherited_context=inherited_context,
@@ -408,7 +415,83 @@ def _extract_semantic_step_params(step_text: str) -> dict[str, Any]:
     params.pop("filter_error", None)
     params.pop("if_predicate", None)
     params.pop("if_error", None)
+    params.pop("select_identity", None)
+    params.pop("select_error", None)
     return params
+
+
+def _maybe_execute_select_step(
+    *,
+    step_text: str,
+    inherited_context: dict,
+) -> dict | None:
+    from forge_bridge.graph import (
+        GraphInputError,
+        SelectError,
+        SelectIdentity,
+        SelectNode,
+        is_select_step,
+    )
+    from forge_bridge.llm.resolver import resolve_query_entities
+
+    if not is_select_step(step_text):
+        return None
+
+    inherited_context = inherited_context or {}
+    resolved = resolve_query_entities(step_text)
+    select_error = resolved.get("select_error")
+    if isinstance(select_error, dict) and isinstance(select_error.get("value"), dict):
+        return {"error": {
+            "type": select_error["value"].get("code", "INVALID_SELECT_IDENTITY"),
+            "message": select_error["value"].get("message", "Invalid select identity."),
+            "details": select_error["value"],
+        }}
+
+    entity = resolved.get("select_identity")
+    identity_value = entity.get("value") if isinstance(entity, dict) else None
+    if not isinstance(identity_value, dict):
+        return {"error": {
+            "type": "INVALID_SELECT_IDENTITY",
+            "message": "Invalid select identity.",
+        }}
+
+    if "__previous_result__" not in inherited_context:
+        return {"error": {
+            "type": "GRAPH_INPUT_REQUIRED",
+            "message": "SelectNode requires a previous collection or manifest result.",
+        }}
+
+    prior = inherited_context["__previous_result__"]
+    try:
+        identity = SelectIdentity.from_dict(identity_value)
+        node = SelectNode(identity)
+        result = node.run(prior)
+        selected = node.selected_collection(prior)
+    except (GraphInputError, SelectError, ValueError) as exc:
+        error = {
+            "type": getattr(exc, "code", type(exc).__name__),
+            "message": getattr(exc, "message", str(exc)),
+        }
+        details = getattr(exc, "details", None)
+        if isinstance(details, dict) and details:
+            error["details"] = details
+        return {"error": error}
+
+    extracted: dict[str, Any] = {"__filtered_collection__": selected}
+    sequence = None
+    if isinstance(result, dict):
+        sequence = result.get("sequence") or result.get("sequence_name")
+    if not sequence and isinstance(prior, dict):
+        sequence = prior.get("sequence") or prior.get("sequence_name")
+    if isinstance(sequence, str) and sequence:
+        extracted["sequence_name"] = sequence
+
+    return {
+        "result": result,
+        "extracted_context": extracted,
+        "tool": "graph_select",
+        "params": {"identity": identity.to_dict()},
+    }
 
 
 def _maybe_execute_if_step(
