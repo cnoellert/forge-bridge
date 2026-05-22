@@ -765,6 +765,7 @@ async def _maybe_execute_commit_step(
     verify_params["resolved_plan"] = [
         record.to_dict() for record in manifest.resolved_plan
     ]
+    verify_params = normalize_tool_args(target_tool, verify_params, tools)
 
     try:
         raw = await mcp.call_tool(target_tool, verify_params)
@@ -812,6 +813,7 @@ async def _maybe_execute_commit_step(
     apply_params["resolved_plan"] = [
         record.to_dict() for record in manifest.resolved_plan
     ]
+    apply_params = normalize_tool_args(target_tool, apply_params, tools)
 
     try:
         apply_raw = await mcp.call_tool(target_tool, apply_params)

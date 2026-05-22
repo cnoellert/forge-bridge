@@ -46,6 +46,36 @@ def _tool(name: str = "apply_plan"):
     return SimpleNamespace(name=name)
 
 
+def _wrapped_tool(name: str = "apply_plan"):
+    return SimpleNamespace(
+        name=name,
+        inputSchema={
+            "$defs": {
+                "WrappedInput": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+            "type": "object",
+            "properties": {"params": {"$ref": "#/$defs/WrappedInput"}},
+            "required": ["params"],
+        },
+    )
+
+
+def _flat_tool(name: str = "apply_plan"):
+    return SimpleNamespace(
+        name=name,
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "mode": {"type": "string"},
+                "resolved_plan": {"type": "array"},
+            },
+        },
+    )
+
+
 class VerifyMCP:
     def __init__(self, result: dict | list[dict]):
         self.results = result if isinstance(result, list) else [result]
@@ -111,6 +141,50 @@ def test_commit_valid_manifest_verifies_then_applies_clean():
                 "resolved_plan": [_record("a", "one")],
             },
         ),
+    ]
+
+
+def test_commit_dispatch_wraps_args_when_tool_schema_requires_params():
+    result, mcp = _run_commit(_manifest(), tools=[_wrapped_tool()])
+
+    assert result["tool"] == "graph_commit"
+    assert [arguments for _name, arguments in mcp.calls] == [
+        {
+            "params": {
+                "request": "demo",
+                "dry_run": False,
+                "mode": "verify",
+                "resolved_plan": [_record("a", "one")],
+            },
+        },
+        {
+            "params": {
+                "request": "demo",
+                "dry_run": False,
+                "mode": "apply",
+                "resolved_plan": [_record("a", "one")],
+            },
+        },
+    ]
+
+
+def test_commit_dispatch_leaves_args_flat_when_tool_schema_does_not_require_wrapper():
+    result, mcp = _run_commit(_manifest(), tools=[_flat_tool()])
+
+    assert result["tool"] == "graph_commit"
+    assert [arguments for _name, arguments in mcp.calls] == [
+        {
+            "request": "demo",
+            "dry_run": False,
+            "mode": "verify",
+            "resolved_plan": [_record("a", "one")],
+        },
+        {
+            "request": "demo",
+            "dry_run": False,
+            "mode": "apply",
+            "resolved_plan": [_record("a", "one")],
+        },
     ]
 
 
