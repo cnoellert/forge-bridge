@@ -47,17 +47,24 @@ def _tool(name: str = "apply_plan"):
 
 
 class VerifyMCP:
-    def __init__(self, result: dict):
-        self.result = result
+    def __init__(self, result: dict | list[dict]):
+        self.results = result if isinstance(result, list) else [result]
         self.calls: list[tuple[str, dict]] = []
 
     async def call_tool(self, name, arguments):
         self.calls.append((name, arguments))
-        return _text_block(json.dumps(self.result))
+        index = min(len(self.calls) - 1, len(self.results) - 1)
+        return _text_block(json.dumps(self.results[index]))
 
 
-def _run_commit(previous: dict, *, tools=None, fresh: dict | None = None):
-    mcp = VerifyMCP(fresh or previous)
+def _run_commit(
+    previous: dict,
+    *,
+    tools=None,
+    fresh: dict | None = None,
+    apply_result: dict | None = None,
+):
+    mcp = VerifyMCP([fresh or previous, apply_result or {"renamed": 1}])
     result = asyncio.run(execute_chain_step(
         step_text="commit",
         tools=[_tool()] if tools is None else tools,
@@ -75,24 +82,36 @@ def _manifest_object(records: list[dict] | None = None) -> MutationManifest:
     return MutationManifest.from_dict(_manifest(records))
 
 
-def test_commit_valid_manifest_verifies_clean():
+def test_commit_valid_manifest_verifies_then_applies_clean():
     result, mcp = _run_commit(_manifest())
 
     assert result["tool"] == "graph_commit"
-    assert result["result"]["message"] == "verified, would apply"
-    assert result["result"]["applied"] is False
+    assert result["result"]["message"] == "applied"
+    assert result["result"]["applied"] is True
     assert result["result"]["count"] == 1
+    assert result["result"]["apply_result"] == {"renamed": 1}
     assert result["extracted_context"] == {}
     assert result["emitted_topology"] == {"kind": "manifest"}
-    assert mcp.calls == [(
-        "apply_plan",
-        {
-            "request": "demo",
-            "dry_run": False,
-            "mode": "verify",
-            "resolved_plan": [_record("a", "one")],
-        },
-    )]
+    assert mcp.calls == [
+        (
+            "apply_plan",
+            {
+                "request": "demo",
+                "dry_run": False,
+                "mode": "verify",
+                "resolved_plan": [_record("a", "one")],
+            },
+        ),
+        (
+            "apply_plan",
+            {
+                "request": "demo",
+                "dry_run": False,
+                "mode": "apply",
+                "resolved_plan": [_record("a", "one")],
+            },
+        ),
+    ]
 
 
 def test_commit_invalid_manifest_returns_manifest_error():
@@ -127,6 +146,34 @@ def test_commit_drifted_resolved_plan_returns_drift_envelope():
     assert result["error"]["step"] == "commit"
     assert result["error"]["drift_count"] == 1
     assert result["error"]["first_drift_index"] == 1
+
+
+def test_commit_apply_side_drift_uses_same_drift_envelope():
+    result, _mcp = _run_commit(
+        _manifest([_record("a", "one")]),
+        apply_result={
+            "drift": True,
+            "drift_count": 1,
+            "first_drift_index": 0,
+            "message": "Plan/state drift detected during apply.",
+        },
+    )
+
+    assert result["error"] == {
+        "type": "PLAN_STATE_DRIFT",
+        "message": "Mutation plan no longer matches current state.",
+        "step_index": 3,
+        "step": "commit",
+        "drift_count": 1,
+        "first_drift_index": 0,
+    }
+
+
+def test_commit_applied_result_infers_manifest_topology():
+    result, _mcp = _run_commit(_manifest())
+
+    assert result["result"]["type"] == "commit_applied"
+    assert infer_topology(result["result"]) == PortTopology.manifest()
 
 
 def test_commit_node_structural_comparison_matches_identical_plan():

@@ -19,7 +19,7 @@ Key Flame API facts (Flame 2026, discovered in production):
 """
 
 import json
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -260,6 +260,22 @@ class RenameInput(BaseModel):
         default=None,
         description="Graph-filtered segment collection. None means all segments; [] means no selected segments.",
     )
+    mode: Literal["discover", "verify", "apply"] = Field(
+        "discover",
+        description=(
+            "Invocation mode: 'discover' (operator params -> manifest), "
+            "'verify' (resolved_plan -> manifest, no mutation), "
+            "'apply' (resolved_plan -> verified mutation). "
+            "Defaults derived from dry_run when not set explicitly."
+        ),
+    )
+    resolved_plan: Optional[list[dict]] = Field(
+        default=None,
+        description=(
+            "For verify/apply modes: the resolved ChangeRecord list from a "
+            "mutation manifest. Each entry has 'identity' and 'payload' dicts."
+        ),
+    )
 
 
 async def rename_shots(params: RenameInput) -> str:
@@ -283,70 +299,160 @@ async def rename_shots(params: RenameInput) -> str:
     Runs on Flame's main thread (required for set_value calls).
     Returns counts of shots_assigned, propagated, renamed, skipped.
     """
+    fields_set = (
+        params.model_fields_set
+        if hasattr(params, "model_fields_set")
+        else getattr(params, "__fields_set__", set())
+    )
+    mode = params.mode
+    if "mode" not in fields_set and params.resolved_plan is None:
+        mode = "discover" if params.dry_run else "apply"
+
+    # resolved_plan is interpolated directly as Python literal source here.
+    # For typical sequence sizes this keeps the bridge call shape simple.
     data = await bridge.execute_json(f"""
 import flame, json, threading
 {_COLLECT_CODE}
 
-seq = _find_seq({params.sequence_name!r})
-if not seq:
-    print(json.dumps({{'error': 'Sequence not found: ' + {params.sequence_name!r}}}))
-else:
-    prefix              = {params.prefix!r}
-    increment           = {params.increment!r}
-    padding             = {params.padding!r}
-    start               = {params.start!r}
-    role_overrides      = {{{', '.join(f'{int(k)}: {v!r}' for k, v in params.role_overrides.items())}}}
-    qualifier_overrides = {{{', '.join(f'{int(k)}: {v!r}' for k, v in params.qualifier_overrides.items())}}}
-    dry_run             = {params.dry_run!r}
-    selected_segments   = {params.selected_segments!r}
+prefix              = {params.prefix!r}
+increment           = {params.increment!r}
+padding             = {params.padding!r}
+start               = {params.start!r}
+role_overrides      = {{{', '.join(f'{int(k)}: {v!r}' for k, v in params.role_overrides.items())}}}
+qualifier_overrides = {{{', '.join(f'{int(k)}: {v!r}' for k, v in params.qualifier_overrides.items())}}}
+mode                = {mode!r}
+selected_segments   = {params.selected_segments!r}
+resolved_plan_input = {params.resolved_plan!r}
+intent_parameters   = {{
+    'sequence_name': {params.sequence_name!r},
+    'prefix': prefix,
+    'increment': increment,
+    'padding': padding,
+    'start': start,
+}}
 
-    result = {{'shots_assigned': 0, 'propagated': 0, 'renamed': 0, 'skipped': 0, 'changes': []}}
-    event  = threading.Event()
+result = {{'shots_assigned': 0, 'propagated': 0, 'renamed': 0, 'skipped': 0, 'changes': []}}
+manifest_result = None
+event  = threading.Event()
 
-    def _do():
-        try:
+def _do():
+    global manifest_result
+    try:
+        def _tracks_for(seq):
             tracks = []
             for ver in seq.versions:
                 for track in ver.tracks:
                     tracks.append(track)
+            return tracks
 
-            def _seg_name(seg):
-                try:
-                    return seg.name.get_value() if hasattr(seg.name, 'get_value') else str(seg.name)
-                except Exception:
-                    return ''
+        def _seg_name(seg):
+            try:
+                return seg.name.get_value() if hasattr(seg.name, 'get_value') else str(seg.name)
+            except Exception:
+                return ''
 
-            def _seg_key(track_idx, seg):
+        def _seg_key_tuple(track_idx, seg):
+            src = str(seg.source_name) if seg.source_name else ''
+            return (track_idx, str(seg.record_in), _seg_name(seg), src)
+
+        def _identity_key(identity):
+            return (
+                int(identity.get('track_idx', 0)),
+                str(identity.get('record_in', '')),
+                str(identity.get('seg_name', '')),
+                str(identity.get('source_name', '')),
+            )
+
+        def _selected_key_tuple(item):
+            return (
+                int(item.get('track_idx', 0)),
+                str(item.get('record_in', '')),
+                str(item.get('seg_name') or item.get('name') or ''),
+                str(item.get('source_name', '')),
+            )
+
+        def _record_for(proposed_records, sequence_name, track_idx, seg):
+            key = _seg_key_tuple(track_idx, seg)
+            rec = proposed_records.get(key)
+            if rec is None:
                 src = str(seg.source_name) if seg.source_name else ''
-                return '|'.join([
-                    str(track_idx),
-                    str(seg.record_in),
-                    _seg_name(seg),
-                    src,
-                ])
+                rec = {{
+                    'identity': {{
+                        'track_idx': track_idx,
+                        'record_in': str(seg.record_in),
+                        'seg_name': _seg_name(seg),
+                        'source_name': src,
+                        'sequence_name': sequence_name,
+                    }},
+                    'payload': {{}},
+                }}
+                proposed_records[key] = rec
+            return rec
+
+        def _planned_groups():
+            if mode in ('verify', 'apply') and isinstance(resolved_plan_input, list):
+                grouped = []
+                by_sequence = {{}}
+                for item in resolved_plan_input:
+                    identity = item.get('identity', {{}}) if isinstance(item, dict) else {{}}
+                    sequence_name = str(identity.get('sequence_name') or {params.sequence_name!r})
+                    if sequence_name not in by_sequence:
+                        by_sequence[sequence_name] = []
+                        grouped.append((sequence_name, by_sequence[sequence_name]))
+                    by_sequence[sequence_name].append(item)
+                return grouped
+            return [({params.sequence_name!r}, None)]
+
+        def _same_plan(left, right):
+            return left == right
+
+        def _drift(left, right):
+            max_len = max(len(left), len(right))
+            drift_count = 0
+            first_drift_index = None
+            for index in range(max_len):
+                left_item = left[index] if index < len(left) else None
+                right_item = right[index] if index < len(right) else None
+                if left_item == right_item:
+                    continue
+                drift_count += 1
+                if first_drift_index is None:
+                    first_drift_index = index
+            return drift_count, first_drift_index
+
+        def _resolve_group(sequence_name, group_records, *, do_writes):
+            seq = _find_seq(sequence_name)
+            if not seq:
+                raise Exception('Sequence not found: ' + sequence_name)
+            tracks = _tracks_for(seq)
+            proposed_records = {{}}
+            plan_keys = None
+            if group_records is not None:
+                plan_keys = set()
+                for item in group_records:
+                    identity = item.get('identity', {{}}) if isinstance(item, dict) else {{}}
+                    plan_keys.add(_identity_key(identity))
 
             selected_keys = None
-            if selected_segments is not None:
+            if group_records is None and selected_segments is not None:
                 selected_keys = set()
                 for item in selected_segments:
-                    if not isinstance(item, dict):
-                        continue
-                    selected_keys.add('|'.join([
-                        str(item.get('track_idx', '')),
-                        str(item.get('record_in', '')),
-                        str(item.get('seg_name') or item.get('name') or ''),
-                        str(item.get('source_name', '')),
-                    ]))
+                    if isinstance(item, dict):
+                        selected_keys.add(_selected_key_tuple(item))
 
             def _is_selected(track_idx, seg):
+                key = _seg_key_tuple(track_idx, seg)
+                if plan_keys is not None:
+                    return key in plan_keys
                 if selected_keys is None:
                     return True
-                return _seg_key(track_idx, seg) in selected_keys
+                return key in selected_keys
 
             # State-aware deterministic default resolution: preserve a
             # coherent existing numbering grammar. The schema padding
             # value is only the bootstrap fallback when no unanimous
             # existing width is present.
+            local_padding = padding
             existing_padding_widths = []
             for track in tracks:
                 for seg in track.segments:
@@ -358,13 +464,9 @@ else:
                     if m:
                         existing_padding_widths.append(len(m.group(1)))
             if existing_padding_widths and len(set(existing_padding_widths)) == 1:
-                padding = existing_padding_widths[0]
+                local_padding = existing_padding_widths[0]
 
             # Pass 1: assign shot names on background track, build bg_map.
-            # When T0 has a gap, scan upward tracks (T1, T2, ...) for a real
-            # segment covering the gap range and use it as the gap fill.
-            # This prevents silent shot-number skips when T0 has a hole but
-            # an upper track covers the cut.
             bg_map     = []   # [(shot_name, record_in_str, record_out_str)]
             gap_fills  = set()  # id() of segments used as gap fills
             proposed_shots = {{}}
@@ -391,10 +493,11 @@ else:
                         if fill_seg:
                             break
                     if fill_seg is not None:
-                        num_str   = str(shot_num).zfill(padding)
+                        num_str   = str(shot_num).zfill(local_padding)
                         shot_name = f"{{prefix}}_{{num_str}}"
                         proposed_shots[id(fill_seg)] = shot_name
-                        if not dry_run:
+                        _record_for(proposed_records, sequence_name, fti, fill_seg)['payload']['shot_name'] = shot_name
+                        if do_writes:
                             fill_seg.shot_name.set_value(shot_name)
                         bg_map.append((shot_name, gap_in, gap_out))
                         gap_fills.add(id(fill_seg))
@@ -403,10 +506,11 @@ else:
                     else:
                         bg_map.append((None, gap_in, gap_out))
                     continue
-                num_str   = str(shot_num).zfill(padding)
+                num_str   = str(shot_num).zfill(local_padding)
                 shot_name = f"{{prefix}}_{{num_str}}"
                 proposed_shots[id(seg)] = shot_name
-                if not dry_run:
+                _record_for(proposed_records, sequence_name, 0, seg)['payload']['shot_name'] = shot_name
+                if do_writes:
                     seg.shot_name.set_value(shot_name)
                 bg_map.append((shot_name, str(seg.record_in), str(seg.record_out)))
                 result['shots_assigned'] += 1
@@ -421,13 +525,13 @@ else:
                     if not src:
                         continue
                     if id(seg) in gap_fills:
-                        # Already named in Pass 1 as a T0 gap fill — skip
                         continue
                     seg_in = str(seg.record_in)
                     for bg_shot, bg_in, bg_out in bg_map:
                         if bg_shot and bg_in <= seg_in <= bg_out:
                             proposed_shots[id(seg)] = bg_shot
-                            if not dry_run:
+                            _record_for(proposed_records, sequence_name, ti, seg)['payload']['shot_name'] = bg_shot
+                            if do_writes:
                                 seg.shot_name.set_value(bg_shot)
                             result['propagated'] += 1
                             break
@@ -461,7 +565,12 @@ else:
                         new_name = f"{{shot_name}}_{{role}}_{{qualifier}}_L{{layer_num}}"
                     else:
                         new_name = f"{{shot_name}}_{{role}}_L{{layer_num}}"
-                    if dry_run:
+                    if old_name != new_name:
+                        _record_for(proposed_records, sequence_name, ti, seg)['payload']['segment_name'] = new_name
+                    if do_writes:
+                        seg.name.set_value(new_name)
+                        result['changes'].append({{'seg_idx': seg_idx, 'old': old_name, 'new': new_name}})
+                    else:
                         result['changes'].append({{
                             'index': seg_idx,
                             'track_idx': ti,
@@ -473,26 +582,61 @@ else:
                             'proposed': new_name,
                             'type': 'shot_name',
                         }})
-                    else:
-                        seg.name.set_value(new_name)
-                        result['changes'].append({{'seg_idx': seg_idx, 'old': old_name, 'new': new_name}})
                     result['renamed'] += 1
                     seg_idx += 1
-        except Exception as e:
-            result['error'] = str(e)
+
+            records = list(proposed_records.values())
+            if group_records is not None:
+                by_key = {{_identity_key(item['identity']): item for item in records}}
+                ordered = []
+                for item in group_records:
+                    identity = item.get('identity', {{}}) if isinstance(item, dict) else {{}}
+                    key = _identity_key(identity)
+                    if key in by_key:
+                        ordered.append(by_key[key])
+                return ordered
+            return records
+
+        fresh_plan = []
+        for sequence_name, group_records in _planned_groups():
+            fresh_plan.extend(_resolve_group(sequence_name, group_records, do_writes=False))
+
+        if mode == 'apply':
+            input_plan = resolved_plan_input if isinstance(resolved_plan_input, list) else None
+            if input_plan is not None and not _same_plan(input_plan, fresh_plan):
+                drift_count, first_drift_index = _drift(input_plan, fresh_plan)
+                manifest_result = {{
+                    'drift': True,
+                    'drift_count': drift_count,
+                    'first_drift_index': first_drift_index,
+                    'message': 'Plan/state drift detected during apply.',
+                }}
+                return
+            result['shots_assigned'] = result['propagated'] = result['renamed'] = result['skipped'] = 0
+            result['changes'] = []
+            for sequence_name, group_records in _planned_groups():
+                _resolve_group(sequence_name, group_records, do_writes=True)
+            manifest_result = result
+            return
+
+        manifest_result = {{
+            'type': 'mutation_plan',
+            'intent_parameters': intent_parameters,
+            'resolved_plan': fresh_plan,
+            'originating_capability': 'flame_rename_shots',
+            'apply_counterpart': {{
+                'tool': 'flame_rename_shots',
+                'parameter_overrides': {{'mode': 'apply'}},
+            }},
+        }}
+    except Exception as e:
+        manifest_result = {{'error': str(e)}}
+    finally:
         event.set()
 
-    flame.schedule_idle_event(_do)
-    event.wait(timeout=60)
-    if dry_run:
-        print(json.dumps({{
-            'dry_run': True,
-            'proposed_changes': result.get('changes', []),
-            'count': len(result.get('changes', [])),
-            'sequence': {params.sequence_name!r},
-        }}))
-    else:
-        print(json.dumps(result))
+flame.schedule_idle_event(_do)
+event.wait(timeout=60)
+print(json.dumps(manifest_result))
 """, main_thread=False)
     return json.dumps(data, indent=2)
 

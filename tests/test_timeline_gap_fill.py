@@ -217,7 +217,7 @@ def test_rename_shots_uses_worker_bridge_for_inner_idle_event(monkeypatch):
 def test_rename_shots_numbers_from_start_by_increment():
     src = _source_of(timeline.rename_shots)
 
-    assert "num_str   = str(shot_num).zfill(padding)" in src
+    assert "num_str   = str(shot_num).zfill(local_padding)" in src
     assert "shot_num += increment" in src
     assert "shot_num * increment" not in src
 
@@ -255,9 +255,10 @@ def test_rename_shots_dry_run_template_does_not_write_names():
     src = _source_of(timeline.rename_shots)
 
     assert "dry_run" in src
-    assert "'proposed_changes': result.get('changes', [])" in src
-    assert re.search(r"if dry_run:.*?else:\s+seg\.name\.set_value", src, re.S)
-    assert re.search(r"if not dry_run:\s+seg\.shot_name\.set_value", src)
+    assert "'type': 'mutation_plan'" in src
+    assert "'resolved_plan': fresh_plan" in src
+    assert re.search(r"if do_writes:\s+seg\.name\.set_value", src)
+    assert re.search(r"if do_writes:\s+seg\.shot_name\.set_value", src)
 
 
 def test_rename_shots_dry_run_manifest_carries_segment_identity():

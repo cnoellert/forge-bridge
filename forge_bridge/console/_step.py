@@ -806,13 +806,45 @@ async def _maybe_execute_commit_step(
             first_drift_index=verification.first_drift_index,
         ).to_error()}
 
+    apply_params = dict(manifest.intent_parameters)
+    apply_params.update(manifest.apply_counterpart["parameter_overrides"])
+    apply_params["mode"] = "apply"
+    apply_params["resolved_plan"] = [
+        record.to_dict() for record in manifest.resolved_plan
+    ]
+
+    try:
+        apply_raw = await mcp.call_tool(target_tool, apply_params)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": {
+            "type": type(exc).__name__,
+            "message": str(exc),
+        }}
+
+    apply_serialized = serialize_forced_tool_result(apply_raw)
+    try:
+        apply_result = json.loads(apply_serialized)
+    except (ValueError, json.JSONDecodeError):
+        apply_result = apply_serialized
+
+    if isinstance(apply_result, dict) and apply_result.get("drift") is True:
+        return {"error": CommitError(
+            CommitError.PLAN_STATE_DRIFT,
+            "Mutation plan no longer matches current state.",
+            step_index=step_index,
+            step_text=step_text,
+            drift_count=apply_result.get("drift_count"),
+            first_drift_index=apply_result.get("first_drift_index"),
+        ).to_error()}
+
     result = {
-        "type": "commit_verification",
-        "execution_state": "verified",
+        "type": "commit_applied",
+        "execution_state": "applied",
         "verified": True,
-        "applied": False,
-        "message": "verified, would apply",
+        "applied": True,
+        "message": "applied",
         "count": len(manifest.resolved_plan),
+        "apply_result": apply_result,
     }
     return {
         "result": result,
