@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
+import sys
+from contextlib import redirect_stdout
 from types import SimpleNamespace
 
 from forge_bridge.console._step import execute_chain_step
@@ -228,6 +231,100 @@ def test_multiscope_resolved_plan_groups_by_sequence_name(monkeypatch):
     assert "sequence_name = str(identity.get('sequence_name')" in code
     assert "for sequence_name, group_records in _planned_groups():" in code
     assert "'sequence_name': 'other_seq'" in code
+
+
+def _run_generated_rename_script(code: str) -> dict:
+    class ValueField:
+        def __init__(self, value: str):
+            self.value = value
+
+        def get_value(self):
+            return self.value
+
+        def set_value(self, value: str):
+            self.value = value
+
+    class Segment:
+        source_name = "source_a"
+        record_in = "00:00:00:00"
+        record_out = "00:00:01:00"
+        file_path = "/show/footage/source/source_a.exr"
+
+        def __init__(self):
+            self.name = ValueField("seg_a")
+            self.shot_name = ValueField("")
+
+    class Track:
+        name = "V1"
+
+        @property
+        def segments(self):
+            return [Segment()]
+
+    sequence = SimpleNamespace(
+        name="30sec_21",
+        versions=[SimpleNamespace(tracks=[Track()])],
+    )
+    reel = SimpleNamespace(sequences=[sequence])
+    reel_group = SimpleNamespace(reels=[reel])
+    desktop = SimpleNamespace(reel_groups=[reel_group])
+    workspace = SimpleNamespace(desktop=desktop)
+    project = SimpleNamespace(current_workspace=workspace)
+
+    def _schedule_idle_event(callback):
+        callback()
+
+    flame = SimpleNamespace(
+        projects=SimpleNamespace(current_project=project),
+        schedule_idle_event=_schedule_idle_event,
+    )
+    previous_flame = sys.modules.get("flame")
+    sys.modules["flame"] = flame
+    stdout = io.StringIO()
+    try:
+        with redirect_stdout(stdout):
+            exec(code, {})  # noqa: S102
+    finally:
+        if previous_flame is None:
+            sys.modules.pop("flame", None)
+        else:
+            sys.modules["flame"] = previous_flame
+    return json.loads(stdout.getvalue())
+
+
+def test_rename_resolution_uses_stable_identity_across_fresh_segment_wrappers(
+    monkeypatch,
+):
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        return _run_generated_rename_script(code)
+
+    monkeypatch.setattr(timeline.bridge, "execute_json", _fake_execute_json)
+
+    params = timeline.RenameInput(
+        sequence_name="30sec_21",
+        prefix="genesis",
+        padding=4,
+        dry_run=True,
+    )
+    first = json.loads(asyncio.run(timeline.rename_shots(params)))
+    second = json.loads(asyncio.run(timeline.rename_shots(params)))
+
+    assert first["resolved_plan"] == second["resolved_plan"]
+    assert first["resolved_plan"] == [
+        {
+            "identity": {
+                "track_idx": 0,
+                "record_in": "00:00:00:00",
+                "seg_name": "seg_a",
+                "source_name": "source_a",
+                "sequence_name": "30sec_21",
+            },
+            "payload": {
+                "shot_name": "genesis_0010",
+                "segment_name": "genesis_0010_source_L01",
+            },
+        },
+    ]
 
 
 def test_commit_step_clean_verify_dispatches_apply_and_returns_apply_result():

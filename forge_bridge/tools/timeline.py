@@ -470,7 +470,7 @@ def _do():
 
             # Pass 1: assign shot names on background track, build bg_map.
             bg_map     = []   # [(shot_name, record_in_str, record_out_str)]
-            gap_fills  = set()  # id() of segments used as gap fills
+            gap_fills  = set()  # stable-identity tuples of segments used as gap fills
             proposed_shots = {{}}
             shot_num   = start
             for seg in tracks[0].segments:
@@ -497,12 +497,12 @@ def _do():
                     if fill_seg is not None:
                         num_str   = str(shot_num).zfill(local_padding)
                         shot_name = f"{{prefix}}_{{num_str}}"
-                        proposed_shots[id(fill_seg)] = shot_name
+                        proposed_shots[_seg_key_tuple(fti, fill_seg)] = shot_name
                         _record_for(proposed_records, sequence_name, fti, fill_seg)['payload']['shot_name'] = shot_name
                         if do_writes:
                             fill_seg.shot_name.set_value(shot_name)
                         bg_map.append((shot_name, gap_in, gap_out))
-                        gap_fills.add(id(fill_seg))
+                        gap_fills.add(_seg_key_tuple(fti, fill_seg))
                         result['shots_assigned'] += 1
                         shot_num += increment
                     else:
@@ -510,7 +510,7 @@ def _do():
                     continue
                 num_str   = str(shot_num).zfill(local_padding)
                 shot_name = f"{{prefix}}_{{num_str}}"
-                proposed_shots[id(seg)] = shot_name
+                proposed_shots[_seg_key_tuple(0, seg)] = shot_name
                 _record_for(proposed_records, sequence_name, 0, seg)['payload']['shot_name'] = shot_name
                 if do_writes:
                     seg.shot_name.set_value(shot_name)
@@ -526,12 +526,12 @@ def _do():
                     src = str(seg.source_name) if seg.source_name else ''
                     if not src:
                         continue
-                    if id(seg) in gap_fills:
+                    if _seg_key_tuple(ti, seg) in gap_fills:
                         continue
                     seg_in = str(seg.record_in)
                     for bg_shot, bg_in, bg_out in bg_map:
                         if bg_shot and bg_in <= seg_in <= bg_out:
-                            proposed_shots[id(seg)] = bg_shot
+                            proposed_shots[_seg_key_tuple(ti, seg)] = bg_shot
                             _record_for(proposed_records, sequence_name, ti, seg)['payload']['shot_name'] = bg_shot
                             if do_writes:
                                 seg.shot_name.set_value(bg_shot)
@@ -550,7 +550,7 @@ def _do():
                         result['skipped'] += 1
                         continue
                     current_shot_name = seg.shot_name.get_value() if hasattr(seg.shot_name, 'get_value') else ''
-                    shot_name = proposed_shots.get(id(seg), current_shot_name)
+                    shot_name = proposed_shots.get(_seg_key_tuple(ti, seg), current_shot_name)
                     if not shot_name:
                         result['skipped'] += 1
                         continue
