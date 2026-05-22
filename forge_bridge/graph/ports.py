@@ -180,6 +180,9 @@ _COLLECTION_ITEM_TYPES = {
 
 def infer_topology(value: Any) -> PortTopology:
     """Infer the emitted topology of a graph value at a chain boundary."""
+    if isinstance(value, dict) and value.get("type") == "mutation_plan":
+        return PortTopology.manifest()
+
     if isinstance(value, list):
         if all(isinstance(item, dict) for item in value):
             return PortTopology.list_of("item")
@@ -215,6 +218,8 @@ def infer_iteration_item_topology(
     collection_topology: PortTopology,
 ) -> PortTopology:
     """Infer the topology seen by a foreach body for one iteration item."""
+    if isinstance(item, dict) and item.get("type") == "mutation_plan":
+        return PortTopology.manifest()
     if _MANIFEST_MARKERS & set(item):
         return PortTopology.manifest()
     if collection_topology.kind == "list":
