@@ -24,7 +24,7 @@ def _record(name: str = "seg_a", value: str = "genesis_0010_source_L01"):
     }
 
 
-def _manifest(records=None):
+def _manifest(records=None, *, role_overrides=None, qualifier_overrides=None):
     return {
         "type": "mutation_plan",
         "intent_parameters": {
@@ -33,6 +33,8 @@ def _manifest(records=None):
             "increment": 10,
             "padding": 4,
             "start": 10,
+            "role_overrides": role_overrides or {},
+            "qualifier_overrides": qualifier_overrides or {},
         },
         "resolved_plan": records or [_record()],
         "originating_capability": "flame_rename_shots",
@@ -49,7 +51,10 @@ async def _capture_rename(monkeypatch, params, response=None):
     async def _fake_execute_json(code: str, *, main_thread: bool = False):
         captured["code"] = code
         captured["main_thread"] = main_thread
-        return response if response is not None else _manifest()
+        return response if response is not None else _manifest(
+            role_overrides=params.role_overrides,
+            qualifier_overrides=params.qualifier_overrides,
+        )
 
     monkeypatch.setattr(timeline.bridge, "execute_json", _fake_execute_json)
     output = await timeline.rename_shots(params)
@@ -75,6 +80,8 @@ def test_discover_mode_emits_mutation_plan_shape(monkeypatch):
         "increment": 10,
         "padding": 4,
         "start": 10,
+        "role_overrides": {},
+        "qualifier_overrides": {},
     }
     assert captured["output"]["apply_counterpart"] == {
         "tool": "flame_rename_shots",
@@ -88,6 +95,25 @@ def test_discover_mode_emits_mutation_plan_shape(monkeypatch):
     assert "'sequence_name': sequence_name" in code
     assert "'payload': {}" in code
     assert "'parameter_overrides': {'mode': 'apply'}" in code
+
+
+def test_discover_mode_intent_parameters_round_trips_role_overrides(monkeypatch):
+    captured = asyncio.run(_capture_rename(
+        monkeypatch,
+        timeline.RenameInput(
+            sequence_name="30sec_21",
+            prefix="genesis",
+            role_overrides={0: "graded"},
+        ),
+    ))
+
+    assert captured["output"]["intent_parameters"]["role_overrides"] == {
+        "0": "graded",
+    }
+    assert captured["output"]["intent_parameters"]["qualifier_overrides"] == {}
+    assert "role_overrides      = {0: 'graded'}" in captured["code"]
+    assert "'role_overrides': role_overrides" in captured["code"]
+    assert "'qualifier_overrides': qualifier_overrides" in captured["code"]
 
 
 def test_accumulator_merges_pass_payloads_into_one_change_record(monkeypatch):

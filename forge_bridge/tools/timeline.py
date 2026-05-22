@@ -329,6 +329,8 @@ intent_parameters   = {{
     'increment': increment,
     'padding': padding,
     'start': start,
+    'role_overrides': role_overrides,
+    'qualifier_overrides': qualifier_overrides,
 }}
 
 result = {{'shots_assigned': 0, 'propagated': 0, 'renamed': 0, 'skipped': 0, 'changes': []}}
