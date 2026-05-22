@@ -178,6 +178,16 @@ async def execute_chain_step(
     if graph_outcome is not None:
         return graph_outcome
 
+    graph_outcome = await _maybe_execute_commit_step(
+        step_text=step_text,
+        tools=tools,
+        mcp=mcp,
+        inherited_context=inherited_context,
+        step_index=step_index,
+    )
+    if graph_outcome is not None:
+        return graph_outcome
+
     graph_outcome = _maybe_execute_if_step(
         step_text=step_text,
         inherited_context=inherited_context,
@@ -464,11 +474,13 @@ def _validate_step_chain_wire(
 def _port_contract_for_step(step_text: str):
     from forge_bridge.graph import (
         CollectNode,
+        CommitNode,
         FilterNode,
         ForEachNode,
         IfGateNode,
         SelectNode,
         is_collect_step,
+        is_commit_step,
         is_filter_step,
         is_foreach_step,
         is_if_step,
@@ -479,6 +491,8 @@ def _port_contract_for_step(step_text: str):
         return ForEachNode.port_contract
     if is_collect_step(step_text):
         return CollectNode.port_contract
+    if is_commit_step(step_text):
+        return CommitNode.port_contract
     if is_if_step(step_text):
         return IfGateNode.port_contract
     if is_select_step(step_text):
@@ -682,6 +696,129 @@ def _maybe_execute_collect_step(
         "extracted_context": extracted,
         "emitted_topology": _topology_dict_for_value(result),
         "tool": "graph_collect",
+        "params": {},
+    }
+
+
+async def _maybe_execute_commit_step(
+    *,
+    step_text: str,
+    tools: list,
+    mcp: Any,
+    inherited_context: dict,
+    step_index: int | str,
+) -> dict | None:
+    from forge_bridge.graph import (
+        CommitError,
+        CommitNode,
+        is_commit_step,
+        parse_commit_step,
+    )
+    from forge_bridge.graph.mutation import (
+        MutationManifest,
+        validate_mutation_manifest,
+    )
+
+    if not is_commit_step(step_text):
+        return None
+
+    inherited_context = inherited_context or {}
+    if "__previous_result__" not in inherited_context:
+        return {"error": {
+            "type": "GRAPH_INPUT_REQUIRED",
+            "message": "CommitNode requires a previous mutation manifest.",
+        }}
+
+    previous = inherited_context["__previous_result__"]
+    error = validate_mutation_manifest(previous)
+    if error is not None:
+        return {"error": CommitError(
+            CommitError.MUTATION_MANIFEST_INVALID,
+            error.message,
+            step_index=step_index,
+            step_text=step_text,
+        ).to_error()}
+
+    try:
+        parse_commit_step(step_text)
+        manifest = MutationManifest.from_dict(previous)
+    except (CommitError, ValueError) as exc:
+        return {"error": CommitError(
+            CommitError.MUTATION_MANIFEST_INVALID,
+            str(exc),
+            step_index=step_index,
+            step_text=step_text,
+        ).to_error()}
+
+    target_tool = manifest.apply_counterpart["tool"]
+    if target_tool not in {getattr(tool, "name", str(tool)) for tool in tools}:
+        return {"error": CommitError(
+            CommitError.APPLY_COUNTERPART_NOT_DECLARED,
+            f"Apply counterpart {target_tool!r} is not declared.",
+            step_index=step_index,
+            step_text=step_text,
+        ).to_error()}
+
+    verify_params = dict(manifest.intent_parameters)
+    verify_params.update(manifest.apply_counterpart["parameter_overrides"])
+    verify_params["mode"] = "verify"
+    verify_params["resolved_plan"] = [
+        record.to_dict() for record in manifest.resolved_plan
+    ]
+
+    try:
+        raw = await mcp.call_tool(target_tool, verify_params)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": {
+            "type": type(exc).__name__,
+            "message": str(exc),
+        }}
+
+    serialized = serialize_forced_tool_result(raw)
+    try:
+        decoded = json.loads(serialized)
+    except (ValueError, json.JSONDecodeError) as exc:
+        return {"error": CommitError(
+            CommitError.MUTATION_MANIFEST_INVALID,
+            f"Verify result is not a mutation manifest: {exc}",
+            step_index=step_index,
+            step_text=step_text,
+        ).to_error()}
+
+    error = validate_mutation_manifest(decoded)
+    if error is not None:
+        return {"error": CommitError(
+            CommitError.MUTATION_MANIFEST_INVALID,
+            error.message,
+            step_index=step_index,
+            step_text=step_text,
+        ).to_error()}
+
+    fresh = MutationManifest.from_dict(decoded)
+    verification = CommitNode().verify(manifest, fresh)
+    if not verification.matched:
+        return {"error": CommitError(
+            CommitError.PLAN_STATE_DRIFT,
+            "Mutation plan no longer matches current state.",
+            step_index=step_index,
+            step_text=step_text,
+            drift_count=verification.drift_count,
+            first_drift_index=verification.first_drift_index,
+        ).to_error()}
+
+    result = {
+        "type": "commit_verification",
+        "execution_state": "verified",
+        "verified": True,
+        "applied": False,
+        "message": "verified, would apply",
+        "count": len(manifest.resolved_plan),
+    }
+    return {
+        "result": result,
+        "extracted_context": {},
+        "emitted_topology": _topology_dict_for_value(result),
+        "tool": "graph_commit",
         "params": {},
     }
 

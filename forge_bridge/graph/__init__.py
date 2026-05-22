@@ -19,6 +19,12 @@ from forge_bridge.graph.collect import (
     is_collect_step,
     parse_collect_step,
 )
+from forge_bridge.graph.commit import (
+    CommitError,
+    CommitNode,
+    is_commit_step,
+    parse_commit_step,
+)
 from forge_bridge.graph.filter import (
     FilterNode,
     FilterPredicate,
@@ -62,6 +68,8 @@ __all__ = [
     "FilterPredicate",
     "CollectError",
     "CollectNode",
+    "CommitError",
+    "CommitNode",
     "ForEachNode",
     "ForeachInputError",
     "ForeachParseError",
@@ -79,11 +87,13 @@ __all__ = [
     "infer_topology",
     "infer_iteration_item_topology",
     "is_collect_step",
+    "is_commit_step",
     "is_filter_step",
     "is_foreach_step",
     "is_if_step",
     "is_select_step",
     "parse_collect_step",
+    "parse_commit_step",
     "parse_filter_step",
     "parse_foreach_step",
     "parse_if_step",
