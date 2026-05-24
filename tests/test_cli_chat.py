@@ -369,6 +369,99 @@ def test_chat_trace_outputs_chain_summaries_to_stderr():
     assert result.stdout == "SHOT STATUS\n0010 ok\n"
 
 
+def test_trace_renders_collect_step_with_primitive_label():
+    # collect is a declared primitive: its label anchors on is_collect_step,
+    # not on the iterations-shaped result. Regression for the get-iterations
+    # mislabel (Phase N+ candidate, PHASE-N-CLOSE.md §11).
+    body = {
+        "status": "success",
+        "request_id": "rid",
+        "chain": [
+            {
+                "step": "get sequence segments on 30sec 21",
+                "result": {"segments": [{"duration": 1}, {"duration": 2}]},
+            },
+            {
+                "step": "collect",
+                "result": {
+                    "iterations": [{"index": 0}, {"index": 1}],
+                    "collect": {"input_count": 2, "output_topology": {"kind": "manifest"}},
+                    "count": 2,
+                },
+            },
+        ],
+        "error": None,
+    }
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "--trace", "chain"])
+
+    assert "[2/2] collect → 2 iterations" in result.stderr
+    assert "get iterations" not in result.stderr
+
+
+def test_trace_non_collect_step_with_iterations_result_is_not_relabelled():
+    # Inverse / contract-enforcer probe: a synthetic non-collect step (no
+    # substring-guard keyword) carrying an iterations-only result must still
+    # fall through to _find_collection. A wrong guard keyed on
+    # result.get("iterations") would mislabel this "collect"; the correct
+    # identity guard leaves it "get iterations".
+    body = {
+        "status": "success",
+        "request_id": "rid",
+        "chain": [
+            {"step": "list iterations", "result": {"iterations": [{"index": 0}]}},
+        ],
+        "error": None,
+    }
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "--trace", "chain"])
+
+    assert "[1/1] get iterations" in result.stderr
+    assert "[1/1] collect" not in result.stderr
+
+
+def test_trace_collect_step_suppressed_by_gate_uses_collect_label():
+    # Sibling call site: gate-skipped entries route through _trace_step_label.
+    body = {
+        "status": "success",
+        "request_id": "rid",
+        "chain": [
+            {"step": "collect", "result": {"skipped_step": True}},
+        ],
+        "error": None,
+    }
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "--trace", "chain"])
+
+    assert "[1/1] collect → suppressed by upstream gate" in result.stderr
+
+
+def test_trace_foreach_body_collect_step_uses_collect_label():
+    # Sibling call site: the foreach-body label path also routes through
+    # _trace_step_label. Intentional and semantically correct propagation.
+    body = {
+        "status": "success",
+        "request_id": "rid",
+        "chain": [
+            {
+                "step": "foreach(collect)",
+                "result": {
+                    "iterations": [
+                        {"index": 0, "result": {"iterations": [{"index": 0}], "count": 1}},
+                    ],
+                    "foreach": {"body": "collect", "input_count": 1, "output_count": 1},
+                    "count": 1,
+                },
+            },
+        ],
+        "error": None,
+    }
+    with _patch_httpx([_Resp(200, body)]):
+        result = runner.invoke(app, ["chat", "--trace", "chain"])
+
+    assert "  [1.0] collect → 1 iterations" in result.stderr
+
+
 def test_trace_renders_matched_gate_as_gate_open():
     body = {
         "status": "success",

@@ -483,6 +483,10 @@ def _format_if_predicate(predicate: dict) -> str:
 
 
 def _trace_step_label(step: str, result: object) -> str:
+    from forge_bridge.graph import is_collect_step
+
+    if is_collect_step(step):
+        return "collect"
     lowered = step.lower()
     if "filter" in lowered or lowered.startswith("where") or lowered.startswith("only"):
         return step.strip()
