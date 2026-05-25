@@ -35,7 +35,13 @@ def is_collect_step(text: str) -> bool:
 
 
 def parse_collect_step(text: str) -> None:
-    """Validate collect step syntax."""
+    """Validate collect step syntax.
+
+    The syntax is exactly the bare word ``collect``: no arguments, no inline
+    body. The parser accepts it case-insensitively with surrounding whitespace
+    allowed, and rejects every other shape before foreach results are
+    reconciled.
+    """
     if not is_collect_step(text):
         raise CollectError("NOT_COLLECT_STEP", "Step is not a collect node.")
     return None

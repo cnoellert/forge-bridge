@@ -561,31 +561,31 @@ def register_builtins(mcp: FastMCP) -> None:
         # ── Project & Workspace ──────────────────────────────────
 
         register_tool(mcp, flame_utility.ping, name="flame_ping", source="builtin",
-                      annotations={"readOnlyHint": True})
+                      annotations={"title": "Check Flame hook connection", "readOnlyHint": True})
 
         register_tool(mcp, flame_project.get_project, name="flame_get_project", source="builtin",
-                      annotations={"readOnlyHint": True})
+                      annotations={"title": "Get current Flame project", "readOnlyHint": True})
 
         register_tool(mcp, flame_project.list_libraries, name="flame_list_libraries", source="builtin",
-                      annotations={"readOnlyHint": True})
+                      annotations={"title": "List Flame workspace libraries", "readOnlyHint": True})
 
         register_tool(mcp, flame_project.list_library_contents, name="flame_list_library_contents", source="builtin",
-                      annotations={"readOnlyHint": True})
+                      annotations={"title": "List Flame library contents", "readOnlyHint": True})
 
         register_tool(mcp, flame_project.list_desktop, name="flame_list_desktop", source="builtin",
-                      annotations={"readOnlyHint": True})
+                      annotations={"title": "List Flame desktop contents", "readOnlyHint": True})
 
         register_tool(mcp, flame_project.list_reel_groups, name="flame_list_reel_groups", source="builtin",
-                      annotations={"readOnlyHint": True})
+                      annotations={"title": "List Flame reel groups", "readOnlyHint": True})
 
         register_tool(mcp, flame_project.list_reel_contents, name="flame_list_reel_contents", source="builtin",
-                      annotations={"readOnlyHint": True})
+                      annotations={"title": "List Flame reel contents", "readOnlyHint": True})
 
         register_tool(mcp, flame_project.get_clip, name="flame_get_clip", source="builtin",
-                      annotations={"readOnlyHint": True})
+                      annotations={"title": "Get Flame clip metadata", "readOnlyHint": True})
 
         register_tool(mcp, flame_project.find_media, name="flame_find_media", source="builtin",
-                      annotations={"readOnlyHint": True})
+                      annotations={"title": "Find Flame media by name", "readOnlyHint": True})
 
         register_tool(
             mcp, flame_project.get_context,

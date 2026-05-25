@@ -1,4 +1,16 @@
-"""Commit graph primitive."""
+"""Authority-transition commit graph primitive.
+
+CommitNode is the substrate's first host-mutating primitive: it is the
+operator-ratified boundary where a previewed mutation may become an applied
+one. It orchestrates the preview->apply authority transition by verifying a
+held mutation manifest against a freshly recomputed one before the underlying
+mutation tool is allowed to apply.
+
+Commit does not define the mutation tool's discover, verify, or apply modes;
+those modes live on the tool underneath, such as flame_rename_shots. Commit's
+role is to ratify that the previewed plan still matches the fresh plan at the
+moment authority crosses from inspection to host mutation.
+"""
 from __future__ import annotations
 
 import re
@@ -58,7 +70,13 @@ def is_commit_step(text: str) -> bool:
 
 
 def parse_commit_step(text: str) -> None:
-    """Validate commit step syntax."""
+    """Validate commit step syntax.
+
+    The syntax is exactly the bare word ``commit``: no arguments, no inline
+    body. The parser accepts it case-insensitively with surrounding whitespace
+    allowed, and rejects every other shape before host-mutation authority can
+    proceed.
+    """
     if not is_commit_step(text):
         raise CommitError("NOT_COMMIT_STEP", "Step is not a commit node.")
     return None
