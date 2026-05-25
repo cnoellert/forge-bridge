@@ -56,32 +56,6 @@ Also in close doc: 1 constitutional note
 Q10(b) bypass+side-effects),
 1 seed (SEED-RENAME-SHOTS-SEGMENT-NAME-COLLISION-PHASE-N+.md).
 
-# Memory promotions (6)
-stage-1b-spec-review
-sibling-check-before-fix-scope
-grep-c-completion-invariant
-mock-three-tier
-substrate-before-consumer-landing
-substrate-coherence-revealed-in-retrospect
-
-# Memory amendments (3)
-ground-specs-in-actual-files
-brief-examples-as-behavioral-reference-shapes
-canonical-probe-text
-
-# Close-doc named artifacts (3)
-drift-guard-as-determinism-enforcement
-the seam held every time it mattered
-evidence-artifact-as-canonical-witness
-
-# Filenames cited as named artifacts (2)
-v1.6-PHASE-N-PLUS-CLOSE.md
-SEED-RENAME-SHOTS-SEGMENT-NAME-COLLISION-PHASE-N+.md
-
-# CARRIED FORWARD candidate names (2)
-verbatim-quotation grep-ability
-promoted-pattern-closes-defect-in-own-promotion-artifact
-
 PROCESS
 -------
 Three-step cadence: 4 cycles in Phase N+ proper + 1 in the close cycle.
@@ -98,7 +72,8 @@ CARRIED FORWARD
   (a) verbatim-quotation grep-ability — candidate 3rd shape for
       grep-c-completion-invariant;
   (b) promoted-pattern-closes-defect-in-own-promotion-artifact —
-      methodology-grain instance of substrate-coherence-in-retrospect.
+      methodology-grain instance of
+      substrate-coherence-revealed-in-retrospect.
 - STATE.md DISCONTINUITY: .planning/STATE.md is frozen at Phase 24.4
   (2026-05-18). It has no record of Phase 25.x, Phase N, or Phase N+ —
   it stopped advancing a full milestone ago, and the project continued
