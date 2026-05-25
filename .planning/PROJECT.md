@@ -4,6 +4,14 @@
 
 forge-bridge is protocol-agnostic middleware for post-production pipelines — a communication bus with a canonical vocabulary that any endpoint (Flame, Maya, editorial systems, LLM agents) can connect to. As of v1.0, it ships as a standalone pip-installable package with full Flame tool parity (matching projekt-forge), an LLM-powered learning pipeline that auto-promotes repeated operations into reusable MCP tools, and a pluggable MCP server that downstream consumers can extend.
 
+> **[FROZEN — 2026-05-01, v1.5-open; classified archival 2026-05-25]**
+> The "Current State" and "Current Milestone" sections below, and the
+> update protocol at the foot of this file, describe a v1.5-era
+> snapshot and a cadence this file no longer follows. "What This Is"
+> above remains broadly accurate; the dated sections are preserved as
+> archaeology and are intentionally not updated. For current project
+> state see `.planning/CONTINUITY-MAP.md`.
+
 ## Current State
 
 **Shipped:** v1.4.1 (2026-04-30) — `v1.4.x Carry-Forward Debt` patch milestone complete. Closed nine carry-forward debt items surfaced during v1.4 close-out (`.planning/milestones/v1.4-MILESTONE-AUDIT.md`) across three phases: default cloud model flipped to `claude-sonnet-4-6` and `qwen3:32b` deferred to v1.5 with empirical evidence (Phase 17 — MODEL-01..02); `staged_client` migrated from `starlette.TestClient` to `httpx.AsyncClient + ASGITransport` and 22+ previously silently-skipped console tests now run against live Postgres (Phase 18 — HARNESS-01..03); WR-02 ref-collision guard, Phase 13 `from_status` `Optional[str]` type-contract fix, real cross-session atomicity assertion, and qwen2.5-coder `<|im_start|>` tail-token strip in `OllamaToolAdapter` (Phase 19 — POLISH-01..04). Audit `passed` with 7/7 cross-phase integration wires verified; public `__all__` byte-identical to v1.4 close (no API surface changes; internal tech-debt only). See `.planning/milestones/v1.4.x-ROADMAP.md` and `.planning/milestones/v1.4.x-MILESTONE-AUDIT.md`.

@@ -2,6 +2,16 @@
 
 *A living document updated after each milestone. Lessons feed forward into future planning.*
 
+> **[FROZEN — last entry v1.4.x close; classified archival 2026-05-25]**
+> The "living document" line above describes a cadence this file no
+> longer follows — it last advanced at the v1.4.x milestone close.
+> Roughly ten phase/milestone closes since (Phases 20 through N+) landed
+> no retrospective entry. The per-milestone retrospective function
+> migrated into the milestone close docs (`.planning/milestones/*-CLOSE.md`),
+> which now carry per-phase reflection. This file is preserved as
+> archaeology and is intentionally not back-filled. See
+> `.planning/CONTINUITY-MAP.md`.
+
 ## Milestone: v1.2 — Observability & Provenance
 
 **Shipped:** 2026-04-22

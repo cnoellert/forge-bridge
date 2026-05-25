@@ -14,6 +14,15 @@ progress:
   percent: 100
 ---
 
+> **[FROZEN — 2026-05-18, Phase 24.4]** This file is no longer the
+> project's live state cursor. It stopped advancing at Phase 24.4;
+> Phases 25.x, N, and N+ shipped without it. The project's continuity
+> is now distributed across milestone framing/close docs, §11
+> registers, seeds, .planning/JOURNAL.md, and git history. The
+> frontmatter and body below are preserved as archaeology of the
+> single-cursor era and are intentionally not updated. For the current
+> continuity topology, see `.planning/CONTINUITY-MAP.md`.
+
 # Project State
 
 ## Project Reference
