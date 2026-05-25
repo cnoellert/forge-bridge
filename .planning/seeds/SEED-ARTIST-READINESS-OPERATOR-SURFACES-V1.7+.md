@@ -8,6 +8,13 @@ trigger_when: "Thread B (exec discoverability) closes — at which point the mil
 
 # Seed — Artist Readiness: the operator-facing surface layer
 
+> **[PROMOTED — 2026-05-25]** This seed's `trigger_when` fired: Thread B's
+> phase framing converged, the Artist Readiness milestone opened. The
+> converged doctrine is now carried at milestone grade in
+> `.planning/milestones/v1.7-ARTIST-READINESS-FRAMING.md`. This seed is
+> preserved as archaeology of where the doctrine was first planted; its
+> content below is intentionally not updated.
+
 ## The transition this names
 
 Phase N+ answered "can the substrate mutate reality safely?" — the
