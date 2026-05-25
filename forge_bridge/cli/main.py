@@ -18,6 +18,7 @@ import typer
 
 from forge_bridge import config
 from forge_bridge.cli import chat as _chat
+from forge_bridge.cli import discover as _discover
 from forge_bridge.cli import doctor as _doctor
 from forge_bridge.cli import exec as _exec
 from forge_bridge.cli import execs as _execs
@@ -434,6 +435,46 @@ graph_app.command(
     epilog=_graph._GRAPH_SHOW_EPILOG,
 )(_graph.graph_show_cmd)
 app.add_typer(graph_app, name="graph")
+
+
+# ── discover group: substrate-derived operator vocabulary ─────────────────
+discover_app = typer.Typer(
+    name="discover",
+    help=(
+        "Discover the forge-bridge operator vocabulary: the chain grammar, "
+        "the six graph primitives, and the available tools."
+    ),
+    no_args_is_help=True,
+)
+discover_app.command(
+    "primitives",
+    help="List graph primitives derived from the primitive registry.",
+)(_discover.discover_primitives_cmd)
+discover_app.command(
+    "primitive",
+    help="Show one graph primitive's substrate docstrings.",
+)(_discover.discover_primitive_cmd)
+discover_app.command(
+    "tools",
+    help="List MCP tools registered with the bridge.",
+)(_discover.discover_tools_cmd)
+discover_app.command(
+    "tool",
+    help="Show one MCP tool's description, annotations, and provenance.",
+)(_discover.discover_tool_cmd)
+discover_app.command(
+    "macros",
+    help="List user macros and their chain expansions.",
+)(_discover.discover_macros_cmd)
+discover_app.command(
+    "macro",
+    help="Show one macro's full chain expansion.",
+)(_discover.discover_macro_cmd)
+discover_app.command(
+    "grammar",
+    help="Show the deterministic chain grammar reference.",
+)(_discover.discover_grammar_cmd)
+app.add_typer(discover_app, name="discover")
 
 
 # ── flame group: thin ping ────────────────────────────────────────────────
