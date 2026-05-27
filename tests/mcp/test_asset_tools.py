@@ -44,6 +44,7 @@ class _RepoBackedClient:
     def __init__(self, session_factory):
         self._session_factory = session_factory
         self._metadata_by_entity_id: dict[str, dict] = {}
+        self._locations_by_entity_id: dict[str, list[dict]] = {}
 
     async def request(self, msg):
         async with self._session_factory() as session:
@@ -74,6 +75,7 @@ class _RepoBackedClient:
                     raise ValueError(f"Entity {msg['entity_id']} not found")
                 data = entity.to_dict()
                 data["metadata"] = dict(self._metadata_by_entity_id.get(str(entity.id), data["metadata"]))
+                data["locations"] = list(self._locations_by_entity_id.get(str(entity.id), []))
                 return data
 
             if msg.type == MsgType.ENTITY_LIST:
@@ -85,6 +87,7 @@ class _RepoBackedClient:
                 for entity in entities:
                     data = entity.to_dict()
                     data["metadata"] = dict(self._metadata_by_entity_id.get(str(entity.id), data["metadata"]))
+                    data["locations"] = list(self._locations_by_entity_id.get(str(entity.id), []))
                     rows.append(data)
                 return {"entities": rows}
 
@@ -108,6 +111,22 @@ class _RepoBackedClient:
                 entity.metadata = attrs
                 await entity_repo.save(entity)
                 await session.commit()
+                return {}
+
+            if msg.type == MsgType.LOC_ADD:
+                entity = await entity_repo.get(uuid.UUID(msg["entity_id"]))
+                if entity is None:
+                    raise ValueError(f"Entity {msg['entity_id']} not found")
+                loc = {
+                    "path": msg["path"],
+                    "storage_type": msg.get("storage_type", "local"),
+                    "priority": msg.get("priority", 0),
+                    "exists": False,
+                    "metadata": {},
+                }
+                locations = self._locations_by_entity_id.setdefault(str(entity.id), [])
+                locations.append(loc)
+                locations.sort(key=lambda item: item["priority"], reverse=True)
                 return {}
 
         raise AssertionError(f"unsupported message type {msg.type!r}")
@@ -317,3 +336,35 @@ async def test_update_asset_preserves_entity_type_against_smuggled_attribute(rep
     assert loaded["entity_type"] == "asset"
     listed = json.loads(await asset_tools.list_assets(asset_tools.ListAssetsInput(project_id=project_id)))
     assert any(asset["asset_id"] == asset_id for asset in listed["assets"])
+
+
+@pytest.mark.asyncio
+async def test_attach_asset_location_round_trip(repo_client, project_id):
+    asset_id = await _create_asset(project_id, "Located Asset", "cad_source")
+
+    result = await asset_tools.attach_asset_location(
+        asset_tools.AttachAssetLocationInput(
+            asset_id=asset_id,
+            path="/show/assets/car/model.usd",
+            storage_type="network",
+            priority=10,
+        )
+    )
+
+    decoded = json.loads(result)
+    assert decoded["attached"] is True
+    loaded = json.loads(await asset_tools.get_asset(asset_tools.GetAssetInput(asset_id=asset_id)))
+    assert loaded["locations"][0]["path"] == "/show/assets/car/model.usd"
+    assert loaded["locations"][0]["storage_type"] == "network"
+
+
+@pytest.mark.asyncio
+async def test_attach_asset_location_rejects_non_asset(repo_client, project_id, session_factory):
+    shot_id = await _create_shot(session_factory, project_id)
+
+    result = await asset_tools.attach_asset_location(
+        asset_tools.AttachAssetLocationInput(asset_id=shot_id, path="/show/shot.mov")
+    )
+
+    decoded = json.loads(result)
+    assert decoded["error"] == f"Entity {shot_id} is not an asset"

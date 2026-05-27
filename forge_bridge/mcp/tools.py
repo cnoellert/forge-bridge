@@ -800,6 +800,41 @@ async def update_asset(params: UpdateAssetInput) -> str:
         return _err(str(e))
 
 
+class AttachAssetLocationInput(BaseModel):
+    asset_id: str = Field(..., description="Asset UUID")
+    path: str = Field(..., description="Filesystem path or URL")
+    storage_type: str = Field(
+        default="local",
+        description="One of: local, network, cloud, archive, clip",
+    )
+    priority: int = Field(default=0, description="Higher = preferred when multiple locations exist")
+
+
+async def attach_asset_location(params: AttachAssetLocationInput) -> str:
+    """Attach a path or URL location to an Asset entity."""
+    try:
+        from forge_bridge.server.protocol import entity_get, location_add
+
+        client = _client()
+        asset = await client.request(entity_get(params.asset_id))
+        if asset.get("entity_type") != "asset":
+            return _err(f"Entity {params.asset_id} is not an asset")
+
+        await client.request(location_add(
+            entity_id=params.asset_id,
+            path=params.path,
+            storage_type=params.storage_type,
+            priority=params.priority,
+        ))
+        return _ok({
+            "attached": True,
+            "asset_id": params.asset_id,
+            "path": params.path,
+        })
+    except Exception as e:
+        return _err(str(e))
+
+
 # ─────────────────────────────────────────────────────────────
 # Versions
 # ─────────────────────────────────────────────────────────────

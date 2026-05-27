@@ -434,6 +434,17 @@ def register_builtins(mcp: FastMCP) -> None:
     )
 
     register_tool(
+        mcp, tools.attach_asset_location,
+        name="forge_attach_asset_location",
+        source="builtin",
+        annotations={
+            "title": "Attach Asset location",
+            "readOnlyHint": False,
+            "idempotentHint": False,
+        },
+    )
+
+    register_tool(
         mcp, tools.list_versions,
         name="forge_list_versions",
         source="builtin",
