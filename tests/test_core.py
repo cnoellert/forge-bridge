@@ -75,9 +75,16 @@ class TestStatus:
     def test_alias(self):
         assert Status.from_string("wip") == Status.IN_PROGRESS
         assert Status.from_string("final") == Status.DELIVERED
+        assert Status.from_string("done") == Status.DELIVERED
+        assert Status.from_string("complete") == Status.DELIVERED
+
+    def test_asset_operator_aliases(self):
+        assert Status.from_string("proposed") == Status.PENDING
+        assert Status.from_string("published") == Status.DELIVERED
+        assert Status.from_string("invalidated") == Status.ARCHIVED
 
     def test_unknown_raises(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="Unknown status 'nonsense'"):
             Status.from_string("nonsense")
 
 

@@ -39,6 +39,7 @@ class Status(str, Enum):
     def from_string(cls, value: str) -> "Status":
         """Parse a status string, with common aliases."""
         aliases = {
+            "proposed":         cls.PENDING,
             "wip":              cls.IN_PROGRESS,
             "work_in_progress": cls.IN_PROGRESS,
             "ip":               cls.IN_PROGRESS,
@@ -47,7 +48,9 @@ class Status(str, Enum):
             "final":            cls.DELIVERED,
             "done":             cls.DELIVERED,
             "complete":         cls.DELIVERED,
+            "published":        cls.DELIVERED,
             "omit":             cls.ARCHIVED,
+            "invalidated":      cls.ARCHIVED,
         }
         normalized = value.lower().strip()
         if normalized in aliases:
