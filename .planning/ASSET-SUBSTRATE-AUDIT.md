@@ -9,18 +9,28 @@
 
 ## Headline
 
-This is **operationalize-what's-stubbed**, not greenfield. `Asset` is
-already in the canonical vocabulary; the load-bearing substrate
-(entity table, JSONB attributes, relationship graph, location records,
-event log, WebSocket protocol, sync/async clients) is generic enough
-that Asset already round-trips through it. The gap is operator-surface
-work — tools, CLI, tests, docs — plus one structural decision about
-whether `asset_type` deserves a first-class indexed column.
+**Asset is not missing from Bridge. Asset is quiet. Thread C makes it
+speak.** *(Operator coinage, 2026-05-27; ratified writer's-room
+framing.)*
 
-The substrate is closer to ready than the brief implies. The
-implementation arc is meaningfully smaller than Phase N+ (the commit
-primitive) — most of the brief's checklist is already mechanically
-satisfied; the work is making it operator-visible and
+`Asset` is already in the canonical vocabulary; the load-bearing
+substrate (entity table, JSONB attributes, relationship graph,
+location records, event log, WebSocket protocol, sync/async clients)
+is generic enough that Asset already round-trips through it. The gap
+is operator-surface work — tools, CLI, tests, docs — that makes the
+substrate operationally audible.
+
+**Thread C scope discipline.** The first pass treats `asset_type` as a
+required semantic attribute on asset entities, queryable through the
+existing JSONB+GIN path. Promotion to a structured column or
+registry-backed classifier is **not** in Thread C — it is a follow-on
+motion that opens only if repeated operator/API usage produces
+evidence that JSONB query guarantees are insufficient. One clean
+thread, not a schema philosophy war.
+
+The implementation arc is meaningfully smaller than Phase N+ (the
+commit primitive) — most of the brief's checklist is already
+mechanically satisfied; the work is making it operator-visible and
 operator-driveable.
 
 ## Layer-by-layer current state
@@ -214,9 +224,8 @@ Layer 6 work but with an additional schema-migration step.
 | 6 — Console | absent | optional Assets view in Artist Console | S/M |
 | 6 — tests | absent | round-trip, list-by-type, relationship-traversal, location-attach | M |
 | 6 — docs | absent | `docs/ASSET.md` + VOCABULARY.md cross-link | S |
-| 7 — projekt-forge DBAsset | absent | DBAsset model + alembic migration + repo layer | M |
-| 7 — projekt-forge CLI | absent | `projekt-forge asset create/list/show/locate/relate` | M |
-| 7 — projekt-forge tests | absent | DB persistence + graph relationship tests | M |
+| 7 — projekt-forge consume-vs-duplicate | absent | **C.3 proves** whether consumer needs DBAsset, or just commands + project conventions over Bridge's substrate | S (investigation) + S–M (consume-direct CLI) **OR** M (DBAsset+migration+CLI) — depends on C.3 finding |
+| 7 — projekt-forge tests | absent | persistence + graph-relationship tests; shape depends on C.3 outcome | M |
 
 Effort symbols: XS = <1 commit / decision-only. S = 1 commit.
 M = 2-4 commits. L = 5+ commits / multi-phase.
@@ -277,53 +286,92 @@ Reasoning:
   invites scope creep into "asset DAM features" which the brief
   explicitly bans.
 
-**Decomposition shape (recommended, not committed):**
+**Decomposition (operator-ratified, 2026-05-27):**
 
-- **C.1 Bridge — Asset MCP tools + tests + docs.** Adds
-  `forge_create_asset`, `forge_list_assets`, `forge_get_asset`,
-  `forge_update_asset`, plus optionally `forge_attach_location` and
-  `forge_relate_asset` (or generic equivalents). Behavioral tests
-  cover create/read/update/list and relationship traversal. Docs at
-  `docs/ASSET.md` and VOCABULARY.md cross-link. Ships substrate-only;
-  no consumer impact.
-- **C.2 Bridge — `fbridge asset` CLI subgroup.** Operator CLI surface
-  over the C.1 MCP tools — `fbridge asset create / list / show /
-  locate / relate`. Dogfood-tested against the new bridge surface
-  itself (matches the Thread B B-2 dogfooding pattern). Optional
-  Console Assets view rides here or defers to C.3.
-- **C.3 projekt-forge — DBAsset + migration + CLI.** Mirror of C.1+C.2
-  on the consumer side. Adds DBAsset model, alembic migration 006,
-  projekt-forge asset CLI subgroup, persistence + graph-relationship
-  tests. Lands after C.1 (substrate-before-consumer discipline).
+- **C.1 — Bridge MCP asset tools.** Create, list, get/show, update
+  (status + attributes), attach location, relate asset. Behavioral
+  tests cover create/read/update/list and relationship traversal.
+  Docs at `docs/ASSET.md` + VOCABULARY.md cross-link. Ships
+  substrate-only; no consumer impact. `asset_type` is a required
+  semantic attribute, queryable via JSONB+GIN — no schema promotion
+  in this phase.
+- **C.2 — Bridge CLI asset surface.** Same operations as C.1,
+  operator-friendly Typer subgroup under `fbridge asset`.
+  **`--json` mode preserved** (matches the P-01 stdout-purity
+  constraint already binding on `fbridge`). Dogfood-tested against
+  the C.1 surface (matches Thread B B-2 dogfooding pattern).
+- **C.3 — Projekt Forge consumer proof.** **Investigation-first**,
+  not implementation-first. The load-bearing question:
+  *can projekt-forge consume Bridge's generic entity-asset directly,
+  or does it genuinely need its own DBAsset?* Default hypothesis: if
+  Bridge already persists generic assets well, projekt-forge needs
+  **commands and project conventions** more than storage. The thread
+  proves or disproves that. Outcomes:
+    - **If consume-directly works:** C.3 ships projekt-forge command
+      surfaces + project conventions over the Bridge substrate. No
+      DBAsset, no migration, no duplicate table. Substrate-before-
+      consumer respected — the consumer drives, doesn't duplicate.
+    - **If DBAsset is genuinely required:** C.3 ships DBAsset +
+      alembic migration + repo + CLI, but with evidence about *why*
+      duplication is warranted (specific query patterns / consistency
+      semantics / failure modes that consume-directly can't satisfy).
+  Either way, lands after C.1 (substrate-before-consumer discipline).
 
-**Open scoping questions (for the writing room when C.1 frames):**
+**Why C.3 is investigation-first.** The audit's first draft defaulted
+to "projekt-forge gets DBAsset" because projekt-forge has DBShot /
+DBVersion / DBMedia tables and parallel structure looked obvious.
+Operator ratification rejected that default — Bridge is the substrate,
+projekt-forge is the consumer, and the substrate/consumer pattern
+already governs Learning and Staged ops (see
+[[project_forge_bridge_substrate_not_producer]]). Whether projekt-forge
+extends the duplicate-table convention to Asset, or starts breaking
+that pattern in favor of consume-directly, is a real architectural
+question worth making the room prove rather than answering by
+precedent.
 
-1. **`asset_type` extensibility shape.** Open string field, structured
-   column with B-tree index, or registry-backed (analogous to Role)?
-   Evidence to gather: predominant query patterns. Brief recommends
-   "prefer extensibility" — likely lands as open string with optional
-   structured-column promotion if query evidence warrants.
-2. **`status` semantics for Asset.** Inherited from `Status` enum
+**Open scoping questions (for the writing room when Thread C opens):**
+
+1. **`status` semantics for Asset.** Inherited from `Status` enum
    currently (Pending/InProgress/etc.). Is the Shot-flavored status
    ontology right for assets, or does Asset need its own
    approval/lifecycle states (e.g. `proposed → approved → published →
-   invalidated`)? The brief mentions `approve` and `invalidate` in its
-   North Star — a hint that Asset status may want its own ontology.
-3. **MCP tool granularity.** Six dedicated Asset tools, or extend the
+   invalidated`)? The brief mentions `approve` and `invalidate` in
+   its North Star — a hint that Asset status may want its own
+   ontology. Resolvable in C.1.
+2. **MCP tool granularity.** Six dedicated Asset tools, or extend the
    generic `forge_create_entity` / `forge_list_entities` surface?
    Pattern in current MCP layer leans toward dedicated tools
    (`forge_list_shots`, `forge_get_shot`, `forge_create_shot`).
    Evidence-grounded answer: follow the existing convention unless
    the registry-watcher / sanitization layer breaks for asset_type.
-4. **Asset relationships to Version.** The Version entity already has
-   `parent_type` field that supports `"shot"` or `"asset"`. Asset
+   Resolvable in C.1.
+3. **Asset relationships to Version.** The Version entity already
+   has `parent_type` field that supports `"shot"` or `"asset"`. Asset
    versioning works substrate-wise. Whether C.1 ships an explicit
    `forge_publish_asset_version` MCP tool, or leaves that to
    consumer-driven publish flows, is a scoping decision.
-5. **Cross-repo coordination tactics.** Does projekt-forge pin a
-   tagged forge-bridge release (e.g. v1.7.x) before C.3 lands, or
-   develop against editable install and pin at v1.7 milestone close?
-   Defer to projekt-forge maintainer ruling.
+4. **C.3 investigation criteria — explicit.** What evidence would
+   force "needs DBAsset" over "consume directly"? Candidates: query
+   patterns Bridge can't serve at projekt-forge's read latency;
+   transactional consistency needs that span Bridge + projekt-forge
+   data; failure-mode isolation; offline-operation requirements. The
+   writing room nails the criteria *before* C.3 starts gathering
+   evidence — otherwise C.3 drifts toward "build it anyway."
+
+**Explicitly deferred — not open scoping questions:**
+
+- **`asset_type` extensibility shape.** Stays as an open string
+  field with JSONB+GIN query support for v1. Promotion to a
+  structured column with B-tree index, or registry-backed treatment
+  analogous to Role, is a **follow-on motion** that opens only if
+  repeated operator/API usage produces evidence that JSONB query
+  guarantees are insufficient. Per
+  [[feedback-explicitly-unbound-vs-implicitly-rejected]]: this is
+  deferral, not rejection — preserves maneuverability when evidence
+  arrives.
+- **Cross-repo coordination tactics.** projekt-forge maintainer
+  ruling, not a Thread C ruling. Pinning policy, editable-install
+  vs tagged-release adoption, etc., live downstream.
 
 ## Next Motion
 
@@ -333,13 +381,18 @@ When the writing room opens Thread C:
    (`.planning/seeds/SEED-ASSET-FIRST-CLASS-ENTITY-V1.7+.md`) to a
    thread framing artifact at
    `.planning/phases/C.1-.../THREAD-C-FRAMING.md` (matching Thread A's
-   directory convention).
-2. Draft the C.1 phase plan against this audit's gap map and the 5
+   directory convention). The thread framing carries forward the
+   operator-ratified headline ("Asset is not missing from Bridge.
+   Asset is quiet. Thread C makes it speak.") and the deferral
+   discipline on `asset_type` schema work.
+2. Draft the C.1 phase plan against this audit's gap map and the 4
    open scoping questions above.
 3. Stage 1b review the C.1 plan before any implementation handoff
    (per the active testing discipline).
-4. C.1 ships; C.2 ships; C.3 ships on projekt-forge against the
-   pinned bridge release.
+4. C.1 ships (Bridge MCP). C.2 ships (Bridge CLI, JSON mode
+   preserved). C.3 opens as an investigation that proves or disproves
+   the consume-directly hypothesis before any projekt-forge
+   schema/code lands.
 
 Thread A is unblocked by this audit and proceeds in parallel.
 
