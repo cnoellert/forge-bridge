@@ -87,6 +87,9 @@ Traits: `Versionable`, `Locatable`, `Relational`
 ### Asset
 Anything that isn't a Shot but gets used in one. Characters, elements, textures, audio, reference material.
 
+For operator-facing Asset tools, examples, and C.1 scope boundaries, see
+[ASSET.md](ASSET.md).
+
 | Attribute | Type | Description |
 |-----------|------|-------------|
 | `id` | uuid | Canonical identifier |
