@@ -412,6 +412,17 @@ def register_builtins(mcp: FastMCP) -> None:
     )
 
     register_tool(
+        mcp, tools.get_asset,
+        name="forge_get_asset",
+        source="builtin",
+        annotations={
+            "title": "Get Asset details",
+            "readOnlyHint": True,
+            "idempotentHint": True,
+        },
+    )
+
+    register_tool(
         mcp, tools.list_versions,
         name="forge_list_versions",
         source="builtin",

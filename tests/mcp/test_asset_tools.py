@@ -8,7 +8,7 @@ import pytest
 import pytest_asyncio
 from pydantic import ValidationError
 
-from forge_bridge.core import Asset, Project, Registry, Status
+from forge_bridge.core import Asset, Project, Registry, Shot, Status
 from forge_bridge.mcp import tools as asset_tools
 from forge_bridge.mcp.registry import register_builtins
 from forge_bridge.server.protocol import MsgType, entity_get
@@ -112,6 +112,14 @@ async def _create_asset(project_id: str, name: str, asset_type: str, status: str
     return decoded["asset_id"]
 
 
+async def _create_shot(session_factory, project_id: str, name: str = "SH010") -> str:
+    shot = Shot(name=name)
+    async with session_factory() as session:
+        await EntityRepo(session, Registry.default()).save(shot, uuid.UUID(project_id))
+        await session.commit()
+    return str(shot.id)
+
+
 def test_create_asset_requires_asset_type():
     with pytest.raises(ValidationError):
         asset_tools.CreateAssetInput()
@@ -205,3 +213,27 @@ async def test_list_assets_empty_args(repo_client, project_id):
     decoded = json.loads(result)
     assert decoded["count"] >= 1
     assert any(asset["name"] == "All Assets" for asset in decoded["assets"])
+
+
+@pytest.mark.asyncio
+async def test_get_asset_returns_full_payload(repo_client, project_id):
+    asset_id = await _create_asset(project_id, "Detailed Asset", "environment")
+
+    result = await asset_tools.get_asset(asset_tools.GetAssetInput(asset_id=asset_id))
+
+    decoded = json.loads(result)
+    assert decoded["id"] == asset_id
+    assert decoded["entity_type"] == "asset"
+    assert decoded["asset_type"] == "environment"
+    assert "locations" in decoded
+    assert "relationships" in decoded
+
+
+@pytest.mark.asyncio
+async def test_get_asset_rejects_non_asset_uuid(repo_client, project_id, session_factory):
+    shot_id = await _create_shot(session_factory, project_id)
+
+    result = await asset_tools.get_asset(asset_tools.GetAssetInput(asset_id=shot_id))
+
+    decoded = json.loads(result)
+    assert decoded["error"] == f"Entity {shot_id} is not an asset"

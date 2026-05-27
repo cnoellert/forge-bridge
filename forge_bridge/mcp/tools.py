@@ -734,6 +734,23 @@ async def list_assets(params: Optional[ListAssetsInput] = None) -> str:
         return _err(str(e))
 
 
+class GetAssetInput(BaseModel):
+    asset_id: str = Field(..., description="Asset UUID")
+
+
+async def get_asset(params: GetAssetInput) -> str:
+    """Get a full Asset entity payload by UUID."""
+    try:
+        from forge_bridge.server.protocol import entity_get
+
+        asset = await _client().request(entity_get(params.asset_id))
+        if asset.get("entity_type") != "asset":
+            return _err(f"Entity {params.asset_id} is not an asset")
+        return _ok(asset)
+    except Exception as e:
+        return _err(str(e))
+
+
 # ─────────────────────────────────────────────────────────────
 # Versions
 # ─────────────────────────────────────────────────────────────
