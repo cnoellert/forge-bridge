@@ -445,6 +445,17 @@ def register_builtins(mcp: FastMCP) -> None:
     )
 
     register_tool(
+        mcp, tools.relate_asset,
+        name="forge_relate_asset",
+        source="builtin",
+        annotations={
+            "title": "Relate Asset to entity",
+            "readOnlyHint": False,
+            "idempotentHint": False,
+        },
+    )
+
+    register_tool(
         mcp, tools.list_versions,
         name="forge_list_versions",
         source="builtin",

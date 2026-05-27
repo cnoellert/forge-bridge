@@ -835,6 +835,49 @@ async def attach_asset_location(params: AttachAssetLocationInput) -> str:
         return _err(str(e))
 
 
+class RelateAssetInput(BaseModel):
+    asset_id: str = Field(..., description="Source asset UUID")
+    target_id: str = Field(..., description="Target entity UUID (any entity type)")
+    rel_type: str = Field(
+        ...,
+        description=(
+            "Relationship type. System types: member_of, version_of, "
+            "derived_from, references, peer_of, consumes, produces. "
+            "Custom types may be passed by UUID string."
+        ),
+    )
+    attributes: Optional[dict] = Field(
+        default=None,
+        description="Edge attributes (e.g. track_role for consumes/produces)",
+    )
+
+
+async def relate_asset(params: RelateAssetInput) -> str:
+    """Create a relationship edge from an Asset to another entity."""
+    try:
+        from forge_bridge.server.protocol import entity_get, relationship_create
+
+        client = _client()
+        asset = await client.request(entity_get(params.asset_id))
+        if asset.get("entity_type") != "asset":
+            return _err(f"Entity {params.asset_id} is not an asset")
+
+        await client.request(relationship_create(
+            source_id=params.asset_id,
+            target_id=params.target_id,
+            rel_type=params.rel_type,
+            attributes=params.attributes,
+        ))
+        return _ok({
+            "related": True,
+            "asset_id": params.asset_id,
+            "target_id": params.target_id,
+            "rel_type": params.rel_type,
+        })
+    except Exception as e:
+        return _err(str(e))
+
+
 # ─────────────────────────────────────────────────────────────
 # Versions
 # ─────────────────────────────────────────────────────────────

@@ -45,6 +45,7 @@ class _RepoBackedClient:
         self._session_factory = session_factory
         self._metadata_by_entity_id: dict[str, dict] = {}
         self._locations_by_entity_id: dict[str, list[dict]] = {}
+        self._relationships_by_entity_id: dict[str, list[dict]] = {}
 
     async def request(self, msg):
         async with self._session_factory() as session:
@@ -76,6 +77,7 @@ class _RepoBackedClient:
                 data = entity.to_dict()
                 data["metadata"] = dict(self._metadata_by_entity_id.get(str(entity.id), data["metadata"]))
                 data["locations"] = list(self._locations_by_entity_id.get(str(entity.id), []))
+                data["relationships"] = list(self._relationships_by_entity_id.get(str(entity.id), []))
                 return data
 
             if msg.type == MsgType.ENTITY_LIST:
@@ -88,6 +90,7 @@ class _RepoBackedClient:
                     data = entity.to_dict()
                     data["metadata"] = dict(self._metadata_by_entity_id.get(str(entity.id), data["metadata"]))
                     data["locations"] = list(self._locations_by_entity_id.get(str(entity.id), []))
+                    data["relationships"] = list(self._relationships_by_entity_id.get(str(entity.id), []))
                     rows.append(data)
                 return {"entities": rows}
 
@@ -127,6 +130,22 @@ class _RepoBackedClient:
                 locations = self._locations_by_entity_id.setdefault(str(entity.id), [])
                 locations.append(loc)
                 locations.sort(key=lambda item: item["priority"], reverse=True)
+                return {}
+
+            if msg.type == MsgType.REL_CREATE:
+                source = await entity_repo.get(uuid.UUID(msg["source_id"]))
+                target = await entity_repo.get(uuid.UUID(msg["target_id"]))
+                if source is None:
+                    raise ValueError(f"Entity {msg['source_id']} not found")
+                if target is None:
+                    raise ValueError(f"Entity {msg['target_id']} not found")
+                rel = {
+                    "source_id": msg["source_id"],
+                    "target_id": msg["target_id"],
+                    "rel_type": msg["rel_type"],
+                    "attributes": msg.get("attributes") or {},
+                }
+                self._relationships_by_entity_id.setdefault(str(source.id), []).append(rel)
                 return {}
 
         raise AssertionError(f"unsupported message type {msg.type!r}")
@@ -368,3 +387,41 @@ async def test_attach_asset_location_rejects_non_asset(repo_client, project_id, 
 
     decoded = json.loads(result)
     assert decoded["error"] == f"Entity {shot_id} is not an asset"
+
+
+@pytest.mark.asyncio
+async def test_relate_asset_creates_edge(repo_client, project_id, session_factory):
+    asset_id = await _create_asset(project_id, "Reference Asset", "reference_pack")
+    shot_id = await _create_shot(session_factory, project_id)
+
+    result = await asset_tools.relate_asset(
+        asset_tools.RelateAssetInput(
+            asset_id=asset_id,
+            target_id=shot_id,
+            rel_type="references",
+            attributes={"note": "lookdev"},
+        )
+    )
+
+    decoded = json.loads(result)
+    assert decoded["related"] is True
+    loaded = json.loads(await asset_tools.get_asset(asset_tools.GetAssetInput(asset_id=asset_id)))
+    assert loaded["relationships"][0]["target_id"] == shot_id
+    assert loaded["relationships"][0]["rel_type"] == "references"
+
+
+@pytest.mark.asyncio
+async def test_relate_asset_rejects_non_asset_source(repo_client, project_id, session_factory):
+    source_shot_id = await _create_shot(session_factory, project_id, name="SH020")
+    target_shot_id = await _create_shot(session_factory, project_id, name="SH030")
+
+    result = await asset_tools.relate_asset(
+        asset_tools.RelateAssetInput(
+            asset_id=source_shot_id,
+            target_id=target_shot_id,
+            rel_type="references",
+        )
+    )
+
+    decoded = json.loads(result)
+    assert decoded["error"] == f"Entity {source_shot_id} is not an asset"
