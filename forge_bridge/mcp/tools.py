@@ -622,6 +622,66 @@ async def update_shot_status(params: UpdateShotStatusInput) -> str:
 
 
 # ─────────────────────────────────────────────────────────────
+# Assets
+# ─────────────────────────────────────────────────────────────
+
+class CreateAssetInput(BaseModel):
+    project_id: str = Field(..., description="Project UUID")
+    name: str = Field(..., description="Asset name (operator-facing)")
+    asset_type: str = Field(
+        ...,
+        description=(
+            "Asset type/category. Free-form string — open vocabulary. "
+            "Examples: vehicle_spec, cad_source, usd_composition, "
+            "environment, location_sheet, material, camera_move, "
+            "lighting_setup, style_sheet, reference_pack, "
+            "otio_edit, deliverable. New types do not require schema changes."
+        ),
+    )
+    status: Optional[str] = Field(
+        default=None,
+        description="Initial status (default: pending). Accepts canonical Status values + aliases.",
+    )
+    attributes: Optional[dict] = Field(
+        default=None,
+        description="Optional metadata dict for type-specific or pipeline-specific fields.",
+    )
+
+
+async def create_asset(params: CreateAssetInput) -> str:
+    """Create a new Asset entity.
+
+    Asset is any durable production object that needs persistent
+    identity in the graph — characters, vehicles, environments,
+    materials, references, etc. Distinct from Shot.
+
+    Returns the asset_id on success.
+    """
+    try:
+        from forge_bridge.server.protocol import entity_create
+        client = _client()
+        asset_attrs = dict(params.attributes or {})
+        # asset_type lives at the top of the attributes payload —
+        # repo.py reads it from there.
+        asset_attrs["asset_type"] = params.asset_type
+        result = await client.request(entity_create(
+            entity_type="asset",
+            project_id=params.project_id,
+            name=params.name,
+            attributes=asset_attrs,
+            status=params.status,
+        ))
+        return _ok({
+            "created": True,
+            "asset_id": result["entity_id"],
+            "asset_name": params.name,
+            "asset_type": params.asset_type,
+        })
+    except Exception as e:
+        return _err(str(e))
+
+
+# ─────────────────────────────────────────────────────────────
 # Versions
 # ─────────────────────────────────────────────────────────────
 

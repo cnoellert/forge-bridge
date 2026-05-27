@@ -387,6 +387,19 @@ def register_builtins(mcp: FastMCP) -> None:
         },
     )
 
+    # ── Asset operability tools (Thread C / Phase C.1) ──
+
+    register_tool(
+        mcp, tools.create_asset,
+        name="forge_create_asset",
+        source="builtin",
+        annotations={
+            "title": "Create an Asset entity",
+            "readOnlyHint": False,
+            "idempotentHint": False,
+        },
+    )
+
     register_tool(
         mcp, tools.list_versions,
         name="forge_list_versions",
