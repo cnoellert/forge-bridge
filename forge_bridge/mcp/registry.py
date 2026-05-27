@@ -401,6 +401,17 @@ def register_builtins(mcp: FastMCP) -> None:
     )
 
     register_tool(
+        mcp, tools.list_assets,
+        name="forge_list_assets",
+        source="builtin",
+        annotations={
+            "title": "List Asset entities",
+            "readOnlyHint": True,
+            "idempotentHint": True,
+        },
+    )
+
+    register_tool(
         mcp, tools.list_versions,
         name="forge_list_versions",
         source="builtin",

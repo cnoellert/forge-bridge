@@ -681,6 +681,59 @@ async def create_asset(params: CreateAssetInput) -> str:
         return _err(str(e))
 
 
+class ListAssetsInput(BaseModel):
+    project_id: Optional[str] = Field(default=None, description="Project UUID filter")
+    asset_type: Optional[str] = Field(default=None, description="Filter by asset_type (exact match)")
+    status: Optional[str] = Field(default=None, description="Filter by status (canonical value or alias)")
+    limit: int = Field(default=100, description="Max results (silently clamped to 500)")
+
+
+async def list_assets(params: Optional[ListAssetsInput] = None) -> str:
+    """List Asset entities, optionally filtered by project, type, and status."""
+    if params is None:
+        params = ListAssetsInput()
+    try:
+        from forge_bridge.core import Status
+        from forge_bridge.server.protocol import entity_list, project_list
+
+        client = _client()
+        limit = max(1, min(params.limit, 500))
+        project_ids: list[str]
+        if params.project_id:
+            project_ids = [params.project_id]
+        else:
+            projects = await client.request(project_list())
+            project_ids = [p["id"] for p in projects.get("projects", [])]
+
+        assets: list[dict] = []
+        for project_id in project_ids:
+            result = await client.request(entity_list("asset", project_id))
+            assets.extend(result.get("entities", []))
+
+        if params.asset_type:
+            assets = [a for a in assets if a.get("asset_type") == params.asset_type]
+        if params.status:
+            status = Status.from_string(params.status).value
+            assets = [a for a in assets if a.get("status") == status]
+
+        summaries = [
+            {
+                "asset_id": asset.get("id"),
+                "name": asset.get("name"),
+                "asset_type": asset.get("asset_type"),
+                "status": asset.get("status"),
+                "created_at": asset.get("created_at"),
+            }
+            for asset in assets[:limit]
+        ]
+        return _ok({
+            "count": len(summaries),
+            "assets": summaries,
+        })
+    except Exception as e:
+        return _err(str(e))
+
+
 # ─────────────────────────────────────────────────────────────
 # Versions
 # ─────────────────────────────────────────────────────────────

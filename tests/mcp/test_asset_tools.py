@@ -62,11 +62,22 @@ class _RepoBackedClient:
                 await session.commit()
                 return {"entity_id": str(entity.id)}
 
+            if msg.type == MsgType.PROJECT_LIST:
+                projects = await ProjectRepo(session).list_all()
+                return {"projects": [project.to_dict() for project in projects]}
+
             if msg.type == MsgType.ENTITY_GET:
                 entity = await entity_repo.get(uuid.UUID(msg["entity_id"]))
                 if entity is None:
                     raise ValueError(f"Entity {msg['entity_id']} not found")
                 return entity.to_dict()
+
+            if msg.type == MsgType.ENTITY_LIST:
+                entities = await entity_repo.list_by_type(
+                    msg["entity_type"],
+                    uuid.UUID(msg["project_id"]),
+                )
+                return {"entities": [entity.to_dict() for entity in entities]}
 
         raise AssertionError(f"unsupported message type {msg.type!r}")
 
@@ -85,6 +96,20 @@ def repo_client(session_factory, monkeypatch):
     client = _RepoBackedClient(session_factory)
     monkeypatch.setattr(asset_tools, "_client", lambda: client)
     return client
+
+
+async def _create_asset(project_id: str, name: str, asset_type: str, status: str | None = None):
+    result = await asset_tools.create_asset(
+        asset_tools.CreateAssetInput(
+            project_id=project_id,
+            name=name,
+            asset_type=asset_type,
+            status=status,
+        )
+    )
+    decoded = json.loads(result)
+    assert "error" not in decoded, decoded
+    return decoded["asset_id"]
 
 
 def test_create_asset_requires_asset_type():
@@ -141,3 +166,42 @@ def test_create_asset_registered_with_pr22_annotations():
     annotations = spy.registered_tools["forge_create_asset"]["annotations"]
     assert annotations["readOnlyHint"] is False
     assert annotations["idempotentHint"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_assets_filters_by_project(repo_client, project_id, session_factory):
+    other_project = Project(name="Other Asset Test", code=f"OT{uuid.uuid4().hex[:8]}")
+    async with session_factory() as session:
+        await ProjectRepo(session).save(other_project)
+        await session.commit()
+    await _create_asset(project_id, "Project A Asset", "vehicle_spec")
+    await _create_asset(str(other_project.id), "Project B Asset", "vehicle_spec")
+
+    result = await asset_tools.list_assets(asset_tools.ListAssetsInput(project_id=project_id))
+
+    decoded = json.loads(result)
+    assert decoded["count"] == 1
+    assert decoded["assets"][0]["name"] == "Project A Asset"
+
+
+@pytest.mark.asyncio
+async def test_list_assets_filters_by_asset_type(repo_client, project_id):
+    await _create_asset(project_id, "Hero Car", "vehicle_spec")
+    await _create_asset(project_id, "Hero Material", "material")
+
+    result = await asset_tools.list_assets(asset_tools.ListAssetsInput(asset_type="material"))
+
+    decoded = json.loads(result)
+    assert decoded["count"] == 1
+    assert decoded["assets"][0]["asset_type"] == "material"
+
+
+@pytest.mark.asyncio
+async def test_list_assets_empty_args(repo_client, project_id):
+    await _create_asset(project_id, "All Assets", "reference_pack")
+
+    result = await asset_tools.list_assets(None)
+
+    decoded = json.loads(result)
+    assert decoded["count"] >= 1
+    assert any(asset["name"] == "All Assets" for asset in decoded["assets"])
