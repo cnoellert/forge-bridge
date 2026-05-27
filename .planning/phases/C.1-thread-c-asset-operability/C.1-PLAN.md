@@ -544,10 +544,12 @@ stylistic.
 
 **Implementation notes for tests:**
 
-- Use the existing in-memory or fixture-based MCP test harness
-  (locate the precedent at implementation time — likely
-  `tests/conftest.py` or an existing `tests/mcp/conftest.py`
-  fixture); do not require live Postgres.
+- Test harness is the `session_factory` fixture path described
+  above (B-3 fixture grounding). The fixture skips gracefully
+  when Postgres is unavailable per `tests/conftest.py:188`
+  `_phase13_postgres_available()`; when it runs it exercises the
+  real wire→repo→JSONB path. No in-memory alternative; no fixture
+  swap-out at implementation time.
 - The three Status alias unit tests can live in
   `tests/test_core.py` next to existing vocabulary tests, or in a
   new `tests/test_vocabulary.py` — match the existing convention.
@@ -623,8 +625,7 @@ Acceptance gate for C.1 docs:
 
 **New files:**
 
-- `tests/mcp/test_asset_tools.py` (or path adjusted at implementation
-  time per existing convention)
+- `tests/mcp/test_asset_tools.py`
 - `docs/ASSET.md`
 
 **Modified files:**
@@ -638,9 +639,8 @@ Acceptance gate for C.1 docs:
   added in `register_builtins()` (at `registry.py:290`) under a
   new section header.
 - `docs/VOCABULARY.md` — Asset subsection or cross-link.
-- `docs/TOOL_AUTHORING.md` — tool inventory update if applicable.
 
-**Files NOT modified (this is intentional per L3):**
+**Files NOT modified (this is intentional per L3 + B-5):**
 
 - `forge_bridge/mcp/tools.py` existing `list_versions`,
   `register_publish`, `list_published_plates`, `get_shot_versions`,
@@ -651,6 +651,11 @@ Acceptance gate for C.1 docs:
 - `forge_bridge/server/router.py`, `forge_bridge/server/protocol.py` —
   the wire protocol already handles Asset generically; C.1 wraps
   what exists.
+- `docs/TOOL_AUTHORING.md` — durable architectural reference for
+  the PR22 contract, not a tool inventory. C.1's six new tools
+  obey the contract by registration (mechanically enforced via
+  the test cited under Test Plan #3); no doc edit is the right
+  outcome. See D9 § rationale.
 
 ## Implementation guidance — ontology-leakage watch
 
