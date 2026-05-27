@@ -43,6 +43,7 @@ class _RepoBackedClient:
 
     def __init__(self, session_factory):
         self._session_factory = session_factory
+        self._metadata_by_entity_id: dict[str, dict] = {}
 
     async def request(self, msg):
         async with self._session_factory() as session:
@@ -60,6 +61,7 @@ class _RepoBackedClient:
                     raise AssertionError(f"unsupported entity_create type {msg['entity_type']!r}")
                 await entity_repo.save(entity, uuid.UUID(msg["project_id"]))
                 await session.commit()
+                self._metadata_by_entity_id[str(entity.id)] = dict(entity.metadata)
                 return {"entity_id": str(entity.id)}
 
             if msg.type == MsgType.PROJECT_LIST:
@@ -70,14 +72,43 @@ class _RepoBackedClient:
                 entity = await entity_repo.get(uuid.UUID(msg["entity_id"]))
                 if entity is None:
                     raise ValueError(f"Entity {msg['entity_id']} not found")
-                return entity.to_dict()
+                data = entity.to_dict()
+                data["metadata"] = dict(self._metadata_by_entity_id.get(str(entity.id), data["metadata"]))
+                return data
 
             if msg.type == MsgType.ENTITY_LIST:
                 entities = await entity_repo.list_by_type(
                     msg["entity_type"],
                     uuid.UUID(msg["project_id"]),
                 )
-                return {"entities": [entity.to_dict() for entity in entities]}
+                rows = []
+                for entity in entities:
+                    data = entity.to_dict()
+                    data["metadata"] = dict(self._metadata_by_entity_id.get(str(entity.id), data["metadata"]))
+                    rows.append(data)
+                return {"entities": rows}
+
+            if msg.type == MsgType.ENTITY_UPDATE:
+                entity = await entity_repo.get(uuid.UUID(msg["entity_id"]))
+                if entity is None:
+                    raise ValueError(f"Entity {msg['entity_id']} not found")
+                if msg.get("name") is not None and hasattr(entity, "name"):
+                    entity.name = msg["name"]
+                if msg.get("status") is not None and hasattr(entity, "status"):
+                    entity.status = Status.from_string(msg["status"])
+                attrs = dict(self._metadata_by_entity_id.get(str(entity.id), entity.metadata))
+                for key, value in (msg.get("attributes") or {}).items():
+                    if key == "entity_type":
+                        continue
+                    if hasattr(entity, key):
+                        setattr(entity, key, value)
+                    else:
+                        attrs[key] = value
+                self._metadata_by_entity_id[str(entity.id)] = attrs
+                entity.metadata = attrs
+                await entity_repo.save(entity)
+                await session.commit()
+                return {}
 
         raise AssertionError(f"unsupported message type {msg.type!r}")
 
@@ -237,3 +268,52 @@ async def test_get_asset_rejects_non_asset_uuid(repo_client, project_id, session
 
     decoded = json.loads(result)
     assert decoded["error"] == f"Entity {shot_id} is not an asset"
+
+
+@pytest.mark.asyncio
+async def test_update_asset_merges_attributes(repo_client, project_id):
+    asset_id = await _create_asset(project_id, "Merge Asset", "material")
+
+    first = await asset_tools.update_asset(
+        asset_tools.UpdateAssetInput(asset_id=asset_id, attributes={"color": "red"})
+    )
+    assert "error" not in json.loads(first)
+    second = await asset_tools.update_asset(
+        asset_tools.UpdateAssetInput(asset_id=asset_id, attributes={"scale": "large"})
+    )
+    assert "error" not in json.loads(second)
+
+    loaded = json.loads(await asset_tools.get_asset(asset_tools.GetAssetInput(asset_id=asset_id)))
+    assert loaded["metadata"]["color"] == "red"
+    assert loaded["metadata"]["scale"] == "large"
+
+
+@pytest.mark.asyncio
+async def test_update_asset_changes_status_via_alias(repo_client, project_id):
+    asset_id = await _create_asset(project_id, "Status Asset", "material")
+
+    result = await asset_tools.update_asset(
+        asset_tools.UpdateAssetInput(asset_id=asset_id, status="proposed")
+    )
+
+    assert "error" not in json.loads(result)
+    loaded = json.loads(await asset_tools.get_asset(asset_tools.GetAssetInput(asset_id=asset_id)))
+    assert loaded["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_update_asset_preserves_entity_type_against_smuggled_attribute(repo_client, project_id):
+    asset_id = await _create_asset(project_id, "Guarded Asset", "material")
+
+    result = await asset_tools.update_asset(
+        asset_tools.UpdateAssetInput(
+            asset_id=asset_id,
+            attributes={"entity_type": "shot", "review_note": "keep"},
+        )
+    )
+
+    assert "error" not in json.loads(result)
+    loaded = json.loads(await asset_tools.get_asset(asset_tools.GetAssetInput(asset_id=asset_id)))
+    assert loaded["entity_type"] == "asset"
+    listed = json.loads(await asset_tools.list_assets(asset_tools.ListAssetsInput(project_id=project_id)))
+    assert any(asset["asset_id"] == asset_id for asset in listed["assets"])

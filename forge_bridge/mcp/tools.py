@@ -751,6 +751,55 @@ async def get_asset(params: GetAssetInput) -> str:
         return _err(str(e))
 
 
+class UpdateAssetInput(BaseModel):
+    asset_id: str = Field(..., description="Asset UUID")
+    name: Optional[str] = Field(default=None, description="New name (omit to leave unchanged)")
+    status: Optional[str] = Field(default=None, description="New status (omit to leave unchanged)")
+    asset_type: Optional[str] = Field(default=None, description="New asset_type (omit to leave unchanged)")
+    attributes: Optional[dict] = Field(
+        default=None,
+        description=(
+            "Attributes to merge (omit to leave unchanged). Existing keys are overwritten; "
+            "existing keys not in this dict are preserved."
+        ),
+    )
+
+
+async def update_asset(params: UpdateAssetInput) -> str:
+    """Update an Asset entity without changing its entity_type."""
+    try:
+        from forge_bridge.server.protocol import entity_get, entity_update
+
+        client = _client()
+        current = await client.request(entity_get(params.asset_id))
+        if current.get("entity_type") != "asset":
+            return _err(f"Entity {params.asset_id} is not an asset")
+
+        merged_attrs = dict(current.get("metadata") or {})
+        merged_attrs["asset_type"] = current.get("asset_type", "generic")
+        for key, value in (params.attributes or {}).items():
+            if key == "entity_type":
+                continue
+            merged_attrs[key] = value
+        if params.asset_type is not None:
+            merged_attrs["asset_type"] = params.asset_type
+
+        await client.request(entity_update(
+            entity_id=params.asset_id,
+            name=params.name,
+            status=params.status,
+            attributes=merged_attrs,
+        ))
+        return _ok({
+            "updated": True,
+            "asset_id": params.asset_id,
+            "name": params.name if params.name is not None else current.get("name"),
+            "asset_type": merged_attrs.get("asset_type"),
+        })
+    except Exception as e:
+        return _err(str(e))
+
+
 # ─────────────────────────────────────────────────────────────
 # Versions
 # ─────────────────────────────────────────────────────────────
