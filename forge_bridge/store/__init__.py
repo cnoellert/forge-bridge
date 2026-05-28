@@ -31,6 +31,11 @@ from forge_bridge.store.staged_operations import (
     StagedOpLifecycleError,
     StagedOpRepo,
 )
+from forge_bridge.store.content_addressed_repo import (
+    ContentAddressedRepo,
+    ImmutableArtifactError,
+)
+from forge_bridge.store.orch_locked_intent_repo import LockedIntentRepo
 from forge_bridge.store.session import (
     create_tables,
     get_async_engine,
@@ -43,6 +48,7 @@ __all__ = [
     "RegistryRepo", "ProjectRepo", "EntityRepo",
     "LocationRepo", "RelationshipRepo", "EventRepo", "ClientSessionRepo",
     "StagedOpRepo", "StagedOpLifecycleError",
+    "ContentAddressedRepo", "ImmutableArtifactError", "LockedIntentRepo",
     "get_session", "get_async_engine", "get_sync_engine",
     "get_db_url", "create_tables",
 ]

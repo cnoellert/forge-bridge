@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy import (
     Boolean,
@@ -56,6 +57,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, relationship
@@ -274,6 +276,7 @@ class DBEntity(Base):
     )
     name        = Column(String(256), nullable=True)   # Not all entities have names
     status      = Column(String(64), nullable=True)
+    content_hash = Column(Text, nullable=True)
     attributes  = Column(JSONB, nullable=False, default=dict)
 
     created_at  = Column(
@@ -311,6 +314,14 @@ class DBEntity(Base):
         Index("ix_entities_project_type",  "project_id", "entity_type"),
         Index("ix_entities_type_name",     "entity_type", "name"),
         Index("ix_entities_status",        "status"),
+        Index(
+            "ix_entities_content_hash_orch",
+            "content_hash",
+            unique=True,
+            postgresql_where=text(
+                "entity_type LIKE 'orch_%' AND content_hash IS NOT NULL"
+            ),
+        ),
         # GIN index on JSONB attributes for fast containment queries
         # e.g. WHERE attributes @> '{"sequence_id": "..."}'
         Index("ix_entities_attributes",    "attributes", postgresql_using="gin"),
@@ -318,6 +329,91 @@ class DBEntity(Base):
 
     def __repr__(self) -> str:
         return f"<DBEntity {self.entity_type} {self.name or self.id!s:.8}...>"
+
+
+class DBOrchLockedIntent:
+    """Thin view over a DBEntity row with entity_type='orch_locked_intent'.
+
+    Per PHASE-4B-ORCHESTRATION-DESIGN.md §4 — typed read accessors over the
+    JSONB attributes column. Writes go through LockedIntentRepo only.
+    """
+
+    ENTITY_TYPE = "orch_locked_intent"
+
+    def __init__(self, entity: DBEntity) -> None:
+        if entity.entity_type != self.ENTITY_TYPE:
+            raise ValueError(
+                f"DBOrchLockedIntent requires entity_type={self.ENTITY_TYPE!r}; "
+                f"got {entity.entity_type!r}"
+            )
+        self._entity = entity
+
+    @classmethod
+    def from_entity(cls, entity: DBEntity) -> DBOrchLockedIntent:
+        return cls(entity)
+
+    @property
+    def id(self) -> uuid.UUID:
+        return self._entity.id
+
+    @property
+    def project_id(self) -> uuid.UUID | None:
+        return self._entity.project_id
+
+    @property
+    def name(self) -> str | None:
+        return self._entity.name
+
+    @property
+    def status(self) -> str | None:
+        return self._entity.status
+
+    @property
+    def content_hash(self) -> str | None:
+        return self._entity.content_hash
+
+    @property
+    def attributes(self) -> dict[str, Any]:
+        return self._entity.attributes
+
+    @property
+    def created_at(self) -> datetime:
+        return self._entity.created_at
+
+    @property
+    def source_read(self) -> Any:
+        return self._entity.attributes.get("source_read")
+
+    @property
+    def change_manifest(self) -> Any:
+        return self._entity.attributes.get("change_manifest")
+
+    @property
+    def success_criteria(self) -> Any:
+        return self._entity.attributes.get("success_criteria")
+
+    @property
+    def allowed_compromises(self) -> Any:
+        return self._entity.attributes.get("allowed_compromises")
+
+    @property
+    def hard_constraints(self) -> Any:
+        return self._entity.attributes.get("hard_constraints")
+
+    @property
+    def escalation_threshold(self) -> Any:
+        return self._entity.attributes.get("escalation_threshold")
+
+    @property
+    def deliverable_spec(self) -> Any:
+        return self._entity.attributes.get("deliverable_spec")
+
+    @property
+    def entity(self) -> DBEntity:
+        return self._entity
+
+    def __repr__(self) -> str:
+        return f"<DBOrchLockedIntent id={self.id!s:.8}...>"
 
 
 # ─────────────────────────────────────────────────────────────
