@@ -35,7 +35,21 @@ from forge_bridge.store.content_addressed_repo import (
     ContentAddressedRepo,
     ImmutableArtifactError,
 )
+from forge_bridge.store.errors import (
+    AppendOnlyLedgerError,
+    LifecycleConsistencyError,
+    MultipleActiveRunsError,
+)
 from forge_bridge.store.orch_locked_intent_repo import LockedIntentRepo
+from forge_bridge.store.orchestration_compromise_ledger_repo import (
+    OrchestrationCompromiseLedgerRepo,
+)
+from forge_bridge.store.orchestration_lifecycle_state_repo import (
+    OrchestrationLifecycleStateRepo,
+)
+from forge_bridge.store.orchestration_promotion_ledger_repo import (
+    OrchestrationPromotionLedgerRepo,
+)
 from forge_bridge.store.session import (
     create_tables,
     get_async_engine,
@@ -49,6 +63,9 @@ __all__ = [
     "LocationRepo", "RelationshipRepo", "EventRepo", "ClientSessionRepo",
     "StagedOpRepo", "StagedOpLifecycleError",
     "ContentAddressedRepo", "ImmutableArtifactError", "LockedIntentRepo",
+    "AppendOnlyLedgerError", "LifecycleConsistencyError", "MultipleActiveRunsError",
+    "OrchestrationLifecycleStateRepo", "OrchestrationPromotionLedgerRepo",
+    "OrchestrationCompromiseLedgerRepo",
     "get_session", "get_async_engine", "get_sync_engine",
     "get_db_url", "create_tables",
 ]

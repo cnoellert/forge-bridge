@@ -348,6 +348,155 @@ from forge_bridge.store.orch_entity_views import (
 
 
 # ─────────────────────────────────────────────────────────────
+# Phase 4B operational tables (migrations 0006–0008)
+# ─────────────────────────────────────────────────────────────
+
+_ORCH_LIFECYCLE_STAGES = (
+    "ingest",
+    "spec_convergence",
+    "routing",
+    "execution",
+    "audit",
+    "promotion",
+    "publish",
+)
+
+_ORCH_LIFECYCLE_STATUSES = (
+    "active",
+    "paused",
+    "completed",
+    "failed",
+    "cancelled",
+)
+
+
+def _in_check(column: str, values: tuple[str, ...]) -> str:
+    quoted = ", ".join(f"'{value}'" for value in values)
+    return f"{column} IN ({quoted})"
+
+
+class DBOrchestrationLifecycleState(Base):
+    """One lifecycle row per pipeline run (PHASE-4B-ORCHESTRATION-DESIGN.md §4)."""
+
+    __tablename__ = "orchestration_lifecycle_state"
+
+    run_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("entities.id", name="fk_orchestration_lifecycle_state_run_id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    shot_id = Column(UUID(as_uuid=True), nullable=False)
+    current_stage = Column(Text, nullable=False)
+    stage_entered_at = Column(DateTime(timezone=True), nullable=False)
+    intent_id = Column(UUID(as_uuid=True), nullable=True)
+    plan_id = Column(UUID(as_uuid=True), nullable=True)
+    current_canonical = Column(UUID(as_uuid=True), nullable=True)
+    status = Column(Text, nullable=False)
+    block = Column(JSONB, nullable=True)
+    last_event_id = Column(UUID(as_uuid=True), nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            _in_check("current_stage", _ORCH_LIFECYCLE_STAGES),
+            name="ck_orchestration_lifecycle_state_current_stage",
+        ),
+        CheckConstraint(
+            _in_check("status", _ORCH_LIFECYCLE_STATUSES),
+            name="ck_orchestration_lifecycle_state_status",
+        ),
+        CheckConstraint(
+            "(status = 'paused') = (block IS NOT NULL)",
+            name="ck_orchestration_lifecycle_state_paused_has_block",
+        ),
+        Index(
+            "ix_orchestration_lifecycle_state_shot_id_active",
+            "shot_id",
+            postgresql_where=text("status = 'active'"),
+        ),
+        Index("ix_orchestration_lifecycle_state_current_stage", "current_stage"),
+        Index("ix_orchestration_lifecycle_state_status", "status"),
+    )
+
+
+class DBOrchestrationPromotionLedger(Base):
+    """Append-only canonical promotion history per shot."""
+
+    __tablename__ = "orchestration_promotion_ledger"
+
+    promotion_id = Column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    shot_id = Column(UUID(as_uuid=True), nullable=False)
+    promoted_artifact_id = Column(UUID(as_uuid=True), nullable=False)
+    superseded_id = Column(UUID(as_uuid=True), nullable=True)
+    audit_report_id = Column(UUID(as_uuid=True), nullable=True)
+    promoted_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    promoted_by = Column(Text, nullable=False)
+    rationale = Column(Text, nullable=False)
+
+    __table_args__ = (
+        Index(
+            "ix_orchestration_promotion_ledger_shot_id_promoted_at",
+            "shot_id",
+            "promoted_at",
+            postgresql_ops={"promoted_at": "DESC"},
+        ),
+        Index(
+            "ix_orchestration_promotion_ledger_promoted_artifact_id",
+            "promoted_artifact_id",
+        ),
+    )
+
+
+class DBOrchestrationCompromiseLedger(Base):
+    """Append-only compromise consumption records."""
+
+    __tablename__ = "orchestration_compromise_ledger"
+
+    entry_id = Column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    intent_id = Column(UUID(as_uuid=True), nullable=False)
+    run_id = Column(UUID(as_uuid=True), nullable=False)
+    plan_id = Column(UUID(as_uuid=True), nullable=True)
+    artifact_id = Column(UUID(as_uuid=True), nullable=True)
+    criterion_id = Column(Text, nullable=False)
+    dimension = Column(Text, nullable=False)
+    side = Column(Text, nullable=False)
+    magnitude = Column(JSONB, nullable=False)
+    recorded_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "side IN ('planned_predicted', 'audit_actual')",
+            name="ck_orchestration_compromise_ledger_side",
+        ),
+        Index(
+            "ix_orchestration_compromise_ledger_intent_criterion",
+            "intent_id",
+            "criterion_id",
+            "dimension",
+        ),
+        Index("ix_orchestration_compromise_ledger_run_id", "run_id"),
+    )
+
+
+# ─────────────────────────────────────────────────────────────
 # Locations
 # ─────────────────────────────────────────────────────────────
 
