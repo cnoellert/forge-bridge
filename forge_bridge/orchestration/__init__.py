@@ -62,6 +62,10 @@ from forge_bridge.orchestration.rule_checks import (
     PlanningRuleViolation,
     default_planning_rule_registry,
 )
+from forge_bridge.orchestration.event_consumer import (
+    ConsumerProcessResult,
+    GraphEngineEventConsumer,
+)
 from forge_bridge.orchestration.manifest import (
     ManifestBody,
     ManifestSubgraphWalker,
@@ -143,4 +147,6 @@ __all__ = [
     "ManifestBody",
     "SubgraphClosure",
     "SnapshotIdSet",
+    "GraphEngineEventConsumer",
+    "ConsumerProcessResult",
 ]

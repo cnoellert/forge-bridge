@@ -61,6 +61,24 @@ def _global_policy_for_dimension(
     return "honor_snapshot"
 
 
+def _source_run_is_eligible(
+    lifecycle: DBOrchestrationLifecycleState,
+    *,
+    kind: Literal["replay", "remediation"],
+) -> bool:
+    if lifecycle.current_stage == "publish" and lifecycle.status == "completed":
+        return True
+    if kind != "remediation":
+        return False
+    if lifecycle.current_stage != "execution" or lifecycle.status != "paused":
+        return False
+    block = lifecycle.block if isinstance(lifecycle.block, dict) else {}
+    return (
+        block.get("kind") == "awaiting_decision"
+        and block.get("decision_type") == "approve_remediation"
+    )
+
+
 @dataclass(frozen=True)
 class ReconstructionRequest:
     request_id: uuid.UUID
@@ -187,7 +205,10 @@ class ReplayEngine:
         )
 
         try:
-            source_ctx = await self._load_source_run_context(request.source_run_id)
+            source_ctx = await self._load_source_run_context(
+                request.source_run_id,
+                kind=request.kind,
+            )
             if source_ctx.spec_convergence_trace is None:
                 raise ReplayRefusalError(
                     "spec_convergence_trace_missing",
@@ -323,6 +344,8 @@ class ReplayEngine:
     async def _load_source_run_context(
         self,
         source_run_id: uuid.UUID,
+        *,
+        kind: Literal["replay", "remediation"] = "replay",
     ) -> SourceRunContext:
         lifecycle = await OrchestrationLifecycleStateRepo(self.session).get_by_run_id(
             source_run_id
@@ -332,7 +355,7 @@ class ReplayEngine:
                 "source_run_incomplete",
                 f"Source run {source_run_id} has no lifecycle state",
             )
-        if lifecycle.current_stage != "publish" or lifecycle.status != "completed":
+        if not _source_run_is_eligible(lifecycle, kind=kind):
             raise ReplayRefusalError(
                 "source_run_incomplete",
                 "Source run must be at publish/completed before replay",
