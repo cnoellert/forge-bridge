@@ -40,6 +40,13 @@ from typing import Any, Awaitable, Callable, Optional, TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    import ollama
+    from anthropic import AsyncAnthropic
+    from openai import AsyncOpenAI
+
+    from forge_bridge.llm._adapters import _TurnResponse
+
 
 # ---------------------------------------------------------------------------
 # Phase A chat-contract realignment (2026-05-05)
@@ -257,6 +264,64 @@ class LLMToolError(RuntimeError):
     """
 
 
+class CompileError(RuntimeError):
+    """Base for all compile-stage structural failures."""
+
+
+class CompileUnresolvableIntent(CompileError):
+    """LLM produced no recognizable graph-intent."""
+
+    def __init__(self, raw_response: str):
+        super().__init__("compile_intent produced no recognizable graph-intent")
+        self.raw_response = _truncate_compile_raw(raw_response)
+
+
+class CompileInvalidChainShape(CompileError):
+    """LLM output could not parse to list[str] chain steps."""
+
+    def __init__(self, raw_response: str, parse_error: str):
+        super().__init__(f"compile_intent produced invalid chain shape: {parse_error}")
+        self.raw_response = _truncate_compile_raw(raw_response)
+        self.parse_error = parse_error
+
+
+class CompileToolUnknown(CompileError):
+    """Compiled graph references a tool name not in the registered set."""
+
+    def __init__(self, unknown_tool: str, step_index: int, step_text: str):
+        super().__init__(
+            f"compile_intent referenced unknown tool {unknown_tool!r} "
+            f"at step {step_index}"
+        )
+        self.unknown_tool = unknown_tool
+        self.step_index = step_index
+        self.step_text = step_text
+
+
+class CompileSeamViolation(CompileError):
+    """Compiled graph produced host mutation without a paired commit step."""
+
+    def __init__(self, offending_step_text: str, offending_step_index: int):
+        super().__init__(
+            "compile_intent produced a host-mutation step without a paired "
+            f"commit step at index {offending_step_index}"
+        )
+        self.offending_step_text = offending_step_text
+        self.offending_step_index = offending_step_index
+
+
+class CompileBudgetExceeded(CompileError):
+    """Wall-clock cap fired before compile_intent's LLM call returned."""
+
+    def __init__(self, max_seconds: float, elapsed_s: float):
+        super().__init__(
+            f"compile_intent exceeded {max_seconds:.1f}s "
+            f"(elapsed={elapsed_s:.1f}s)"
+        )
+        self.max_seconds = max_seconds
+        self.elapsed_s = elapsed_s
+
+
 # ---------------------------------------------------------------------------
 # Phase 24.4 internal control-flow signal (NOT exported)
 #
@@ -319,6 +384,166 @@ class _OrchestrationTerminated(Exception):
 _in_tool_loop: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "_in_tool_loop", default=False
 )
+
+
+def _truncate_compile_raw(raw: str) -> str:
+    text = "" if raw is None else str(raw)
+    if len(text) <= 2048:
+        return text
+    return text[:2048]
+
+
+def _tool_name(tool: Any) -> str | None:
+    if isinstance(tool, dict):
+        value = tool.get("name")
+    else:
+        value = getattr(tool, "name", None)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _tool_description(tool: Any) -> str:
+    if isinstance(tool, dict):
+        value = tool.get("description", "")
+    else:
+        value = getattr(tool, "description", "")
+    return str(value or "").strip()
+
+
+def _default_compile_system_prompt(tools: list) -> str:
+    catalogue_lines = []
+    for tool in tools:
+        name = _tool_name(tool)
+        if not name:
+            continue
+        description = _tool_description(tool)
+        if description:
+            catalogue_lines.append(f"- {name}: {description}")
+        else:
+            catalogue_lines.append(f"- {name}")
+    catalogue = "\n".join(catalogue_lines) or "- (no tools supplied)"
+    return (
+        "You compile an operator's natural-language request into "
+        "forge-bridge chain-step text.\n\n"
+        "Return only the chain-step text. Use the literal `->` separator "
+        "between ordered steps. Do not include explanations, Markdown, or "
+        "extra natural language around the chain.\n\n"
+        "Available tools:\n"
+        f"{catalogue}\n\n"
+        "`commit` is the authority-transition keyword: it is used only "
+        "when a previewed host mutation is ready to cross into apply."
+    )
+
+
+def _strip_compile_fence(raw: str) -> str:
+    text = raw.strip()
+    if not text.startswith("```") or not text.endswith("```"):
+        return text
+    lines = text.splitlines()
+    if len(lines) < 2:
+        return text
+    return "\n".join(lines[1:-1]).strip()
+
+
+def _top_level_chain_segments(raw: str) -> list[str]:
+    segments: list[str] = []
+    start = 0
+    depth = 0
+    index = 0
+    while index < len(raw):
+        char = raw[index]
+        if char == "(":
+            depth += 1
+            index += 1
+            continue
+        if char == ")":
+            depth = max(0, depth - 1)
+            index += 1
+            continue
+        if depth == 0 and raw.startswith("->", index):
+            segments.append(raw[start:index].strip())
+            index += 2
+            start = index
+            continue
+        index += 1
+    segments.append(raw[start:].strip())
+    return segments
+
+
+def _structured_compile_step_text(item: Any, available_names: set[str], index: int) -> str:
+    if isinstance(item, str):
+        text = item.strip()
+        if not text:
+            raise CompileInvalidChainShape(str(item), f"empty step at index {index}")
+        return text
+    if not isinstance(item, dict):
+        raise CompileInvalidChainShape(
+            json.dumps(item, default=str),
+            f"step {index} is not a string or object",
+        )
+    tool_name = item.get("tool_name") or item.get("tool") or item.get("name")
+    if not isinstance(tool_name, str) or not tool_name.strip():
+        text = item.get("step") or item.get("step_text") or item.get("text")
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+        raise CompileInvalidChainShape(
+            json.dumps(item, default=str),
+            f"step {index} has no tool_name or step_text",
+        )
+    tool_name = tool_name.strip()
+    if tool_name not in available_names:
+        raise CompileToolUnknown(tool_name, index, json.dumps(item, sort_keys=True))
+    arguments = item.get("arguments") or item.get("args") or {}
+    if not isinstance(arguments, dict) or not arguments:
+        return tool_name
+    args_text = " ".join(f"{key}={value}" for key, value in arguments.items())
+    return f"{tool_name} {args_text}".strip()
+
+
+def _parse_compile_output(raw, tools) -> list[str]:
+    text = _strip_compile_fence("" if raw is None else str(raw))
+    if not text:
+        raise CompileUnresolvableIntent("" if raw is None else str(raw))
+
+    available_names = {name for name in (_tool_name(tool) for tool in tools) if name}
+    try:
+        decoded = json.loads(text)
+    except (TypeError, json.JSONDecodeError):
+        decoded = None
+
+    if decoded is not None:
+        if isinstance(decoded, dict) and "steps" in decoded:
+            raw_steps = decoded["steps"]
+        elif isinstance(decoded, list):
+            raw_steps = decoded
+        elif isinstance(decoded, dict):
+            raw_steps = [decoded]
+        else:
+            raise CompileInvalidChainShape(
+                text, "structured output is not an object or list"
+            )
+        if not isinstance(raw_steps, list) or not raw_steps:
+            raise CompileUnresolvableIntent(text)
+        steps = [
+            _structured_compile_step_text(item, available_names, index)
+            for index, item in enumerate(raw_steps)
+        ]
+    else:
+        segments = _top_level_chain_segments(text)
+        for index, segment in enumerate(segments):
+            if not segment:
+                raise CompileInvalidChainShape(
+                    text, f"empty step at index {index}"
+                )
+        from forge_bridge.console._chain_parse import parse_chain
+        steps = parse_chain(text)
+
+    if not steps:
+        raise CompileUnresolvableIntent(text)
+    if not all(isinstance(step, str) and step.strip() for step in steps):
+        raise CompileInvalidChainShape(text, "parsed chain contains empty step")
+    return [step.strip() for step in steps]
 
 
 class LLMRouter:
@@ -418,6 +643,66 @@ class LLMRouter:
         if sensitive:
             return await self._async_local(prompt, system, temperature)
         return await self._async_cloud(prompt, system, temperature)
+
+    async def compile_intent(
+        self,
+        prompt: str,
+        tools: list,
+        *,
+        sensitive: bool = True,
+        system: Optional[str] = None,
+        temperature: float = 0.1,
+        max_seconds: float = 30.0,
+    ) -> list[str]:
+        """Compile NL into a deterministic chain-step list."""
+        if _in_tool_loop.get():
+            raise RecursiveToolLoopError(
+                "compile_intent() called from within complete_with_tools() — "
+                "recursive LLM call blocked. See LLMTOOL-07 / D-12..D-14 "
+                "and S-3 ruling (Stage 1b 2026-05-27)."
+            )
+
+        sys_msg = system if system is not None else _default_compile_system_prompt(tools)
+        started = time.monotonic()
+        status = "success"
+        raw = ""
+        try:
+            backend_call = (
+                self._async_local(prompt, sys_msg, temperature)
+                if sensitive
+                else self._async_cloud(prompt, sys_msg, temperature)
+            )
+            raw = await asyncio.wait_for(backend_call, timeout=max_seconds)
+            return _parse_compile_output(raw, tools)
+        except asyncio.TimeoutError as exc:
+            status = "budget_exceeded"
+            raise CompileBudgetExceeded(max_seconds, time.monotonic() - started) from exc
+        except CompileError:
+            status = "compile_error"
+            raise
+        except Exception:
+            status = "backend_error"
+            raise
+        finally:
+            duration_ms = int((time.monotonic() - started) * 1000)
+            cache_prefix = f"{sys_msg}\n{prompt[:256]}"
+            cache_prefix_hash = hashlib.sha256(
+                cache_prefix.encode("utf-8")
+            ).hexdigest()[:8]
+            prompt_tokens = len(f"{sys_msg}\n{prompt}".split())
+            completion_tokens = len(str(raw or "").split())
+            model = self.local_model if sensitive else self.cloud_model
+            logger.info(
+                "ollama-compile model=%s prompt_tokens=%d "
+                "completion_tokens=%d duration_ms=%d cache_prefix_hash=%s "
+                "status=%s",
+                model,
+                prompt_tokens,
+                completion_tokens,
+                duration_ms,
+                cache_prefix_hash,
+                status,
+            )
 
     async def complete_with_tools(
         self,
