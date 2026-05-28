@@ -1,6 +1,7 @@
 """A.1 D3 compile-branch helper tests."""
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -75,6 +76,33 @@ def _post_chat(client, text: str):
         "/api/v1/chat",
         json={"messages": [{"role": "user", "content": text}]},
     )
+
+
+def _post_sse(client, text: str):
+    return client.post(
+        "/api/v1/chat",
+        json={"messages": [{"role": "user", "content": text}]},
+        headers={"Accept": "text/event-stream"},
+    )
+
+
+def _parse_sse_stream(text: str) -> list[tuple[str, dict]]:
+    events: list[tuple[str, dict]] = []
+    current_event: str | None = None
+    current_data: str | None = None
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip("\r")
+        if line.startswith("event:"):
+            current_event = line[len("event:"):].strip()
+        elif line.startswith("data:"):
+            current_data = line[len("data:"):].strip()
+        elif line == "" and current_event is not None and current_data is not None:
+            events.append((current_event, json.loads(current_data)))
+            current_event = None
+            current_data = None
+    if current_event is not None and current_data is not None:
+        events.append((current_event, json.loads(current_data)))
+    return events
 
 
 def test_build_compile_system_prompt_empty_tool_set_names_chain_syntax():
@@ -409,3 +437,190 @@ def test_chat_handler_json_no_build_orchestration_terminated_body_grep():
 
     source = inspect.getsource(handlers)
     assert "_build_orchestration_terminated_body" not in source
+
+
+def test_chat_handler_sse_regime_2_event_sequence(monkeypatch):
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(return_value=["forge_list_shots"])
+    )
+    chain_body = {
+        "status": "success",
+        "request_id": "req",
+        "chain": [{"step": "forge_list_shots", "result": {"shots": []}}],
+        "error": None,
+    }
+    monkeypatch.setattr(
+        _chat_compile,
+        "run_chain_steps",
+        AsyncMock(return_value=chain_body),
+    )
+    client, patches = _chat_client(
+        router, [_mcp_tool("forge_list_shots", "List shots.")]
+    )
+
+    with patches[0], patches[1]:
+        response = _post_sse(client, "list shots")
+
+    assert response.status_code == 200, response.text
+    events = _parse_sse_stream(response.text)
+    assert [name for name, _ in events] == ["compile_complete", "chain_complete"]
+    assert events[1][1]["chain"] == chain_body["chain"]
+
+
+def test_chat_handler_sse_regime_3_event_sequence(monkeypatch):
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(return_value=[
+            "flame_rename_shots dry_run=False",
+            "commit",
+        ])
+    )
+    monkeypatch.setattr(_chat_compile, "run_chain_steps", AsyncMock())
+    client, patches = _chat_client(
+        router, [_mcp_tool("flame_rename_shots", "Rename shots.")]
+    )
+
+    with patches[0], patches[1]:
+        response = _post_sse(client, "rename shots")
+
+    events = _parse_sse_stream(response.text)
+    assert [name for name, _ in events] == ["compile_complete", "preview_emitted"]
+    assert events[1][1]["preview"]["summary"]["requires_ratification"] is True
+    assert "final_text" not in events[1][1]
+
+
+def test_chat_handler_sse_compile_error_event():
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(side_effect=CompileUnresolvableIntent(""))
+    )
+    client, patches = _chat_client(
+        router, [_mcp_tool("forge_list_shots", "List shots.")]
+    )
+
+    with patches[0], patches[1]:
+        response = _post_sse(client, "???")
+
+    events = _parse_sse_stream(response.text)
+    assert [name for name, _ in events] == ["compile_error"]
+    assert events[0][1]["error"]["code"] == "compile_unresolvable_intent"
+
+
+def test_chat_handler_sse_chain_aborted_event(monkeypatch):
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(return_value=["forge_list_shots"])
+    )
+    chain_body = {
+        "status": "error",
+        "request_id": "req",
+        "chain": [],
+        "error": {
+            "code": "CHAIN_STEP_FAILED",
+            "message": "step failed",
+            "step_index": 0,
+            "original_error": {"type": "boom"},
+        },
+    }
+    monkeypatch.setattr(
+        _chat_compile,
+        "run_chain_steps",
+        AsyncMock(return_value=chain_body),
+    )
+    client, patches = _chat_client(
+        router, [_mcp_tool("forge_list_shots", "List shots.")]
+    )
+
+    with patches[0], patches[1]:
+        response = _post_sse(client, "list shots")
+
+    events = _parse_sse_stream(response.text)
+    assert [name for name, _ in events] == ["compile_complete", "chain_aborted"]
+    assert events[1][1]["error"]["code"] == "CHAIN_STEP_FAILED"
+    assert events[1][1]["stop_reason"] == "chain_aborted"
+
+
+def test_chat_handler_sse_compile_complete_intermediate_event(monkeypatch):
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(return_value=["forge_list_shots"])
+    )
+    monkeypatch.setattr(
+        _chat_compile,
+        "run_chain_steps",
+        AsyncMock(return_value={
+            "status": "success",
+            "request_id": "req",
+            "chain": [],
+            "error": None,
+        }),
+    )
+    client, patches = _chat_client(
+        router, [_mcp_tool("forge_list_shots", "List shots.")]
+    )
+
+    with patches[0], patches[1]:
+        response = _post_sse(client, "list shots")
+
+    events = _parse_sse_stream(response.text)
+    assert events[0][0] == "compile_complete"
+    assert events[0][1]["steps_count"] == 1
+
+
+def test_chat_handler_sse_transport_error_event_unchanged():
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(side_effect=RuntimeError("backend down"))
+    )
+    client, patches = _chat_client(
+        router, [_mcp_tool("forge_list_shots", "List shots.")]
+    )
+
+    with patches[0], patches[1]:
+        response = _post_sse(client, "list shots")
+
+    events = _parse_sse_stream(response.text)
+    assert [name for name, _ in events] == ["error"]
+    assert events[0][1]["error"]["code"] == "internal_error"
+
+
+def test_chat_handler_sse_no_event_message_grep():
+    import forge_bridge.console.handlers as handlers
+
+    source = inspect.getsource(handlers)
+    assert "event: message" not in source
+    assert "_on_message" not in source
+    assert "message_callback" not in source
+
+
+def test_chat_handler_sse_no_event_done_grep():
+    import forge_bridge.console.handlers as handlers
+
+    source = inspect.getsource(handlers)
+    assert "event: done" not in source
+    assert '"done"' not in source
+
+
+def test_chat_compile_json_sse_terminal_state_parity(monkeypatch):
+    router_json = SimpleNamespace(
+        compile_intent=AsyncMock(return_value=[
+            "flame_rename_shots dry_run=False",
+            "commit",
+        ])
+    )
+    router_sse = SimpleNamespace(
+        compile_intent=AsyncMock(return_value=[
+            "flame_rename_shots dry_run=False",
+            "commit",
+        ])
+    )
+    monkeypatch.setattr(_chat_compile, "run_chain_steps", AsyncMock())
+    tools = [_mcp_tool("flame_rename_shots", "Rename shots.")]
+    json_client, json_patches = _chat_client(router_json, tools)
+    sse_client, sse_patches = _chat_client(router_sse, tools)
+
+    with json_patches[0], json_patches[1]:
+        json_response = _post_chat(json_client, "rename shots")
+    with sse_patches[0], sse_patches[1]:
+        sse_response = _post_sse(sse_client, "rename shots")
+
+    json_body = json_response.json()
+    terminal = _parse_sse_stream(sse_response.text)[-1][1]
+    assert terminal["stop_reason"] == json_body["stop_reason"]
+    assert terminal["preview"] == json_body["preview"]
+    assert terminal["chain"] == json_body["chain"]

@@ -54,11 +54,7 @@ from forge_bridge.console._rate_limit import (
     RateLimitDecision,
     check_rate_limit,
 )
-from forge_bridge.console._tool_enforcement import (
-    build_enforcement_system_prompt,
-    is_response_text_malformed_tool,
-    is_tool_enforced,
-)
+from forge_bridge.console._tool_enforcement import is_tool_enforced
 from forge_bridge.console._tool_filter import (
     deterministic_narrow,
     filter_tools_by_message,
@@ -958,7 +954,7 @@ async def _chat_sse_response(
     router: Any,
     messages: list[dict],
     tools: list,
-    enforced_system: str,
+    mcp: Any,
     max_iterations: int,
     tool_result_max_bytes: Optional[int],
     request_id: str,
@@ -967,75 +963,35 @@ async def _chat_sse_response(
     tool_call_count_in: int,
     tools_available_count: int,
     tools_filtered_count: int,
-    tool_enforced_flag: bool,
 ) -> StreamingResponse:
-    """Phase 24.3 commit 4 — SSE history-grows streaming response for
-    `POST /api/v1/chat` when the client sends `Accept: text/event-stream`.
-
-    Event shape (history-grows; framing §6.5 — preserves D-03 response
-    semantics at the contents level; transport changes to SSE only):
-
-      event: message
-      data: {"role": "assistant", "content": "...", "tool_calls": [...]}
-
-      event: message
-      data: {"role": "tool", "tool_call_id": "...", "name": "...",
-             "content": "..."}
-
-      ...
-
-      event: done
-      data: {"final_text": "...", "stop_reason": "end_turn",
-             "request_id": "...", "tools_available": N, ...}
-
-      OR (terminal failure path):
-      event: error
-      data: {"error": {"code": "...", "message": "..."}}
-
-    Per framing §7 anti-scope: Bug-D salvage logic body at _adapters.py:733
-    is UNCHANGED. Salvage runs BEFORE the assistant-message emit (router's
-    `_emit_stream_assistant` reads `response.tool_calls` which is already
-    post-salvage). Token-delta streaming explicitly NOT in scope; emit
-    granularity is message-level per Sub-Q3.b convergence.
-
-    Per framing §4.0 binding ("streaming exposes forward progress, NOT
-    redefines conversational success"): the stream's existence does not
-    change L1/L2/L3 success criteria. A run that emits 20 messages and
-    then hits the 120s budget is still a Layer-A/B failure — the SSE
-    stream just makes the failure path observable in real time.
-
-    Input echo (caller's `messages=` argument) is NEVER emitted via the
-    stream — only NEW messages produced during the loop. Client
-    reconstruction: client's input messages + accumulated stream events
-    = equivalent of the D-03 JSON response's `messages` field.
-
-    D-02/D-13/D-14 wiring untouched — pre-flight validation, rate limit,
-    and 125s outer cap all enforced upstream of this function. The 504
-    timeout case becomes an in-stream `event: error` (HTTP 200 OK has
-    already been committed once the StreamingResponse iterator yields
-    its first event).
-    """
+    """SSE response for the A.1 compile branch."""
     msg_queue: asyncio.Queue = asyncio.Queue()
     _DONE = object()  # sentinel for end of stream
-
-    async def _on_message(msg: dict) -> None:
-        await msg_queue.put(("message", msg))
 
     async def _run_loop() -> None:
         try:
             try:
-                chat_result = await asyncio.wait_for(
-                    router.complete_with_tools(
-                        messages=messages,
-                        tools=tools,
-                        sensitive=True,                  # D-05 hardcoded
-                        system=enforced_system,          # PR15 deterministic enforcement
-                        max_iterations=max_iterations,
-                        max_seconds=120.0,               # FB-C inner cap
-                        tool_result_max_bytes=tool_result_max_bytes,
-                        message_callback=_on_message,    # Phase 24.3 streaming hook
+                compile_prompt = next(
+                    (
+                        m["content"] for m in reversed(messages)
+                        if isinstance(m, dict)
+                        and m.get("role") == "user"
+                        and isinstance(m.get("content"), str)
                     ),
-                    timeout=125.0,                       # CHAT-02 outer cap
+                    "",
+                )
+                outcome = await asyncio.wait_for(
+                    run_compile_branch(
+                        router=router,
+                        user_prompt=compile_prompt,
+                        tools=tools,
+                        mcp=mcp,
+                        request_id=request_id,
+                        client_ip=client_ip,
+                        started=started,
+                        compile_system=build_compile_system_prompt(tools),
+                    ),
+                    timeout=125.0,
                 )
             except asyncio.TimeoutError:
                 elapsed_ms = int((time.monotonic() - started) * 1000)
@@ -1094,89 +1050,81 @@ async def _chat_sse_response(
                 }}))
                 return
 
-            # PR15 output validation — same as JSON path. Malformed terminal
-            # tool-call text becomes an in-stream error event (HTTP 200 is
-            # already committed).
-            if is_response_text_malformed_tool(chat_result.final_text):
-                logger.warning(
-                    "chat malformed_tool_text request_id=%s "
-                    "tools_offered_count=%d transport=sse",
-                    request_id, len(tools),
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            if outcome.regime == "compile_error":
+                code, message, _status, details = _compile_error_payload(
+                    outcome.compile_error
                 )
-                await msg_queue.put(("error", {"error": {
-                    "code": "internal_error",
-                    "message": "Model produced a hallucinated tool-call as text — see logs.",
-                }}))
+                logger.info(
+                    "chat compile_error request_id=%s client_ip=%s "
+                    "tools_offered_count=%d wall_clock_ms=%d "
+                    "transport=sse chat_regime=compile_error",
+                    request_id, client_ip, len(tools), elapsed_ms,
+                )
+                await msg_queue.put(("compile_error", {"error": {
+                    "code": code,
+                    "message": message,
+                    "details": details,
+                }, "stop_reason": "compile_error", "request_id": request_id}))
                 return
 
-            # Phase 24.4 commit 3 — orchestration-terminated case routes
-            # to a distinct terminal event taxonomy. The envelope is the
-            # entire payload (carried inside ``data["termination"]``);
-            # ``stop_reason`` makes the policy outcome unmistakable to
-            # consumers reading transport-level metadata. SSE consumers
-            # observed the K-th tool result via ``event: message`` before
-            # this terminal event (framing §5 + §8.3 — deferred-raise
-            # mechanism in router._loop_body ensures sequencing).
-            #
-            # Distinct from ``event: done`` (model-decided success) and
-            # ``event: error`` (transport/recovery failure). Three
-            # terminal-event taxa now exist; consumers branch by event
-            # name (framing §10.1 — unmistakable termination shape).
-            if chat_result.termination is not None:
-                elapsed_ms = int((time.monotonic() - started) * 1000)
-                env = chat_result.termination
+            if outcome.steps:
+                await msg_queue.put(("compile_complete", {
+                    "request_id": request_id,
+                    "steps_count": len(outcome.steps),
+                }))
+
+            if outcome.regime == "chain_aborted":
+                body = dict(outcome.chain_body or {})
+                body["stop_reason"] = "chain_aborted"
                 logger.info(
-                    "chat orchestration_terminated request_id=%s client_ip=%s "
-                    "message_count_in=%d message_count_out=%d "
-                    "tool_call_count=%d tools_offered_count=%d "
-                    "wall_clock_ms=%d stop_reason=orchestration_terminated "
-                    "trigger=%s iterations=%d transport=sse",
-                    request_id, client_ip, len(messages),
-                    len(chat_result.messages), tool_call_count_in,
-                    len(tools), elapsed_ms,
-                    chat_result.termination.trigger,
-                    chat_result.termination.iterations,
+                    "chat chain_aborted request_id=%s client_ip=%s "
+                    "steps=%d tools_offered_count=%d wall_clock_ms=%d "
+                    "transport=sse chat_regime=compiled_non_mutating",
+                    request_id, client_ip, len(outcome.steps), len(tools),
+                    elapsed_ms,
                 )
-                await msg_queue.put(("orchestration_terminated", {
-                    "termination": {
-                        "status": env.status,
-                        "trigger": env.trigger,
-                        "reason": env.reason,
-                        "iterations": env.iterations,
-                        "accumulated_results": env.accumulated_results,
-                    },
-                    "stop_reason": "orchestration_terminated",
-                    "messages": chat_result.messages,
-                    "tool_trace": chat_result.tool_trace,
+                await msg_queue.put(("chain_aborted", body))
+                return
+
+            if outcome.regime == "compiled_mutating_preview":
+                logger.info(
+                    "chat preview_emitted request_id=%s client_ip=%s "
+                    "steps=%d tools_offered_count=%d wall_clock_ms=%d "
+                    "transport=sse chat_regime=compiled_mutating_preview",
+                    request_id, client_ip, len(outcome.steps), len(tools),
+                    elapsed_ms,
+                )
+                await msg_queue.put(("preview_emitted", {
+                    "preview": outcome.preview,
+                    "chain": [],
+                    "stop_reason": "preview_emitted",
                     "request_id": request_id,
                     "tools_available": tools_available_count,
                     "tools_filtered": tools_filtered_count,
-                    "tool_enforced": tool_enforced_flag,
+                    "tool_enforced": False,
                     "tool_forced": False,
                 }))
                 return
 
-            # Success — emit done event with the same metadata the JSON path
-            # would have packed into the response body. Client reconstructs
-            # final messages list by concatenating their input + all
-            # streamed assistant/tool messages.
-            elapsed_ms = int((time.monotonic() - started) * 1000)
+            chain_body = outcome.chain_body or {}
             logger.info(
                 "chat ok request_id=%s client_ip=%s message_count_in=%d "
-                "message_count_out=%d tool_call_count=%d tools_offered_count=%d "
-                "wall_clock_ms=%d stop_reason=end_turn transport=sse",
-                request_id, client_ip, len(messages), len(chat_result.messages),
+                "steps=%d tool_call_count=%d tools_offered_count=%d "
+                "wall_clock_ms=%d stop_reason=chain_complete transport=sse "
+                "chat_regime=compiled_non_mutating",
+                request_id, client_ip, len(messages), len(outcome.steps),
                 tool_call_count_in, len(tools), elapsed_ms,
             )
-            await msg_queue.put(("done", {
-                "final_text": chat_result.final_text,
-                "stop_reason": "end_turn",
+            await msg_queue.put(("chain_complete", {
+                "chain": chain_body.get("chain", []),
+                "stop_reason": "chain_complete",
                 "request_id": request_id,
                 "tools_available": tools_available_count,
                 "tools_filtered": tools_filtered_count,
-                "tool_enforced": tool_enforced_flag,
+                "tool_enforced": False,
                 "tool_forced": False,
-                "tool_trace": chat_result.tool_trace,
+                "preview": None,
             }))
         finally:
             # Sentinel guarantees the SSE generator unblocks even if the
@@ -1699,9 +1647,7 @@ async def chat_handler(request: Request) -> Response:
             router=router,
             messages=messages_for_llm,
             tools=tools,
-            enforced_system=build_enforcement_system_prompt(
-                router.system_prompt, tools_filtered_count,
-            ),
+            mcp=_mcp_server.mcp,
             max_iterations=max_iterations,
             tool_result_max_bytes=tool_result_max_bytes,
             request_id=request_id,
@@ -1710,7 +1656,6 @@ async def chat_handler(request: Request) -> Response:
             tool_call_count_in=tool_call_count_in,
             tools_available_count=tools_available_count,
             tools_filtered_count=tools_filtered_count,
-            tool_enforced_flag=tool_enforced_flag,
         )
 
     compile_prompt = next(
