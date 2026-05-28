@@ -1,4 +1,4 @@
-"""GraphEngine exceptions (Phase 4B §6)."""
+"""Orchestration exceptions (Phase 4B §6, §9)."""
 
 from __future__ import annotations
 
@@ -49,4 +49,19 @@ class DecisionNotAllowedAtStageError(Exception):
         self.current_stage = current_stage
         super().__init__(
             f"Decision {decision_type!r} is not allowed at stage {current_stage!r}"
+        )
+
+
+class DuplicateToolIdError(Exception):
+    def __init__(self, tool_id: str) -> None:
+        self.tool_id = tool_id
+        super().__init__(f"Duplicate tool_id registration: {tool_id!r}")
+
+
+class InvalidGenerationDriverError(Exception):
+    def __init__(self, tool_id: str, reason: str) -> None:
+        self.tool_id = tool_id
+        self.reason = reason
+        super().__init__(
+            f"Invalid generation driver for tool_id={tool_id!r}: {reason}"
         )
