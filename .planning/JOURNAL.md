@@ -194,3 +194,147 @@ STATE: Thread B closed, v1.7 opening phase shipped. Clean seam. Thread A
 is the milestone's next motion.
 =============================================================================
 
+
+=============================================================================
+v1.7 THREAD C / PHASE C.1 — CLOSED                              2026-05-27
+=============================================================================
+
+Six Asset MCP tools shipped; Stage 2 leakage-watch clean; 10-test +
+1-PR22 pre-existing main-branch debt cluster discovered and seeded
+as follow-on. Single day-long cycle: writing-room → spec → Stage 1b
+→ implementation → Stage 2 → close, zero role-distinction violations.
+
+WHAT LANDED
+-----------
+Seed + audit + framing + plan + 8 implementation commits + close
+arc, in one continuous cadence:
+
+Planning:
+  71acce9  plant Asset first-class-entity seed + open substrate audit
+  9f0cdd4  sharpen Asset audit scoping per operator ratification
+  3020ae9  Thread C phase framing — Asset operability (R-1..R-10 converged)
+  3a361e3  C.1 phase plan — Bridge MCP asset tools (Stage 1b cleared)
+  32e8cfb  C.1 plan — sweep-completeness fixups (R-1..R-3)
+
+Implementation (D1..D9 in spec order, byte-for-byte):
+  b5e21f7  Status aliases for operator vocabulary parity
+  407e5f4  forge_create_asset MCP tool
+  3f1caa1  forge_list_assets MCP tool
+  92a35d1  forge_get_asset MCP tool
+  903d968  forge_update_asset MCP tool
+  7a59e81  forge_attach_asset_location MCP tool
+  03ee2db  forge_relate_asset MCP tool
+  8ea4a40  docs/ASSET.md + VOCABULARY.md cross-link
+
+Close:
+  this commit       C.1-CLOSE.md + JOURNAL entry + reliability-debt
+                    seed + TROUBLESHOOTING.md launchd-kickstart entry
+
+The room's headline (operator coinage at audit-sharpening):
+"Asset is not missing from Bridge. Asset is quiet. Thread C makes it
+speak." Six dedicated MCP affordances now exercise the substrate's
+already-present Asset infrastructure; the silence is closed.
+
+CLOSE-CURSOR DISCOVERIES
+------------------------
+Five worth carrying forward (full archaeology in C.1-CLOSE.md):
+
+1. Pre-existing reliability-debt cluster surfaced. C.1's full-suite
+   acceptance gate exposed 10 failing tests + 1 PR22 mechanical
+   violation that pre-date C.1 (identity-matched against commit
+   32e8cfb). Five clusters: console-startup binding, CLI entrypoint,
+   flame timeline, ping fixtures, PR22 flame_execute_python (flat-
+   signature pattern not in PR22's A/B/C taxonomy). Seeded at
+   SEED-MAIN-RELIABILITY-DEBT-V1.7+.md as forward-pressure per
+   [[feedback-explicitly-unbound-vs-implicitly-rejected]].
+
+2. Acceptance-gate scope-of-test observation — candidate memory at
+   single-instance hold. Gates that reference shared mechanical
+   tests inherit the shared surface's health, not just new code's
+   compliance. Sibling to [[feedback-distinct-success-criteria-
+   per-adjacent-layer]] at gate-language grain.
+
+3. External-daemon-restart operational gap. `fbridge down/up` does
+   not own launchd-supervised daemons. The `install_provenance`
+   doctor row did exactly what Phase 24.2 engineered it to do —
+   caught the snapshot-vs-live asymmetry as first-class observable.
+   TROUBLESHOOTING.md launchd-kickstart entry landed alongside this
+   close.
+
+4. Stage 2 leakage-watch — clean across all 8 commits. The five
+   named substrate-side surfaces (utilities, serializers, shared
+   queries, registry helpers, response envelopes) stayed generic.
+   Discipline-proof-of-life for the ontology-leakage-watch
+   structure.
+
+5. [[feedback-failure-shape-stability-as-disposition-evidence]]
+   firing as designed. 10→10 identity-match closed what could have
+   been a multi-hour "is C.1 broken?" investigation in minutes.
+   Already memory-grade; this is corroboration at a new project
+   layer (full-suite integration cluster, not single-intervention
+   behavioral falsification).
+
+CANDIDATE-MEMORY LEDGER
+-----------------------
+One at hold pending second occurrence:
+
+- Acceptance-gate scope-of-test discipline (D-2 above). Single
+  instance; carry forward as candidate until a second distinct-
+  pressure-surface occurrence.
+
+PROCESS
+-------
+Writer's-room cadence held without role-distinction violation
+across the entire C.1 arc:
+
+- Audit grounded against actual files per
+  [[feedback-ground-specs-in-actual-files]] — six layers cited
+  with verified file:line anchors.
+- Three-step cadence at framing supersession (writing-room
+  proposal → explicit room sign-off → code-handoff format) —
+  Thread C framing went from writing-room-proposal to
+  phase-framing only after Creative + DT + operator ratification
+  on the four open scoping questions.
+- Stage 1b caught 8 blocking grounding fixes (B-1..B-8) and 3
+  substantive room rulings (S-1..S-3) before implementation
+  handoff. Creative added four constitutional tightenings (MOL-3
+  rationale, MOL-6 doctrine, D1 state-vs-authority, L3 semantic-
+  coupling Stage 1b question, ontology-leakage watch).
+- Drafter self-violation caught at Stage 1b second pass:
+  [[feedback-grep-c-completion-invariant]] failure on the v2
+  revision — body updated, manifest didn't sweep alongside (R-1,
+  R-2, R-3). The methodology caught the methodology drift; the
+  spec promoted clean after the sweep completed.
+- Implementation discipline: operator held C.1-CLOSE.md drafting
+  appropriately on the strict reading of acceptance gates — the
+  writing room owed the classification (load-bearing semantic) on
+  what counts as a regression vs corpus-scope archaeology. The
+  hand-off was clean once that classification landed.
+
+CARRIED FORWARD
+---------------
+- Reliability-debt seed (5 clusters) — promotes when CI-green
+  becomes load-bearing for a v1.7+ phase OR an explicit cleanup
+  motion opens. Two paths named for Cluster 5 (PR22).
+- Convenience aggregation pressure watch — Creative's Stage 1b
+  forward-looking observation. Now that Asset ontology exists,
+  downstream pressure for joins / unified queries / helper
+  abstractions / generalized entity handling will arrive. Sibling
+  pressure to the ontology-leakage watch but inverted (leakage
+  flows substrate-ward; aggregation flows surface-ward). Attend
+  to in C.2 and beyond.
+- C.2 (Bridge CLI asset surface) — next motion. Operates against
+  the same six operations at the operator-friendly Typer subgroup;
+  --json mode preserved per P-01; dogfood pass per Thread B B-2.
+- C.3 (Projekt Forge consumer proof) — R-10 forcing-criterion
+  contract intact; three buckets (latency-bound / atomicity-bound
+  / availability-bound), explicit does-NOT-count list. Investigates
+  whether projekt-forge needs DBAsset or just commands +
+  conventions over Bridge's substrate.
+
+STATE: Thread C / C.1 closed clean. Asset surfaces operational at
+the MCP layer. C.2 is the next motion within Thread C; Thread A
+proceeds in parallel. Reliability-debt seed parked.
+=============================================================================
+
+
