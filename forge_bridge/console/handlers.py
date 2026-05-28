@@ -43,6 +43,10 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from forge_bridge.console._constants import CHAIN_MAX_STEPS
+from forge_bridge.console._chat_compile import (
+    build_compile_system_prompt,
+    run_compile_branch,
+)
 from forge_bridge.console._engine import run_chain_steps
 from forge_bridge.console._macros import delete_macro, expand_macro, list_macros
 from forge_bridge.console._step import serialize_forced_tool_result
@@ -61,6 +65,11 @@ from forge_bridge.console._tool_filter import (
     filter_tools_by_reachable_backends,
 )
 from forge_bridge.llm.router import (
+    CompileBudgetExceeded,
+    CompileInvalidChainShape,
+    CompileSeamViolation,
+    CompileToolUnknown,
+    CompileUnresolvableIntent,
     LLMLoopBudgetExceeded,
     LLMToolError,
     RecursiveToolLoopError,
@@ -862,6 +871,64 @@ def _chat_error(
     )
 
 
+def _compile_error_payload(exc: Exception) -> tuple[str, str, int, dict]:
+    """Map compile-stage structural errors to chat error envelopes."""
+    if isinstance(exc, CompileUnresolvableIntent):
+        return (
+            "compile_unresolvable_intent",
+            "Could not compile the request into a graph intent.",
+            422,
+            {"raw_response": exc.raw_response},
+        )
+    if isinstance(exc, CompileInvalidChainShape):
+        return (
+            "compile_invalid_chain_shape",
+            "Compiled graph intent was malformed.",
+            422,
+            {
+                "raw_response": exc.raw_response,
+                "parse_error": exc.parse_error,
+            },
+        )
+    if isinstance(exc, CompileToolUnknown):
+        return (
+            "compile_tool_unknown",
+            "Compiled graph intent referenced an unavailable tool.",
+            422,
+            {
+                "unknown_tool": exc.unknown_tool,
+                "step_index": exc.step_index,
+                "step_text": exc.step_text,
+            },
+        )
+    if isinstance(exc, CompileBudgetExceeded):
+        return (
+            "compile_budget_exceeded",
+            "Compile timed out — try a simpler request.",
+            504,
+            {
+                "max_seconds": exc.max_seconds,
+                "elapsed_s": exc.elapsed_s,
+            },
+        )
+    if isinstance(exc, CompileSeamViolation):
+        return (
+            "compile_seam_violation",
+            "Compiled graph intent violated the mutation authority seam.",
+            500,
+            {
+                "offending_step_text": exc.offending_step_text,
+                "offending_step_index": exc.offending_step_index,
+            },
+        )
+    return (
+        "compile_error",
+        "Compile failed — check console for details.",
+        500,
+        {},
+    )
+
+
 def _ambiguity_state_for(n: int) -> str:
     """Translate narrowing-count to the schema's ``ambiguity_state``
     string. Translation-only; no inferential logic per the binding
@@ -884,70 +951,6 @@ def _format_sse_event(event: str, data: dict) -> str:
     needed for our schema). Trailing blank line is the frame terminator.
     """
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
-
-
-def _build_orchestration_terminated_body(
-    chat_result: Any,
-    *,
-    request_id: str,
-    tools_available_count: int,
-    tools_filtered_count: int,
-    tool_enforced_flag: bool,
-) -> dict:
-    """Phase 24.4 commit 3 — shared response/event body for the
-    orchestration-terminated case (.planning/milestones/v1.6-PHASE-24-4-
-    FRAMING.md §5 + §9 Seam B).
-
-    Identical shape across JSON ``/api/v1/chat`` response body and SSE
-    ``event: orchestration_terminated`` data payload. The handler
-    projects the policy outcome cleanly — it does NOT reinterpret,
-    beautify, or synthesize prose around the envelope (framing §10.1).
-
-    Shape:
-      - ``termination``: the verbatim OrchestrationTerminationEnvelope
-        (status, trigger, reason, iterations, accumulated_results).
-        Consumers detect orchestration termination via
-        ``data["termination"] is not None`` OR via
-        ``data["termination"]["status"] == "orchestration_terminated"``.
-      - ``stop_reason``: ``"orchestration_terminated"`` — distinct
-        taxonomic value vs canonical-success ``"end_turn"`` and
-        budget-exceeded ``"loop_budget_exceeded"``. Makes the policy
-        outcome unmistakable to consumers reading transport-level
-        metadata (parity guarantee with framing §5.2 — orchestration
-        terminated by policy, NOT failed by transport).
-      - ``messages``: full transcript at trigger time (Phase A invariant
-        — tool execution history preserved). Ends with the K-th
-        successful tool result (not a synthetic assistant turn — see
-        ChatTurnResult docstring + framing §10.1).
-      - ``tool_trace``: every dispatch this session (success + failure;
-        Phase A invariant).
-      - Transport metadata parity with canonical success path:
-        ``request_id``, ``tools_available``, ``tools_filtered``,
-        ``tool_enforced``, ``tool_forced``.
-
-    NOT included: ``final_text``. The orchestrator does not produce
-    conversational text in this case. Including an empty string would
-    create ambiguity with model-emitted empty responses (which are a
-    different failure mode, not the same shape). Omission is unambiguous.
-    """
-    env = chat_result.termination
-    return {
-        "termination": {
-            "status": env.status,
-            "trigger": env.trigger,
-            "reason": env.reason,
-            "iterations": env.iterations,
-            "accumulated_results": env.accumulated_results,
-        },
-        "stop_reason": "orchestration_terminated",
-        "messages": chat_result.messages,
-        "tool_trace": chat_result.tool_trace,
-        "request_id": request_id,
-        "tools_available": tools_available_count,
-        "tools_filtered": tools_filtered_count,
-        "tool_enforced": tool_enforced_flag,
-        "tool_forced": False,
-    }
 
 
 async def _chat_sse_response(
@@ -1121,6 +1124,7 @@ async def _chat_sse_response(
             # name (framing §10.1 — unmistakable termination shape).
             if chat_result.termination is not None:
                 elapsed_ms = int((time.monotonic() - started) * 1000)
+                env = chat_result.termination
                 logger.info(
                     "chat orchestration_terminated request_id=%s client_ip=%s "
                     "message_count_in=%d message_count_out=%d "
@@ -1133,15 +1137,23 @@ async def _chat_sse_response(
                     chat_result.termination.trigger,
                     chat_result.termination.iterations,
                 )
-                await msg_queue.put(("orchestration_terminated",
-                    _build_orchestration_terminated_body(
-                        chat_result,
-                        request_id=request_id,
-                        tools_available_count=tools_available_count,
-                        tools_filtered_count=tools_filtered_count,
-                        tool_enforced_flag=tool_enforced_flag,
-                    ),
-                ))
+                await msg_queue.put(("orchestration_terminated", {
+                    "termination": {
+                        "status": env.status,
+                        "trigger": env.trigger,
+                        "reason": env.reason,
+                        "iterations": env.iterations,
+                        "accumulated_results": env.accumulated_results,
+                    },
+                    "stop_reason": "orchestration_terminated",
+                    "messages": chat_result.messages,
+                    "tool_trace": chat_result.tool_trace,
+                    "request_id": request_id,
+                    "tools_available": tools_available_count,
+                    "tools_filtered": tools_filtered_count,
+                    "tool_enforced": tool_enforced_flag,
+                    "tool_forced": False,
+                }))
                 return
 
             # Success — emit done event with the same metadata the JSON path
@@ -1597,13 +1609,10 @@ async def chat_handler(request: Request) -> Response:
             source="runtime",
         )
 
-    # ---- PR15: deterministic-tool-call enforcement --------------------------
-    # Stack the existing pipeline system prompt with the PR15 rule block so
-    # the model treats tools as the primary response modality. When exactly
-    # one tool survives the filter, append the HARD-TOOL instruction.
-    enforced_system = build_enforcement_system_prompt(
-        router.system_prompt, tools_filtered_count,
-    )
+    # ---- PR15: deterministic-tool-call enforcement state --------------------
+    # PR20 still reports whether the deterministic forced-tool rule applies.
+    # The compiled JSON path below uses a compile-specific prompt instead of
+    # PR15's executor prompt.
     tool_enforced_flag = is_tool_enforced(tools_filtered_count)
 
     # ---- PR20: deterministic forced execution when filter narrowed to 1 -----
@@ -1690,7 +1699,9 @@ async def chat_handler(request: Request) -> Response:
             router=router,
             messages=messages_for_llm,
             tools=tools,
-            enforced_system=enforced_system,
+            enforced_system=build_enforcement_system_prompt(
+                router.system_prompt, tools_filtered_count,
+            ),
             max_iterations=max_iterations,
             tool_result_max_bytes=tool_result_max_bytes,
             request_id=request_id,
@@ -1702,28 +1713,31 @@ async def chat_handler(request: Request) -> Response:
             tool_enforced_flag=tool_enforced_flag,
         )
 
+    compile_prompt = next(
+        (
+            m["content"] for m in reversed(messages_for_llm)
+            if isinstance(m, dict)
+            and m.get("role") == "user"
+            and isinstance(m.get("content"), str)
+        ),
+        "",
+    )
+    compile_system = build_compile_system_prompt(tools)
+
     try:
-        # Phase A chat-contract realignment (2026-05-05): the router now
-        # returns a ChatTurnResult dataclass carrying final_text, the
-        # full normalized message transcript, and the structured tool_trace.
-        # The handler MUST NOT collapse the transcript back to
-        # ``input + final_text`` — that was the bug Phase A fixes.
-        chat_result = await asyncio.wait_for(
-            router.complete_with_tools(
-                messages=messages_for_llm,    # D-02a (plan 16-01)
+        outcome = await asyncio.wait_for(
+            run_compile_branch(
+                router=router,
+                user_prompt=compile_prompt,
                 tools=tools,
-                sensitive=True,               # D-05 hardcoded
-                system=enforced_system,       # PR15 deterministic enforcement
-                max_iterations=max_iterations,
-                max_seconds=120.0,            # FB-C inner cap
-                tool_result_max_bytes=tool_result_max_bytes,
+                mcp=_mcp_server.mcp,
+                request_id=request_id,
+                client_ip=client_ip,
+                started=started,
+                compile_system=compile_system,
             ),
-            timeout=125.0,                    # CHAT-02 outer cap
+            timeout=125.0,
         )
-        result_text = chat_result.final_text
-        result_messages = chat_result.messages
-        result_trace = chat_result.tool_trace
-        result_termination = chat_result.termination  # Phase 24.4
     except asyncio.TimeoutError:
         elapsed_ms = int((time.monotonic() - started) * 1000)
         logger.info(
@@ -1784,92 +1798,77 @@ async def chat_handler(request: Request) -> Response:
             request_id,
         )
 
-    # ---- Phase 24.4 orchestration-terminated branch ------------------------
-    # Per .planning/milestones/v1.6-PHASE-24-4-FRAMING.md §5 + §9 Seam B:
-    # the K-fold canonical-recurrence trigger fired inside the router's
-    # complete_with_tools loop. Project the policy outcome cleanly — no
-    # editorialization, no reinterpretation, no synthesis. HTTP 200 with
-    # ``stop_reason=orchestration_terminated`` + verbatim envelope under
-    # the ``termination`` top-level key. PR15 malformed-tool validation
-    # below is bypassed because ``result_text=""`` is structural (not
-    # model-emitted prose) — the model didn't produce text; the
-    # orchestrator decided to terminate.
-    if result_termination is not None:
-        elapsed_ms = int((time.monotonic() - started) * 1000)
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    if outcome.regime == "compile_error":
+        code, message, status, details = _compile_error_payload(outcome.compile_error)
         logger.info(
-            "chat orchestration_terminated request_id=%s client_ip=%s "
-            "message_count_in=%d message_count_out=%d tool_call_count=%d "
-            "tools_offered_count=%d wall_clock_ms=%d "
-            "stop_reason=orchestration_terminated trigger=%s iterations=%d",
-            request_id, client_ip, len(messages), len(result_messages),
-            len(result_trace), len(tools), elapsed_ms,
-            result_termination.trigger, result_termination.iterations,
+            "chat compile_error request_id=%s client_ip=%s "
+            "tools_offered_count=%d wall_clock_ms=%d chat_regime=compile_error",
+            request_id, client_ip, len(tools), elapsed_ms,
+        )
+        return _chat_error(
+            code,
+            message,
+            status,
+            request_id,
+            details=details,
+        )
+
+    if outcome.regime == "chain_aborted":
+        body = dict(outcome.chain_body or {})
+        body["stop_reason"] = "chain_aborted"
+        logger.info(
+            "chat chain_aborted request_id=%s client_ip=%s "
+            "steps=%d tools_offered_count=%d wall_clock_ms=%d "
+            "chat_regime=compiled_non_mutating",
+            request_id, client_ip, len(outcome.steps), len(tools), elapsed_ms,
         )
         return JSONResponse(
-            _build_orchestration_terminated_body(
-                chat_result,
-                request_id=request_id,
-                tools_available_count=tools_available_count,
-                tools_filtered_count=tools_filtered_count,
-                tool_enforced_flag=tool_enforced_flag,
-            ),
+            body,
+            status_code=400,
+            headers={"X-Request-ID": request_id},
+        )
+
+    if outcome.regime == "compiled_mutating_preview":
+        logger.info(
+            "chat preview_emitted request_id=%s client_ip=%s "
+            "steps=%d tools_offered_count=%d wall_clock_ms=%d "
+            "chat_regime=compiled_mutating_preview",
+            request_id, client_ip, len(outcome.steps), len(tools), elapsed_ms,
+        )
+        return JSONResponse(
+            {
+                "preview": outcome.preview,
+                "chain": [],
+                "stop_reason": "preview_emitted",
+                "request_id": request_id,
+                "tools_available": tools_available_count,
+                "tools_filtered": tools_filtered_count,
+                "tool_enforced": False,
+                "tool_forced": False,
+            },
             status_code=200,
             headers={"X-Request-ID": request_id},
         )
 
-    # ---- PR15: output validation -------------------------------------------
-    # The model sometimes emits a hallucinated tool-call as free text instead
-    # of actually invoking a tool (qwen2.5-coder leaks chat-template tokens
-    # like ``<|im_start|>{"name": ..., "arguments": ...}``). Detect that
-    # pattern and return 500 → wrapper classifies as invalid_response so the
-    # operator sees a deterministic failure instead of a nonsense reply.
-    if is_response_text_malformed_tool(result_text):
-        logger.warning(
-            "chat malformed_tool_text request_id=%s tools_offered_count=%d",
-            request_id, len(tools),
-        )
-        return _chat_error(
-            "internal_error",
-            "Model produced a hallucinated tool-call as text — see logs.",
-            500,
-            request_id,
-        )
-
-    # ---- Success path -------------------------------------------------------
-
-    elapsed_ms = int((time.monotonic() - started) * 1000)
-    # Phase A: surface the router's normalized transcript verbatim. No
-    # input + final_text reconstruction — the router already accounts for
-    # input echo via the adapter's state.messages chain.
-    out_messages = result_messages
+    chain_body = outcome.chain_body or {}
     logger.info(
         "chat ok request_id=%s client_ip=%s message_count_in=%d "
-        "message_count_out=%d tool_call_count=%d tools_offered_count=%d "
-        "wall_clock_ms=%d stop_reason=end_turn",
-        request_id, client_ip, len(messages), len(out_messages),
-        tool_call_count_in, len(tools), elapsed_ms,
+        "steps=%d tools_offered_count=%d wall_clock_ms=%d "
+        "stop_reason=chain_complete chat_regime=compiled_non_mutating",
+        request_id, client_ip, len(messages), len(outcome.steps),
+        len(tools), elapsed_ms,
     )
     return JSONResponse(
         {
-            # Phase A: top-level final_text + tool_trace are part of the
-            # canonical response schema — both execution paths (this real
-            # LLM-loop path and the PR20 short-circuit) emit the same keys.
-            "final_text": result_text,
-            "messages": out_messages,
-            "tool_trace": result_trace,
-            "stop_reason": "end_turn",
+            "chain": chain_body.get("chain", []),
+            "stop_reason": "chain_complete",
             "request_id": request_id,
-            # PR14 — narrow-tool-selection telemetry surfaced for the wrapper
-            # trace summary (forge_bridge/llm/call_wrapper.py).
             "tools_available": tools_available_count,
             "tools_filtered": tools_filtered_count,
-            # PR15 — true when the filtered set was small enough that we
-            # forced the deterministic-call rules (≤3 tools).
-            "tool_enforced": tool_enforced_flag,
-            # Phase A parity: short-circuit path emits tool_forced=True; the
-            # LLM-loop path emits False so top-level keys are identical
-            # across both paths (canonical schema invariant).
+            "tool_enforced": False,
             "tool_forced": False,
+            "preview": None,
         },
         status_code=200,
         headers={"X-Request-ID": request_id},

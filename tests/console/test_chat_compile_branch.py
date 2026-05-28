@@ -2,21 +2,79 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import inspect
 import pytest
+from starlette.testclient import TestClient
 
+from forge_bridge.console import _rate_limit
 from forge_bridge.console import _chat_compile
+from forge_bridge.console.app import build_console_app
 from forge_bridge.console._chat_compile import (
     build_compile_system_prompt,
     build_preview_from_steps,
     run_compile_branch,
 )
-from forge_bridge.llm.router import CompileUnresolvableIntent
+from forge_bridge.console.handlers import chat_handler
+from forge_bridge.console.manifest_service import ManifestService
+from forge_bridge.console.read_api import ConsoleReadAPI
+from forge_bridge.llm.router import (
+    CompileBudgetExceeded,
+    CompileSeamViolation,
+    CompileToolUnknown,
+    CompileUnresolvableIntent,
+)
 
 
 def _tool(name: str, description: str):
     return SimpleNamespace(name=name, description=description)
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limit():
+    _rate_limit._reset_for_tests()
+    yield
+    _rate_limit._reset_for_tests()
+
+
+def _mcp_tool(name: str, description: str):
+    from mcp.types import Tool
+    return Tool(
+        name=name,
+        description=description,
+        inputSchema={"type": "object", "properties": {}, "required": []},
+    )
+
+
+def _chat_client(router, tools):
+    ms = ManifestService()
+    mock_log = MagicMock()
+    mock_log.snapshot.return_value = ([], 0)
+    api = ConsoleReadAPI(
+        execution_log=mock_log,
+        manifest_service=ms,
+        llm_router=router,
+    )
+    app = build_console_app(api)
+    patches = (
+        patch(
+            "forge_bridge.mcp.server.mcp.list_tools",
+            new=AsyncMock(return_value=tools),
+        ),
+        patch(
+            "forge_bridge.console.handlers.filter_tools_by_reachable_backends",
+            new=AsyncMock(return_value=tools),
+        ),
+    )
+    return TestClient(app), patches
+
+
+def _post_chat(client, text: str):
+    return client.post(
+        "/api/v1/chat",
+        json={"messages": [{"role": "user", "content": text}]},
+    )
 
 
 def test_build_compile_system_prompt_empty_tool_set_names_chain_syntax():
@@ -151,3 +209,203 @@ async def test_run_compile_branch_compile_error_returns_outcome():
     assert outcome.preview is None
     assert outcome.chain_body is None
     assert outcome.compile_error is error
+
+
+def test_chat_handler_json_regime_2_full_path(monkeypatch):
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(return_value=["forge_list_shots"])
+    )
+    tools = [_mcp_tool("forge_list_shots", "List shots.")]
+    chain_body = {
+        "status": "success",
+        "request_id": "req-from-engine",
+        "chain": [{"step": "forge_list_shots", "result": {"shots": []}}],
+        "error": None,
+    }
+    monkeypatch.setattr(
+        _chat_compile,
+        "run_chain_steps",
+        AsyncMock(return_value=chain_body),
+    )
+    client, patches = _chat_client(router, tools)
+
+    with patches[0], patches[1]:
+        response = _post_chat(client, "list shots")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["stop_reason"] == "chain_complete"
+    assert body["chain"] == chain_body["chain"]
+    assert body["preview"] is None
+
+
+def test_chat_handler_json_regime_2_omits_final_text(monkeypatch):
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(return_value=["forge_list_shots"])
+    )
+    monkeypatch.setattr(
+        _chat_compile,
+        "run_chain_steps",
+        AsyncMock(return_value={
+            "status": "success",
+            "request_id": "req",
+            "chain": [],
+            "error": None,
+        }),
+    )
+    client, patches = _chat_client(
+        router, [_mcp_tool("forge_list_shots", "List shots.")]
+    )
+
+    with patches[0], patches[1]:
+        response = _post_chat(client, "list shots")
+
+    assert "final_text" not in response.json()
+
+
+def test_chat_handler_json_regime_2_emits_tool_enforced_false(monkeypatch):
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(return_value=["forge_list_shots"])
+    )
+    monkeypatch.setattr(
+        _chat_compile,
+        "run_chain_steps",
+        AsyncMock(return_value={
+            "status": "success",
+            "request_id": "req",
+            "chain": [],
+            "error": None,
+        }),
+    )
+    client, patches = _chat_client(
+        router, [_mcp_tool("forge_list_shots", "List shots.")]
+    )
+
+    with patches[0], patches[1]:
+        response = _post_chat(client, "list shots")
+
+    body = response.json()
+    assert body["tool_enforced"] is False
+    assert body["tool_forced"] is False
+
+
+def test_chat_handler_json_regime_3_full_path(monkeypatch):
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(return_value=[
+            "flame_rename_shots dry_run=False",
+            "commit",
+        ])
+    )
+    run_chain = AsyncMock()
+    monkeypatch.setattr(_chat_compile, "run_chain_steps", run_chain)
+    tools = [_mcp_tool("flame_rename_shots", "Rename shots.")]
+    client, patches = _chat_client(router, tools)
+
+    with patches[0], patches[1]:
+        response = _post_chat(client, "rename shots")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["stop_reason"] == "preview_emitted"
+    assert body["chain"] == []
+    assert body["preview"]["summary"]["requires_ratification"] is True
+    run_chain.assert_not_awaited()
+
+
+def test_chat_handler_json_regime_3_omits_final_text(monkeypatch):
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(return_value=[
+            "flame_rename_shots dry_run=False",
+            "commit",
+        ])
+    )
+    monkeypatch.setattr(_chat_compile, "run_chain_steps", AsyncMock())
+    client, patches = _chat_client(
+        router, [_mcp_tool("flame_rename_shots", "Rename shots.")]
+    )
+
+    with patches[0], patches[1]:
+        response = _post_chat(client, "rename shots")
+
+    assert "final_text" not in response.json()
+
+
+def test_chat_handler_json_compile_error_422():
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(
+            side_effect=CompileToolUnknown("missing_tool", 0, "missing_tool")
+        )
+    )
+    client, patches = _chat_client(
+        router, [_mcp_tool("forge_list_shots", "List shots.")]
+    )
+
+    with patches[0], patches[1]:
+        response = _post_chat(client, "list shots")
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error"]["code"] == "compile_tool_unknown"
+    assert body["error"]["details"]["unknown_tool"] == "missing_tool"
+
+
+def test_chat_handler_json_compile_budget_504():
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(
+            side_effect=CompileBudgetExceeded(30.0, 30.1)
+        )
+    )
+    client, patches = _chat_client(
+        router, [_mcp_tool("forge_list_shots", "List shots.")]
+    )
+
+    with patches[0], patches[1]:
+        response = _post_chat(client, "list shots")
+
+    assert response.status_code == 504
+    assert response.json()["error"]["code"] == "compile_budget_exceeded"
+
+
+def test_chat_handler_json_compile_seam_violation_500():
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(
+            side_effect=CompileSeamViolation("flame_rename_shots", 0)
+        )
+    )
+    client, patches = _chat_client(
+        router, [_mcp_tool("flame_rename_shots", "Rename shots.")]
+    )
+
+    with patches[0], patches[1]:
+        response = _post_chat(client, "rename shots")
+
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "compile_seam_violation"
+
+
+def test_chat_handler_json_preserves_pr14_pr20_pr30_short_circuits():
+    router = SimpleNamespace(compile_intent=AsyncMock(return_value=["unused"]))
+    client, patches = _chat_client(
+        router, [_mcp_tool("forge_list_shots", "List shots.")]
+    )
+
+    with patches[0], patches[1]:
+        macro_response = _post_chat(client, "list macros")
+        chain_response = _post_chat(client, "forge_list_shots -> format_result")
+
+    assert macro_response.status_code == 200
+    assert macro_response.json()["status"] == "success"
+    assert chain_response.status_code in {200, 400}
+    router.compile_intent.assert_not_awaited()
+
+
+def test_chat_handler_json_no_complete_with_tools_grep():
+    source = inspect.getsource(chat_handler)
+    assert "router.complete_with_tools" not in source
+
+
+def test_chat_handler_json_no_build_orchestration_terminated_body_grep():
+    import forge_bridge.console.handlers as handlers
+
+    source = inspect.getsource(handlers)
+    assert "_build_orchestration_terminated_body" not in source
