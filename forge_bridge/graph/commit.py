@@ -82,6 +82,11 @@ def parse_commit_step(text: str) -> None:
     return None
 
 
+def graph_contains_commit_node(steps: list[str]) -> bool:
+    """Return true when any chain step is a commit graph node."""
+    return any(is_commit_step(step) for step in steps)
+
+
 @dataclass(frozen=True)
 class CommitVerification:
     matched: bool
