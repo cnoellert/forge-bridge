@@ -166,6 +166,34 @@ The compiler may read conversation history to compile the current
 turn, but graph-intent carries no multi-turn accumulation state.
 Multi-turn intent persistence is a different system, deferred.
 
+## Coexistence architecture
+
+The five rulings cohere into a single architectural claim —
+**coexistence architecture, not replacement architecture** — revealed
+by Q-A1.5's convergence (Phase 24.4 taxa stay; chat-side taxa are new;
+both families coexist, therefore both execution paths coexist).
+Post-A.1, chat dispatches through three execution regimes:
+
+1. **Legacy agentic** — `complete_with_tools(...)`. Retained substrate
+   primitive.
+2. **Compiled non-mutating** — `compile_intent(...)` ->
+   `run_chain_steps(...)`. A.1 ships.
+3. **Compiled mutating** — `compile_intent(...)` -> preview-only (A.1)
+   -> ratify -> apply (A.2). A.1 stubs the seam; A.2 closes it.
+
+The enumeration is chat-scoped. `complete_with_tools(...)` remains
+reachable by non-chat callers — direct router users, other surfaces.
+Chat moves to regimes 2/3; the executor stays substrate for callers
+that do not want compile/preview/ratify discipline. Reading the three
+regimes as a system-wide deprecation arc is a misread; Stage 1b
+reviewers should catch that shape.
+
+The coexistence was not engineered as a framing-time goal — it was
+surfaced by reading the rulings together. Sibling shape to FC-1
+(run_chain_steps as substrate convergence point for both exact-compile
+and inferential-compile) and to Phase 24's retrospective architecture
+claims. Recording, not new ruling.
+
 ## Phase decomposition
 
 - **A.1 — the compile stage.** NL -> graph-intent -> preview. The
