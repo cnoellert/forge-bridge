@@ -1,25 +1,9 @@
 """Unit tests for forge_bridge/console/handlers.py chat_handler (CHAT-01/02 + D-14a).
 
-All tests use a mocked LLMRouter (no real Ollama dep). Rate-limit module is
-reset before each test for isolation. Tool registry snapshot is patched to
-return a fixed Tool list so the empty-registry guard does NOT short-circuit.
-
-Test roster (15 tests):
-  1. test_chat_happy_path_returns_200
-  2. test_chat_invalid_json_body_returns_422
-  3. test_chat_missing_messages_field_returns_422
-  4. test_chat_unsupported_role_returns_422
-  5. test_chat_rate_limit_returns_429_with_retry_after
-  6. test_chat_loop_budget_exceeded_returns_504
-  7. test_chat_outer_timeout_returns_504
-  8. test_chat_recursive_loop_error_returns_500
-  9. test_chat_tool_error_returns_500
- 10. test_chat_envelope_shape_is_nested
- 11. test_chat_passes_messages_list_to_router
- 12. test_ui_chat_handler_renders_panel_template
- 13. test_chat_filters_unreachable_backends (Phase 16.1 D-01)
- 14. test_chat_503_when_no_backends_reachable (Phase 16.1 D-01)
- 15. test_chat_logs_tools_offered_count_on_success (Phase 16.1 D-01 + D-21)
+All tests use a mocked LLMRouter.compile_intent (no real Ollama dep).
+Rate-limit module is reset before each test for isolation. Tool registry
+snapshot is patched to return a fixed Tool list so the empty-registry guard
+does NOT short-circuit.
 """
 from __future__ import annotations
 
@@ -35,37 +19,7 @@ from forge_bridge.console import _rate_limit
 from forge_bridge.console.app import build_console_app
 from forge_bridge.console.manifest_service import ManifestService
 from forge_bridge.console.read_api import ConsoleReadAPI
-from forge_bridge.llm.router import (
-    ChatTurnResult,
-    LLMLoopBudgetExceeded,
-    LLMToolError,
-    RecursiveToolLoopError,
-)
-
-
-def _make_phase_a_chat_result(*, final_text: str, messages, **_kwargs) -> ChatTurnResult:
-    """Phase A test helper — build a ChatTurnResult that mirrors the handler's
-    pre-Phase-A "echo input + append final_text" behavior. Lets tests that
-    just sample the final assistant text keep passing without bespoke mock
-    bodies. tool_trace is empty (these tests don't exercise tool activity)."""
-    return ChatTurnResult(
-        final_text=final_text,
-        messages=list(messages) + [{"role": "assistant", "content": final_text}],
-        tool_trace=[],
-    )
-
-
-def _async_chat_result(final_text: str = "OK from mock LLM"):
-    """AsyncMock side_effect factory that builds a ChatTurnResult per call,
-    echoing the caller's `messages=` kwarg so handler tests round-trip
-    cleanly under the Phase A contract."""
-    async def _impl(**kwargs):
-        return _make_phase_a_chat_result(
-            final_text=final_text,
-            messages=kwargs.get("messages") or [],
-        )
-    return _impl
-
+from forge_bridge.llm.router import LLMToolError, RecursiveToolLoopError
 
 @pytest.fixture(autouse=True)
 def _reset_rate_limit():
@@ -94,7 +48,7 @@ async def _passthrough_filter(tools):
 
 @pytest.fixture
 def chat_client():
-    """TestClient with mocked LLMRouter; complete_with_tools returns 'OK'.
+    """TestClient with mocked LLMRouter.compile_intent.
 
     Patches forge_bridge.mcp.server.mcp.list_tools at the import path the
     handler resolves (`from forge_bridge.mcp import server as _mcp_server;
@@ -106,7 +60,8 @@ def chat_client():
     their own patch that overrides this default.
     """
     mock_router = MagicMock()
-    mock_router.complete_with_tools = AsyncMock(side_effect=_async_chat_result())
+    mock_router.compile_intent = AsyncMock(return_value=["forge_test_probe"])
+    mock_router.complete_with_tools = AsyncMock()
 
     ms = ManifestService()
     mock_log = MagicMock()
@@ -124,28 +79,19 @@ def chat_client():
     ), patch(
         "forge_bridge.console.handlers.filter_tools_by_reachable_backends",
         side_effect=_passthrough_filter,
+    ), patch(
+        "forge_bridge.console._chat_compile.run_chain_steps",
+        new=AsyncMock(return_value={
+            "status": "success",
+            "request_id": "test-request",
+            "chain": [{"step": "forge_test_probe", "result": {"ok": True}}],
+            "error": None,
+        }),
     ):
         yield TestClient(app), mock_router
 
 
 # ── Happy path ─────────────────────────────────────────────────────────────────
-
-def test_chat_happy_path_returns_200(chat_client):
-    client, mock_router = chat_client
-    r = client.post(
-        "/api/v1/chat",
-        json={"messages": [{"role": "user", "content": "what week is it?"}]},
-    )
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["stop_reason"] == "end_turn"
-    assert "request_id" in body
-    assert isinstance(body["messages"], list) and len(body["messages"]) == 2
-    assert body["messages"][-1] == {"role": "assistant", "content": "OK from mock LLM"}
-    assert "X-Request-ID" in r.headers
-    # D-05: sensitive must be hardcoded True regardless of the request body.
-    call_kwargs = mock_router.complete_with_tools.call_args.kwargs
-    assert call_kwargs["sensitive"] is True
 
 
 # ── 422 validation paths ───────────────────────────────────────────────────────
@@ -201,23 +147,11 @@ def test_chat_rate_limit_returns_429_with_retry_after(chat_client):
 
 # ── 504 timeout paths (D-14a) ──────────────────────────────────────────────────
 
-def test_chat_loop_budget_exceeded_returns_504(chat_client):
-    client, mock_router = chat_client
-    mock_router.complete_with_tools.side_effect = LLMLoopBudgetExceeded(
-        "max_seconds", -1, 120.0,
-    )
-    r = client.post(
-        "/api/v1/chat",
-        json={"messages": [{"role": "user", "content": "hi"}]},
-    )
-    assert r.status_code == 504
-    assert r.json()["error"]["code"] == "request_timeout"
-
 
 def test_chat_outer_timeout_returns_504(chat_client):
     """asyncio.TimeoutError from the outer wait_for translates to 504 per D-14a."""
     client, mock_router = chat_client
-    mock_router.complete_with_tools.side_effect = asyncio.TimeoutError()
+    mock_router.compile_intent.side_effect = asyncio.TimeoutError()
     r = client.post(
         "/api/v1/chat",
         json={"messages": [{"role": "user", "content": "hi"}]},
@@ -226,11 +160,9 @@ def test_chat_outer_timeout_returns_504(chat_client):
     assert r.json()["error"]["code"] == "request_timeout"
 
 
-# ── 500 internal error paths (D-14a) ───────────────────────────────────────────
-
 def test_chat_recursive_loop_error_returns_500(chat_client):
     client, mock_router = chat_client
-    mock_router.complete_with_tools.side_effect = RecursiveToolLoopError(
+    mock_router.compile_intent.side_effect = RecursiveToolLoopError(
         "test recursive loop"
     )
     r = client.post(
@@ -243,7 +175,7 @@ def test_chat_recursive_loop_error_returns_500(chat_client):
 
 def test_chat_tool_error_returns_500(chat_client):
     client, mock_router = chat_client
-    mock_router.complete_with_tools.side_effect = LLMToolError("provider 5xx")
+    mock_router.compile_intent.side_effect = LLMToolError("provider 5xx")
     r = client.post(
         "/api/v1/chat",
         json={"messages": [{"role": "user", "content": "hi"}]},
@@ -268,22 +200,6 @@ def test_chat_envelope_shape_is_nested(chat_client):
     assert "message" not in body
 
 
-def test_chat_passes_messages_list_to_router(chat_client):
-    """D-02a: messages list is passed verbatim (no lossy stitching)."""
-    client, mock_router = chat_client
-    history = [
-        {"role": "user", "content": "first turn"},
-        {"role": "assistant", "content": "first reply"},
-        {"role": "user", "content": "second turn"},
-    ]
-    r = client.post("/api/v1/chat", json={"messages": history})
-    assert r.status_code == 200, r.text
-    call_kwargs = mock_router.complete_with_tools.call_args.kwargs
-    assert call_kwargs["messages"] == history
-    # And NOT the legacy prompt= path.
-    assert call_kwargs.get("prompt", "") == ""
-
-
 # ── Plan 16-07 post-rename guard ───────────────────────────────────────────────
 
 def test_ui_chat_handler_renders_panel_template(chat_client):
@@ -305,7 +221,7 @@ def test_ui_chat_handler_renders_panel_template(chat_client):
 
 def test_chat_filters_unreachable_backends(chat_client):
     """D-01: chat handler drops forge_* and flame_* tools whose backends are
-    unreachable. Asserts complete_with_tools() receives only the filtered list.
+    unreachable. Asserts compile_intent() receives only the filtered list.
 
     Patches forge_bridge.console.handlers.filter_tools_by_reachable_backends
     (the module-top import binding) to simulate no Flame backend reachable.
@@ -337,8 +253,7 @@ def test_chat_filters_unreachable_backends(chat_client):
         )
 
     assert r.status_code == 200, r.text
-    call_kwargs = mock_router.complete_with_tools.call_args.kwargs
-    forwarded_tools = call_kwargs["tools"]
+    forwarded_tools = mock_router.compile_intent.call_args.args[1]
     assert len(forwarded_tools) == 1
     assert forwarded_tools[0].name == "synth_test"
 
@@ -346,7 +261,7 @@ def test_chat_filters_unreachable_backends(chat_client):
 def test_chat_503_when_no_backends_reachable(chat_client):
     """D-01: when filter_tools_by_reachable_backends returns empty list,
     chat handler returns 503 with service_unavailable envelope.
-    complete_with_tools must NOT be called.
+    compile_intent must NOT be called.
     """
     from mcp.types import Tool
 
@@ -377,7 +292,7 @@ def test_chat_503_when_no_backends_reachable(chat_client):
     assert body["error"]["code"] == "service_unavailable"
     assert "No tool backends reachable" in body["error"]["message"]
     assert "X-Request-ID" in r.headers
-    mock_router.complete_with_tools.assert_not_called()
+    mock_router.compile_intent.assert_not_called()
 
 
 def test_chat_logs_tools_offered_count_on_success(chat_client, caplog):
@@ -414,7 +329,11 @@ def test_chat_logs_tools_offered_count_on_success(chat_client, caplog):
     assert r.status_code == 200, r.text
     # Assert the success log line contains both fields
     log_messages = [r.message for r in caplog.records]
-    success_logs = [m for m in log_messages if "stop_reason=end_turn" in m]
+    success_logs = [
+        m for m in log_messages
+        if "stop_reason=chain_complete" in m
+        and "chat_regime=compiled_non_mutating" in m
+    ]
     assert len(success_logs) >= 1, (
         f"Expected at least one 'chat ok' log line, got: {log_messages}"
     )
@@ -423,140 +342,17 @@ def test_chat_logs_tools_offered_count_on_success(chat_client, caplog):
     )
 
 
-# ── PR15: deterministic-tool-call enforcement ─────────────────────────────
-
-
-def test_pr15_chat_handler_passes_enforcement_system_prompt(chat_client):
-    """The chat handler MUST override system= with the PR15 enforcement
-    prompt — preserving the router's base prompt at the top of the stack."""
+def test_pr15_malformed_tool_text_validation_retired(chat_client):
+    """A.1 compiles text to graph-intent; PR15 terminal-text validation no longer runs."""
     client, mock_router = chat_client
-    mock_router.system_prompt = "You are a VFX pipeline assistant."
-
-    r = client.post(
-        "/api/v1/chat",
-        json={"messages": [{"role": "user", "content": "use forge_test_probe"}]},
+    mock_router.compile_intent = AsyncMock(
+        return_value=['<|im_start|>{"name": "forge_test_probe", "arguments": {}}']
     )
-    assert r.status_code == 200, r.text
-    kwargs = mock_router.complete_with_tools.call_args.kwargs
-    sys_msg = kwargs.get("system")
-    assert isinstance(sys_msg, str)
-    assert sys_msg.startswith("You are a VFX pipeline assistant.")
-    assert "tool-using agent" in sys_msg
-    assert "YOU MUST CALL IT" in sys_msg
-
-
-def test_pr15_chat_handler_injects_hard_tool_mode_when_one_tool(chat_client):
-    """Single tool surviving the filter triggers HARD-TOOL injection."""
-    client, mock_router = chat_client
-    mock_router.system_prompt = "base"
-    # The mock fixture installs exactly one tool (forge_test_probe), and the
-    # passthrough filter keeps all of them. The PR14 message filter will keep
-    # it (no tokens overlap → fallback to full list = 1 tool).
-    r = client.post(
-        "/api/v1/chat",
-        json={"messages": [{"role": "user", "content": "anything goes"}]},
-    )
-    assert r.status_code == 200, r.text
-    sys_msg = mock_router.complete_with_tools.call_args.kwargs["system"]
-    assert "exactly ONE tool" in sys_msg
-    assert "MUST call this tool" in sys_msg
-
-
-def test_pr15_chat_handler_omits_hard_tool_mode_when_multiple_tools(chat_client):
-    """No HARD-TOOL line when more than one tool is offered to the model."""
-    from mcp.types import Tool
-
-    client, mock_router = chat_client
-    mock_router.system_prompt = "base"
-
-    fake_tools = [
-        Tool(name="forge_a", description="x",
-             inputSchema={"type": "object", "properties": {}}),
-        Tool(name="forge_b", description="x",
-             inputSchema={"type": "object", "properties": {}}),
-    ]
-
-    async def fake_passthrough(tools):
-        return tools
-
-    with patch(
-        "forge_bridge.mcp.server.mcp.list_tools",
-        new=AsyncMock(return_value=fake_tools),
-    ), patch(
-        "forge_bridge.console.handlers.filter_tools_by_reachable_backends",
-        side_effect=fake_passthrough,
-    ):
-        r = client.post(
-            "/api/v1/chat",
-            json={"messages": [{"role": "user", "content": "hi"}]},
-        )
-    assert r.status_code == 200
-    sys_msg = mock_router.complete_with_tools.call_args.kwargs["system"]
-    assert "tool-using agent" in sys_msg
-    assert "MUST call this tool" not in sys_msg
-
-
-def test_pr15_chat_handler_response_body_carries_tool_enforced(chat_client):
-    """Success body must include ``tool_enforced`` for the wrapper trace."""
-    client, mock_router = chat_client
-    mock_router.system_prompt = "base"
     r = client.post(
         "/api/v1/chat",
         json={"messages": [{"role": "user", "content": "hi"}]},
     )
     assert r.status_code == 200, r.text
-    body = r.json()
-    # The fixture installs 1 tool → tools_filtered=1 → tool_enforced=True.
-    assert body["tool_enforced"] is True
-
-
-def test_pr15_chat_handler_returns_500_on_malformed_tool_text(chat_client):
-    """Hallucinated tool-call text in the assistant response → 500."""
-    client, mock_router = chat_client
-    mock_router.system_prompt = "base"
-    mock_router.complete_with_tools = AsyncMock(
-        side_effect=_async_chat_result(
-            final_text='<|im_start|>{"name": "forge_test_probe", "arguments": {}}',
-        ),
-    )
-    r = client.post(
-        "/api/v1/chat",
-        json={"messages": [{"role": "user", "content": "hi"}]},
-    )
-    assert r.status_code == 500
-    assert r.json()["error"]["code"] == "internal_error"
-
-
-def test_pr15_chat_handler_legitimate_response_not_flagged(chat_client):
-    """A normal assistant response must still 200 — no false-positive 500s."""
-    client, mock_router = chat_client
-    mock_router.system_prompt = "base"
-    mock_router.complete_with_tools = AsyncMock(
-        side_effect=_async_chat_result(
-            final_text="There are 4 libraries: Default, WIP, Postings, Delivery.",
-        ),
-    )
-    r = client.post(
-        "/api/v1/chat",
-        json={"messages": [{"role": "user", "content": "list libraries"}]},
-    )
-    assert r.status_code == 200, r.text
-
-
-def test_pr15_no_regression_pr14_counts_still_present(chat_client):
-    """tools_available / tools_filtered (PR14) must still ship alongside
-    the new tool_enforced field — no key churn for downstream consumers."""
-    client, mock_router = chat_client
-    mock_router.system_prompt = "base"
-    r = client.post(
-        "/api/v1/chat",
-        json={"messages": [{"role": "user", "content": "hi"}]},
-    )
-    assert r.status_code == 200
-    body = r.json()
-    for key in ("tools_available", "tools_filtered", "tool_enforced",
-                "messages", "stop_reason", "request_id"):
-        assert key in body, f"missing {key} in response body"
 
 
 # ── PR20: deterministic forced execution when filter narrows to 1 ──────────
@@ -600,7 +396,8 @@ def _pr20_build_app(tools_list, fake_call_tool=None):
     from mcp.types import TextContent
 
     mock_router = MagicMock()
-    mock_router.complete_with_tools = AsyncMock(side_effect=_async_chat_result("UNREACHED LLM"))
+    mock_router.compile_intent = AsyncMock(return_value=["commit"])
+    mock_router.complete_with_tools = AsyncMock()
     mock_router.system_prompt = "base"
 
     ms = ManifestService()
@@ -687,7 +484,7 @@ def test_pr20_fetch_versions_forces_forge_list_versions():
     assert body["tools_filtered"] == 1
     assert body["tools_available"] > 1
     # Hard contract — LLM was NEVER called on the forced path.
-    mock_router.complete_with_tools.assert_not_called()
+    mock_router.compile_intent.assert_not_called()
     # PR24 — `forge_list_versions` is on the project_id-injection allow-list,
     # so the handler probes `forge_list_projects` first. Default fixture
     # returns zero projects → no injection → tool still called with `{}`.
@@ -720,7 +517,7 @@ def test_pr20_get_versions_forces_forge_list_versions():
     body = r.json()
     assert body["tool_forced"] is True
     assert body["stop_reason"] == "tool_forced"
-    mock_router.complete_with_tools.assert_not_called()
+    mock_router.compile_intent.assert_not_called()
     # PR24 — probe call to forge_list_projects + actual tool call.
     call_mock.assert_any_call("forge_list_projects", {})
     call_mock.assert_any_call("forge_list_versions", {})
@@ -743,7 +540,7 @@ def test_pr20_list_version_singular_forces_forge_list_versions():
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["tool_forced"] is True
-    mock_router.complete_with_tools.assert_not_called()
+    mock_router.compile_intent.assert_not_called()
     # PR24 — probe call to forge_list_projects + actual tool call.
     call_mock.assert_any_call("forge_list_projects", {})
     call_mock.assert_any_call("forge_list_versions", {})
@@ -772,8 +569,8 @@ def test_pr20_multi_tool_match_does_not_force():
     assert r.status_code == 200, r.text
     body = r.json()
     assert body.get("tool_forced") in (None, False)
-    assert body["stop_reason"] == "end_turn"
-    mock_router.complete_with_tools.assert_called_once()
+    assert body["stop_reason"] == "preview_emitted"
+    mock_router.compile_intent.assert_awaited_once()
     # The handler did NOT call the tool directly on the LLM path.
     call_mock.assert_not_called()
 
@@ -792,7 +589,7 @@ def test_pr20_validation_error_returns_structured_tool_message():
     list_p, back_p, call_p, app, mock_router = _pr20_build_app(
         tools, fake_call_tool=boom,
     )
-    with list_p, back_p, call_p as call_mock:
+    with list_p, back_p, call_p:
         client = TestClient(app)
         r = client.post(
             "/api/v1/chat",
@@ -804,7 +601,7 @@ def test_pr20_validation_error_returns_structured_tool_message():
     body = r.json()
     assert body["tool_forced"] is True
     assert body["stop_reason"] == "tool_forced"
-    mock_router.complete_with_tools.assert_not_called()
+    mock_router.compile_intent.assert_not_called()
     tool_msg = body["messages"][-1]
     assert tool_msg["role"] == "tool"
     assert tool_msg["name"] == "forge_list_versions"
@@ -849,7 +646,7 @@ def test_pr20_forced_path_does_not_call_when_sequence_unresolved():
         "key": "sequence_name",
         "tool": "flame_get_sequence_segments",
     }
-    mock_router.complete_with_tools.assert_not_called()
+    mock_router.compile_intent.assert_not_called()
     call_mock.assert_not_awaited()
 
 
@@ -880,7 +677,7 @@ def test_pr20_forced_path_uses_query_resolved_sequence_name():
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["tool_forced"] is True
-    mock_router.complete_with_tools.assert_not_called()
+    mock_router.compile_intent.assert_not_called()
     call_mock.assert_awaited_once_with(
         "flame_get_sequence_segments",
         {"params": {"sequence_name": "30sec_21"}},
@@ -942,9 +739,9 @@ def test_pr20_does_not_force_when_available_equals_filtered_equals_one(chat_clie
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["stop_reason"] == "end_turn"
+    assert body["stop_reason"] == "chain_complete"
     assert body.get("tool_forced") in (None, False)
-    mock_router.complete_with_tools.assert_called_once()
+    mock_router.compile_intent.assert_awaited_once()
 
 
 def test_phase_24_11_llm_path_receives_resolved_entity_context(chat_client):
@@ -961,14 +758,13 @@ def test_phase_24_11_llm_path_receives_resolved_entity_context(chat_client):
     )
 
     assert r.status_code == 200, r.text
-    mock_router.complete_with_tools.assert_called_once()
-    forwarded = mock_router.complete_with_tools.call_args.kwargs["messages"]
-    assert forwarded[-1]["role"] == "user"
-    assert forwarded[-1]["content"].startswith("[Resolved entities from query]\n")
+    mock_router.compile_intent.assert_awaited_once()
+    forwarded = mock_router.compile_intent.call_args.args[0]
+    assert forwarded.startswith("[Resolved entities from query]\n")
     assert 'sequence_name: "30sec_21"  (normalized from "30sec 21")' in (
-        forwarded[-1]["content"]
+        forwarded
     )
-    assert "User query: Give me the versions" in forwarded[-1]["content"]
+    assert "User query: Give me the versions" in forwarded
 
 
 def test_pr20_envelope_keys_on_forced_path():
@@ -1045,9 +841,9 @@ def test_pr20_does_not_force_when_message_does_not_match_any_tool():
         )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["stop_reason"] == "end_turn"
+    assert body["stop_reason"] == "preview_emitted"
     assert body.get("tool_forced") in (None, False)
-    mock_router.complete_with_tools.assert_called_once()
+    mock_router.compile_intent.assert_awaited_once()
     call_mock.assert_not_called()
 
 
@@ -1087,7 +883,7 @@ def test_pr21_list_project_versions_forces_forge_list_versions():
     assert body["stop_reason"] == "tool_forced"
     assert body["tools_filtered"] == 1
     assert body["tools_available"] > 1
-    mock_router.complete_with_tools.assert_not_called()
+    mock_router.compile_intent.assert_not_called()
     # PR24 — probe call to forge_list_projects + actual tool call.
     call_mock.assert_any_call("forge_list_projects", {})
     call_mock.assert_any_call("forge_list_versions", {})
@@ -1113,7 +909,7 @@ def test_pr21_list_projects_forces_forge_list_projects():
     body = r.json()
     assert body["tool_forced"] is True
     assert body["stop_reason"] == "tool_forced"
-    mock_router.complete_with_tools.assert_not_called()
+    mock_router.compile_intent.assert_not_called()
     call_mock.assert_called_once_with("forge_list_projects", {})
 
 
@@ -1133,7 +929,7 @@ def test_pr21_list_versions_forces_forge_list_versions():
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["tool_forced"] is True
-    mock_router.complete_with_tools.assert_not_called()
+    mock_router.compile_intent.assert_not_called()
     # PR24 — probe call to forge_list_projects + actual tool call.
     call_mock.assert_any_call("forge_list_projects", {})
     call_mock.assert_any_call("forge_list_versions", {})
@@ -1162,8 +958,8 @@ def test_pr21_unbreakable_tie_falls_back_to_llm():
     assert r.status_code == 200, r.text
     body = r.json()
     assert body.get("tool_forced") in (None, False)
-    assert body["stop_reason"] == "end_turn"
-    mock_router.complete_with_tools.assert_called_once()
+    assert body["stop_reason"] == "preview_emitted"
+    mock_router.compile_intent.assert_awaited_once()
     call_mock.assert_not_called()
 
 
@@ -1185,7 +981,7 @@ def test_pr21_no_regression_pr20_single_match_still_forces():
     body = r.json()
     assert body["tool_forced"] is True
     assert body["stop_reason"] == "tool_forced"
-    mock_router.complete_with_tools.assert_not_called()
+    mock_router.compile_intent.assert_not_called()
     # PR24 — probe call to forge_list_projects + actual tool call.
     call_mock.assert_any_call("forge_list_projects", {})
     call_mock.assert_any_call("forge_list_versions", {})
@@ -1271,7 +1067,7 @@ def test_pr24_single_project_injects_project_id():
     assert body["tool_forced"] is True
     assert body["stop_reason"] == "tool_forced"
     assert body["tools_filtered"] == 1
-    mock_router.complete_with_tools.assert_not_called()
+    mock_router.compile_intent.assert_not_called()
     # The probe ran, AND the forced tool was called with the injected id.
     call_mock.assert_any_call("forge_list_projects", {})
     call_mock.assert_any_call(
@@ -1315,7 +1111,7 @@ def test_pr24_zero_projects_does_not_inject_and_surfaces_missing_project_id():
     assert body["tool_forced"] is True
     assert body["stop_reason"] == "tool_forced"
     assert body["tools_filtered"] == 1
-    mock_router.complete_with_tools.assert_not_called()
+    mock_router.compile_intent.assert_not_called()
     # Forced tool called with EMPTY args — no injection took place.
     call_mock.assert_any_call("forge_list_projects", {})
     call_mock.assert_any_call("forge_list_versions", {})
@@ -1374,7 +1170,7 @@ def test_pr24_multiple_projects_returns_pr27_disambiguation_envelope():
     assert "X-Request-ID" in r.headers
 
     # Hard contract: NO LLM, NO downstream tool call.
-    mock_router.complete_with_tools.assert_not_called()
+    mock_router.compile_intent.assert_not_called()
     call_mock.assert_called_once_with("forge_list_projects", {})
 
 
@@ -1403,7 +1199,7 @@ def test_pr24_does_not_fire_for_tools_outside_allow_list():
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["tool_forced"] is True
-    mock_router.complete_with_tools.assert_not_called()
+    mock_router.compile_intent.assert_not_called()
     # Crucial: NO probe call to forge_list_projects, only the target.
     call_mock.assert_called_once_with("flame_ping", {})
 
@@ -1473,28 +1269,6 @@ def test_state_invariant_pr21_narrowing_force_path():
     _assert_tool_state_invariant(body)
 
 
-def test_state_invariant_multi_tool_llm_path():
-    """LLM path with multiple survivors: filtered>1 AND enforced=False
-    together. Pre-fix the ≤3 PR15 threshold made enforced=True for
-    filtered=2..3, breaking the invariant."""
-    tools = [_pr20_make_tool(n) for n in _PR20_MULTI_MATCH_TOOLS]
-    list_p, back_p, call_p, app, mock_router = _pr20_build_app(tools)
-    with list_p, back_p, call_p:
-        client = TestClient(app)
-        r = client.post(
-            "/api/v1/chat",
-            json={"messages": [
-                {"role": "user", "content": "list"},
-            ]},
-        )
-    assert r.status_code == 200
-    body = r.json()
-    assert body["tools_filtered"] > 1
-    assert body["tool_enforced"] is False
-    _assert_tool_state_invariant(body)
-    mock_router.complete_with_tools.assert_called_once()
-
-
 def test_state_invariant_tools_filtered_equals_actual_tool_count():
     """Single source of truth: `tools_filtered` in the body must equal
     the number of tools the chat handler actually forwarded to the LLM
@@ -1512,8 +1286,8 @@ def test_state_invariant_tools_filtered_equals_actual_tool_count():
         )
     assert r.status_code == 200
     body = r.json()
-    # The LLM was called — verify the count matches what was forwarded.
-    forwarded = mock_router.complete_with_tools.call_args.kwargs["tools"]
+    # The compile path was called — verify the count matches what was forwarded.
+    forwarded = mock_router.compile_intent.call_args.args[1]
     assert body["tools_filtered"] == len(forwarded)
     _assert_tool_state_invariant(body)
 
@@ -1539,7 +1313,8 @@ def test_chat_returns_503_when_filter_pipeline_yields_empty_tool_set():
     ]
 
     mock_router = MagicMock()
-    mock_router.complete_with_tools = AsyncMock(return_value="UNREACHED")
+    mock_router.compile_intent = AsyncMock(return_value=["commit"])
+    mock_router.complete_with_tools = AsyncMock()
     mock_router.system_prompt = "base"
     ms = ManifestService()
     mock_log = MagicMock()
@@ -1574,7 +1349,7 @@ def test_chat_returns_503_when_filter_pipeline_yields_empty_tool_set():
     body = r.json()
     assert body["error"]["code"] == "service_unavailable"
     # LLM must NOT have been called.
-    mock_router.complete_with_tools.assert_not_called()
+    mock_router.compile_intent.assert_not_called()
 
 
 def test_chat_safe_error_envelope_when_router_raises_arbitrary_exception(chat_client):
@@ -1583,7 +1358,7 @@ def test_chat_safe_error_envelope_when_router_raises_arbitrary_exception(chat_cl
     string into the response body, never let the framework return a
     Starlette default 500 with a traceback."""
     client, mock_router = chat_client
-    mock_router.complete_with_tools.side_effect = RuntimeError(
+    mock_router.compile_intent.side_effect = RuntimeError(
         "secret detail in exception text — must NOT leak"
     )
     r = client.post(
@@ -1605,7 +1380,7 @@ def test_chat_safe_error_envelope_when_router_raises_value_error(chat_client):
     """Same contract under a different exception class — proves the
     catch-all is the load-bearing guarantee, not just LLMToolError."""
     client, mock_router = chat_client
-    mock_router.complete_with_tools.side_effect = ValueError("oops")
+    mock_router.compile_intent.side_effect = ValueError("oops")
     r = client.post(
         "/api/v1/chat",
         json={"messages": [{"role": "user", "content": "hi"}]},
@@ -1613,179 +1388,6 @@ def test_chat_safe_error_envelope_when_router_raises_value_error(chat_client):
     assert r.status_code == 500
     assert r.json()["error"]["code"] == "internal_error"
     assert "oops" not in r.json()["error"]["message"]
-
-
-# ---------------------------------------------------------------------------
-# Phase 24.4 — JSON path orchestration-terminated passthrough
-# (.planning/milestones/v1.6-PHASE-24-4-FRAMING.md §5 + §9 Seam B)
-# ---------------------------------------------------------------------------
-
-
-from forge_bridge.llm.router import OrchestrationTerminationEnvelope
-
-
-def _make_terminated_chat_result(
-    *,
-    messages,
-    tool_name: str = "forge_x",
-    result_text: str = "canonical_answer",
-    k: int = 2,
-) -> ChatTurnResult:
-    """Build a ChatTurnResult shaped like what router._loop_body produces
-    when the K-fold canonical trigger fires — final_text="" + populated
-    termination envelope + transcript ending in tool results."""
-    accumulated = [
-        {
-            "tool_name": tool_name,
-            "args_hash": "deadbeef",
-            "result_hash": "abc12345",
-            "content": result_text,
-            "iter": i,
-        }
-        for i in range(1, k + 1)
-    ]
-    transcript = list(messages) + [
-        {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [{
-                "id": f"call_{i}",
-                "type": "function",
-                "function": {"name": tool_name, "arguments": "{}"},
-            }],
-        }
-        for i in range(k)
-    ]
-    for i in range(k):
-        transcript.append({
-            "role": "tool",
-            "tool_call_id": f"call_{i}",
-            "name": tool_name,
-            "content": result_text,
-        })
-    return ChatTurnResult(
-        final_text="",
-        messages=transcript,
-        tool_trace=[
-            {"tool_name": tool_name, "arguments": {}, "result": result_text,
-             "error": None, "index": i}
-            for i in range(k)
-        ],
-        termination=OrchestrationTerminationEnvelope(
-            status="orchestration_terminated",
-            trigger="k_fold_canonical",
-            reason=(
-                f"Tool {tool_name} dispatched successfully {k} times with "
-                "identical canonical arguments and identical canonical result. "
-                "Loop terminated by orchestration policy."
-            ),
-            iterations=k,
-            accumulated_results=accumulated,
-        ),
-    )
-
-
-def test_chat_orchestration_terminated_returns_200_with_envelope(chat_client):
-    """Framing §5 + §9 Seam B: HTTP 200 (policy success), top-level
-    ``termination`` field carries the verbatim envelope, ``stop_reason``
-    is ``orchestration_terminated`` (distinct from ``end_turn``)."""
-    client, mock_router = chat_client
-    async def _termination_complete(**kwargs):
-        return _make_terminated_chat_result(messages=kwargs.get("messages") or [])
-    mock_router.complete_with_tools = AsyncMock(side_effect=_termination_complete)
-
-    r = client.post(
-        "/api/v1/chat",
-        json={"messages": [{"role": "user", "content": "show canonical"}]},
-    )
-    assert r.status_code == 200, r.text
-    body = r.json()
-
-    # Distinct stop_reason — consumers reading transport metadata
-    # cannot mistake this for model-decided success.
-    assert body["stop_reason"] == "orchestration_terminated"
-
-    # Envelope is verbatim under the ``termination`` top-level key
-    assert "termination" in body
-    env = body["termination"]
-    assert env["status"] == "orchestration_terminated"
-    assert env["trigger"] == "k_fold_canonical"
-    assert env["iterations"] == 2
-    assert "forge_x" in env["reason"]
-    assert len(env["accumulated_results"]) == 2
-    for entry in env["accumulated_results"]:
-        assert entry["tool_name"] == "forge_x"
-        assert entry["content"] == "canonical_answer"
-
-    # ``final_text`` field is OMITTED — orchestrator did not synthesize
-    # conversational text (framing §10.1). Including it as "" would
-    # create ambiguity with model-emitted empty responses.
-    assert "final_text" not in body
-
-
-def test_chat_orchestration_terminated_preserves_transcript_and_trace(chat_client):
-    """Phase A invariant + framing §3.1.3: tool_trace and messages
-    transcript still surfaced. tool_trace carries every dispatch this
-    session (success + failure); the envelope carries only the K
-    successful canonical results."""
-    client, mock_router = chat_client
-    async def _termination_complete(**kwargs):
-        return _make_terminated_chat_result(messages=kwargs.get("messages") or [])
-    mock_router.complete_with_tools = AsyncMock(side_effect=_termination_complete)
-
-    r = client.post(
-        "/api/v1/chat",
-        json={"messages": [{"role": "user", "content": "show canonical"}]},
-    )
-    body = r.json()
-    # Transcript present and non-empty
-    assert isinstance(body["messages"], list)
-    assert len(body["messages"]) >= 1
-    # Tool results in transcript
-    tool_msgs = [m for m in body["messages"] if m.get("role") == "tool"]
-    assert len(tool_msgs) == 2
-    # tool_trace surfaces every dispatch
-    assert isinstance(body["tool_trace"], list)
-    assert len(body["tool_trace"]) == 2
-
-
-def test_chat_orchestration_terminated_preserves_transport_metadata(chat_client):
-    """Framing §10.1 + transport-parity: request_id, tools_available,
-    tools_filtered, tool_enforced, tool_forced all present so wrapper
-    trace summaries (forge_bridge/llm/call_wrapper.py) work unchanged."""
-    client, mock_router = chat_client
-    async def _termination_complete(**kwargs):
-        return _make_terminated_chat_result(messages=kwargs.get("messages") or [])
-    mock_router.complete_with_tools = AsyncMock(side_effect=_termination_complete)
-
-    r = client.post(
-        "/api/v1/chat",
-        json={"messages": [{"role": "user", "content": "show canonical"}]},
-    )
-    body = r.json()
-    for key in (
-        "request_id", "tools_available", "tools_filtered",
-        "tool_enforced", "tool_forced",
-    ):
-        assert key in body, f"missing transport key {key!r}"
-    assert body["tool_forced"] is False  # LLM-loop path
-    assert "X-Request-ID" in r.headers
-
-
-def test_chat_model_decided_success_unaffected_by_termination_branch(chat_client):
-    """C-layer regression check (framing §7.4): model-decided
-    ``end_turn`` path BYTE-IDENTICAL to pre-24.4 behavior.
-    ``termination`` field is OMITTED (not present, not null) so
-    consumers using `"termination" in body` detection work cleanly."""
-    client, mock_router = chat_client  # default fixture returns model-decided result
-    r = client.post(
-        "/api/v1/chat",
-        json={"messages": [{"role": "user", "content": "hi"}]},
-    )
-    body = r.json()
-    assert body["stop_reason"] == "end_turn"
-    assert "termination" not in body  # absent in model-decided path
-    assert body["final_text"] == "OK from mock LLM"
 
 
 # ── Phase 24.5 — Console UI consumer projection of orchestration_terminated ──
