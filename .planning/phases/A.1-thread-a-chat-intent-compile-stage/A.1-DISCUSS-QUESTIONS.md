@@ -9,7 +9,7 @@ drafted: 2026-05-27
 type: phase-discuss
 derives_from: .planning/phases/A.1-thread-a-chat-intent-compile-stage/THREAD-A-FRAMING.md
 artifact_role: load-bearing — A.1-PLAN.md drafts from these converged rulings
-review_state: awaiting-operator-ratification
+review_state: operator-ratified-2026-05-27
 ---
 
 # A.1 — Phase discuss: five framing-grade questions, room-converged
@@ -336,12 +336,16 @@ A.1's plan opens against these contracts. Stage 1b reviews against them.
 
 ## Status
 
-**Room-converged, awaiting operator ratification.** Creative provided
-the architectural transition framing (NL → compile → canonical graph →
+**Operator-ratified 2026-05-27.** Creative provided the
+architectural transition framing (NL → compile → canonical graph →
 execution substrate → host); DT provided five grounded rulings + Stage
 1b carve-outs + four forward-looking caveats. The two seats converged
 without active disagreement; rulings flow from the architectural framing.
+Operator ratified the room-converged rulings on 2026-05-27; frontmatter
+flipped concurrently.
 
-Once operator ratifies: A.1-PLAN.md drafts in code-handoff format
-against R-A1.1..R-A1.5 + FC-1..FC-4 + Stage 1b carve-outs, then goes
-to Stage 1b review before implementation handoff.
+A.1-PLAN.md drafted in code-handoff format against R-A1.1..R-A1.5 +
+FC-1..FC-4 + Stage 1b carve-outs, then went through Stage 1b review
+(v1 → v2 with B-1..B-12 + S-1/S-2/S-3 + sub-q (a) applied; v3 normalization
+pass for F-1..F-5 line/count/IFF/body-sync drift). Implementation hands
+off in D1..D8 order against v3.
