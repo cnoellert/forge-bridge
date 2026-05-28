@@ -22,11 +22,13 @@ from forge_bridge.orchestration.errors import (
     DecisionNotAllowedAtStageError,
     DuplicateToolIdError,
     InvalidGenerationDriverError,
+    InvalidManifestRequestError,
     InvalidReconstructionRequestError,
     InvalidStageTransitionError,
     InvalidStatusTransitionError,
     LifecycleStateAlreadyExistsError,
     LifecycleStateNotFoundError,
+    ManifestPreconditionError,
     PlannerRefusalError,
     ReplayRefusalError,
     UnknownDecisionEventError,
@@ -59,6 +61,13 @@ from forge_bridge.orchestration.rule_checks import (
     PlanningRuleRegistry,
     PlanningRuleViolation,
     default_planning_rule_registry,
+)
+from forge_bridge.orchestration.manifest import (
+    ManifestBody,
+    ManifestSubgraphWalker,
+    ProvenanceManifestAssembler,
+    SnapshotIdSet,
+    SubgraphClosure,
 )
 from forge_bridge.orchestration.replay import (
     ComparisonTarget,
@@ -127,4 +136,11 @@ __all__ = [
     "DimensionPolicy",
     "ComparisonTarget",
     "SourceRunContext",
+    "InvalidManifestRequestError",
+    "ManifestPreconditionError",
+    "ProvenanceManifestAssembler",
+    "ManifestSubgraphWalker",
+    "ManifestBody",
+    "SubgraphClosure",
+    "SnapshotIdSet",
 ]

@@ -78,6 +78,18 @@ class AmendedIntentLineageError(Exception):
         super().__init__(f"Amended intent lineage error: {reason}")
 
 
+class InvalidManifestRequestError(Exception):
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(f"Invalid manifest request: {reason}")
+
+
+class ManifestPreconditionError(Exception):
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(f"Manifest precondition failed: {reason}")
+
+
 class DuplicateToolIdError(Exception):
     def __init__(self, tool_id: str) -> None:
         self.tool_id = tool_id
