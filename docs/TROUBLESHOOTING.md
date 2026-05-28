@@ -36,6 +36,18 @@ Two optional sections appear where they earn their keep:
 
 If doctor's output disagrees with what's documented here, doctor wins — its output reflects live state. Open an issue and we'll close the gap.
 
+### Restarting the daemon — `fbridge up/down` does NOT own supervised daemons
+
+`fbridge down && fbridge up` only manages daemons it started itself. If the bridge was installed via `sudo ./scripts/install-bootstrap.sh` (the supervised-daemon path), it runs under launchd (macOS) or systemd (Linux), and `fbridge down` will report `external (no managed PID to stop)`. Use the supervisor's restart path instead:
+
+```bash
+sudo launchctl kickstart -k system/com.cnoellert.forge-bridge          # macOS (chat / console / mcp_http)
+sudo launchctl kickstart -k system/com.cnoellert.forge-bridge-server   # macOS (WS server, if needed)
+sudo systemctl restart forge-bridge                                    # Linux
+```
+
+The `install_provenance` row in `fbridge doctor` catches the snapshot-vs-live asymmetry — if the daemon is serving a stale commit, that row will read `daemon <stale> @ <repo>` and warn until the supervisor kickstart loads the current commit.
+
 ## Failure-mode coverage commitment
 
 Every failure mode this document names must be one of:
@@ -821,5 +833,41 @@ This is a Python packaging / workflow hazard, not a forge-bridge bug. The same s
 ### Cross-references
 
 - `CLAUDE.md` "Housekeeping discipline (cleanup actions)" — the precondition check that prevents this in the first place, written so AI assistants doing routine cleanup catch the editable-install anchor before destructive worktree removal.
+
+---
+
+## Failure mode: `fbridge doctor` flags `install_provenance` row — daemon serving stale commit
+
+**Surfaces from:** a `git pull` / branch update / new commit on disk while a long-running daemon stays up; `fbridge doctor` reports `install_provenance` mismatch.
+
+### Symptom
+
+`fbridge doctor` reports the `install_provenance` row as not-`ok`, naming the daemon's served commit alongside the on-disk commit. The two differ. Operator reflex is to run `fbridge down && fbridge up` to recycle — but `fbridge down` reports `external (no managed PID to stop)` and the daemon keeps serving the stale commit.
+
+### Diagnosis
+
+`fbridge down`/`fbridge up` manages **its own** background daemon PIDs. If the daemon was installed via `sudo ./scripts/install-bootstrap.sh`, it is **launchd-supervised** (macOS) or **systemd-supervised** (Linux) — `fbridge` cannot recycle a process owned by another supervisor.
+
+### Recovery
+
+Use the supervisor's kickstart, not `fbridge up`:
+
+```bash
+# macOS — launchd
+sudo launchctl kickstart -k system/com.cnoellert.forge-bridge
+# Linux — systemd
+sudo systemctl restart forge-bridge
+```
+
+After the kickstart, run `fbridge doctor` — the `install_provenance` row should clear to `ok` and report the on-disk commit as the served commit.
+
+### Why this happens
+
+The `install_provenance` doctor row is engineered (per Phase 24.2) to catch snapshot-vs-live asymmetry as a first-class observable. Without it, a daemon serving a stale commit can persist silently and indefinitely. The row does its job; the operator's muscle-memory just needs to route to the right restart path.
+
+### Cross-references
+
+- `docs/INSTALL.md` — supervised-daemon install path (the `install-bootstrap.sh` route).
+- The Ollama-restart and Postgres-restart failure modes above both already document the `launchctl kickstart` / `systemctl restart` invocations as part of their recovery steps; this section names them as the canonical answer for the standalone "daemon serving stale commit" symptom.
 
 ---
