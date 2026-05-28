@@ -70,6 +70,12 @@ class ContentAddressedRepo(Generic[T]):
         )
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
+    @classmethod
+    def _default_status(cls, body: dict[str, Any]) -> str:
+        if body.get("status") is not None:
+            return str(body["status"])
+        return "locked"
+
     async def insert_if_absent(
         self,
         body: dict[str, Any],
@@ -86,7 +92,7 @@ class ContentAddressedRepo(Generic[T]):
             entity_type=self.__entity_type__,
             project_id=project_id,
             name=body.get("name") or f"{self.__entity_type__}:{content_hash[:12]}",
-            status=body.get("status") or "locked",
+            status=self._default_status(body),
             content_hash=content_hash,
             attributes=body,
         )

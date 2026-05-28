@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from forge_bridge.store.content_addressed_repo import ContentAddressedRepo
-from forge_bridge.store.models import DBOrchLockedIntent
+from forge_bridge.store.orch_entity_views import DBOrchLockedIntent
 
 
 class LockedIntentRepo(ContentAddressedRepo[DBOrchLockedIntent]):
