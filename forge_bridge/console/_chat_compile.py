@@ -1,0 +1,158 @@
+"""A.1 chat compile branch helpers.
+
+This module owns the compile -> classify -> preview-or-execute branch shared
+by the JSON and SSE chat transports. It does not own HTTP response shaping.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Optional
+
+from forge_bridge.console._engine import run_chain_steps
+from forge_bridge.console._param_extract import extract_explicit_params
+from forge_bridge.graph.commit import graph_contains_commit_node, is_commit_step
+from forge_bridge.llm.router import CompileError
+
+
+@dataclass(frozen=True)
+class CompileBranchOutcome:
+    """Structured outcome of the compile-branch helper."""
+
+    regime: str
+    steps: list[str]
+    preview: Optional[dict]
+    chain_body: Optional[dict]
+    compile_error: Optional[Any]
+
+
+def _tool_name(tool: Any) -> str | None:
+    if isinstance(tool, dict):
+        value = tool.get("name")
+    else:
+        value = getattr(tool, "name", None)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _tool_description(tool: Any) -> str:
+    if isinstance(tool, dict):
+        value = tool.get("description", "")
+    else:
+        value = getattr(tool, "description", "")
+    return str(value or "").strip()
+
+
+def build_compile_system_prompt(tools: list) -> str:
+    """Format the compile system prompt from the registered tool surface."""
+    catalogue_lines: list[str] = []
+    for tool in tools:
+        name = _tool_name(tool)
+        if not name:
+            continue
+        description = _tool_description(tool)
+        catalogue_lines.append(
+            f"- {name}: {description}" if description else f"- {name}"
+        )
+
+    catalogue = "\n".join(catalogue_lines) or "- (empty tool set)"
+    return (
+        "Compile the operator's request into forge-bridge chain-step text.\n\n"
+        "Return only chain-step text. Use the literal `->` chain syntax "
+        "between ordered steps. Do not include Markdown, prose, or code "
+        "fences.\n\n"
+        "Available tools:\n"
+        f"{catalogue}\n\n"
+        "Authority transition:\n"
+        "Use the `commit` keyword only for a previewed host-mutation "
+        "authority transition. A graph containing `commit` is previewed for "
+        "operator ratification before apply."
+    )
+
+
+def build_preview_from_steps(steps: list[str]) -> dict:
+    """Construct the L4 preview shape from compiled chain steps."""
+    preview_steps: list[dict[str, Any]] = []
+    for step_text in steps:
+        commit_step = is_commit_step(step_text)
+        first_token = step_text.split(maxsplit=1)[0] if step_text.strip() else ""
+        preview_steps.append({
+            "step_text": step_text,
+            "tool_name": "__commit__" if commit_step else first_token,
+            "args_preview": extract_explicit_params(step_text),
+            "would_mutate": commit_step,
+        })
+
+    mutating_steps = sum(1 for step in preview_steps if step["would_mutate"])
+    return {
+        "kind": "graph-intent-preview",
+        "steps": preview_steps,
+        "summary": {
+            "total_steps": len(preview_steps),
+            "mutating_steps": mutating_steps,
+            "requires_ratification": mutating_steps > 0,
+        },
+    }
+
+
+async def run_compile_branch(
+    *,
+    router: Any,
+    user_prompt: str,
+    tools: list,
+    mcp: Any,
+    request_id: str,
+    client_ip: str,
+    started: float,
+    compile_system: Optional[str] = None,
+) -> CompileBranchOutcome:
+    """Compile, classify, then either preview or execute chain steps."""
+    system = (
+        compile_system
+        if compile_system is not None
+        else build_compile_system_prompt(tools)
+    )
+    try:
+        steps = await router.compile_intent(
+            user_prompt,
+            tools,
+            system=system,
+        )
+    except CompileError as exc:
+        return CompileBranchOutcome(
+            regime="compile_error",
+            steps=[],
+            preview=None,
+            chain_body=None,
+            compile_error=exc,
+        )
+
+    if graph_contains_commit_node(steps):
+        return CompileBranchOutcome(
+            regime="compiled_mutating_preview",
+            steps=steps,
+            preview=build_preview_from_steps(steps),
+            chain_body=None,
+            compile_error=None,
+        )
+
+    chain_body = await run_chain_steps(
+        steps=steps,
+        tools=tools,
+        mcp=mcp,
+        request_id=request_id,
+        client_ip=client_ip,
+        started=started,
+    )
+    regime = (
+        "chain_aborted"
+        if isinstance(chain_body, dict) and chain_body.get("status") == "error"
+        else "compiled_non_mutating"
+    )
+    return CompileBranchOutcome(
+        regime=regime,
+        steps=steps,
+        preview=None,
+        chain_body=chain_body,
+        compile_error=None,
+    )
