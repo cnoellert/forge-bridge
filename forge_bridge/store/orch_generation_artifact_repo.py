@@ -87,6 +87,8 @@ class GenerationArtifactRepo:
         artifact_id: uuid.UUID,
         new_state: str,
         polling_event: dict[str, Any] | None = None,
+        terminal_provenance: dict[str, Any] | None = None,
+        partial_fidelity_report: dict[str, Any] | None = None,
     ) -> DBOrchGenerationArtifact:
         """Advance lifecycle_state; seal content_hash on terminal transition."""
         if new_state not in self.ALL_STATES:
@@ -111,6 +113,20 @@ class GenerationArtifactRepo:
             history = list(history)
             history.append(polling_event)
             attributes["polling_history"] = history
+
+        if terminal_provenance is not None:
+            existing_provenance = attributes.get("execution_provenance")
+            if isinstance(existing_provenance, dict):
+                merged = copy.deepcopy(existing_provenance)
+                merged.update(terminal_provenance)
+                attributes["execution_provenance"] = merged
+            else:
+                attributes["execution_provenance"] = copy.deepcopy(terminal_provenance)
+
+        if partial_fidelity_report is not None:
+            attributes["partial_fidelity_report"] = copy.deepcopy(
+                partial_fidelity_report
+            )
 
         attributes.pop("lifecycle_state", None)
         entity.attributes = attributes
