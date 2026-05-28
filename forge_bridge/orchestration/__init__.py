@@ -25,13 +25,37 @@ from forge_bridge.orchestration.errors import (
     InvalidStatusTransitionError,
     LifecycleStateAlreadyExistsError,
     LifecycleStateNotFoundError,
+    PlannerRefusalError,
     UnknownDecisionEventError,
+)
+from forge_bridge.orchestration.identity_registries import (
+    InMemoryPlatformUUIDRegistry,
+    InMemoryTrainedIdentityRegistry,
+    PlatformUUIDRegistryProtocol,
+    TrainedIdentityRecord,
+    TrainedIdentityRegistryProtocol,
+)
+from forge_bridge.orchestration.lineage_graph import (
+    InMemoryLineageGraph,
+    LineageGraphProtocol,
+)
+from forge_bridge.orchestration.planner import (
+    REPLAY_REFUSAL_CODES,
+    Planner,
+    PlannerRefusalCode,
+    PlanningContext,
 )
 from forge_bridge.orchestration.registration import (
     BridgeRegistrationContext,
     RegisterToolCallable,
     ToolRegistration,
     ToolRegistry,
+)
+from forge_bridge.orchestration.rule_checks import (
+    DEFAULT_PLANNING_RULES,
+    PlanningRuleRegistry,
+    PlanningRuleViolation,
+    default_planning_rule_registry,
 )
 from forge_bridge.orchestration.worker import GenerationPoller, PollPassResult
 
@@ -56,6 +80,22 @@ __all__ = [
     "make_db_event_appender",
     "DEFAULT_CAPABILITY_KINDS",
     "DEFAULT_ENTRY_POINT_GROUP",
+    "Planner",
+    "PlanningContext",
+    "PlannerRefusalCode",
+    "PlannerRefusalError",
+    "REPLAY_REFUSAL_CODES",
+    "PlatformUUIDRegistryProtocol",
+    "TrainedIdentityRegistryProtocol",
+    "InMemoryPlatformUUIDRegistry",
+    "InMemoryTrainedIdentityRegistry",
+    "TrainedIdentityRecord",
+    "LineageGraphProtocol",
+    "InMemoryLineageGraph",
+    "PlanningRuleRegistry",
+    "PlanningRuleViolation",
+    "DEFAULT_PLANNING_RULES",
+    "default_planning_rule_registry",
     "DecisionNotAllowedAtStageError",
     "DuplicateToolIdError",
     "InvalidGenerationDriverError",

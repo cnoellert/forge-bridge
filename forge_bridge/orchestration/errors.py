@@ -52,6 +52,13 @@ class DecisionNotAllowedAtStageError(Exception):
         )
 
 
+class PlannerRefusalError(Exception):
+    def __init__(self, refusal_code: str, explanation: str) -> None:
+        self.refusal_code = refusal_code
+        self.explanation = explanation
+        super().__init__(f"Planner refused ({refusal_code}): {explanation}")
+
+
 class DuplicateToolIdError(Exception):
     def __init__(self, tool_id: str) -> None:
         self.tool_id = tool_id
