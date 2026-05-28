@@ -127,6 +127,45 @@ def test_build_compile_system_prompt_renders_tool_catalogue():
     assert "authority transition" in prompt
 
 
+def test_build_compile_system_prompt_omits_pr15_enforcement_language():
+    """L7 contract: compile system prompt omits PR15 enforcement vocabulary.
+
+    The chat handler deletes its enforced_system construction (S-1) on the
+    grounds that compile_intent runs PR15-free. Asserts that property
+    structurally on the prompt builder's output, grounded against
+    _tool_enforcement.py's actual emitted strings (not conjectured PR15
+    vocabulary). Per [[feedback-ground-specs-in-actual-files]] applied to
+    negative-assertion layer (Creative refinement 2026-05-28).
+    """
+    from forge_bridge.console._tool_enforcement import (
+        PR15_HARD_TOOL_INSTRUCTION,
+    )
+
+    prompt = build_compile_system_prompt([
+        _tool("forge_list_shots", "List shots."),
+        _tool("flame_rename_shots", "Rename shots."),
+    ])
+
+    # Distinctive PR15_ENFORCEMENT_PROMPT fragments — semantically unique
+    # to PR15 enforcement language; cannot appear naturally in compile-stage
+    # prose. Selected per Creative's Stage 1b ruling 2026-05-28: ground in
+    # PR15 source semantics, not formatting mechanics.
+    for forbidden in [
+        "tool-using agent",
+        "answer from memory",
+        "looks like a tool call",
+        "structured format when using tools",
+        "If you fail to call a tool",
+    ]:
+        assert forbidden not in prompt, f"PR15 fragment leaked: {forbidden!r}"
+
+    # Whole-constant assertion — PR15_HARD_TOOL_INSTRUCTION is a single-string
+    # imperative; no formatting fragility, exact-match safe.
+    assert (
+        PR15_HARD_TOOL_INSTRUCTION not in prompt
+    ), "PR15 HARD_TOOL instruction leaked"
+
+
 def test_build_preview_from_steps_non_mutating_shape():
     preview = build_preview_from_steps(["list shots"])
 

@@ -145,13 +145,38 @@ async def test_compile_intent_system_override_replaces_default():
 
 @pytest.mark.asyncio
 async def test_compile_intent_system_none_omits_pr15_language():
+    from forge_bridge.console._tool_enforcement import (
+        PR15_HARD_TOOL_INSTRUCTION,
+    )
+
     router = LLMRouter()
     router._async_local = AsyncMock(return_value="forge_list_shots")
 
     await router.compile_intent("list shots", tools=[_tool()])
 
     system_prompt = router._async_local.await_args.args[1]
-    assert "HARD-TOOL" not in system_prompt
+
+    # Grounded PR15 omission check — same distinctive-fragment list as the
+    # compile-branch sibling test in test_chat_compile_branch.py. Both tests
+    # exercise the same architectural contract (compile prompt PR15-free);
+    # both grounded against _tool_enforcement.py source per
+    # [[feedback-ground-specs-in-actual-files]] at the negative-assertion
+    # layer (DT+Creative Stage 1b ratification 2026-05-28).
+    for forbidden in [
+        "tool-using agent",
+        "answer from memory",
+        "looks like a tool call",
+        "structured format when using tools",
+        "If you fail to call a tool",
+    ]:
+        assert (
+            forbidden not in system_prompt
+        ), f"PR15 fragment leaked: {forbidden!r}"
+    assert (
+        PR15_HARD_TOOL_INSTRUCTION not in system_prompt
+    ), "PR15 HARD_TOOL instruction leaked"
+
+    # Positive assertions preserved — these were not part of the F-D3-1 defect.
     assert "chain-step text" in system_prompt
     assert "forge_list_shots" in system_prompt
 
