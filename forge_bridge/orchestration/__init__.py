@@ -18,14 +18,17 @@ from forge_bridge.orchestration.drivers import (
 )
 from forge_bridge.orchestration.engine import GraphEngine, UNSET
 from forge_bridge.orchestration.errors import (
+    AmendedIntentLineageError,
     DecisionNotAllowedAtStageError,
     DuplicateToolIdError,
     InvalidGenerationDriverError,
+    InvalidReconstructionRequestError,
     InvalidStageTransitionError,
     InvalidStatusTransitionError,
     LifecycleStateAlreadyExistsError,
     LifecycleStateNotFoundError,
     PlannerRefusalError,
+    ReplayRefusalError,
     UnknownDecisionEventError,
 )
 from forge_bridge.orchestration.identity_registries import (
@@ -57,6 +60,16 @@ from forge_bridge.orchestration.rule_checks import (
     PlanningRuleViolation,
     default_planning_rule_registry,
 )
+from forge_bridge.orchestration.replay import (
+    ComparisonTarget,
+    DimensionPolicy,
+    EffectivePinningPolicy,
+    PinningMode,
+    ReconstructionRequest,
+    ReplayEngine,
+    SourceRunContext,
+)
+
 from forge_bridge.orchestration.worker import GenerationPoller, PollPassResult
 
 __all__ = [
@@ -104,4 +117,14 @@ __all__ = [
     "LifecycleStateAlreadyExistsError",
     "LifecycleStateNotFoundError",
     "UnknownDecisionEventError",
+    "InvalidReconstructionRequestError",
+    "ReplayRefusalError",
+    "AmendedIntentLineageError",
+    "ReplayEngine",
+    "ReconstructionRequest",
+    "EffectivePinningPolicy",
+    "PinningMode",
+    "DimensionPolicy",
+    "ComparisonTarget",
+    "SourceRunContext",
 ]

@@ -121,7 +121,13 @@ async def pass_2_filter_candidates(planner: Planner, ctx: PlanningContext) -> No
     deliverable = ctx.intent.deliverable_spec or {}
     inputs = (ctx.inputs_catalog or {}).get("inputs", [])
     shot_id = ctx.shot_id or ctx.run_id
-    as_of = datetime.now(timezone.utc)
+    identity_as_of = (
+        ctx.source_authored_at
+        if ctx.pinning_policy is not None
+        and getattr(ctx.pinning_policy, "identity", None) == "honor_pinning"
+        and ctx.source_authored_at is not None
+        else datetime.now(timezone.utc)
+    )
 
     candidates: list[dict[str, Any]] = []
     for entry in ctx.capability_snapshot.get("snapshots", []):
@@ -139,6 +145,17 @@ async def pass_2_filter_candidates(planner: Planner, ctx: PlanningContext) -> No
         ):
             continue
 
+        if (
+            ctx.pinning_policy is not None
+            and getattr(ctx.pinning_policy, "backend", None) == "honor_pinning"
+            and ctx.source_backend_revision is not None
+            and ctx.pinned_backend_id is not None
+            and backend_id == ctx.pinned_backend_id
+        ):
+            triple = entry.get("backend_identity_triple") or {}
+            if triple.get("revision") != ctx.source_backend_revision:
+                continue
+
         for input_item in inputs:
             if not isinstance(input_item, dict):
                 continue
@@ -147,7 +164,7 @@ async def pass_2_filter_candidates(planner: Planner, ctx: PlanningContext) -> No
                 valid, reason = await planner.trained_identity_registry.is_valid_for_context(
                     uuid.UUID(str(identity_id)),
                     shot_id=shot_id,
-                    as_of=as_of,
+                    as_of=identity_as_of,
                 )
                 if not valid:
                     if reason == "validity_expired":
@@ -192,6 +209,15 @@ async def pass_2_filter_candidates(planner: Planner, ctx: PlanningContext) -> No
         )
 
     if not candidates:
+        if (
+            ctx.pinning_policy is not None
+            and getattr(ctx.pinning_policy, "backend", None) == "honor_pinning"
+            and ctx.source_backend_revision is not None
+        ):
+            _raise_refusal(
+                "backend_revision_unreachable",
+                "Honor-pinned backend revision is unavailable in capability snapshot",
+            )
         _raise_refusal("no_feasible_backend", "No backend satisfies hard constraints")
 
     ctx.candidates = candidates

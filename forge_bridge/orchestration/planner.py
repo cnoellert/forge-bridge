@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any, Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,6 +42,9 @@ from forge_bridge.store.orch_spec_convergence_trace_repo import SpecConvergenceT
 from forge_bridge.store.orchestration_compromise_ledger_repo import (
     OrchestrationCompromiseLedgerRepo,
 )
+
+if TYPE_CHECKING:
+    from forge_bridge.orchestration.replay import EffectivePinningPolicy
 
 PlannerRefusalCode = Literal[
     "inputs_missing",
@@ -106,6 +110,11 @@ class PlanningContext:
     feasibility_explanation: str = ""
     refusal_code: str | None = None
 
+    pinning_policy: Any | None = None
+    source_authored_at: datetime | None = None
+    source_backend_revision: str | None = None
+    pinned_backend_id: str | None = None
+
     def plan_under_construction(self) -> dict[str, Any]:
         chain_depth = 0
         if self.candidates:
@@ -152,6 +161,10 @@ class Planner:
         partial_fidelity_snapshot_id: uuid.UUID,
         inputs_catalog_id: uuid.UUID | None = None,
         capability_snapshot_id: uuid.UUID | None = None,
+        pinning_policy: Any | None = None,
+        source_authored_at: datetime | None = None,
+        source_backend_revision: str | None = None,
+        pinned_backend_id: str | None = None,
     ) -> DBOrchExecutionPlan:
         ctx = PlanningContext(
             intent_id=intent_id,
@@ -160,6 +173,10 @@ class Planner:
             partial_fidelity_snapshot_id=partial_fidelity_snapshot_id,
             inputs_catalog_id=inputs_catalog_id,
             capability_snapshot_id=capability_snapshot_id,
+            pinning_policy=pinning_policy,
+            source_authored_at=source_authored_at,
+            source_backend_revision=source_backend_revision,
+            pinned_backend_id=pinned_backend_id,
         )
         try:
             await self._pass_1_validate_completeness(ctx)
