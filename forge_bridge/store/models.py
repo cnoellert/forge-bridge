@@ -207,6 +207,19 @@ class DBProject(Base):
 ENTITY_TYPES = frozenset({
     "sequence", "shot", "asset", "version", "media", "layer", "stack",
     "staged_operation",
+    # Phase 4B orchestration discriminators — PHASE-4B-ORCHESTRATION-DESIGN.md §4
+    "orch_pipeline_run",
+    "orch_inputs_catalog",
+    "orch_spec_convergence_trace",
+    "orch_locked_intent",
+    "orch_rule_snapshot",
+    "orch_capability_snapshot",
+    "orch_partial_fidelity_snapshot",
+    "orch_execution_plan",
+    "orch_generation_artifact",
+    "orch_validation_report",
+    "orch_audit_report",
+    "orch_provenance_manifest",
 })
 
 
