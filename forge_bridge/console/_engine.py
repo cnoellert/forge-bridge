@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from typing import Any, Optional
 
 from forge_bridge.console._step import execute_chain_step
 from forge_bridge.graph import infer_topology
+from forge_bridge.graph.commit import is_commit_step
+
+from forge_bridge.core.assent import AssentRecord
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +22,7 @@ async def run_chain_steps(
     request_id: str,
     client_ip: str,
     started: float,
+    assent_record: Optional[AssentRecord] = None,
 ) -> dict:
     """Sequentially execute chain steps. Abort on first error.
 
@@ -50,6 +54,7 @@ async def run_chain_steps(
             mcp=mcp,
             inherited_context=context,
             step_index=step_idx,
+            assent_record=assent_record if is_commit_step(step_text) else None,
         )
 
         if "error" in outcome:

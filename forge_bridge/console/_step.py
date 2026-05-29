@@ -19,8 +19,9 @@ import json
 import logging
 import re
 import time
-from typing import Any
+from typing import Any, Optional
 
+from forge_bridge.core.assent import AssentRecord
 from forge_bridge.console._tool_filter import deterministic_narrow, filter_tools_by_message
 from forge_bridge.mcp.arguments import normalize_tool_args
 
@@ -130,6 +131,7 @@ async def execute_chain_step(
     mcp: Any,
     inherited_context: dict,
     step_index: int | str = 0,
+    assent_record: Optional[AssentRecord] = None,
 ) -> dict:
     """Run a single chain step end-to-end.
 
@@ -166,6 +168,7 @@ async def execute_chain_step(
         mcp=mcp,
         inherited_context=inherited_context,
         step_index=step_index,
+        assent_record=assent_record,
     )
     if graph_outcome is not None:
         return graph_outcome
@@ -184,6 +187,7 @@ async def execute_chain_step(
         mcp=mcp,
         inherited_context=inherited_context,
         step_index=step_index,
+        assent_record=assent_record,
     )
     if graph_outcome is not None:
         return graph_outcome
@@ -546,6 +550,7 @@ async def _maybe_execute_foreach_step(
     mcp: Any,
     inherited_context: dict,
     step_index: int | str,
+    assent_record: Optional[AssentRecord] = None,
 ) -> dict | None:
     from forge_bridge.graph import (
         ForeachInputError,
@@ -613,6 +618,7 @@ async def _maybe_execute_foreach_step(
             mcp=mcp,
             inherited_context=iteration_context,
             step_index=f"{step_index}.{iteration_index}",
+            assent_record=assent_record,
         )
         if "error" in outcome:
             error = dict(outcome["error"])
@@ -707,6 +713,7 @@ async def _maybe_execute_commit_step(
     mcp: Any,
     inherited_context: dict,
     step_index: int | str,
+    assent_record: Optional[AssentRecord] = None,
 ) -> dict | None:
     from forge_bridge.graph import (
         CommitError,
@@ -796,7 +803,7 @@ async def _maybe_execute_commit_step(
         ).to_error()}
 
     fresh = MutationManifest.from_dict(decoded)
-    verification = CommitNode().verify(manifest, fresh)
+    verification = CommitNode().verify(manifest, fresh, assent=assent_record)
     if not verification.matched:
         return {"error": CommitError(
             CommitError.PLAN_STATE_DRIFT,
@@ -805,6 +812,14 @@ async def _maybe_execute_commit_step(
             step_text=step_text,
             drift_count=verification.drift_count,
             first_drift_index=verification.first_drift_index,
+        ).to_error()}
+    if assent_record is not None and not verification.assent_valid:
+        return {"error": CommitError(
+            CommitError.ASSENT_INVALID,
+            "AssentRecord is not in ratified state.",
+            step_index=step_index,
+            step_text=step_text,
+            graph_intent_id=assent_record.graph_intent_id,
         ).to_error()}
 
     apply_params = dict(manifest.intent_parameters)
