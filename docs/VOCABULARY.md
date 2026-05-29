@@ -103,6 +103,29 @@ Traits: `Versionable`, `Locatable`, `Relational`
 
 ---
 
+### AssentRecord
+A stored operator decision record for a chat-compiled graph-intent. It captures the exact chain-step text shown in a mutating preview, records who ratified it, and tracks whether the persisted chain was applied or failed.
+
+For the operator flow, see [RATIFICATION.md](RATIFICATION.md).
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `id` | uuid | Canonical identifier |
+| `graph_intent_id` | string | 12-character content-addressed identifier for the previewed chain |
+| `chain_steps` | list[string] | Exact chain-step text stored at preview time |
+| `status` | string | `proposed`, `ratified`, `applied`, or `failed` |
+| `decided_by` | string | Operator/caller identity that ratified the graph-intent |
+| `decided_at` | datetime | Ratification timestamp |
+| `applied_at` | datetime | Apply-completion timestamp |
+| `apply_result` | dict | Stored apply result envelope |
+| `apply_failure_reason` | string | Failure reason such as `drift_invalid`, `chain_aborted`, or `assent_invalid` |
+
+Traits: `Relational`
+
+Relationship note: `AssentRecord` is parallel to, not a subtype of, `staged_operation`. It belongs to chat graph-intent ratification, not producer-owned approval queues.
+
+---
+
 ### Version
 A specific iteration of a Shot or Asset at a point in time. Versions are immutable once created — a new version is always a new entity.
 
@@ -260,6 +283,14 @@ A start frame, end frame, and duration. Bridge treats these as related — chang
 Where something is in its lifecycle. Status values are configurable per pipeline. Bridge maps between whatever terms a connected system uses and its canonical Status values.
 
 Suggested canonical values: `pending`, `in_progress`, `review`, `approved`, `rejected`, `delivered`, `archived`
+
+### Graph Intent
+A compiled chain-step representation of operator intent. For chat, graph-intent is produced by the compile stage from natural language; for exec, equivalent chain-step text is provided directly by the operator.
+
+`graph_intent_id` is the content-addressed identifier used for mutating chat previews. It is 12 lowercase hex characters and resolves to an `AssentRecord`.
+
+### Ratification
+The operator authority transition that allows a previewed graph-intent to cross the host-mutation boundary. Ratification records assent against an `AssentRecord`; apply then replays the exact stored chain.
 
 ---
 
