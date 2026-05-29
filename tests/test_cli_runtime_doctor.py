@@ -9,12 +9,24 @@ import json
 from unittest.mock import patch
 
 import httpx
+import pytest
 from typer.testing import CliRunner
 
 from forge_bridge import config
 from forge_bridge.__main__ import app
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def _ratification_loaded(monkeypatch):
+    async def _count(_window):
+        return 0
+
+    monkeypatch.setattr(
+        "forge_bridge.cli.runtime_doctor._recent_ratification_count",
+        _count,
+    )
 
 
 # ── HTTP and TCP fakes ────────────────────────────────────────────────────
@@ -195,13 +207,14 @@ def test_json_shape_all_ok():
         "mcp_http",
         "flame_bridge",
         "state_ws",
+        "ratification",
         "graph_store",
     ]
     for c in payload["checks"]:
         assert set(c.keys()) >= {"name", "ok", "status", "url", "fix"}
         assert c["ok"] is True
         # graph_store fix is non-empty on unexercised substrate (loaded chip);
-        # all other rows have empty fix when ok.
+        # all other ok rows have empty fix.
         if c["name"] != "graph_store":
             assert c["fix"] == ""
 
