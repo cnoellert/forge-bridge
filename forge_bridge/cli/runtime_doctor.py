@@ -12,9 +12,11 @@ Human mode prints a Rich table plus a one-line "Suggested next action".
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import socket
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Any, Optional
 
@@ -32,6 +34,7 @@ _TCP_TIMEOUT = 1.0
 # chain engine; allow more time than a passive HEAD because the daemon round-
 # trips to the Flame hook before responding.
 _EXEC_PROBE_TIMEOUT = 5.0
+_RECENT_ACTIVITY_WINDOW = timedelta(hours=24)
 
 
 def runtime_doctor_cmd(
@@ -51,6 +54,7 @@ def runtime_doctor_cmd(
         _check_mcp_http(),
         _check_flame_bridge(),
         _check_state_ws(),
+        _check_ratification(),
         _check_graph_store(),
     ]
     overall_ok = all(c["ok"] for c in checks)
@@ -470,6 +474,73 @@ def _check_state_ws() -> dict[str, Any]:
         "fix": "the State WebSocket server is optional — see docs/ARCHITECTURE.md "
                "if you need it for your workflow",
     }
+
+
+def _check_ratification() -> dict[str, Any]:
+    """Probe recent AssentRecord activity in the database."""
+    from forge_bridge.store.session import get_db_url
+
+    url = get_db_url()
+    window_label = _format_recent_window(_RECENT_ACTIVITY_WINDOW)
+    try:
+        count = asyncio.run(_recent_ratification_count(_RECENT_ACTIVITY_WINDOW))
+    except Exception as exc:
+        return {
+            "name": "ratification",
+            "ok": False,
+            "chip": "fail",
+            "status": f"db unreachable ({type(exc).__name__})",
+            "url": url,
+            "fix": "check Postgres and run `alembic upgrade head`",
+        }
+
+    if count > 0:
+        return {
+            "name": "ratification",
+            "ok": True,
+            "chip": "ok",
+            "status": f"{count} ratifications in last {window_label}",
+            "url": url,
+            "fix": "",
+        }
+    return {
+        "name": "ratification",
+        "ok": True,
+        "chip": "loaded",
+        "status": f"no ratifications in last {window_label}",
+        "url": url,
+        "fix": "",
+    }
+
+
+async def _recent_ratification_count(window: timedelta) -> int:
+    from forge_bridge.store.assent_record_repo import AssentRecordRepo
+    from forge_bridge.store.session import get_session
+
+    cutoff = datetime.now(timezone.utc) - window
+    count = 0
+    async with get_session() as session:
+        repo = AssentRecordRepo(session)
+        for status in ("ratified", "applied", "failed"):
+            records, _ = await repo.list_pending(status=status)
+            for record in records:
+                decided_at = record.decided_at
+                if decided_at is None:
+                    continue
+                if decided_at.tzinfo is None:
+                    decided_at = decided_at.replace(tzinfo=timezone.utc)
+                if decided_at >= cutoff:
+                    count += 1
+    return count
+
+
+def _format_recent_window(window: timedelta) -> str:
+    total_seconds = int(window.total_seconds())
+    if total_seconds % 3600 == 0:
+        return f"{total_seconds // 3600}h"
+    if total_seconds % 60 == 0:
+        return f"{total_seconds // 60}m"
+    return f"{total_seconds}s"
 
 
 def _check_graph_store() -> dict[str, Any]:
