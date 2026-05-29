@@ -11,6 +11,7 @@ Imports of heavy modules (mcp.server, httpx) are lazy so ``--help`` is fast.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from typing import Annotated
 
@@ -136,6 +137,229 @@ Examples:
 Tip: `fbridge doctor` first if the call hangs or errors — chat needs
 mcp_http running on :9996.
 """
+
+_RATIFY_EPILOG = """\
+Examples:
+  fbridge ratify 4bd83c2f1abc
+  fbridge ratify 4bd83c2f1abc --actor jdoe
+  fbridge ratify 4bd83c2f1abc --json
+
+Atomic operation: writes operator assent for the graph-intent, then applies
+the persisted chain through the shared store-and-replay substrate.
+
+Exit codes:
+  0  apply succeeded
+  1  apply failed or CLI validation failed
+  2  daemon unreachable
+"""
+
+_GRAPH_INTENT_ID_RE = re.compile(r"^[a-f0-9]{12}$")
+_RATIFY_TIMEOUT_SECONDS = 65.0
+
+
+class _RatifyTransportError(Exception):
+    """Transport failure while calling the console daemon ratify endpoint."""
+
+    def __init__(self, url: str, reason: str) -> None:
+        self.url = url
+        self.reason = reason
+        super().__init__(reason)
+
+
+def _ratify_http(graph_intent_id: str, actor: str, *, client=None) -> dict:
+    """POST to /api/v1/ratify and return the daemon's JSON envelope."""
+    import httpx
+
+    url = f"{config.console_url()}/api/v1/ratify"
+    own_client = client is None
+    if own_client:
+        client = httpx.Client(timeout=_RATIFY_TIMEOUT_SECONDS)
+
+    try:
+        try:
+            response = client.post(
+                url,
+                json={"graph_intent_id": graph_intent_id, "actor": actor},
+            )
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.TimeoutException) as exc:
+            raise _RatifyTransportError(url, type(exc).__name__)
+        except httpx.HTTPError as exc:
+            raise _RatifyTransportError(url, str(exc) or type(exc).__name__)
+
+        try:
+            body = response.json()
+        except ValueError:
+            return {
+                "error": {
+                    "code": "invalid_response",
+                    "message": f"daemon returned non-JSON response ({response.status_code})",
+                    "status_code": response.status_code,
+                }
+            }
+        if not isinstance(body, dict):
+            return {
+                "error": {
+                    "code": "invalid_response",
+                    "message": "daemon returned a non-object JSON response",
+                    "status_code": response.status_code,
+                }
+            }
+        return body
+    finally:
+        if own_client:
+            client.close()
+
+
+def _ratify_validation_error(message: str) -> dict:
+    return {"error": {"code": "validation_error", "message": message}}
+
+
+def _ratify_is_success(body: dict) -> bool:
+    return "apply_complete" in body and "error" not in body
+
+
+def _ratify_error_code(body: dict) -> str:
+    error = body.get("error")
+    if isinstance(error, dict):
+        return str(error.get("code") or "ratify_failed")
+    if body.get("stop_reason") == "chain_aborted":
+        return "chain_aborted"
+    if body.get("status") == "error":
+        nested = body.get("error")
+        if isinstance(nested, dict):
+            return str(nested.get("code") or nested.get("type") or "chain_aborted")
+        return "chain_aborted"
+    return "ratify_failed"
+
+
+def _render_ratify_human(body: dict) -> None:
+    from rich.table import Table
+
+    from forge_bridge.cli.render import HEADER_STYLE, TOOLS_BOX, make_console
+
+    console = make_console()
+    table = Table(box=TOOLS_BOX, header_style=HEADER_STYLE)
+    table.add_column("Field")
+    table.add_column("Value")
+
+    if _ratify_is_success(body):
+        payload = body.get("apply_complete") or {}
+        graph_intent_id = payload.get("graph_intent_id", "")
+        chain = payload.get("chain")
+        if isinstance(chain, dict):
+            status = chain.get("status", "success")
+            steps = len(chain.get("chain") or [])
+        else:
+            status = "success"
+            steps = 0
+        table.add_row("status", "apply_complete")
+        table.add_row("graph_intent_id", str(graph_intent_id))
+        table.add_row("chain_status", str(status))
+        table.add_row("steps", str(steps))
+        console.print(table)
+        return
+
+    error = body.get("error")
+    if isinstance(error, dict):
+        table.add_row("status", "failed")
+        table.add_row("code", str(error.get("code", "ratify_failed")))
+        table.add_row("message", str(error.get("message", "")))
+        details = error.get("details")
+        if isinstance(details, dict):
+            for key in ("graph_intent_id", "current_status", "reason", "url"):
+                if key in details:
+                    table.add_row(key, str(details[key]))
+        console.print(table)
+        return
+
+    table.add_row("status", "failed")
+    table.add_row("code", _ratify_error_code(body))
+    if "graph_intent_id" in body:
+        table.add_row("graph_intent_id", str(body["graph_intent_id"]))
+    console.print(table)
+
+
+@app.command(
+    "ratify",
+    help="Ratify a previewed graph-intent and apply its persisted chain.",
+    epilog=_RATIFY_EPILOG,
+)
+def ratify_cmd(
+    graph_intent_id: Annotated[
+        str,
+        typer.Argument(
+            help="12-char graph-intent identifier from a prior chat preview",
+        ),
+    ],
+    actor: Annotated[
+        str,
+        typer.Option(
+            "--actor",
+            help="Caller identity (free string; future SEED-AUTH integration point)",
+        ),
+    ] = "local",
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help="Emit JSON result instead of Rich-rendered table",
+        ),
+    ] = False,
+) -> None:
+    """Ratify a previously-emitted graph-intent and apply it.
+
+    Atomic operation: writes the assent record (proposed -> ratified
+    transition), then invokes the shared store-and-replay substrate
+    to execute the persisted chain (ratified -> applied | failed
+    transition). Result returned to stdout.
+
+    Exit codes:
+      0  apply succeeded (assent.applied event emitted)
+      1  apply failed (any class -- see envelope for code)
+      2  daemon unreachable (transport error)
+    """
+    if not _GRAPH_INTENT_ID_RE.match(graph_intent_id):
+        body = _ratify_validation_error(
+            "graph_intent_id must be a 12-character lowercase hex string"
+        )
+        if json_output:
+            sys.stdout.write(json.dumps(body) + "\n")
+        else:
+            _render_ratify_human(body)
+        raise typer.Exit(code=1)
+
+    actor = actor.strip()
+    if not actor:
+        body = _ratify_validation_error("actor must be a non-empty string")
+        if json_output:
+            sys.stdout.write(json.dumps(body) + "\n")
+        else:
+            _render_ratify_human(body)
+        raise typer.Exit(code=1)
+
+    try:
+        body = _ratify_http(graph_intent_id, actor)
+    except _RatifyTransportError as exc:
+        body = {
+            "error": {
+                "code": "daemon_unreachable",
+                "url": exc.url,
+                "reason": exc.reason,
+            }
+        }
+        if json_output:
+            sys.stdout.write(json.dumps(body) + "\n")
+        else:
+            _render_ratify_human(body)
+        raise typer.Exit(code=2)
+
+    if json_output:
+        sys.stdout.write(json.dumps(body, default=str) + "\n")
+    else:
+        _render_ratify_human(body)
+
+    if not _ratify_is_success(body):
+        raise typer.Exit(code=1)
 
 app.command(
     "doctor",
