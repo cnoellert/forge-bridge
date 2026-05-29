@@ -18,6 +18,7 @@ from forge_bridge.console.handlers import (
     execs_handler,
     health_handler,
     manifest_handler,
+    ratify_endpoint,
     staged_approve_handler,   # NEW (Plan 14-03)
     staged_list_handler,      # NEW (Plan 14-03)
     staged_reject_handler,    # NEW (Plan 14-03)
@@ -42,7 +43,7 @@ from forge_bridge.console.ui_handlers import (
     ui_tools_handler,
 )
 
-from forge_bridge.console._execute import execute_command
+from forge_bridge.console._execute import execute_command  # noqa: F401
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -108,6 +109,8 @@ def build_console_app(
         Route("/api/v1/staged/{id}/reject", staged_reject_handler, methods=["POST"]),
         # Phase 16 (FB-D) — chat endpoint
         Route("/api/v1/chat", chat_handler, methods=["POST"]),
+        # A.2 — ratify + apply endpoint
+        Route("/api/v1/ratify", ratify_endpoint, methods=["POST"]),
     ]
     middleware = [
         Middleware(

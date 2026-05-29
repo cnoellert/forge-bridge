@@ -29,6 +29,18 @@ class CompileBranchOutcome:
     assent_record_id: Optional[uuid.UUID] = None
 
 
+@dataclass(frozen=True)
+class ApplyBranchOutcome:
+    """Structured outcome of the ratified apply branch."""
+
+    regime: str
+    graph_intent_id: str
+    chain_body: Optional[dict] = None
+    error: Optional[dict] = None
+    status_code: int = 200
+    assent_record: Optional[dict] = None
+
+
 def _tool_name(tool: Any) -> str | None:
     if isinstance(tool, dict):
         value = tool.get("name")
@@ -183,3 +195,117 @@ async def run_compile_branch(
         chain_body=chain_body,
         compile_error=None,
     )
+
+
+async def run_apply_branch(
+    *,
+    graph_intent_id: str,
+    session_factory: Optional[Any],
+    tools: list,
+    mcp: Any,
+    request_id: str,
+    client_ip: str,
+    started: float,
+    actor: Optional[str] = None,
+) -> ApplyBranchOutcome:
+    """Replay a stored graph-intent after ratification."""
+    if session_factory is None:
+        return ApplyBranchOutcome(
+            regime="error",
+            graph_intent_id=graph_intent_id,
+            error={
+                "code": "internal_error",
+                "message": "Session factory is unavailable.",
+                "graph_intent_id": graph_intent_id,
+            },
+            status_code=500,
+        )
+
+    from forge_bridge.store.assent_record_repo import (
+        AssentRecordLifecycleError,
+        AssentRecordNotFound,
+    )
+
+    async with session_factory() as session:
+        repo = AssentRecordRepo(session)
+        try:
+            if actor is not None:
+                record = await repo.ratify(graph_intent_id, actor=actor)
+            else:
+                record = await repo.get_by_graph_intent_id(graph_intent_id)
+                if record is None:
+                    raise AssentRecordNotFound(graph_intent_id)
+                if record.status != "ratified":
+                    return ApplyBranchOutcome(
+                        regime="error",
+                        graph_intent_id=graph_intent_id,
+                        error={
+                            "code": "assent_illegal_state",
+                            "message": "AssentRecord is not ratified.",
+                            "current_status": record.status,
+                            "graph_intent_id": graph_intent_id,
+                        },
+                        status_code=409,
+                    )
+        except AssentRecordNotFound:
+            return ApplyBranchOutcome(
+                regime="error",
+                graph_intent_id=graph_intent_id,
+                error={
+                    "code": "assent_record_not_found",
+                    "message": "No AssentRecord found for graph_intent_id.",
+                    "graph_intent_id": graph_intent_id,
+                },
+                status_code=404,
+            )
+        except AssentRecordLifecycleError as exc:
+            return ApplyBranchOutcome(
+                regime="error",
+                graph_intent_id=graph_intent_id,
+                error={
+                    "code": "assent_illegal_state",
+                    "message": "AssentRecord is not in a ratifiable state.",
+                    "current_status": exc.from_status,
+                    "graph_intent_id": graph_intent_id,
+                },
+                status_code=409,
+            )
+
+        chain_body = await run_chain_steps(
+            steps=record.chain_steps,
+            tools=tools,
+            mcp=mcp,
+            request_id=request_id,
+            client_ip=client_ip,
+            started=started,
+            assent_record=record,
+        )
+        if isinstance(chain_body, dict) and chain_body.get("status") == "error":
+            original = (chain_body.get("error") or {}).get("original_error") or {}
+            reason = (
+                "drift_invalid"
+                if original.get("type") == "PLAN_STATE_DRIFT"
+                else "chain_aborted"
+            )
+            failed = await repo.mark_failed(
+                graph_intent_id,
+                reason=reason,
+                result=chain_body,
+            )
+            await session.commit()
+            return ApplyBranchOutcome(
+                regime="chain_aborted",
+                graph_intent_id=graph_intent_id,
+                chain_body=chain_body,
+                status_code=400,
+                assent_record=failed.to_dict(),
+            )
+
+        applied = await repo.mark_applied(graph_intent_id, result=chain_body)
+        await session.commit()
+        return ApplyBranchOutcome(
+            regime="apply_complete",
+            graph_intent_id=graph_intent_id,
+            chain_body=chain_body,
+            assent_record=applied.to_dict(),
+        )

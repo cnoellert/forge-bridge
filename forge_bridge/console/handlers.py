@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 from dataclasses import asdict
@@ -45,6 +46,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from forge_bridge.console._constants import CHAIN_MAX_STEPS
 from forge_bridge.console._chat_compile import (
     build_compile_system_prompt,
+    run_apply_branch,
     run_compile_branch,
 )
 from forge_bridge.console._engine import run_chain_steps
@@ -126,6 +128,8 @@ except ImportError as _corpus_import_error:
         pass
 
 logger = logging.getLogger(__name__)
+
+_APPLY_GRAMMAR = re.compile(r"^apply\s+([a-f0-9]{12})\s*$")
 
 _DEFAULT_LIMIT = 50
 _MAX_LIMIT = 500  # D-05
@@ -949,6 +953,17 @@ def _format_sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+def _apply_complete_body(outcome, transport: str) -> dict:
+    return {
+        "kind": "apply_complete",
+        "graph_intent_id": outcome.graph_intent_id,
+        "chain": outcome.chain_body,
+        "stop_reason": "apply_complete",
+        "chat_regime": "ratified_apply",
+        "transport": transport,
+    }
+
+
 async def _chat_sse_response(
     *,
     router: Any,
@@ -963,6 +978,7 @@ async def _chat_sse_response(
     tool_call_count_in: int,
     tools_available_count: int,
     tools_filtered_count: int,
+    session_factory: Optional[Any] = None,
 ) -> StreamingResponse:
     """SSE response for the A.1 compile branch."""
     msg_queue: asyncio.Queue = asyncio.Queue()
@@ -980,6 +996,31 @@ async def _chat_sse_response(
                     ),
                     "",
                 )
+                apply_match = _APPLY_GRAMMAR.match(compile_prompt.strip())
+                if apply_match:
+                    outcome = await run_apply_branch(
+                        graph_intent_id=apply_match.group(1),
+                        session_factory=session_factory,
+                        tools=tools,
+                        mcp=mcp,
+                        request_id=request_id,
+                        client_ip=client_ip,
+                        started=started,
+                    )
+                    if outcome.regime == "error":
+                        await msg_queue.put(("error", {"error": outcome.error}))
+                        return
+                    if outcome.regime == "chain_aborted":
+                        body = dict(outcome.chain_body or {})
+                        body["stop_reason"] = "chain_aborted"
+                        body["graph_intent_id"] = outcome.graph_intent_id
+                        await msg_queue.put(("chain_aborted", body))
+                        return
+                    await msg_queue.put((
+                        "apply_complete",
+                        _apply_complete_body(outcome, "sse"),
+                    ))
+                    return
                 outcome = await asyncio.wait_for(
                     run_compile_branch(
                         router=router,
@@ -990,6 +1031,7 @@ async def _chat_sse_response(
                         client_ip=client_ip,
                         started=started,
                         compile_system=build_compile_system_prompt(tools),
+                        session_factory=session_factory,
                     ),
                     timeout=125.0,
                 )
@@ -1160,6 +1202,98 @@ async def _chat_sse_response(
             # harmless when no proxy is present (operator-workstation default).
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+async def ratify_endpoint(request: Request) -> JSONResponse:
+    """POST /api/v1/ratify — atomic ratify + apply for fbridge ratify."""
+    request_id = str(uuid.uuid4())
+    client_ip = request.client.host if request.client else "unknown"
+    started = time.monotonic()
+
+    decision: RateLimitDecision = check_rate_limit(client_ip)
+    if not decision.allowed:
+        return _chat_error(
+            "rate_limit_exceeded",
+            f"Rate limit reached — wait {decision.retry_after}s before retrying.",
+            429,
+            request_id,
+            extra_headers={"Retry-After": str(decision.retry_after)},
+        )
+
+    try:
+        body = await request.json()
+    except Exception:
+        return _chat_error(
+            "validation_error",
+            "request body is not valid JSON",
+            400,
+            request_id,
+        )
+    if not isinstance(body, dict):
+        return _chat_error(
+            "validation_error",
+            "request body must be a JSON object",
+            400,
+            request_id,
+        )
+
+    graph_intent_id = body.get("graph_intent_id")
+    actor = body.get("actor", "local")
+    if not isinstance(graph_intent_id, str) or not re.fullmatch(
+        r"[a-f0-9]{12}",
+        graph_intent_id,
+    ):
+        return _chat_error(
+            "validation_error",
+            "graph_intent_id must be a 12-character lowercase hex string",
+            400,
+            request_id,
+        )
+    if not isinstance(actor, str) or not actor.strip():
+        return _chat_error(
+            "validation_error",
+            "actor must be a non-empty string",
+            400,
+            request_id,
+        )
+
+    from forge_bridge.mcp import server as _mcp_server
+
+    tools = await _mcp_server.mcp.list_tools()
+    tools = await filter_tools_by_reachable_backends(tools)
+    outcome = await run_apply_branch(
+        graph_intent_id=graph_intent_id,
+        session_factory=request.app.state.session_factory,
+        tools=tools,
+        mcp=_mcp_server.mcp,
+        request_id=request_id,
+        client_ip=client_ip,
+        started=started,
+        actor=actor.strip(),
+    )
+    if outcome.regime == "error":
+        error = dict(outcome.error or {})
+        return _chat_error(
+            error.pop("code", "internal_error"),
+            error.pop("message", "Ratify failed."),
+            outcome.status_code,
+            request_id,
+            details=error or None,
+        )
+    if outcome.regime == "chain_aborted":
+        body = dict(outcome.chain_body or {})
+        body["stop_reason"] = "chain_aborted"
+        body["graph_intent_id"] = outcome.graph_intent_id
+        return JSONResponse(
+            body,
+            status_code=400,
+            headers={"X-Request-ID": request_id},
+        )
+    return JSONResponse(
+        {"apply_complete": _apply_complete_body(outcome, "json")},
+        status_code=200,
+        headers={"X-Request-ID": request_id},
     )
 
 
@@ -1656,6 +1790,7 @@ async def chat_handler(request: Request) -> Response:
             tool_call_count_in=tool_call_count_in,
             tools_available_count=tools_available_count,
             tools_filtered_count=tools_filtered_count,
+            session_factory=request.app.state.session_factory,
         )
 
     compile_prompt = next(
@@ -1667,6 +1802,40 @@ async def chat_handler(request: Request) -> Response:
         ),
         "",
     )
+    apply_match = _APPLY_GRAMMAR.match(compile_prompt.strip())
+    if apply_match:
+        outcome = await run_apply_branch(
+            graph_intent_id=apply_match.group(1),
+            session_factory=request.app.state.session_factory,
+            tools=tools,
+            mcp=_mcp_server.mcp,
+            request_id=request_id,
+            client_ip=client_ip,
+            started=started,
+        )
+        if outcome.regime == "error":
+            error = dict(outcome.error or {})
+            return _chat_error(
+                error.pop("code", "internal_error"),
+                error.pop("message", "Chat error — check console for details."),
+                outcome.status_code,
+                request_id,
+                details=error or None,
+            )
+        if outcome.regime == "chain_aborted":
+            body = dict(outcome.chain_body or {})
+            body["stop_reason"] = "chain_aborted"
+            body["graph_intent_id"] = outcome.graph_intent_id
+            return JSONResponse(
+                body,
+                status_code=400,
+                headers={"X-Request-ID": request_id},
+            )
+        return JSONResponse(
+            {"apply_complete": _apply_complete_body(outcome, "json")},
+            status_code=200,
+            headers={"X-Request-ID": request_id},
+        )
     compile_system = build_compile_system_prompt(tools)
 
     try:
@@ -1680,6 +1849,7 @@ async def chat_handler(request: Request) -> Response:
                 client_ip=client_ip,
                 started=started,
                 compile_system=compile_system,
+                session_factory=request.app.state.session_factory,
             ),
             timeout=125.0,
         )
