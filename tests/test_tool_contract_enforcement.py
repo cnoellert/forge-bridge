@@ -105,7 +105,11 @@ def _has_required_inner_fields(input_schema: dict) -> bool:
         return False
     outer_required = input_schema.get("required") or []
     if "params" not in outer_required:
-        return False
+        # Flat required-argument tools are also correct required-schema
+        # surfaces. A {} runtime call may validly fail at the Pydantic
+        # boundary because the schema advertises that required field directly
+        # (e.g. flame_execute_python requires `code`).
+        return len(outer_required) > 0
     properties = input_schema.get("properties") or {}
     params_prop = properties.get("params") or {}
     ref = params_prop.get("$ref")
