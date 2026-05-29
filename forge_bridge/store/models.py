@@ -209,6 +209,7 @@ class DBProject(Base):
 ENTITY_TYPES = frozenset({
     "sequence", "shot", "asset", "version", "media", "layer", "stack",
     "staged_operation",
+    "assent_record",
     # Phase 4B orchestration discriminators — PHASE-4B-ORCHESTRATION-DESIGN.md §4
     "orch_pipeline_run",
     "orch_inputs_catalog",
@@ -653,6 +654,11 @@ EVENT_TYPES = frozenset({
     "staged.rejected",
     "staged.executed",
     "staged.failed",
+    # Assent records (A.2 — bridge-executed ratification lifecycle)
+    "assent.proposed",
+    "assent.ratified",
+    "assent.applied",
+    "assent.failed",
 })
 
 

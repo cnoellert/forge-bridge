@@ -1,4 +1,9 @@
-"""Content-addressed repository base for Phase 4B orch_* semantic artifacts."""
+"""Content-addressed repository base for immutable semantic artifacts.
+
+Used by Phase 4B orch_* repositories and by the A.2 assent_record_repo.py
+substrate. Subclasses own their model conversion and may layer state-machine
+metadata around an immutable content body.
+"""
 
 from __future__ import annotations
 
@@ -30,13 +35,14 @@ class ImmutableArtifactError(Exception):
 
 
 class ContentAddressedRepo(Generic[T]):
-    """Base class for orch_* semantic-artifact repositories.
+    """Base class for content-addressed semantic-artifact repositories.
 
-    Discipline (per PHASE-4B-ORCHESTRATION-DESIGN.md §3):
+    Discipline:
       - content_hash is computed by the repo over canonical JSON serialization
         of the body (never trusted from the caller).
-      - update() is not supported. Semantic artifacts are immutable by
-        repo-layer convention; the DB column is nullable, the discipline lives here.
+      - update() is not supported. Content-addressed bodies are immutable by
+        repo-layer convention; the DB column is nullable, the discipline lives
+        here.
       - insert_if_absent(body) returns the existing row if its hash is already
         present, else inserts and returns the new row. Idempotent by content.
 

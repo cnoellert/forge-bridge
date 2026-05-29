@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, Self
 
 from forge_bridge.core.entities import BridgeEntity
 
@@ -94,6 +94,41 @@ class AssentRecord(BridgeEntity):
             "apply_failure_reason": self.apply_failure_reason,
         })
         return d
+
+    @classmethod
+    def from_entity(cls, entity) -> Self:
+        """Reconstruct an AssentRecord from a store DBEntity row."""
+        from forge_bridge.store.models import DBEntity
+
+        if not isinstance(entity, DBEntity):
+            raise TypeError(f"Expected DBEntity, got {type(entity)!r}")
+        if entity.entity_type != "assent_record":
+            raise ValueError(
+                "AssentRecord requires entity_type='assent_record'; "
+                f"got {entity.entity_type!r}"
+            )
+
+        attrs = entity.attributes or {}
+        content_hash = entity.content_hash or ""
+        return cls(
+            graph_intent_id=attrs.get("graph_intent_id") or content_hash[:12],
+            chain_steps=list(attrs.get("chain_steps") or []),
+            status=entity.status or attrs.get("status") or "proposed",
+            decided_by=attrs.get("decided_by"),
+            decided_at=(
+                datetime.fromisoformat(attrs["decided_at"])
+                if attrs.get("decided_at") else None
+            ),
+            applied_at=(
+                datetime.fromisoformat(attrs["applied_at"])
+                if attrs.get("applied_at") else None
+            ),
+            apply_result=attrs.get("apply_result"),
+            apply_failure_reason=attrs.get("apply_failure_reason"),
+            id=entity.id,
+            created_at=entity.created_at,
+            metadata=dict(attrs.get("metadata") or {}),
+        )
 
     def __repr__(self) -> str:
         return (
