@@ -73,6 +73,26 @@ Common error codes:
 | `chain_aborted` | A chain step failed during apply. |
 | `daemon_unreachable` | The CLI could not reach the console daemon. |
 
+## Authentication (deferred — SEED-AUTH-V1.5)
+
+The `decided_by` field on `AssentRecord` is a free string today.
+This is a deliberate placeholder: the A.2 substrate carries no
+identity-validation logic, no identity resolution, and no
+authentication contract.
+
+The future SEED-AUTH-V1.5 milestone will define:
+- Where identity validation lives (substrate vs gateway vs both)
+- How identities bind to assent records (free-string vs typed
+  identity reference vs both)
+- What the eventual integration boundary looks like (signature
+  change to `AssentRecordRepo.ratify()` vs upstream gateway vs
+  pluggable validator)
+
+A.3 makes NO claim about any of these. The `decided_by`
+placeholder remains free-string until SEED-AUTH-V1.5 resolves
+the shape; intervening callers may treat it as an audit-trail
+field, not an authentication signal.
+
 ## Relationship To Staged Operations
 
 `AssentRecord` is not `staged_operation`. A staged operation is an approval
