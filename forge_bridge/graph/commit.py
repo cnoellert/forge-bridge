@@ -15,10 +15,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Optional
 
 from forge_bridge.graph.mutation import MutationManifest
 from forge_bridge.graph.ports import PortContract, PortTopology
+
+if TYPE_CHECKING:
+    from forge_bridge.core.assent import AssentRecord
 
 
 _COMMIT_INTENT_RE = re.compile(r"^\s*commit\s*$", re.IGNORECASE)
@@ -30,6 +33,7 @@ class CommitError(ValueError):
     MUTATION_MANIFEST_INVALID = "MUTATION_MANIFEST_INVALID"
     APPLY_COUNTERPART_NOT_DECLARED = "APPLY_COUNTERPART_NOT_DECLARED"
     PLAN_STATE_DRIFT = "PLAN_STATE_DRIFT"
+    ASSENT_INVALID = "ASSENT_INVALID"
 
     def __init__(
         self,
@@ -40,6 +44,7 @@ class CommitError(ValueError):
         step_text: str | None = None,
         drift_count: int | None = None,
         first_drift_index: int | None = None,
+        graph_intent_id: str | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -48,6 +53,7 @@ class CommitError(ValueError):
         self.step_text = step_text
         self.drift_count = drift_count
         self.first_drift_index = first_drift_index
+        self.graph_intent_id = graph_intent_id
 
     def to_error(self) -> dict[str, Any]:
         error: dict[str, Any] = {
@@ -61,6 +67,8 @@ class CommitError(ValueError):
         if self.code == self.PLAN_STATE_DRIFT:
             error["drift_count"] = int(self.drift_count or 0)
             error["first_drift_index"] = int(self.first_drift_index or 0)
+        if self.code == self.ASSENT_INVALID and self.graph_intent_id is not None:
+            error["graph_intent_id"] = self.graph_intent_id
         return error
 
 
@@ -92,6 +100,8 @@ class CommitVerification:
     matched: bool
     drift_count: int = 0
     first_drift_index: int | None = None
+    assent_valid: bool = True
+    assent_record: Optional["AssentRecord"] = None
 
 
 @dataclass(frozen=True)
@@ -107,7 +117,15 @@ class CommitNode:
         self,
         held: MutationManifest,
         fresh: MutationManifest,
+        assent: Optional["AssentRecord"] = None,
     ) -> CommitVerification:
+        if assent is not None:
+            from forge_bridge.core.assent import AssentRecord
+
+            if not isinstance(assent, AssentRecord):
+                raise TypeError(
+                    f"assent must be AssentRecord or None, got {type(assent)!r}"
+                )
         held_plan = held.resolved_plan
         fresh_plan = fresh.resolved_plan
         max_len = max(len(held_plan), len(fresh_plan))
@@ -127,4 +145,6 @@ class CommitNode:
             matched=drift_count == 0,
             drift_count=drift_count,
             first_drift_index=first_drift_index,
+            assent_valid=assent is None or assent.status == "ratified",
+            assent_record=assent,
         )
