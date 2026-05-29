@@ -197,6 +197,16 @@ def test_build_preview_from_steps_commit_requires_ratification():
     assert preview["steps"][1]["would_mutate"] is True
 
 
+def test_build_preview_from_steps_threads_graph_intent_id():
+    preview = build_preview_from_steps(
+        ["flame_rename_shots dry_run=False", "commit"],
+        graph_intent_id="abc123def456",
+    )
+
+    assert list(preview) == ["kind", "graph_intent_id", "steps", "summary"]
+    assert preview["graph_intent_id"] == "abc123def456"
+
+
 @pytest.mark.asyncio
 async def test_run_compile_branch_non_mutating_executes_chain(monkeypatch):
     router = SimpleNamespace(
@@ -253,7 +263,88 @@ async def test_run_compile_branch_mutating_commit_returns_preview(monkeypatch):
     assert outcome.chain_body is None
     assert outcome.preview is not None
     assert outcome.preview["summary"]["requires_ratification"] is True
+    assert outcome.graph_intent_id is None
+    assert outcome.assent_record_id is None
     run_chain.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_compile_branch_mutating_commit_creates_assent_record(
+    session_factory,
+    monkeypatch,
+):
+    from forge_bridge.store.assent_record_repo import AssentRecordRepo
+
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(
+            return_value=["flame_rename_shots dry_run=False", "commit"]
+        )
+    )
+    run_chain = AsyncMock()
+    monkeypatch.setattr(_chat_compile, "run_chain_steps", run_chain)
+
+    outcome = await run_compile_branch(
+        router=router,
+        user_prompt="rename shots",
+        tools=[_tool("flame_rename_shots", "Rename shots.")],
+        mcp=SimpleNamespace(),
+        request_id="req-2",
+        client_ip="127.0.0.1",
+        started=10.0,
+        session_factory=session_factory,
+    )
+
+    assert outcome.regime == "compiled_mutating_preview"
+    assert outcome.graph_intent_id is not None
+    assert len(outcome.graph_intent_id) == 12
+    assert outcome.assent_record_id is not None
+    assert outcome.preview["graph_intent_id"] == outcome.graph_intent_id
+    run_chain.assert_not_awaited()
+
+    async with session_factory() as session:
+        repo = AssentRecordRepo(session)
+        record = await repo.get_by_graph_intent_id(outcome.graph_intent_id)
+
+    assert record is not None
+    assert record.id == outcome.assent_record_id
+    assert record.status == "proposed"
+
+
+@pytest.mark.asyncio
+async def test_run_compile_branch_mutating_commit_is_idempotent_by_content(
+    session_factory,
+    monkeypatch,
+):
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(
+            return_value=["flame_rename_shots dry_run=False", "commit"]
+        )
+    )
+    monkeypatch.setattr(_chat_compile, "run_chain_steps", AsyncMock())
+
+    first = await run_compile_branch(
+        router=router,
+        user_prompt="rename shots",
+        tools=[_tool("flame_rename_shots", "Rename shots.")],
+        mcp=SimpleNamespace(),
+        request_id="req-1",
+        client_ip="127.0.0.1",
+        started=10.0,
+        session_factory=session_factory,
+    )
+    second = await run_compile_branch(
+        router=router,
+        user_prompt="rename shots",
+        tools=[_tool("flame_rename_shots", "Rename shots.")],
+        mcp=SimpleNamespace(),
+        request_id="req-2",
+        client_ip="127.0.0.1",
+        started=10.0,
+        session_factory=session_factory,
+    )
+
+    assert second.graph_intent_id == first.graph_intent_id
+    assert second.assent_record_id == first.assent_record_id
 
 
 @pytest.mark.asyncio

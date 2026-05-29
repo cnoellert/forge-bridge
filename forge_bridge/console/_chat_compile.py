@@ -6,12 +6,14 @@ by the JSON and SSE chat transports. It does not own HTTP response shaping.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import uuid
 from typing import Any, Optional
 
 from forge_bridge.console._engine import run_chain_steps
 from forge_bridge.console._param_extract import extract_explicit_params
 from forge_bridge.graph.commit import graph_contains_commit_node, is_commit_step
 from forge_bridge.llm.router import CompileError
+from forge_bridge.store.assent_record_repo import AssentRecordRepo
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,8 @@ class CompileBranchOutcome:
     preview: Optional[dict]
     chain_body: Optional[dict]
     compile_error: Optional[Any]
+    graph_intent_id: Optional[str] = None
+    assent_record_id: Optional[uuid.UUID] = None
 
 
 def _tool_name(tool: Any) -> str | None:
@@ -70,7 +74,10 @@ def build_compile_system_prompt(tools: list) -> str:
     )
 
 
-def build_preview_from_steps(steps: list[str]) -> dict:
+def build_preview_from_steps(
+    steps: list[str],
+    graph_intent_id: Optional[str] = None,
+) -> dict:
     """Construct the L4 preview shape from compiled chain steps."""
     preview_steps: list[dict[str, Any]] = []
     for step_text in steps:
@@ -84,7 +91,7 @@ def build_preview_from_steps(steps: list[str]) -> dict:
         })
 
     mutating_steps = sum(1 for step in preview_steps if step["would_mutate"])
-    return {
+    preview = {
         "kind": "graph-intent-preview",
         "steps": preview_steps,
         "summary": {
@@ -93,6 +100,14 @@ def build_preview_from_steps(steps: list[str]) -> dict:
             "requires_ratification": mutating_steps > 0,
         },
     }
+    if graph_intent_id is not None:
+        preview = {
+            "kind": preview["kind"],
+            "graph_intent_id": graph_intent_id,
+            "steps": preview["steps"],
+            "summary": preview["summary"],
+        }
+    return preview
 
 
 async def run_compile_branch(
@@ -105,6 +120,7 @@ async def run_compile_branch(
     client_ip: str,
     started: float,
     compile_system: Optional[str] = None,
+    session_factory: Optional[Any] = None,
 ) -> CompileBranchOutcome:
     """Compile, classify, then either preview or execute chain steps."""
     system = (
@@ -128,12 +144,23 @@ async def run_compile_branch(
         )
 
     if graph_contains_commit_node(steps):
+        graph_intent_id: str | None = None
+        assent_record_id: uuid.UUID | None = None
+        if session_factory is not None:
+            async with session_factory() as session:
+                assent_repo = AssentRecordRepo(session)
+                record = await assent_repo.propose(chain_steps=steps)
+                await session.commit()
+            graph_intent_id = record.graph_intent_id
+            assent_record_id = record.id
         return CompileBranchOutcome(
             regime="compiled_mutating_preview",
             steps=steps,
-            preview=build_preview_from_steps(steps),
+            preview=build_preview_from_steps(steps, graph_intent_id),
             chain_body=None,
             compile_error=None,
+            graph_intent_id=graph_intent_id,
+            assent_record_id=assent_record_id,
         )
 
     chain_body = await run_chain_steps(
