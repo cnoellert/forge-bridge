@@ -1,5 +1,42 @@
 # Milestones
 
+## v1.7 Artist Readiness (Shipped: 2026-05-29)
+
+**Threads completed:** 3 threads (B → C → A), 3 phase closures within Thread A (A.1 + A.2 + A.3), 1 thread-level close cursor (Thread A formal closure — first thread-level close in the project)
+**Release tag:** none — patch-equivalent against 1.4.1 baseline (`__all__` at 19; `pyproject.toml` version 1.4.1; no public API expansion across the full milestone arc)
+**Stats:** 75 commits, 126 files changed, +31,642 / −1,519 lines
+**Timeline:** 2026-05-25 → 2026-05-29, ~5 days
+**Audit:** verification gates green per phase; 38 tests passing at A.3 close; ruff clean on changed Python; `git diff --check` clean; A.2-shipped substrate byte-equivalent across A.3
+
+**Key accomplishments per thread:**
+
+- **Thread B — exec discoverability (closed 2026-05-25).** `fbridge discover` sub-app enumerating the chain grammar, six graph primitives, and registered tools as a substrate-derived introspection surface — never a curated layer. Two commits (B-1 sub-app + B-2 dogfooding pass for substrate self-description fixes). Architectural law named + exercised: introspection-pure, derived from docstrings and registries.
+- **Thread C — asset operability (closed 2026-05-27).** Six dedicated MCP tools (`forge_create_asset` / `forge_list_assets` / `forge_get_asset` / `forge_attach_asset_location` / `forge_update_asset` / `forge_relate_asset`) bringing Asset to operator-legibility parity with Shot. Single-day arc seed→close (17 commits); behavioral test coverage + operator-readable docs. Asset is no longer quiet at the operator surface.
+- **Thread A — chat input intent-layer (formally closed 2026-05-29 per THREAD-A-CLOSE.md).** Authority chain end-to-end: NL → compile → graph-intent → preview → ratify → apply. A.1 shipped `LLMRouter.compile_intent()` + `preview_emitted` SSE taxon + graph-intent persistence pre-ratify (authority-model retired across 3 surfaces / 2 transports / 4 contract shapes — 37 tests dispositioned). A.2 shipped `AssentRecord` + `AssentRecordRepo` substrate + 4 `assent.*` event types + `CommitNode.verify` assent extension + `fbridge ratify` CLI + `POST /api/v1/ratify` endpoint + store-and-replay substrate. A.3 shipped operational hardening — `_check_ratification` doctor row, `forge_bridge.console.helpers` operator helpers, drift-invalidation smoke, UAT runbook, `docs/RATIFICATION.md` auth-seed deferral section.
+- **Phase 4b parallel track (orthogonal, 14 commits).** Sibling registration protocol (`ToolRegistry` + discovery + hard-degraded mode) and `GenerationPoller` worker + driver protocol + registry. Architecturally independent of Thread A — same window, separate substrate.
+
+**Verification & regression:**
+
+- A.1 / A.2 / A.3 phase verification gates green per phase close
+- A.3 test gate: 38 passed
+- Public API surface: `forge_bridge.__init__.py::__all__` length 19 — byte-identical to v1.4 close (no API changes; observability + operator surfaces only)
+- `pyproject.toml` version: 1.4.1 across the full arc
+
+**Known deferred items at close** (advisory, non-blocking — carry forward to v1.8 or beyond):
+
+- **SEED-AUTH-V1.5** — auth identity binding for `AssentRecord.decided_by`. Documented as deferral in `docs/RATIFICATION.md` § Authentication (A.3 L5). A.3 ships NO auth code path; deferral is operationally surfaced.
+- **Console ratification** — UI surface for assent. NOT Q5-safe via chat (LLM never owns assent — constitutional Thread A constraint). Separate operator-surface phase or thread.
+- **Multi-turn graph-intent persistence** — graph-intent lifetime extension beyond single-session scope. Thread A scoped to sync-apply common case.
+- **MILESTONES.md gap** — v1.5 and v1.6 shipped (per `CLAUDE.md` archaeology) but never received MILESTONES.md entries. The gap is explicitly noted at v1.7 close; backfill is optional future archaeology.
+- **A.3-PLAN.md L4 drift envelope** — left as handoff archaeology recording the substrate-shape grounding miss (response envelope shape vs assent-record column); test asserts production shape, UAT-A3.md reconciled at 90bfbc2, A.3-CLOSE §Carried Forward documents the divergence.
+
+**Lessons learned:**
+
+- **Cadence convention shift mid-arc.** The writing-room cadence drifted toward methodology-surface inflation through Thread A; the operator named the devolution 2026-05-29 (*"the discipline framework is generating its own overhead"*). The lighter convention memorialized at `[[feedback-cadence-artifacts-shrink-to-load-bearing]]` landed mid-A.3 — concrete proof: A.3-DISCUSS-QUESTIONS at 193 lines vs A.2's 901; A.3-PLAN at 337 lines vs A.2's 2456. Same convergence work; ~1/5 the artifact volume. Shape trimming, not discipline abandonment.
+- **Substrate-shape grounding matured to 5 instances / 4 manifestations.** The memory `[[feedback-substrate-shape-grounding-at-plan-stage]]` accumulated 4 within-project instances during Thread A's A.1+A.2 arc (shape / convention / flow manifestations). A.3 added a 5th instance + 4th manifestation (envelope/response shape). Catch-surface refinement: discoverable-surface Stage 1b reaches manifestations 1-3; runtime-path tracing from entry to error-wrapping site reaches manifestation 4.
+- **Thread-level close cursor as new convention.** A.3-CLOSE R-A3.7 named "Thread A framing or v1.7 milestone framing RULES on formal Thread A closure." Thread B + C closed via milestone-level passoff archaeology without thread-level close cursors; Thread A got the first dedicated THREAD-A-CLOSE.md per the explicit R-A3.7 signal. Whether future threads adopt the precedent or stay with milestone-level archaeology is an open convention question.
+- **Role-boundary discipline at scale.** Writing-room + active-testing surface preserved across A.1+A.2+A.3 arcs, Thread B+C arcs, and phase-4b parallel track. Implementation execution ran in separate sessions for A.2 + A.3 (and Thread B/C). 30+ within-day phase progressions across Thread A alone; zero role violations.
+
 ## v1.4.x Carry-Forward Debt (Shipped: 2026-04-30)
 
 **Phases completed:** 3 phases (17, 18, 19), 10 plans, 14 tasks
