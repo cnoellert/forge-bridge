@@ -1,9 +1,11 @@
 ---
 name: PHASE-4B-ORCHESTRATION-DESIGN
 description: Repo-local design for Phase 4B — forge-bridge orchestration graph + memory; instantiates Phase 4 umbrella §§4, 5, 7, 8, 9 in forge-bridge
-status: active
+status: feature-complete (2026-05-28)
 authored: 2026-05-28
 depends_on: Phase 4 umbrella at forge-vision/.planning/PHASE-4-PIPELINE-ORCHESTRATION-DESIGN.md
+corpus_copy: forge-vision/.planning/PHASE-4B-ORCHESTRATION-DESIGN.md
+implementation_status: All 12 steps from §12 implementation sequencing shipped via commits 1c9eb09..415f937 on forge-bridge/main; 282 Phase 4B tests passing.
 ---
 
 # Phase 4B — forge-bridge orchestration design (repo-local)
