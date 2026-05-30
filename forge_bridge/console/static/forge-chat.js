@@ -74,6 +74,7 @@
       // verbatim from response body's `termination` field; consumer does
       // NOT paraphrase, summarize, or transform any field (framing §10.1).
       termination: null,
+      preview: null,
 
       init() {
         // D-06 per-tab: nothing to restore. Cleared on tab close.
@@ -129,6 +130,7 @@
         // means the previous orchestration termination (if any) is no
         // longer the current state of the conversation.
         this.termination = null;
+        this.preview = null;
 
         // Build the wire payload — strip client-side ids so the server
         // contract stays {role, content, tool_call_id?}.
@@ -177,6 +179,7 @@
                 tool_call_id: m.tool_call_id,
               }));
             }
+            this.preview = null;
             // Phase 24.5: orchestration_terminated detection. When the
             // envelope encodes a policy-decided termination, surface the
             // termination block as its own sibling chrome (see panel.html
@@ -189,6 +192,9 @@
                 && body.termination
                 && typeof body.termination === "object") {
               this.termination = body.termination;
+            } else if (body.stop_reason === "preview_emitted") {
+              this.preview = body.preview || null;
+              this.termination = null;
             } else {
               this.termination = null;
             }

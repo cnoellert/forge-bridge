@@ -91,6 +91,50 @@
         </template>
       </details>
     </section>
+
+    <section class="graph-intent-preview"
+             x-show="preview"
+             x-cloak
+             role="region"
+             aria-label="Graph-intent preview">
+      <header class="graph-intent-preview__header">
+        <span class="graph-intent-preview__taxon">Graph-Intent Preview</span>
+        <span class="graph-intent-preview__sub">compiled by the assistant — read before you ratify</span>
+      </header>
+
+      <dl class="graph-intent-preview__summary">
+        <dt>total_steps</dt>
+        <dd x-text="preview && preview.summary && preview.summary.total_steps"></dd>
+        <dt class="graph-intent-preview__emphasis">mutating_steps</dt>
+        <dd class="graph-intent-preview__emphasis"
+            x-text="preview && preview.summary && preview.summary.mutating_steps"></dd>
+        <dt>requires_ratification</dt>
+        <dd x-text="preview && preview.summary && preview.summary.requires_ratification"></dd>
+      </dl>
+
+      <div class="graph-intent-preview__steps">
+        <template x-for="(step, i) in (preview && preview.steps || [])" :key="i">
+          <details class="graph-intent-preview__step">
+            <summary>
+              <span x-text="step.tool_name"></span>
+              <span class="graph-intent-preview__badge"
+                    :class="step.would_mutate ? 'graph-intent-preview__badge--mutating' : ''"
+                    x-text="step.would_mutate ? 'would mutate' : 'read only'"></span>
+            </summary>
+            <dl class="graph-intent-preview__step-body">
+              <dt>step_text</dt>
+              <dd x-text="step.step_text"></dd>
+              <template x-if="step.args_preview && Object.keys(step.args_preview).length > 0">
+                <div class="graph-intent-preview__args">
+                  <dt>args_preview</dt>
+                  <dd x-text="JSON.stringify(step.args_preview)"></dd>
+                </div>
+              </template>
+            </dl>
+          </details>
+        </template>
+      </div>
+    </section>
   </div>
 
   <!-- input (D-10: single textarea, Enter sends, Shift+Enter newline) -->
