@@ -62,11 +62,29 @@ The button POSTs `{graph_intent_id, actor}` to `/api/v1/ratify` and the
 outcome renders as a distinct authority card (CA-Q2 constraint). Open: the
 button's own states and where it sits.
 
-*Lean:*
-- **Absent-id guard:** `graph_intent_id` is conditional
-  (`_chat_compile.py:161-171`) — if `preview.graph_intent_id` is missing,
-  render the button **disabled** with a one-line "no persisted intent —
-  ratification unavailable" note. Never POST a missing id.
+**Absent-id state — SETTLED (Creative ruling, framing-grade):**
+
+> When `graph_intent_id` is absent, the ratify control remains **visible
+> but disabled**, accompanied by explanatory text describing why
+> ratification is not applicable. The state is **informational, not
+> error-oriented.**
+
+This is the operator-experience face of the constitutional rule. It draws
+a **taxonomy line** CA.1 must render on two distinct surfaces:
+
+- **Non-ratifiable preview** (`graph_intent_id` absent — conditional per
+  `_chat_compile.py:161-171`): visible-but-disabled control + informational
+  text. *Not* an error. Teaches: some previews carry authority weight,
+  some don't, the system knows which, nothing is broken.
+- **Ratification failure** (`AssentRecordNotFound` / apply abort on POST):
+  the actual error/abort surface — distinct from the informational state
+  above. Conflating the two would teach the operator that a non-mutating
+  preview is "broken," which inverts the mental model the authority chain
+  exists to build.
+
+Never POST a missing id.
+
+*Remaining leans (confirm):*
 - **In-flight:** disable + spinner during the POST (reuse the existing
   `inflight` pattern in `forge-chat.js`).
 - **Placement:** the ratify control belongs **on the preview card** (it
@@ -106,6 +124,9 @@ it just must not invent a *fourth* actor convention.
 ## Status
 
 **Discuss-questions cycle-1.** Q1 is the blocker — it must ground before
-the CA.1 plan, because H1 vs H2 sets the phase's true scope. Q2–Q4 carry
-leans ready to confirm. Room reviews Q1's two hypotheses + the leans, then
-this routes to CA.1-PLAN.
+the CA.1 plan, because H1 vs H2 sets the phase's true scope. Q2 absent-id
+state **settled** (Creative framing-grade ruling: visible-but-disabled,
+informational-not-error, with the non-ratifiable/failure taxonomy line);
+Q2 in-flight + placement leans, Q3, Q4 carry leans ready to confirm. The
+only open blocker is Q1's H1-vs-H2 trace. Once that grounds, this routes
+to CA.1-PLAN.
