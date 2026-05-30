@@ -1,8 +1,11 @@
 """Acceptance tests for the Typer-root refactor in forge_bridge/__main__.py.
 
-Covers D-10 (bare invocation boots MCP unchanged), D-11 (`console --help` exits 0),
-and D-27 (--console-port flag precedence). Subprocess-based to catch side-effect
-regressions (e.g. the current broken state where `main()` was called at import).
+Covers D-11 (`console --help` exits 0) and the post-refactor invariant that
+bare ``python -m forge_bridge`` prints help and exits 0 — the MCP server only
+starts via the explicit ``mcp stdio`` / ``mcp http`` subcommands. The legacy
+top-level ``--console-port`` flag is gone; ``FORGE_CONSOLE_PORT`` is the
+canonical env-var precedence handle. Subprocess-based to catch side-effect
+regressions.
 """
 from __future__ import annotations
 
@@ -49,53 +52,43 @@ def test_console_subcommand_help_exits_zero():
     )
 
 
-# ── D-10: bare invocation falls through to mcp_main() ───────────────────────
+# ── bare invocation prints help and exits 0 (post-refactor invariant) ──────
 
-def test_bare_forge_bridge_boots_mcp_not_help(monkeypatch):
-    """Bare `forge-bridge` with a dead bridge URL should fall through to
-    mcp_main() — proven by the existing 'Could not connect to forge-bridge'
-    WARNING appearing on stderr within a short timeout.
+def test_bare_forge_bridge_prints_help_and_exits_zero():
+    """Bare ``python -m forge_bridge`` (no args, no subcommand) must print
+    help and exit 0 — it must NOT start any services.
 
-    We use FORGE_BRIDGE_URL set to a guaranteed-dead port so startup_bridge's
-    graceful-degradation path fires, logs the warning, and allows MCP to
-    proceed (at which point we kill the subprocess — we're not testing the
-    full stdio flow here, only that mcp_main was entered).
+    This is the post Typer-front-door invariant documented in
+    ``forge_bridge/cli/main.py`` and CLAUDE.md: the MCP server only starts
+    via the explicit ``mcp stdio`` / ``mcp http`` subcommands. Earlier
+    versions of this test asserted the inverse (bare invocation falling
+    through to mcp_main); that behavior was deliberately removed when the
+    Typer root callback gained the ``ctx.invoked_subcommand is None`` →
+    print-help-and-exit branch.
+
+    Subprocess-based on purpose: a side-effecting __main__ import would
+    bypass the callback guard and surface here.
     """
-    # Find a guaranteed-free port; we DON'T bind it so it stays dead
-    import socket
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        dead_port = s.getsockname()[1]
-    dead_url = f"ws://127.0.0.1:{dead_port}"
-
-    env = dict(os.environ)
-    env["FORGE_BRIDGE_URL"] = dead_url
-
-    # Short timeout — we just need to see the WARNING fire and prove
-    # mcp_main() was reached. After that, kill the process.
-    proc = subprocess.Popen(
+    proc = subprocess.run(
         [PYTHON, "-m", MODULE],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        env=env,
-        text=True,
+        capture_output=True, text=True, timeout=10.0,
     )
-    try:
-        # Wait up to 5s for mcp_main to enter and emit the bridge-unreachable warning
-        _, stderr = proc.communicate(timeout=5.0)
-    except subprocess.TimeoutExpired:
-        # mcp_main() is running and blocked on MCP stdio loop — that's the
-        # positive signal. Kill and collect stderr so far.
-        proc.kill()
-        _, stderr = proc.communicate(timeout=5.0)
-
-    # Either we saw the warning (process exited) or the process was still
-    # running MCP (timeout). Both prove the bare path boots MCP.
-    # Assertion: stderr contains evidence that mcp_main() was reached — the
-    # logging.basicConfig + graceful-degradation log line.
-    assert "Could not connect to forge-bridge" in stderr or "forge_bridge" in stderr, (
-        f"Bare `forge-bridge` must boot MCP (D-10). Expected the bridge-unreachable "
-        f"WARNING or some forge_bridge log output on stderr. Got: {stderr!r}"
+    assert proc.returncode == 0, (
+        f"Bare `python -m forge_bridge` must exit 0. "
+        f"stdout: {proc.stdout!r}, stderr: {proc.stderr!r}"
+    )
+    # Help text identification: Typer root help mentions the app name and
+    # the canonical subcommand surface.
+    assert "forge-bridge" in proc.stdout, (
+        f"Expected Typer root help on stdout mentioning 'forge-bridge'. "
+        f"stdout: {proc.stdout!r}"
+    )
+    # Negative assertion: bare invocation must NOT have started MCP — the
+    # pre-refactor failure mode emitted the bridge-unreachable WARNING on
+    # stderr from mcp_main()'s startup_bridge call.
+    assert "Could not connect to forge-bridge" not in proc.stderr, (
+        f"Bare `python -m forge_bridge` must NOT start MCP. "
+        f"Found bridge-unreachable warning in stderr: {proc.stderr!r}"
     )
 
 
@@ -123,43 +116,30 @@ def test_module_importable_without_side_effects():
     )
 
 
-# ── D-27: --console-port flag pushes into env ──────────────────────────────
+# ── FORGE_CONSOLE_PORT env-var precedence (post-Typer-front-door) ──────────
 
-def test_console_port_flag_sets_env(monkeypatch):
-    """D-27 precedence: flag > env > default.
+def test_console_port_env_var_overrides_default(monkeypatch):
+    """``FORGE_CONSOLE_PORT`` is the canonical precedence handle for console
+    port selection — the legacy top-level ``--console-port`` flag was
+    removed when the Typer root replaced the old single-callback main.
 
-    Monkeypatch `mcp_main` to a sentinel that captures os.environ at call
-    time, then invoke the Typer callback directly — avoids standing up
-    a real MCP server just to check env propagation.
+    Precedence (post-refactor): FORGE_CONSOLE_PORT env > default (9996).
+    Verify via ``forge_bridge.config.console_port()`` which is what the
+    MCP bootstrap reads at startup (see ``forge_bridge.mcp.server`` step 4).
     """
-    import forge_bridge.__main__ as entrypoint
-    from unittest.mock import patch
+    from forge_bridge import config
 
-    captured: dict[str, str] = {}
-
-    def _stub_mcp_main(*args, **kwargs):
-        # Capture the env at the moment mcp_main would have started.
-        # Accept *args/**kwargs so this stub stays compatible with future
-        # forge_bridge.mcp.server.main signature additions (e.g. Plan 20.1-08
-        # added transport= and port= parameters).
-        captured["FORGE_CONSOLE_PORT"] = os.environ.get("FORGE_CONSOLE_PORT", "")
-
-    # Invoke Typer app via the CliRunner so the callback runs end-to-end
-    from typer.testing import CliRunner
-    runner = CliRunner()
-
+    # Default path: no env → 9996
     monkeypatch.delenv("FORGE_CONSOLE_PORT", raising=False)
-    # Patch the lazy-imported target — the import happens INSIDE the callback,
-    # so we patch forge_bridge.mcp.server.main, which is the resolved symbol.
-    with patch("forge_bridge.mcp.server.main", side_effect=_stub_mcp_main):
-        result = runner.invoke(entrypoint.app, ["--console-port", "9997"])
-    assert result.exit_code == 0, (
-        f"--console-port 9997 should succeed. output: {result.output!r}, "
-        f"exception: {result.exception!r}"
+    assert config.console_port() == 9996, (
+        "Default console port must be 9996 when FORGE_CONSOLE_PORT is unset."
     )
-    assert captured.get("FORGE_CONSOLE_PORT") == "9997", (
-        f"D-27 requires --console-port 9997 to set FORGE_CONSOLE_PORT=9997 in env "
-        f"before mcp_main() runs. Got: {captured!r}"
+
+    # Env-var path: explicit override wins
+    monkeypatch.setenv("FORGE_CONSOLE_PORT", "9997")
+    assert config.console_port() == 9997, (
+        f"FORGE_CONSOLE_PORT=9997 must override default. "
+        f"Got: {config.console_port()!r}"
     )
 
 # ── sanity: `app` is a Typer instance (needed for [project.scripts]) ──────

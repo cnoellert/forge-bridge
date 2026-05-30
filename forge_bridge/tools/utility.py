@@ -302,8 +302,9 @@ async def ping() -> str:
     doctor probe can distinguish "wrong target, no response" (WARN-divergent)
     from "right target, no response" (FAIL-daemon-says-broken) — the
     pre-Phase-24.2 failure-path body omitted bridge_url, which caused
-    doctor's divergence detection to mis-classify the portofino env-file
-    conflation case as FAIL-daemon-says-broken instead of WARN-divergent.
+    doctor's divergence detection to mis-classify the operator-workstation
+    env-file conflation case as FAIL-daemon-says-broken instead of
+    WARN-divergent.
 
     See: .planning/milestones/v1.6-PHASE-24-2-FRAMING.md §6.4 (Q4 4-state
     truth-authority degradation table); ~/.forge-bridge/measurements/
