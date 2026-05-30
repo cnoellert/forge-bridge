@@ -164,14 +164,19 @@
           } else if (!r.ok) {
             this.error = "Chat error — check console for details.";
           } else {
-            // D-03 success — replace local state with the echoed history.
-            // Stamp client-side ids so Alpine's :key tracker is stable.
-            this.messages = (body.messages || []).map((m, i) => ({
-              id: i + ":" + ((crypto.randomUUID && crypto.randomUUID()) || String(Date.now() + i)),
-              role: m.role,
-              content: m.content,
-              tool_call_id: m.tool_call_id,
-            }));
+            // D-03 success — replace local state only when the server echoed
+            // history. Post-A.1 regimes such as preview_emitted and
+            // chain_aborted do not carry `messages`; preserving the local
+            // transcript keeps the user's submitted turn visible.
+            if (Array.isArray(body.messages)) {
+              // Stamp client-side ids so Alpine's :key tracker is stable.
+              this.messages = body.messages.map((m, i) => ({
+                id: i + ":" + ((crypto.randomUUID && crypto.randomUUID()) || String(Date.now() + i)),
+                role: m.role,
+                content: m.content,
+                tool_call_id: m.tool_call_id,
+              }));
+            }
             // Phase 24.5: orchestration_terminated detection. When the
             // envelope encodes a policy-decided termination, surface the
             // termination block as its own sibling chrome (see panel.html
