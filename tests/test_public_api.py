@@ -244,8 +244,22 @@ def test_bridge_module_imports_clean():
     """
     import importlib
     import sys
+    saved = sys.modules.get("forge_bridge.bridge")
     sys.modules.pop("forge_bridge.bridge", None)
-    importlib.import_module("forge_bridge.bridge")  # must not raise
+    try:
+        importlib.import_module("forge_bridge.bridge")  # must not raise
+    finally:
+        # Restore the original module object. Without this, the fresh import
+        # leaks: a NEW forge_bridge.bridge lands in sys.modules and on the
+        # parent package, while modules that bound `from forge_bridge import
+        # bridge` at their own import time (e.g. forge_bridge.tools.utility)
+        # keep referencing the OLD object. That defeats patch.object(bridge,
+        # ...) in tests that import bridge independently — test_utility_ping
+        # patches the new object while utility.ping() reads the old one.
+        # KIND-1 ordering-pollution fix, v1.8 Thread B (SEED-MAIN-RELIABILITY-DEBT).
+        if saved is not None:
+            sys.modules["forge_bridge.bridge"] = saved
+            sys.modules["forge_bridge"].bridge = saved
 
 
 def test_synthesizer_module_level_synthesize_removed():
