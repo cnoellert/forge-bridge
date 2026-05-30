@@ -134,6 +134,22 @@
           </details>
         </template>
       </div>
+
+      <div class="graph-intent-preview__actions"
+           x-show="preview && preview.summary && preview.summary.requires_ratification">
+        <button class="btn chat-send graph-intent-preview__ratify"
+                type="button"
+                @click="ratify()"
+                :disabled="ratifyInflight || !preview || !preview.graph_intent_id">
+          <span x-show="!ratifyInflight">Ratify &amp; Apply</span>
+          <span x-show="ratifyInflight" class="spinner-amber" aria-hidden="true"></span>
+          <span x-show="ratifyInflight" class="visually-hidden">Ratifying…</span>
+        </button>
+        <p class="graph-intent-preview__note"
+           x-show="preview && !preview.graph_intent_id">
+          This preview isn't ratifiable — no persisted intent.
+        </p>
+      </div>
     </section>
   </div>
 

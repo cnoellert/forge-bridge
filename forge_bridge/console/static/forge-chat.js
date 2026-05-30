@@ -75,6 +75,8 @@
       // NOT paraphrase, summarize, or transform any field (framing §10.1).
       termination: null,
       preview: null,
+      ratifyInflight: false,
+      ratifyOutcome: null,
 
       init() {
         // D-06 per-tab: nothing to restore. Cleared on tab close.
@@ -131,6 +133,7 @@
         // longer the current state of the conversation.
         this.termination = null;
         this.preview = null;
+        this.ratifyOutcome = null;
 
         // Build the wire payload — strip client-side ids so the server
         // contract stays {role, content, tool_call_id?}.
@@ -180,6 +183,7 @@
               }));
             }
             this.preview = null;
+            this.ratifyOutcome = null;
             // Phase 24.5: orchestration_terminated detection. When the
             // envelope encodes a policy-decided termination, surface the
             // termination block as its own sibling chrome (see panel.html
@@ -203,6 +207,47 @@
           this.error = "Chat error — check console for details.";
         } finally {
           this.inflight = false;
+        }
+      },
+
+      async ratify() {
+        if (!this.preview || !this.preview.graph_intent_id || this.ratifyInflight) return;
+
+        this.ratifyInflight = true;
+        this.error = "";
+        try {
+          const r = await fetch("/api/v1/ratify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              graph_intent_id: this.preview.graph_intent_id,
+              actor: "local",
+            }),
+          });
+          let body;
+          try {
+            body = await r.json();
+          } catch (_e) {
+            body = {};
+          }
+          this.ratifyOutcome = body;
+
+          if (r.status === 429) {
+            const ra = r.headers.get("Retry-After") || "?";
+            this.error = (body && body.error && body.error.message) ||
+              `Rate limit reached — wait ${ra}s before retrying.`;
+          } else if (r.status === 504) {
+            this.error = "Response timed out — try a simpler question or fewer tools.";
+          } else if (r.status === 422) {
+            const msg = (body && body.error && body.error.message) || "validation error";
+            this.error = "Invalid request — " + msg;
+          } else if (!r.ok) {
+            this.error = "Chat error — check console for details.";
+          }
+        } catch (_e) {
+          this.error = "Chat error — check console for details.";
+        } finally {
+          this.ratifyInflight = false;
         }
       },
     };
