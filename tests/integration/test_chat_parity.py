@@ -85,6 +85,12 @@ def chat_app_fixed_response():
     mock_router.complete_with_tools = AsyncMock(
         side_effect=_phase_a_fixed_response,
     )
+    # A.1 chat compile branch added compile_intent() as the first await on
+    # the chat path (before complete_with_tools). It is async and returns
+    # list[str]. Without an AsyncMock here, the parent MagicMock auto-
+    # generates a sync MagicMock for the attribute and the handler's
+    # `await router.compile_intent(...)` raises TypeError.
+    mock_router.compile_intent = AsyncMock(return_value=[])
     ms = ManifestService()
     mock_log = MagicMock()
     mock_log.snapshot.return_value = ([], 0)
