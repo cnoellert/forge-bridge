@@ -356,12 +356,11 @@ class TestPreSynthesisHook:
         assert "- do not import flame" in kwargs["system"]
 
     async def test_pre_synthesis_hook_exception_falls_back_to_empty_context(
-        self, tmp_path, caplog
+        self, tmp_path
     ):
         """When the hook raises, synthesis continues with default PreSynthesisContext()."""
-        import logging
-
         from forge_bridge.learning.synthesizer import SYNTH_SYSTEM, SkillSynthesizer
+        from tests._log_capture import capture_logger
 
         async def hook(_intent, _params):
             raise RuntimeError("db offline")
@@ -373,7 +372,10 @@ class TestPreSynthesisHook:
             pre_synthesis_hook=hook,
         )
 
-        with caplog.at_level(logging.WARNING, logger="forge_bridge.learning.synthesizer"):
+        # Per-test handler attached directly to the named logger — independent
+        # of root-handler state that earlier uvicorn-starting tests may have
+        # mutated via dictConfig. See tests/_log_capture.py.
+        with capture_logger("forge_bridge.learning.synthesizer") as records:
             out = await synth.synthesize(raw_code="x = 1", intent="t", count=3)
 
         # Synthesis still completed.
@@ -384,7 +386,7 @@ class TestPreSynthesisHook:
         assert "Constraints:" not in kwargs["system"]
         # Fallback warning logged.
         assert any(
-            "pre_synthesis_hook raised" in rec.message for rec in caplog.records
+            "pre_synthesis_hook raised" in rec.getMessage() for rec in records
         )
 
 
