@@ -3,7 +3,7 @@ milestone: v1.8
 thread: A
 phase: CA.1
 phase_name: de-blank guard + preview projection + ratify affordance
-status: plan-draft-cycle-2
+status: plan-ratified
 drafted: 2026-05-30
 type: phase-plan
 derives_from: .planning/phases/CA-thread-a-console-authority/CA.1-DISCUSS-QUESTIONS.md (converged, 17dbcfe)
@@ -295,6 +295,21 @@ above, which makes the manual gate complete rather than sampled.
 Atomic commits per L-block (L1 alone is a shippable bugfix; L2-L5 build
 the projection; L6 is the dogfood gate).
 
+**Execution mechanics — RATIFIED (three-voice convergence 2026-05-30):**
+**Serial implementation spine, NO worktree fan-out.** `forge-chat.js` is
+the spine and the L-blocks are *contract dependencies*, not merely
+same-file adjacency: L2 consumes L1's dispatch model; L3 consumes L2's
+preview state + card; L4 consumes L3's `ratifyOutcome`. A worktree fan-out
+(even branching B/C from A) would make the work correct but not concurrent
+— recovering near-zero wall-clock against real worktree + merge +
+coordination cost. Therefore: **single executor, sequential L1 → L2 → L3 →
+L4**, atomic commit per L-block; **L5 immediately after** the markup exists
+(visual verification needs real DOM); **L6 optional sidecar** — a new file
+with no code-path dependency, the only block that *could* be peeled off,
+and even that is optional (coordination cost ≈ the work). (Creative's
+earlier A→(B,C,D) topology and Orch's branch-from-A reservation both
+superseded by DT's dependency walk; all three converged here.)
+
 ---
 
 ## Acceptance gate (phase-level)
@@ -356,10 +371,10 @@ biggest execution-stage unknown, now resolved in L4 + obligation #1),
 `termination` clearing), **B-3** (named the no-JS-test decision + made the
 de-blank UAT sweep exhaustive across all 8 regimes + seeded the harness
 question). L-decomposition and projection-only thesis both held under
-review. Open for execution decomposition: Creative's A/B/C/D worktree
-fan-out proposal (Orch reservation logged: `forge-chat.js` is a shared
-spine — B/C must branch from A, not main). Routes to CA.1 execution on
-ratification.
+review. **RATIFIED for execution (three-voice convergence 2026-05-30):**
+serial implementation spine, no worktree fan-out, atomic L-block commits,
+L6 optional sidecar (see Implementation step sequence → Execution
+mechanics). No further planning cycle required.
 
 ---
 
