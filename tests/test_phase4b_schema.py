@@ -1,4 +1,9 @@
-"""Phase 4B schema tests — migrations 0004 through 0008."""
+"""Phase 4B schema tests — migrations 0004 through 0008.
+
+Roundtrip downgrades target the named revision 0003 (last pre-Phase-4B),
+not a relative step count, so migrations landing above head (e.g. A.2's
+0009) don't shift the downgrade floor. See test_phase4b_migrations_roundtrip.
+"""
 
 from __future__ import annotations
 
@@ -157,7 +162,19 @@ def _insert_entity(
 
 
 def test_phase4b_migrations_roundtrip(alembic_db) -> None:
-    """upgrade head → downgrade -3 → -1 → -1 → upgrade head lands at same state."""
+    """upgrade head → downgrade to 0003 → upgrade head lands at same state.
+
+    Downgrades to the NAMED revision 0003 (the last pre-Phase-4B revision)
+    rather than a relative step count. The Phase-4B objects this test asserts
+    are absent — relationship types (added 0004), content_hash (added 0005),
+    and the orchestration tables (added 0006-0008) — all live above 0003, so
+    0003 is the correct floor regardless of how many migrations land above
+    head later. The original relative `-3 → -1 → -1` form assumed head==0008
+    and silently broke when A.2's 0009 (assent_record) shifted the floor:
+    five relative steps from 0009 land at 0004, leaving the relationship
+    types present. Named-revision targeting is drift-proof against future
+    migrations (KIND-5, v1.8 Thread B; [[feedback-baseline-drift-invalidates-controls]]).
+    """
     session_factory, alembic_cfg, engine = alembic_db
 
     with session_factory() as session:
@@ -191,9 +208,7 @@ def test_phase4b_migrations_roundtrip(alembic_db) -> None:
         ).one()
         assert lifecycle_table.tablename == "orchestration_lifecycle_state"
 
-    command.downgrade(alembic_cfg, "-3")
-    command.downgrade(alembic_cfg, "-1")
-    command.downgrade(alembic_cfg, "-1")
+    command.downgrade(alembic_cfg, "0003")
 
     with engine.connect() as conn:
         for name in _PHASE4B_RELATIONSHIP_NAMES:
