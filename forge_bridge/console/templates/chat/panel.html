@@ -151,6 +151,52 @@
         </p>
       </div>
     </section>
+
+    <section class="ratify-outcome"
+             x-show="ratifyOutcome"
+             x-cloak
+             role="region"
+             aria-label="Ratification outcome">
+      <template x-if="ratifyOutcome && ratifyOutcome.apply_complete">
+        <div class="ratify-outcome__body">
+          <header class="ratify-outcome__header">
+            <span class="ratify-outcome__taxon">Apply Complete</span>
+            <span class="ratify-outcome__sub">operator-ratified chain applied</span>
+          </header>
+          <dl class="ratify-outcome__facts">
+            <dt>graph_intent_id</dt>
+            <dd x-text="ratifyOutcome.apply_complete.graph_intent_id"></dd>
+            <dt>stop_reason</dt>
+            <dd x-text="ratifyOutcome.apply_complete.stop_reason"></dd>
+            <dt>chat_regime</dt>
+            <dd x-text="ratifyOutcome.apply_complete.chat_regime"></dd>
+            <dt>chain_status</dt>
+            <dd x-text="ratifyOutcome.apply_complete.chain && ratifyOutcome.apply_complete.chain.status"></dd>
+          </dl>
+        </div>
+      </template>
+
+      <template x-if="ratifyOutcome && ratifyOutcome.stop_reason === 'chain_aborted'">
+        <div class="ratify-outcome__body ratify-outcome__body--abort">
+          <header class="ratify-outcome__header">
+            <span class="ratify-outcome__taxon">Chain Aborted</span>
+            <span class="ratify-outcome__sub">ratified chain did not apply</span>
+          </header>
+          <dl class="ratify-outcome__facts">
+            <dt>graph_intent_id</dt>
+            <dd x-text="ratifyOutcome.graph_intent_id"></dd>
+            <dt>stop_reason</dt>
+            <dd x-text="ratifyOutcome.stop_reason"></dd>
+            <dt>step_index</dt>
+            <dd x-text="ratifyOutcome.error && ratifyOutcome.error.step_index"></dd>
+            <dt>error_code</dt>
+            <dd x-text="ratifyOutcome.error && ratifyOutcome.error.code"></dd>
+            <dt>original_error</dt>
+            <dd x-text="ratifyOutcome.error && ratifyOutcome.error.original_error && ratifyOutcome.error.original_error.type"></dd>
+          </dl>
+        </div>
+      </template>
+    </section>
   </div>
 
   <!-- input (D-10: single textarea, Enter sends, Shift+Enter newline) -->
