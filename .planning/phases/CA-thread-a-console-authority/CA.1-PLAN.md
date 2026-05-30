@@ -3,7 +3,7 @@ milestone: v1.8
 thread: A
 phase: CA.1
 phase_name: de-blank guard + preview projection + ratify affordance
-status: plan-draft-cycle-1
+status: plan-draft-cycle-2
 drafted: 2026-05-30
 type: phase-plan
 derives_from: .planning/phases/CA-thread-a-console-authority/CA.1-DISCUSS-QUESTIONS.md (converged, 17dbcfe)
@@ -73,6 +73,11 @@ the success branch to:
   if (Array.isArray(body.messages)) {     // regime #4 only, today
     this.messages = body.messages.map(/* unchanged id-stamp */);
   }                                       // else: keep transcript intact
+  // NOTE (B-2): termination/preview/ratifyOutcome are ALSO reset at the
+  // top of send() (see L2/L3) so a stale prior-turn value never survives.
+  // The per-branch resets below are belt-and-suspenders, not the only
+  // clear — in particular `termination` must be cleared at send()-top, or
+  // a preview_emitted turn (first branch) leaves a stale termination card.
   this.preview = null;                    // reset per-turn (L2)
   this.ratifyOutcome = null;              // reset per-turn (L3/L4)
   if (body.stop_reason === "preview_emitted") {
@@ -184,11 +189,28 @@ exists because the operator chose to look.
 (CA-Q2 **binding constraint** — outcome is authority-decided, never a chat
 message). Mirror the `orchestration-termination` sibling shape (59-93):
 `x-show="ratifyOutcome"`, `x-cloak`, `role="region"`. Render the two
-terminal regimes from the ratify response:
-- **`apply_complete`** → success header + the applied chain summary
-  (verbatim `x-text` over the response's chain/result fields).
-- **`chain_aborted`** → abort header + reason (the 400 path stamps
-  `stop_reason: "chain_aborted"` + `graph_intent_id`).
+terminal regimes from the ratify response.
+
+**⚠️ The success and abort bodies are ASYMMETRIC — grounded (B-1):**
+
+- **200 / success — NESTED.** `_apply_complete_body` (`handlers.py:956`)
+  returns `{"apply_complete": {kind, graph_intent_id, chain, stop_reason:
+  "apply_complete", chat_regime, transport}}`. The real `stop_reason` is
+  at **`body.apply_complete.stop_reason`**, NOT top-level. This shape is
+  **contract-locked in tests** (`test_ratify_endpoint.py:76` pins
+  `body["apply_complete"]["graph_intent_id"]`).
+- **400 / abort — FLAT.** The abort path stamps top-level
+  `{stop_reason: "chain_aborted", graph_intent_id, ...}`
+  (`handlers.py:1287`).
+
+So L4's branch must be: **`body.apply_complete` present → success card**
+(bind to `body.apply_complete.*`); **`body.stop_reason === "chain_aborted"`
+→ abort card** (bind to flat `body.*`). Do NOT reuse L1's top-level
+`stop_reason` dispatch shape for the ratify response — on success it's
+`undefined` at top level. This nested/flat asymmetry is exactly the
+cycle-1 SSE/JSON conflation class; it is grounded here, not deferred
+(manifestation-4 envelope per
+[[feedback-substrate-shape-grounding-at-plan-stage]]).
 
 **Binding discipline:** `x-text` only (verbatim; never `renderContent`).
 
@@ -222,20 +244,41 @@ ruling.
 (new), per [[project-forge-bridge-ux-philosophy]] (every UI phase gets
 non-developer dogfood).
 
-**Scenarios:**
+**Scenarios:** Because L1 has **no automated coverage** (B-3 ruling below),
+the manual UAT is the *sole* regression guard for the 8-regime de-blank.
+It must therefore exercise **every de-blank regime**, not a sample:
+
 1. **Preview renders (the headline fix).** Type a mutating `commit` intent
    in Console chat → preview card appears with steps + mutating-count
-   badge. **Screen does NOT blank.** (Pre-CA.1: blanks.)
+   badge. **Screen does NOT blank.** (Pre-CA.1: blanks.) [regime #8]
 2. **Ratify happy path.** Click "Ratify & Apply" → spinner → outcome card
-   (`apply_complete`).
+   (`apply_complete`, nested body per L4).
 3. **Non-mutating regression.** Type `list projects` (regime #4) → still
    renders normally (no regression on the one path that worked).
-4. **Multi-step de-blank.** Type a `->` multi-step query → transcript no
-   longer blanks (de-blank guard; payload may not render — that's seeded,
-   not a CA.1 bug).
+4. **De-blank sweep — all 8.** Confirm the transcript is **preserved**
+   (not wiped) for every previously-blanking regime: macro list/delete
+   [#1], chain-too-long [#2], multi-step `->` chain [#3], `apply <id>`
+   grammar [#5], compile error [#6 — error banner, already ok], compiled
+   `chain_aborted` [#7], compiled non-mutating `chain_complete` [#9].
+   (Payloads need not *render* — that's seeded; only the **no-blank**
+   invariant is the CA.1 bar.)
 5. **Absent-id informational state.** (If reproducible without a DB) a
    preview lacking `graph_intent_id` shows the disabled button + the
    informational note, **not** an error.
+
+**B-3 — no-JS-test decision (named, not discovered):** CA.1 ships the
+load-bearing de-blank fix with **zero automated JS coverage**. This is a
+**decision, not an oversight**: the repo has no JS harness (no
+`package.json` / jest / vitest / `*.test.js`), `forge-chat.js` is a
+window-attached IIFE (not importable), and introducing a JS toolchain is
+out of a "substrate byte-equivalent, 3 front-end files" phase. Per
+[[feedback-distinct-success-criteria-per-adjacent-layer]], L1's success
+criterion stays attached to its native layer: **L1 is verified by UAT
+scenarios 1+4 only.** The JS-harness question is **seeded, not rejected**
+(per [[feedback-explicitly-unbound-vs-implicitly-rejected]]) →
+`SEED-CONSOLE-JS-TEST-HARNESS-V1.9+` (or fold into CA.3 hardening). The
+mitigation for shipping uncovered is the **exhaustive** scenario-4 sweep
+above, which makes the manual gate complete rather than sampled.
 
 ---
 
@@ -264,11 +307,14 @@ the projection; L6 is the dogfood gate).
       absent-id = disabled + informational (not error); never POSTs a
       missing id; sends `actor: "local"`.
 - [ ] L4: outcome renders as a distinct sibling card (not a chat message);
-      both `apply_complete` and `chain_aborted` covered; `x-text` only.
+      success binds to **nested** `body.apply_complete.*`, abort to **flat**
+      `body.{stop_reason: "chain_aborted", ...}` (B-1); `x-text` only.
 - [ ] Substrate byte-equivalent: `git diff` touches only `forge-chat.js`,
       `panel.html`, `forge-console.css`. No `.py`. `__all__` == 19.
       `pyproject.toml` version == 1.4.1.
-- [ ] L6: non-author dogfood passes scenarios 1-4 (5 if reproducible).
+- [ ] L6: non-author dogfood passes scenarios 1-3 + the **all-8 de-blank
+      sweep** (scenario 4); scenario 5 if reproducible. No automated JS
+      coverage by decision (B-3) — manual sweep is the sole regression guard.
 
 ---
 
@@ -277,13 +323,15 @@ the projection; L6 is the dogfood gate).
 Grounding obligations carried from discuss + this plan's assumptions —
 **read before asserting in code:**
 
-1. **Exact ratify-success body shape.** L4 renders `apply_complete` /
-   `chain_aborted`. This plan grounded the **400/abort** stamp
-   (`handlers.py:1287` stamps `stop_reason` + `graph_intent_id`) but the
-   plan should not assume the 200/apply body field names — execution must
-   read the `run_apply_branch` success return + the `ratify_endpoint` 200
-   path (`handlers.py:1208+`) and bind L4 to the **actual** keys. (Same
-   discipline that caught the cycle-1 SSE/JSON conflation.)
+1. **Ratify-success body shape — RESOLVED at plan time (B-1), no longer
+   deferred.** Success is **nested**: `_apply_complete_body`
+   (`handlers.py:956`) → `{"apply_complete": {kind, graph_intent_id, chain,
+   stop_reason: "apply_complete", chat_regime, transport}}`, contract-locked
+   in `test_ratify_endpoint.py:76`. Abort is **flat**: top-level
+   `{stop_reason: "chain_aborted", graph_intent_id, ...}`
+   (`handlers.py:1287`). L4 binds accordingly. **Residual** for execution:
+   the inner field names under `apply_complete.chain` (the rendered chain
+   summary) — confirm those before binding the success card's detail rows.
 2. **Absent-id reproducibility.** L3's absent-id branch is correct
    defensively, but L6 scenario 5 may be unreproducible on a stock DB
    (production always has `session_factory`). Confirm whether to keep it
@@ -297,13 +345,21 @@ Grounding obligations carried from discuss + this plan's assumptions —
 
 ## Status
 
-**Plan draft cycle-1.** Six L-blocks over the locked discuss scope; L1 is
-the load-bearing de-blank fix, L2-L4 the projection, L5 styling, L6 the
-dogfood gate. Substrate byte-equivalent (3 front-end files, no Python).
-Three draft-time grounding obligations handed to execution. Room reviews
-the L-decomposition + the L1 guard shape + whether L4's outcome-body
-binding is safe to leave to execution-stage grounding. Routes to
-CA.1 execution on ratification.
+**Plan draft cycle-2 (DT Stage-1b grounding applied).** Six L-blocks over
+the locked discuss scope; L1 is the load-bearing de-blank fix, L2-L4 the
+projection, L5 styling, L6 the dogfood gate. Substrate byte-equivalent
+(3 front-end files, no Python). Cycle-2 absorbed DT's three findings:
+**B-1** (un-deferred the ratify-success envelope — nested
+`apply_complete.*` vs flat abort, contract-locked in tests; was the
+biggest execution-stage unknown, now resolved in L4 + obligation #1),
+**B-2** (L1 reset-ordering note so the reference shape isn't miswired on
+`termination` clearing), **B-3** (named the no-JS-test decision + made the
+de-blank UAT sweep exhaustive across all 8 regimes + seeded the harness
+question). L-decomposition and projection-only thesis both held under
+review. Open for execution decomposition: Creative's A/B/C/D worktree
+fan-out proposal (Orch reservation logged: `forge-chat.js` is a shared
+spine — B/C must branch from A, not main). Routes to CA.1 execution on
+ratification.
 
 ---
 
