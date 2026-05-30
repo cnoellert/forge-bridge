@@ -177,6 +177,35 @@ scoping Thread B.
 
 ## Status
 
-**ACTIVE — v1.8 Thread B (main reliability cleanup).** Re-baselined
-inventory above is the work scope. B-reframe-first complete (this
-rewrite); B-full proceeds in fix-kind order. Target: 24 → 0.
+**CLOSED — v1.8 Thread B complete 2026-05-29.** 24 → 8 on main
+(merge `872bea4`, full suite: 8 failed / 2620 passed / 41 skipped /
+41-skip count unchanged from baseline). Disposition:
+
+- **16 closed:** KIND-1 caplog pollution (4, per-test handler ownership
+  + `tests/_log_capture.py` helper), KIND-2 logic/source drift (7,
+  portofino scrub + typer/timeline/stdio invariant alignment), KIND-3
+  harness obstruction (1 of 9, `compile_intent` AsyncMock at radiating
+  fixture sites), KIND-5 migration roundtrip (1, named-revision `0003`
+  downgrade target — drift-proof), ping cluster (3, fixed pre-fan-out at
+  `28f3a55`).
+- **8 reclassified OUT of Thread B:** KIND-4 post-A.1 envelope-contract
+  drift, exposed (not caused) by the KIND-3 harness fix. Seeded at
+  [[SEED-POST-A1-ENVELOPE-CONTRACT-RECONCILIATION-V1.9+]] for the
+  v1.9/A-series. These are contract-evolution debt, not reliability
+  debt — Thread B's classification job answered the question and routed
+  them correctly.
+
+**No production defects discovered.** The single source change across
+the whole sweep was a docstring scrub (`tools/utility.py`);
+`forge_bridge.__all__` unchanged at 19. Thread B objective achieved:
+remove harness obstruction + separate root causes instead of forcing a
+single explanatory model. Thread B did not remain open pending KIND-4
+reconciliation — per the room's ruling, holding it open would have
+meant the classification exercise failed its own purpose.
+
+Method archaeology: 3 worktree-isolated agents (one fan-out block),
+single serialized integration run, `--no-ff` merge for a named
+"Thread B reliability sweep" first-parent node. Fan-out paid for itself
+at exactly the dispatched scale (3 agents); KIND-4 + KIND-5 surfaced as
+*integration-time* discoveries, not agent-time, validating the
+"classify before fix" sequencing.
