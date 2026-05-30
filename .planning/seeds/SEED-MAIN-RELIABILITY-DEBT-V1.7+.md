@@ -1,178 +1,182 @@
 ---
 name: main-reliability-debt
-description: 10 test failures + 1 PR22 mechanical compliance violation on main branch, identity-matched pre-C.1 → post-C.1. Five debt clusters spanning console-startup binding, CLI entrypoint, flame timeline, ping fixtures, and PR22 flame_execute_python compliance. C.1 surfaced the debt by running the full suite as an acceptance gate; C.1 introduced none of it.
+description: 24 test failures on main at HEAD 65af768 (v1.8 open), re-baselined from the obsolete C.1 10-failure inventory. Three failure KINDS — test-ordering pollution (7 tests, pass isolated), real logic/source drift (7 tests), async-mock harness bug (8 tests) — plus the C.1 PR22 cluster now RESOLVED by bebf24a. Thread B (v1.8) promotes this to active reliability cleanup, B-full, fix-kind order.
 type: strategic-framing
-planted_during: "C.1 close, 2026-05-27 — full-suite run during C.1 acceptance produced 10 failures. Pre-C.1 baseline (commit 32e8cfb, with new test_asset_tools.py removed) produced the same 10 failures by name and shape. Failure-shape-stability evidence per [[feedback-failure-shape-stability-as-disposition-evidence]] cleared the C.1 disposition; the underlying debt is recorded here for follow-on motion."
-trigger_when: "A contributor reaches for a v1.7+ phase where suite stability becomes load-bearing (e.g. a phase that needs CI green, that touches console-startup binding, that exercises Flame timeline behavior, or that depends on the PR22 mechanical-enforcement gate as a contract surface). OR an explicit reliability-cleanup motion opens to sweep the clusters."
+planted_during: "C.1 close, 2026-05-27 (original 10-failure inventory). RE-BASELINED 2026-05-29 at v1.8 Thread B open — full-suite run at HEAD 65af768 produced 24 failures, not 10; the C.1 identity-stable baseline was invalidated by Thread-A + phase-4b + PR4 work landing in the interval per [[feedback-baseline-drift-invalidates-controls]]."
+trigger_when: "ACTIVE — promoted to v1.8 Thread B (main reliability cleanup). B-reframe-first (this rewrite) → B-full in fix-kind order (ordering pollution → tokens/CLI/source drift → async harness)."
+superseded_baseline: "C.1 10-failure / 5-cluster inventory (commit 32e8cfb). Preserved as archaeology in § C.1 origin below; DO NOT use as the work scope — see § v1.8 re-baseline."
 ---
 
-# Seed — main reliability debt (v1.7+ era)
+# Seed — main reliability debt (re-baselined for v1.8 Thread B)
 
-> **Captured as forward-pressure, not as a blocker.** This seed
-> exists because C.1's acceptance gate (full pytest suite passes)
-> surfaced 10 failing tests + 1 PR22 violation that pre-date C.1.
-> The failures are identity-matched between pre-C.1 commit
-> `32e8cfb` (with new test_asset_tools.py removed) and post-C.1
-> commit `8ea4a40`. Per
-> `[[feedback-classify-don't-chase]]`: corpus-scope instruments
-> surface archival imperfections that are not regressions;
-> classification determines disposition. C.1 ships clean; the
-> debt is named so the next motion has it as forward-pressure
-> rather than silent erosion.
+> **Re-baselined 2026-05-29.** The C.1 inventory (10 failures, 5
+> clusters, identity-stable) was the correct record for its era but is
+> now obsolete. A contemporaneous full-suite run at v1.8 open (HEAD
+> `65af768`) produced **24 failures**. Per
+> [[feedback-baseline-drift-invalidates-controls]], an inherited
+> failure list is not a safe work scope — it was re-verified, not
+> trusted. This rewrite carries the re-verified inventory; the C.1
+> archaeology is preserved below but is NOT the scope.
 
-## What this seed names
+## v1.8 re-baseline — the live inventory (HEAD 65af768)
 
-Five clusters of pre-existing failures, surfaced together by the
-v1.7 acceptance-gate machinery. Each cluster is its own root
-cause; this seed enumerates and labels, it does not investigate.
+Full default suite: **24 failed, 2604 passed, 41 skipped** (125s).
+Every failing cluster was re-run in isolation to separate genuine
+logic debt from test-ordering pollution from environmental/harness
+defects. Three failure KINDS emerged — the C.1 framing's "5 clusters
+of similar debt" no longer holds.
 
-### Cluster 1 — Console startup binding
+### KIND 1 — test-ordering pollution (7 tests; pass isolated, fail in suite)
 
-```
-tests/test_console_stdio_cleanliness::test_mcp_stdio_frames_are_clean_while_console_under_load
-tests/test_console_stdio_cleanliness::test_stderr_contains_no_access_log_lines
-```
-
-15s-timeout test patterns under console-startup load. Stdio
-cleanliness invariants. Adjacent surface: Phase 24.2 daemon-routed
-doctor work + Phase 16.x SSE streaming work both touched console
-startup; one of them or accumulated drift since may have eroded
-the invariant.
-
-### Cluster 2 — CLI entrypoint
+Cheapest high-value fix. These pass when run alone, fail only under
+full-suite ordering — module-state bleed, not logic debt.
 
 ```
-tests/test_typer_entrypoint::test_bare_forge_bridge_boots_mcp_not_help
-tests/test_typer_entrypoint::test_console_port_flag_sets_env
+tests/test_utility_ping.py::test_ping_failure_path_echoes_bridge_url
+tests/test_utility_ping.py::test_ping_success_path_still_echoes_bridge_url
+tests/test_utility_ping.py::test_ping_failure_path_bridge_url_reflects_current_bridge_module_state
+tests/test_sanitize.py::TestSanitizeTag::test_sanitize_rejects_log_warning_on_control_char
+tests/test_sanitize.py::TestSanitizeTag::test_sanitize_rejects_log_warning_on_injection
+tests/test_sanitize.py::TestApplySizeBudget::test_budget_truncates_tag_list_at_16
+tests/test_synthesizer.py::TestPreSynthesisHook::test_pre_synthesis_hook_exception_falls_back_to_empty_context
 ```
 
-Bare-invocation behavior and CLI flag wiring. Phase 11 + Phase
-20.x + Phase 24.x all touched the `fbridge` CLI surface; drift
-likely accumulated across versions.
+Isolation evidence: `test_utility_ping.py` → 3 passed alone;
+`test_sanitize.py` + `test_synthesizer.py` → 4 passed alone. The ping
+cluster's behavioral shape matches the C.1 Cluster-4 note exactly
+("pass in isolation; fail under full-suite ordering"). Likely one or
+two shared-module-state culprits (the ping cluster touches
+`bridge` module state; sanitize touches logging/allowlist state).
+First fix-kind in B-full.
 
-### Cluster 3 — Flame timeline
+### KIND 2 — real logic / source drift (7 tests)
 
-```
-tests/test_timeline_gap_fill::test_gap_fills_tracks_segments_by_id
-tests/test_timeline_gap_fill::test_pass2_skips_segments_already_used_as_gap_fills
-```
-
-Timeline gap-fill segment tracking. Domain-specific Flame timeline
-logic; not a substrate concern but the test suite carries it.
-
-### Cluster 4 — Ping fixture / module-state divergence
+Genuine debt; fails isolated too.
 
 ```
-tests/test_utility_ping::test_ping_failure_path_echoes_bridge_url
-tests/test_utility_ping::test_ping_failure_path_bridge_url_reflects_current_bridge_module_state
+tests/test_typer_entrypoint.py::test_bare_forge_bridge_boots_mcp_not_help
+tests/test_typer_entrypoint.py::test_console_port_flag_sets_env
+tests/test_timeline_gap_fill.py::test_gap_fills_tracks_segments_by_id
+tests/test_timeline_gap_fill.py::test_pass2_skips_segments_already_used_as_gap_fills
+tests/test_console_stdio_cleanliness.py::test_mcp_stdio_frames_are_clean_while_console_under_load
+tests/test_console_stdio_cleanliness.py::test_stderr_contains_no_access_log_lines
+tests/test_public_api.py::test_no_forge_specific_strings
 ```
 
-**Distinct behavioral shape:** these tests pass in isolation; they
-fail under the full-suite test ordering. Test-isolation / module-
-state pollution between tests, not a substantive code regression.
-Phase 24.2 reworked utility.ping; that's the most-likely surface
-the divergence rides on, but the failure mode is fixture/import-
-order, not behavioral.
+Sub-shapes, each its own root cause:
 
-### Cluster 5 — PR22 mechanical compliance: flame_execute_python
+- **CLI drift (typer, 2).** `--console-port` option genuinely absent
+  from the CLI (`test_console_port_flag_sets_env` → `SystemExit(2)`,
+  "No such option: --console-port"); bare-invocation boot behavior
+  also drifted. Phase 11 + 20.x + 24.x all touched `fbridge`; one of
+  them dropped/renamed the option the test asserts.
+- **Timeline source-grep stale (gap_fill, 2).** These are
+  *source-pattern* tests — they assert `gap_fills.add(id(...))` and
+  `id(seg) in gap_fills` substrings exist in `timeline.rename_shots`
+  source. The impl was rewritten (the function body the test greps no
+  longer contains those patterns); the test was not updated alongside.
+  Decision needed at fix time: is the gap-fill *behavior* still
+  correct (test is stale and should be rewritten to assert behavior,
+  not source) OR was the behavior lost in the rewrite (real
+  regression)? Must read the current `rename_shots` body before
+  deciding — do NOT just delete the assertion.
+- **`portofino` token leak (public_api, 1).** REAL violation.
+  `forge_bridge/tools/utility.py:305` contains the literal word
+  `portofino` in a comment ("...mis-classify the portofino
+  env-file"). The PKG-03 banned-token guard
+  (`portofino|assist-01|ACM_`) is correctly firing. Fix: reword the
+  comment to remove the host-specific token. One-line fix.
+- **Stdio cleanliness (console_stdio, 2).** Fails isolated; 15s-timeout
+  patterns under console-startup load. Needs investigation — adjacent
+  to Phase 24.2 daemon-routed work + 16.x SSE streaming. Lowest
+  confidence on root cause; investigate at fix time.
 
-```
-tests/test_tool_contract_enforcement::test_pr22_every_registered_tool_satisfies_canonical_contract
-```
-
-Single violation: `flame_execute_python` (registered with a
-**flat** signature, `execute_python(code: str, main_thread: bool
-= False)` — per commit `f8328a4` from 23.1) fails the PR22
-mechanical check. The test's `_has_drift` + `_has_required_inner_fields`
-logic categorizes the violation as "annotation/runtime
-divergence" — but the actual cause is that PR22's three-pattern
-taxonomy (A/B/C with `params: <Model>` wrappers) does not name a
-fourth category: **flat signatures with required top-level
-fields**. `flame_execute_python` is correct-by-design for its
-flat shape; the test logic does not yet recognize it.
-
-Two paths forward when this cluster is addressed:
-
-- **Low-cost.** Add `"flame_execute_python"` to
-  `KNOWN_PR22_DRIFT` at
-  `tests/test_tool_contract_enforcement.py:138` and update
-  `SEED-TOOL-CONTRACT-PR22-MIGRATION-V1.5+.md` to acknowledge a
-  "flat-signature with required field" sub-class that is **not
-  drift but an unnamed pattern.** This is a labeling fix, not a
-  code change.
-- **Higher-cost.** Extend `_has_drift` and
-  `_has_required_inner_fields` to recognize flat-signature tools
-  as a fourth pattern (Pattern D — flat-signature with required
-  top-level field) and stop categorizing them as runtime
-  divergence. This makes the test taxonomy match the actual
-  registered-tool surface.
-
-Either path is its own small motion; both restore the PR22 gate
-to load-bearing status.
-
-## Identity-match evidence
+### KIND 3 — async-mock harness bug (8 tests)
 
 ```
-                              pre-C.1 (32e8cfb)   post-C.1 (8ea4a40)
-test_mcp_stdio_frames_clean         FAIL                FAIL
-test_stderr_no_access_log_lines     FAIL                FAIL
-test_no_forge_specific_strings      FAIL                FAIL
-test_gap_fills_tracks_segments      FAIL                FAIL
-test_pass2_skips_segments           FAIL                FAIL
-test_pr22_every_registered_tool     FAIL                FAIL
-test_bare_forge_bridge_boots_mcp    FAIL                FAIL
-test_console_port_flag_sets_env     FAIL                FAIL
-test_ping_failure_path_echoes_url   FAIL                FAIL
-test_ping_failure_path_module_state FAIL                FAIL
-
-                              10 failed             10 failed
+tests/corpus/test_pr4_chat_handler_integration.py::test_chat_handler_arbitration_invariant_under_capture_state[disabled]
+tests/corpus/test_pr4_chat_handler_integration.py::test_chat_handler_arbitration_invariant_under_capture_state[enabled]
+tests/corpus/test_pr4_chat_handler_integration.py::test_chat_handler_arbitration_invariant_under_capture_state[failing]
+tests/corpus/test_pr4_chat_handler_integration.py::test_chat_handler_arbitration_invariant_under_capture_state_recovering[recovering]
+tests/corpus/test_pr4_chat_handler_integration.py::test_chat_handler_capture_latency_delta_bounded
+tests/corpus/test_pr4_no_dependency.py::test_arbitration_completes_when_corpus_unavailable[single_step]
+tests/integration/test_chat_endpoint.py::TestChatSanitizationE2E::test_handler_passes_messages_verbatim_to_router
+tests/integration/test_chat_parity.py::TestChatParityStructural::test_chat_parity_browser_vs_flame_hooks
+tests/integration/test_chat_parity.py::TestChatParityStructural::test_chat_parity_envelope_keys_locked
 ```
 
-Identical names, identical shape, identical count. C.1 introduced
-zero net regression. The clusters are existing debt the v1.7
-phase machinery surfaced by running the suite end-to-end.
+(9 lines = 8 distinct + the 500 visible in both parity asserts.)
+Shared failure signature: `TypeError: object MagicMock can't be used
+in 'await' expression` → handler returns HTTP 500. A fixture mocks a
+coroutine (the LLM router / chat handler call path) with plain
+`MagicMock` where `AsyncMock` is required. Phase-4b / PR4-era test
+harness. Likely **one fixture pattern fix radiating across 8 tests**
+— per [[feedback-mock-three-tier]], this is a stub/contract-enforcer
+that was never exercised against the real async call path. Last
+fix-kind in B-full (largest blast radius, but probably single root
+cause).
 
-## Architectural framing
+### RESOLVED since C.1 — strike from scope
 
-Per `[[feedback-decomposition-recomposition-validation-arc]]`:
-this is a recomposition surface. The v1.7 acceptance-gate
-discipline (writing room owes the implementer a verifiable
-acceptance gate spec) is what made the previously-silent debt
-visible. The earlier project cadence ran narrower test selections
-that did not surface the cluster; v1.7's gate-as-contract change
-made the corpus a load-bearing surface.
+- **PR22 / `flame_execute_python` (C.1 Cluster 5).** Already fixed by
+  `bebf24a test(PR22): recognize flat required tool schemas`
+  (the C.1 close named this exact fix path; it landed during A.2).
+  `flame_execute_python` no longer appears in PR22 drift; the test
+  recognizes flat-signature-with-required-field tools. Do NOT
+  re-address.
 
-Per `[[feedback-explicitly-unbound-vs-implicitly-rejected]]`:
-this seed is the deferral, not the rejection. Each cluster has a
-named likely surface and a named follow-on shape; none are being
-ignored. The room ratifies promotion to an active phase when the
-forcing function arrives (CI-green requirement, contract surface
-needed, or explicit cleanup motion).
+## Fix-kind order (B-full, ratified by operator 2026-05-29)
 
-Per `[[feedback-failure-shape-stability-as-disposition-evidence]]`:
-the identity-match evidence is what made the C.1 disposition
-decisive. Single-instance reuse here; the pattern was already
-promoted from 24.7 H0 disposition. This is corroboration at a
-new project layer (multi-surface integration test failure cluster
-across the full suite, not a single-intervention behavioral
-falsification).
+1. **KIND 1 — ordering pollution** (7 tests). Find the shared-state
+   culprit(s); cheapest, unblocks clean suite signal for the rest.
+2. **KIND 2 — logic/source drift** (7 tests). `portofino` token
+   (trivial) → CLI drift → timeline source-grep (needs behavior
+   decision) → stdio cleanliness (investigate).
+3. **KIND 3 — async-mock harness** (8 tests). One fixture fix,
+   verify it radiates.
 
-## What this seed does NOT do
+Each kind is its own commit cluster. Re-run full suite after each
+kind; the goal is **24 → 0** (true CI-green, the C.1 seed's actual
+intent), not partial.
 
-- It does not investigate any of the five clusters. Root causes
-  are likely but unverified.
-- It does not propose a fix shape. The two paths named for
-  Cluster 5 are options for when the room rules on it, not
-  ratified choices.
-- It does not prioritize the clusters against each other. That
-  ordering is the future motion's job.
-- It does not block any v1.7 work. Threads A, B (closed), C
-  (this close), and any v1.8 work proceed in parallel.
+## C.1 origin (archaeology — NOT the scope)
+
+> Preserved verbatim-in-substance from the original seed. This is the
+> record of how the debt was first surfaced. The 10-failure /
+> 5-cluster inventory below is OBSOLETE as work scope (see § v1.8
+> re-baseline); it is kept because it documents the discovery
+> mechanism and the failure-shape-stability disposition that cleared
+> C.1.
+
+C.1's acceptance gate (full pytest suite passes) surfaced 10 failing
+tests + 1 PR22 violation that pre-dated C.1, identity-matched between
+pre-C.1 commit `32e8cfb` (with new test_asset_tools.py removed) and
+post-C.1 commit `8ea4a40`. Per [[feedback-classify-don't-chase]]:
+corpus-scope instruments surface archival imperfections that are not
+regressions; classification determines disposition. C.1 shipped clean;
+the debt was named for follow-on motion.
+
+The original five clusters: (1) console-startup binding stdio
+cleanliness; (2) CLI entrypoint bare-invocation + flag wiring; (3)
+Flame timeline gap-fill segment tracking; (4) ping fixture / module-
+state divergence (pass isolated, fail in suite); (5) PR22 mechanical
+compliance for `flame_execute_python` (flat-signature pattern not in
+PR22's A/B/C taxonomy — now resolved by `bebf24a`).
+
+Architectural framing (still valid): per
+[[feedback-decomposition-recomposition-validation-arc]], this is a
+recomposition surface — the v1.7 acceptance-gate discipline made
+previously-silent debt visible by running the corpus end-to-end. Per
+[[feedback-failure-shape-stability-as-disposition-evidence]], the C.1
+identity-match (10→10) cleared the C.1 disposition decisively. The
+v1.8 re-baseline does NOT contradict that — C.1's 10 were stable
+*at C.1*; the additional 14 accrued in the Thread-A/phase-4b/PR4
+interval, which is exactly the drift [[feedback-baseline-drift-invalidates-controls]]
+predicts and why contemporaneous re-verification was required before
+scoping Thread B.
 
 ## Status
 
-**Parked as forward-pressure.** Promotes to an active phase
-(reliability-cleanup, or a more-targeted single-cluster motion)
-when the trigger condition fires. The seed's load-bearing job is
-to preserve the cluster identification + identity-match evidence
-so the next investigator does not have to redo this work.
+**ACTIVE — v1.8 Thread B (main reliability cleanup).** Re-baselined
+inventory above is the work scope. B-reframe-first complete (this
+rewrite); B-full proceeds in fix-kind order. Target: 24 → 0.
