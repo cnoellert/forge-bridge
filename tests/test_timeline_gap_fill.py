@@ -8,8 +8,9 @@ as the shot's source of truth.
 
 The algorithm lives inside a Python-string that is shipped to Flame via
 bridge.execute_json — so these tests verify the code template itself
-contains the required markers (gap_fills set, upward track loop,
-id(fill_seg) tracking) and that the rename_shots signature is unchanged.
+contains the required markers (gap_fills set, upward track loop, stable-
+identity key via _seg_key_tuple(...) tracking) and that the rename_shots
+signature is unchanged.
 
 End-to-end verification of the gap-fill behavior against a real Flame
 instance is out-of-scope for the unit test suite (requires Flame runtime);
@@ -120,13 +121,23 @@ def test_flame_get_sequence_segments_does_not_import_utils_in_flame_body():
     )
 
 
-def test_gap_fills_tracks_segments_by_id():
-    """The set stores id(seg) (not the segment itself) because Flame
-    PySegment objects are not hashable by identity semantics we want."""
+def test_gap_fills_tracks_segments_by_stable_identity():
+    """The set stores a stable-identity key (not the segment itself, not
+    Python ``id()``) because Flame PySegment ``id()`` doesn't survive the
+    Phase-25 dry-run plan/state round trip — the identity has to be a
+    JSON-serializable tuple. The canonical key is built by the
+    ``_seg_key_tuple(track_idx, seg)`` helper, which returns
+    ``(track_idx, record_in, seg_name, source_name)``.
+
+    Earlier versions of this test asserted ``gap_fills.add(id(...))`` on
+    the inline Flame template; that syntactic shape was retired when
+    Phase 25 introduced the stable-identity key function — same
+    semantics (fill segment recorded so Pass 2 can skip it), different
+    surface.
+    """
     src = _source_of(timeline.rename_shots)
-    # gap_fills.add(id(fill_seg)) or similar pattern
-    assert re.search(r"gap_fills\.add\(\s*id\(", src), (
-        "Expected gap_fills.add(id(...)) pattern in rename_shots code"
+    assert re.search(r"gap_fills\.add\(\s*_seg_key_tuple\(", src), (
+        "Expected gap_fills.add(_seg_key_tuple(...)) pattern in rename_shots code"
     )
 
 
@@ -141,11 +152,18 @@ def test_rename_shots_has_upward_track_scan_for_gap_fill():
 
 
 def test_pass2_skips_segments_already_used_as_gap_fills():
-    """Pass 2 propagation must skip any segment id() already recorded in
-    gap_fills — otherwise the fill segment gets a second shot name."""
+    """Pass 2 propagation must skip any segment whose stable-identity key
+    is already recorded in ``gap_fills`` — otherwise the fill segment gets
+    a second shot name.
+
+    Same source-drift note as
+    ``test_gap_fills_tracks_segments_by_stable_identity``: the pre-Phase-25
+    guard was ``id(seg) in gap_fills``; the canonical guard is now
+    ``_seg_key_tuple(ti, seg) in gap_fills``.
+    """
     src = _source_of(timeline.rename_shots)
-    assert "id(seg) in gap_fills" in src, (
-        "Expected 'id(seg) in gap_fills' guard in Pass 2 propagation"
+    assert re.search(r"_seg_key_tuple\(\s*\w+\s*,\s*seg\s*\)\s+in\s+gap_fills", src), (
+        "Expected '_seg_key_tuple(<ti>, seg) in gap_fills' guard in Pass 2 propagation"
     )
 
 
