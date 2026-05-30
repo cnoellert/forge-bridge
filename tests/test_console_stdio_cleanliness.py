@@ -1,10 +1,14 @@
 """SC#1 — the P-01 critical runtime UAT.
 
-Spawns `python -m forge_bridge` as a real subprocess, waits for the console
-uvicorn task to bind, hammers :9996 with 100 concurrent GETs via httpx while
-sending MCP initialize + tools/list on stdin, and verifies stdout contains
-ONLY valid Content-Length-framed JSON-RPC messages (no uvicorn access log
-lines, no stray bytes).
+Spawns ``python -m forge_bridge mcp stdio`` as a real subprocess, waits for
+the console uvicorn task to bind, hammers :9996 with 100 concurrent GETs
+via httpx while sending MCP initialize + tools/list on stdin, and verifies
+stdout contains ONLY valid Content-Length-framed JSON-RPC messages (no
+uvicorn access log lines, no stray bytes).
+
+Note: the subprocess invocation uses the explicit ``mcp stdio`` subcommand
+because bare ``python -m forge_bridge`` prints help and exits 0 since the
+Typer-front-door refactor — only the explicit subcommands boot services.
 
 This test is the belt-and-suspenders verification for D-19..D-23:
   - D-20: custom LOGGING_CONFIG routes uvicorn to stderr.
@@ -130,10 +134,23 @@ def _parse_content_length_frames(raw: bytes) -> list[dict]:
 
 
 async def _hammer_console(port: int, n_requests: int = 100) -> list[int]:
-    """Issue N concurrent GETs to /api/v1/health; return status codes."""
+    """Issue N concurrent GETs to a cheap read endpoint; return status codes.
+
+    Endpoint choice: ``/api/v1/tools`` reads the registry (sub-millisecond
+    steady-state, no external service dependencies). The earlier choice of
+    ``/api/v1/health`` was incompatible with hammer-load under the
+    Phase-24.2 daemon-routed Flame probe — health fans out a 5s
+    ``flame_ping`` per request, and without a real Flame, every concurrent
+    health check stacks up against the same in-process await, which
+    saturates well before 100 simultaneous requests under a 5s httpx
+    timeout. The P-01 invariant under test is stdout cleanliness during
+    console load, which is endpoint-agnostic; ``/api/v1/tools`` lets the
+    test measure the cleanliness signal without bumping against
+    health-probe latency.
+    """
     async with httpx.AsyncClient(timeout=5.0) as client:
         tasks = [
-            client.get(f"http://127.0.0.1:{port}/api/v1/health")
+            client.get(f"http://127.0.0.1:{port}/api/v1/tools")
             for _ in range(n_requests)
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -162,13 +179,19 @@ def test_mcp_stdio_frames_are_clean_while_console_under_load(tmp_path):
     env["FORGE_CONSOLE_PORT"] = str(console_port)
     env["FORGE_BRIDGE_URL"] = f"ws://127.0.0.1:{bridge_dead_port}"
     env["FORGE_EXEC_SNAPSHOT_MAX"] = "100"
+    # Phase A.4 added a 30s bus-readiness gate (_wait_for_bus) at bootstrap
+    # Step 0; with a guaranteed-dead FORGE_BRIDGE_URL the gate would have to
+    # time out fully before the console task at Step 6 ever starts. Set the
+    # override to 0 to short-circuit the wait (per _wait_for_bus's
+    # `if timeout <= 0: return False` test/edge path).
+    env["FORGE_BRIDGE_BUS_WAIT_SECONDS"] = "0"
     # Avoid polluting the user's real ~/.forge-bridge during the test
     fake_home = tmp_path / "home"
     fake_home.mkdir(parents=True, exist_ok=True)
     env["HOME"] = str(fake_home)
 
     proc = subprocess.Popen(
-        [sys.executable, "-m", "forge_bridge"],
+        [sys.executable, "-m", "forge_bridge", "mcp", "stdio"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -269,12 +292,14 @@ def test_stderr_contains_no_access_log_lines(tmp_path):
     env["FORGE_CONSOLE_PORT"] = str(console_port)
     env["FORGE_BRIDGE_URL"] = f"ws://127.0.0.1:{bridge_dead_port}"
     env["FORGE_EXEC_SNAPSHOT_MAX"] = "100"
+    # Skip the Phase A.4 bus-readiness gate — see SC#1 test above.
+    env["FORGE_BRIDGE_BUS_WAIT_SECONDS"] = "0"
     fake_home = tmp_path / "home"
     fake_home.mkdir(parents=True, exist_ok=True)
     env["HOME"] = str(fake_home)
 
     proc = subprocess.Popen(
-        [sys.executable, "-m", "forge_bridge"],
+        [sys.executable, "-m", "forge_bridge", "mcp", "stdio"],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         env=env,
     )
@@ -301,9 +326,10 @@ def test_stderr_contains_no_access_log_lines(tmp_path):
             _, stderr = proc.communicate(timeout=5.0)
 
         stderr_str = stderr.decode("utf-8", errors="replace")
-        # Access log lines look like: '127.0.0.1:NNNNN - "GET /api/v1/health HTTP/1.1" 200 OK'
+        # Access log lines look like: '127.0.0.1:NNNNN - "GET /api/v1/tools HTTP/1.1" 200 OK'
+        # (Endpoint mirrors _hammer_console — see its docstring for the choice.)
         forbidden_patterns = [
-            'GET /api/v1/health HTTP/1.1',
+            'GET /api/v1/tools HTTP/1.1',
             '127.0.0.1:' + str(console_port) + ' - "GET',
         ]
         for pat in forbidden_patterns:
