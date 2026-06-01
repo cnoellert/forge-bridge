@@ -482,6 +482,43 @@ def test_chat_handler_json_answer_timeout_still_delivers_read(monkeypatch):
     assert body["stop_reason"] == "chain_complete"
 
 
+def test_chat_handler_json_chain_aborted_preserves_error_and_skips_answer(
+    monkeypatch,
+):
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(return_value=["forge_list_shots"]),
+        acomplete=AsyncMock(return_value="should not run"),
+    )
+    chain_body = {
+        "status": "error",
+        "request_id": "req",
+        "chain": [],
+        "error": {
+            "code": "CHAIN_STEP_FAILED",
+            "message": "step failed",
+            "step_index": 0,
+            "original_error": {"type": "RuntimeError", "message": "boom"},
+        },
+    }
+    monkeypatch.setattr(
+        _chat_compile,
+        "run_chain_steps",
+        AsyncMock(return_value=chain_body),
+    )
+    client, patches = _chat_client(
+        router, [_mcp_tool("forge_list_shots", "List shots.")]
+    )
+
+    with patches[0], patches[1]:
+        response = _post_chat(client, "list shots")
+
+    assert response.status_code == 400, response.text
+    body = response.json()
+    assert body["stop_reason"] == "chain_aborted"
+    assert body["error"] == chain_body["error"]
+    router.acomplete.assert_not_awaited()
+
+
 def test_chat_handler_json_regime_2_omits_final_text(monkeypatch):
     router = SimpleNamespace(
         compile_intent=AsyncMock(return_value=["forge_list_shots"])
