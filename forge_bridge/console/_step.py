@@ -128,6 +128,23 @@ def _ambiguity_state_for_chain_step(n: int) -> str:
     return {0: "zero_survivor", 1: "single_survivor"}.get(n, "multi_survivor")
 
 
+def _ambiguity_outcomes(tools: list, *, limit: int = 5) -> list[str]:
+    outcomes: list[str] = []
+    for index, tool in enumerate(tools[:limit], start=1):
+        name = getattr(tool, "name", "")
+        description = getattr(tool, "description", "")
+        if not isinstance(description, str):
+            description = ""
+        lines = description.strip().splitlines()
+        label = lines[0].strip() if lines else ""
+        if isinstance(name, str) and name:
+            label = label.replace(name, "").strip(" :-")
+        if len(label) < 12 or not any(ch.isalpha() for ch in label):
+            label = "another available result"
+        outcomes.append(f"Outcome {index}: {label}")
+    return outcomes
+
+
 async def execute_chain_step(
     *,
     step_text: str,
@@ -331,13 +348,10 @@ async def execute_chain_step(
         return {"error": {
             "type": "tool_selection_ambiguous",
             "message": (
-                f"Step matched {len(filtered)} tools; chain steps must "
-                "select exactly one. Use a more specific verb/noun "
-                "(e.g. 'list versions' instead of just 'list')."
+                "This step could lead to multiple outcomes. Rephrase the "
+                "request with the specific result you want."
             ),
-            "candidates": [
-                getattr(t, "name", str(t)) for t in filtered[:5]
-            ],
+            "outcomes": _ambiguity_outcomes(filtered),
         }}
     tool_name = filtered[0].name
 

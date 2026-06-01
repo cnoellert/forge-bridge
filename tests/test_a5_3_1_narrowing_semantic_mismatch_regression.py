@@ -194,7 +194,10 @@ async def test_chain_step_emits_tool_selection_ambiguous_for_list_projects_when_
     assert outcome["error"]["type"] == "tool_selection_ambiguous"
     # Defensive: the wrong tool must NEVER have been called.
     mcp.call_tool.assert_not_called()
-    # The candidates list should surface both staged-ops tools so the
-    # operator-facing message names what the system saw.
-    candidates = set(outcome["error"].get("candidates", []))
-    assert candidates == {"forge_get_staged", "forge_list_staged"}
+    error = outcome["error"]
+    assert "candidates" not in error
+    assert "forge_get_staged" not in error["message"]
+    assert "forge_list_staged" not in error["message"]
+    assert "outcomes" in error
+    assert all("forge_get_staged" not in item for item in error["outcomes"])
+    assert all("forge_list_staged" not in item for item in error["outcomes"])
