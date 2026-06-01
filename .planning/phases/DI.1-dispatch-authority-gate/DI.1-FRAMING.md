@@ -3,7 +3,7 @@ milestone: v1.10
 phase: DI.1
 phase_name: The Dispatch-Authority Gate — one invariant at three execution edges
 type: phase-framing
-status: cycle-2-draft
+status: cycle-3-draft
 drafted: 2026-06-01
 derives_from: .planning/milestones/v1.10-AUTHORITY-INVARIANCE-FRAMING.md (ratified + cycle-5) + .planning/milestones/v1.10-DISCUSS.md (cycle-2, DI.1 decomposition)
 artifact_role: load-bearing — the DI.1 discuss + plan derive from this. The non-negotiable safety half of v1.10.
@@ -45,7 +45,7 @@ different directions and carry different obligations.
 |---|---|---|---|---|
 | **1B — forced dispatch** | `handlers.py:720-722` | post-resolution | a **mutation** executes directly, no ratify | **hard block** at the dispatch edge — shared reader on the resolved tool. *Safety floor.* |
 | **1C — chain dispatch** | `_step.py:409` | post-resolution | a **mutation** in a non-commit chain executes, no ratify | **hard block** — same gate, `filtered[0]`. *Safety floor.* |
-| 1A — commit-route | `_chat_compile.py:158` | pre-resolution | a **read** chain gets a spurious `commit` → mis-presented as "Ratify & Apply" | **best-effort correctness:** strip-and-execute *only when it can cheaply confirm all non-commit steps are reads*; else leave the preview (annoying-but-safe status quo) |
+| 1A — commit-route | `_chat_compile.py:158` | pre-resolution | a **read** chain gets a spurious `commit` → mis-presented as "Ratify & Apply" | **best-effort correctness:** strip-and-execute *only when it can cheaply confirm all non-commit steps are reads* → the read then runs the **normal** pipeline and its **existing** answer-pass answers it for free (not a new DI.1 redirect); else leave the preview (annoying-but-safe) |
 
 **Why 1A is demoted, not dropped.** DT traced the worst case: if 1A *wrongly*
 strips a commit guarding a real mutation, the chain goes to `run_chain_steps` →
@@ -79,21 +79,30 @@ non-negotiable without secretly solving DI.2's problem first.
    mutating-until-annotated → the absent set is ∅ universally → fail-closed has no
    flag-day. One line, lands first (substrate-before-consumer).
 3. **The three site gates** (the table above), each calling the shared reader.
-4. **Fail toward understanding — DETERMINISTIC** (acceptance criterion, not
-   implementation detail; **resolved cycle-2, no `acomplete`/CR.1 dependency**).
-   *Tight definition (Creative):* fail toward understanding = **explain why
-   execution stopped and what class of action would be required to proceed** —
-   NOT "help the user accomplish their goal" (that is DI.2). The block path has
-   the resolved tool in hand, so the explanation is a deterministic template that
-   names the tool's declared class precisely — no model call:
-   > Request stopped before execution. · Tool: `flame_set_start_frames` ·
-   > Classification: mutating · This path permits read operations only. · Use a
-   > ratified operation if you intend to modify project state.
-   This *inherits the determinism of the authority substrate it explains* — it is
-   auditable, instantaneous, and **available even when the model is down** (DI.1
-   is a trust milestone; a trust system explains itself without another AI call).
-   The artist leaves with "I understand why nothing happened," not "I got my
-   answer." (CR.1-style "let me explain what I think you meant" is a later phase.)
+4. **Fail toward understanding — exactly TWO deterministic outcomes, one per
+   site type** (acceptance criterion; **resolved cycle-2/3, no new `acomplete`
+   dependency on any block path**). *Tight definition (Creative):* explain why
+   execution stopped and what class of action would proceed — NOT "help the user
+   accomplish their goal" (that is DI.2). DT cycle-3 scoped this to the two
+   outcomes DI.1 can actually prove:
+   - **At 1A (spurious commit on a *correctly-selected* read):** strip + execute
+     → the read runs the **normal** pipeline and its **already-built** answer-pass
+     answers it. This is "fail toward the read," achieved *for free* — DI.1 adds
+     no redirect logic and calls no model itself; it simply **stops mis-treating a
+     read as a mutation** and lets the existing read path (incl. CR.1) do its job.
+   - **At 1B/1C (a *mis-selected mutation* blocked):** a **deterministic
+     template** naming the resolved tool's declared class — no model call:
+     > Request stopped before execution. · Tool: `flame_set_start_frames` ·
+     > Classification: mutating · This path permits read operations only. · Use a
+     > ratified operation if you intend to modify project state.
+     This inherits the determinism of the authority substrate it explains —
+     auditable, instantaneous, available even when the model is down.
+   **Explicitly DI.2, not DI.1:** *answering a mis-selected read* (e.g.
+   `flame_set_start_frames` picked for "duration in frames" → actually answer the
+   duration) requires **re-selecting** the correct read tool — DI.2's narrowing.
+   At a 1B/1C block DI.1 holds only the mis-selected mutation object; it knows the
+   *class*, not the *answer*. Grading DI.1 against that redirect would drag DI.2
+   back in. That win belongs in DI.2's column.
 5. **Enabling tooling:** the baseline (re-run the 11 dogfood reads on current
    `main` for a contemporaneous failure-shape record, before any change) and the
    corpus capture-seam extension (fire on `preview_emitted` / `chain_aborted` /
@@ -171,4 +180,14 @@ phase tightened into a clean trust/usefulness boundary. Cycle-2 changes:
   more useful** — with the standing caution that DI.2 must follow immediately and
   land (the project's historic over-investment in trust without usefulness).
 
-One open question (Q-DI1.4, regression-lock surface). Ready for DI.1-discuss.
+**Cycle-3, 2026-06-01 (DT redirect-scoping refinement; rest of the convergence
+stands).** DT caught a latent DI.2-in-DI.1 trap in item 4's own illustration:
+"answer the duration" for a mis-selected `flame_set_start_frames` is a 1B/1C case
+that requires *re-selection* (DI.2), not something DI.1 can deliver. Item 4
+re-scoped to the two outcomes DI.1 can prove — **1A: strip → existing answer-pass
+answers free** (no new model call; just stop mis-treating a read), **1B/1C:
+deterministic block-explanation** — and "answer a mis-selected read" moved
+explicitly to DI.2's column. Acceptance criteria now match what DI.1 can prove.
+
+One open question (Q-DI1.4, regression-lock surface). Convergence complete —
+ready for DI.1-plan.
