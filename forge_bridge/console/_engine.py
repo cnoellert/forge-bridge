@@ -7,7 +7,6 @@ from typing import Any, Optional
 
 from forge_bridge.console._step import execute_chain_step
 from forge_bridge.graph import infer_topology
-from forge_bridge.graph.commit import is_commit_step
 
 from forge_bridge.core.assent import AssentRecord
 
@@ -54,7 +53,7 @@ async def run_chain_steps(
             mcp=mcp,
             inherited_context=context,
             step_index=step_idx,
-            assent_record=assent_record if is_commit_step(step_text) else None,
+            assent_record=assent_record,
         )
 
         if "error" in outcome:

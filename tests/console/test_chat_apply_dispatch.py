@@ -21,13 +21,13 @@ def _reset_rate_limit():
     _rate_limit._reset_for_tests()
 
 
-def _tool(name: str):
+def _tool(name: str, *, read_only: bool = False):
     from mcp.types import Tool, ToolAnnotations
 
     return Tool(
         name=name,
         description=f"test tool {name}",
-        annotations=ToolAnnotations(readOnlyHint=True),
+        annotations=ToolAnnotations(readOnlyHint=read_only),
         inputSchema={"type": "object", "properties": {}, "required": []},
     )
 
@@ -142,6 +142,11 @@ async def test_chat_apply_json_dispatch_applies_ratified_record(session_factory)
     assert body["apply_complete"]["graph_intent_id"] == record.graph_intent_id
     assert body["apply_complete"]["stop_reason"] == "apply_complete"
     assert body["apply_complete"]["transport"] == "json"
+    assert [(name, args.get("mode")) for name, args in mcp.calls] == [
+        ("emit_plan", None),
+        ("emit_plan", "verify"),
+        ("emit_plan", "apply"),
+    ]
 
 
 @pytest.mark.asyncio

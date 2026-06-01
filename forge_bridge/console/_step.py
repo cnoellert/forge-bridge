@@ -408,7 +408,11 @@ async def execute_chain_step(
             "details": unresolved,
         }}
 
-    if dispatch_authority(filtered[0]):
+    ratified_replay = (
+        assent_record is not None
+        and getattr(assent_record, "status", None) == "ratified"
+    )
+    if dispatch_authority(filtered[0]) and not ratified_replay:
         return {
             "error": {
                 "type": "unauthorized_mutation",

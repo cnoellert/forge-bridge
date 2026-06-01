@@ -9,7 +9,7 @@ from forge_bridge.core.assent import AssentRecord
 
 
 @pytest.mark.asyncio
-async def test_run_chain_steps_passes_assent_only_to_commit_steps(monkeypatch):
+async def test_run_chain_steps_passes_ratified_assent_to_apply_replay(monkeypatch):
     assent = AssentRecord(
         graph_intent_id="abc123def456",
         chain_steps=["list shots", "commit", "format"],
@@ -48,7 +48,7 @@ async def test_run_chain_steps_passes_assent_only_to_commit_steps(monkeypatch):
 
     assert result["status"] == "success"
     assert seen == [
-        ("list shots", None),
+        ("list shots", assent),
         ("commit", assent),
-        ("format", None),
+        ("format", assent),
     ]
