@@ -187,13 +187,17 @@ def test_server_started_flag_default():
 # Phase 20 v1.4.1 correction bumps to "1.4.1" (INSTALL-02: pyproject.toml self-report
 # corrected to match the v1.4.1 git tag — v1.4.0 and v1.4.1 milestones did not bump
 # pyproject.toml; Phase 20 closes the gap).
+# v1.5.0 (096f939) bumps to "1.5.0" to reflect the 0009 (assent_record) schema state,
+# since the v1.4.1 tag points at 0003-era code (projekt-forge findings 2026-05-31 #2).
+# v1.5.1 (ad540ac) bumps to "1.5.1" carrying the registry self-heal fix; consumers
+# pin v1.5.1.
 
 def test_package_version():
-    """pyproject.toml version is 1.4.1 after Phase 20 v1.4.1 correction (INSTALL-02)."""
+    """pyproject.toml version is 1.5.1 (v1.5.1 registry-fix release; see findings #2)."""
     pyproject = Path(__file__).parent.parent / "pyproject.toml"
     content = pyproject.read_text()
-    assert 'version = "1.4.1"' in content, (
-        'pyproject.toml must declare version = "1.4.1" per Phase 20 v1.4.1 correction.'
+    assert 'version = "1.5.1"' in content, (
+        'pyproject.toml must declare version = "1.5.1" per the v1.5.1 release.'
     )
 
 

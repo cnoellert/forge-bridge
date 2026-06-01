@@ -91,7 +91,7 @@ The `[dev]` extra adds pytest + ruff for development. The `[llm]` extra adds `op
 Verify the package version self-reports correctly:
 
 ```bash
-python -c "import forge_bridge; print(forge_bridge.__version__)"   # 1.4.1
+python -c "import forge_bridge; print(forge_bridge.__version__)"   # 1.5.1
 ```
 
 Verify the CLI entry point installed:
@@ -178,14 +178,14 @@ From the repo root:
 Or standalone on any Flame workstation (no clone required):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cnoellert/forge-bridge/v1.4.1/scripts/install-flame-hook.sh | bash
+curl -fsSL https://raw.githubusercontent.com/cnoellert/forge-bridge/v1.5.1/scripts/install-flame-hook.sh | bash
 ```
 
 The installer copies `forge_bridge.py` into `/opt/Autodesk/shared/python/forge_bridge/scripts/`, sanity-checks it parses as Python, and prints next-step instructions. Override defaults via:
 
 | Env var | Default | Purpose |
 |---------|---------|---------|
-| `FORGE_BRIDGE_VERSION` | `v1.4.1` | git tag to pull the hook from |
+| `FORGE_BRIDGE_VERSION` | `v1.5.1` | git tag to pull the hook from |
 | `FORGE_BRIDGE_HOOK_DIR` | `/opt/Autodesk/shared/python/forge_bridge/scripts` | install target |
 
 Launch (or relaunch) Flame. The hook auto-starts a Python HTTP server on `http://127.0.0.1:9999/`.
@@ -386,7 +386,7 @@ ollama list | grep qwen2.5-coder                       # confirms model is pulle
 | `FORGE_BRIDGE_HOST` | `127.0.0.1` | Flame bridge target host |
 | `FORGE_BRIDGE_PORT` | `9999` | Flame bridge port |
 | `FORGE_BRIDGE_ENABLED` | `1` | Set `0` to disable the Flame hook without uninstalling |
-| `FORGE_BRIDGE_VERSION` | `v1.4.1` | (`install-flame-hook.sh` only) git tag to pull the hook from |
+| `FORGE_BRIDGE_VERSION` | `v1.5.1` | (`install-flame-hook.sh` only) git tag to pull the hook from |
 | `FORGE_BRIDGE_HOOK_DIR` | `/opt/Autodesk/shared/python/forge_bridge/scripts` | (`install-flame-hook.sh` only) install target |
 
 ---
