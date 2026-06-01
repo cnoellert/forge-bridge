@@ -3,7 +3,7 @@ milestone: v1.10
 phase: DI.2
 phase_name: Eligibility Arbitration — make routing resolve instead of hard-stop
 type: phase-plan
-status: cycle-1-draft
+status: cycle-2-draft
 drafted: 2026-06-01
 derives_from: .planning/phases/DI.2-eligibility-arbitration/DI.2-DISCUSS.md (ratified) + DI.2-FRAMING.md (cycle-3, sized ≤3/9)
 artifact_role: executable task breakdown for DI.2. The capture baseline (T1) sizes everything downstream; rungs are measurement-gated. Shape-locks grounded by direct read ([[feedback-substrate-shape-grounding-at-plan-stage]]).
@@ -47,37 +47,71 @@ class:
   direct path already does loosely (the direct path is the existing reference;
   T4's seven guardrails are what the chain path adds on top).
 
-## Sizing is provisional until T1 (the measure-first contract)
+## Sizing is provisional until T1 — and T1 measures a *distribution*, not a replay
 
 The "≤3/9 reachable" number is an **upper bound, ledger-grounded, not yet
 corpus-reproducible** (the dogfood never captured candidate sets). **T1 makes it
-reproducible.** Three downstream consequences, stated so they can't be quietly
-skipped:
+reproducible — but T1 re-runs a stochastic compiler (`qwen2.5-coder:14b`), so a
+single pass is one *sample*, not a deterministic replay of the June-1 corpus**
+(DT/Creative, plan cycle-2). The decision T1 informs is not "did R8 fail today?"
+but "what failure *class* does R8 *tend* to produce?" — so **T1 measures a
+failure-shape distribution across N runs and sizes DI.2 on class frequency +
+stability, never a single outcome** ([[feedback-failure-shape-stability-as-disposition-evidence]],
+[[feedback-baseline-drift-invalidates-controls]]). Three downstream consequences,
+stated so they can't be quietly skipped:
 
 - **T3's scope** (which tie-shapes to add to the closed rule-lists) is *unknown
-  until T1* — do not pre-author rule additions; derive them from captured ties.
-- **T4 ships only if T1 shows residual (a)** that rungs 2+3 can't reach. If
-  rungs 2+3 eliminate the reachable class, **T4 never ships** — that is a smaller
+  until T1* — do not pre-author rule additions; derive them from the **stable**
+  captured ties (a tie that appears in 1 of 3 runs is weaker evidence than one in
+  3 of 3).
+- **T4 ships only if T1 shows a *stable* residual (a)** that rungs 2+3 can't reach.
+  If rungs 2+3 eliminate the reachable class, **T4 never ships** — a smaller
   successful phase, not an underdelivery ([[feedback-operational-maturity-not-completeness]]).
-- **T5's frequency** depends on how much (a) survives rungs 2+3; build it minimal.
+- **T5's frequency** depends on how much (a) stably survives rungs 2+3; build it
+  minimal.
 
 ## Tasks (ordered; dependencies noted)
 
 ### T1 — Capture baseline *(enabling; ZERO code; sizes T3, gates T4)*
-Flip `FORGE_BRIDGE_DIVERGENCE_CAPTURE=1` (+ `FORGE_BRIDGE_CORPUS_DIR`) and re-run
-the 11 dogfood reads on a **non-degraded** `:9996` daemon. **Provenance gate
-first** ([[feedback-provenance-precedes-behavioral-interpretation]]): confirm the
-daemon's model (`qwen2.5-coder:14b`, not a degraded session) + loaded-code SHA
-*before* trusting the harvest, else a degraded run re-banks the cursor's
-"every-request-died" artifact. Harvest `candidate_set_post_pr14` +
-`narrower_decision` from the **divergence** corpus at **both** call sites
-(`_step.py:314` chain, `handlers.py:1752` chat). Correlate each row's
-`(prompt, compiled-step, candidate_set)` against the existing dogfood ledger /
-comprehension corpus to classify each of the 9 failures: **(a) resolver-overmatch**
-(right operation, N tools) · **(b) bad-compile** (wrong operation) · **other-seam**.
-Artifact: `UAT/DI.2-baseline.md` with the reproduced (a)/(b)/other split + the
-candidate set per (a) read. **Don't-couple:** read divergence only; never merge
-into the comprehension schema. *No dependency; everything downstream consumes it.*
+**Establishes a failure-shape *distribution*, not a deterministic replay** of the
+June-1 corpus (DT/Creative).
+
+**Bring-up.** Documented stdio-held-open recipe with the capture flag prepended:
+`FORGE_BRIDGE_DIVERGENCE_CAPTURE=1` + `FORGE_DB_URL=…@127.0.0.1:7533/forge_bridge`
+(+ `FORGE_BRIDGE_CORPUS_DIR`), held background process in the conda `forge` env.
+Project `013_13_13_2026_2_1_portofino` (id `2753ec84-775a-4928-8116-2cfef08e1ac3`)
+— **confirmed still published** (27 shots / 20 versions / 48 media; consumer-refactor
+risk retired by query, not assumption). 2 projects present → R7 `MULTIPLE_PROJECTS`
+reproduces. *Nuance (not a blocker):* no `sequence` entity in pg, but R8/9/10 die at
+the resolver and R7 at project-scoping — neither needs it; the (a)-class still
+reproduces.
+
+**Provenance gate first** ([[feedback-provenance-precedes-behavioral-interpretation]]):
+confirm the daemon's model (`qwen2.5-coder:14b`) + loaded-code SHA before trusting
+the harvest (the earlier "Flame dispatch failed" was a stale daemon, now
+disproven).
+
+**Capture-write sanity check (DT diligence) — BEFORE driving all reads.** There are
+import-fallback `divergence_capture_enabled` stubs (`_step.py:57`,
+`handlers.py:130`) that silently return False if the corpus module can't import —
+which would disable capture *regardless of the env var* and silently reproduce the
+dogfood's abort-blindness. So: drive **one** read first and confirm a `source:
+"runtime"` divergence record actually lands in `corpus/capture-*.jsonl` before
+proceeding.
+
+**The runs (stability clause).** Run **each of the 11 reads N≥3 times → ≥33
+samples.** Harvest `candidate_set_post_pr14` + `narrower_decision` from the
+**divergence** corpus at **both** call sites (`_step.py:314` chain,
+`handlers.py:1752` chat). Classify **per run** by dominant failure shape:
+**(a) resolver-overmatch** (right operation, N tools) · **(b) bad-compile** (wrong
+operation) · **(c) other-seam**. **Size DI.2 on class frequency + stability**
+(a tie in 3/3 runs ≫ a tie in 1/3) — *not* a single outcome.
+
+**Artifact:** `UAT/DI.2-baseline.md` — per-read × per-run classification table,
+the resulting class-frequency distribution, the candidate set per stable (a) read,
+and an explicit stability/confidence note. **Don't-couple:** read divergence only;
+never merge into the comprehension schema. *No dependency; everything downstream
+consumes it.*
 
 ### T2 — Exact-name-wins exclusivity *(rung 2; unconditional; unblocks DI.1 demo)*
 `_tool_filter.py` — in `filter_tools_by_message`, **before** the cap-combine at
@@ -191,9 +225,21 @@ corpus forever.
 
 ## Status
 
-**Cycle-1 plan draft, 2026-06-01.** Six tasks (T1–T6); shippable core =
-T1+T2+T3+T5+T6, T4 contingent. Measure-first is structural: T1 is zero-code, sizes
-T3, gates T4. Shape-locks grounded by direct read. Plan-check folded:
+**Cycle-2 plan draft, 2026-06-01** (DT/Creative stability amendment folded). Six
+tasks (T1–T6); shippable core = T1+T2+T3+T5+T6, T4 contingent. Measure-first is
+structural: T1 is zero-code, sizes T3, gates T4. Cycle-2 change:
+
+- **T1 measures a distribution, not a replay (DT/Creative).** A single rerun of a
+  stochastic compiler is one sample, not the frozen 9-failure ledger. T1 now runs
+  **each read N≥3 (≥33 samples)**, classifies **per run** by dominant failure
+  shape, and **sizes DI.2 on class frequency + stability** — the same discipline
+  DI.2 applies to the resolver, applied to its own measurement. Infra risk closed
+  by query (013_13_13 still published; Flame/bus/Ollama/pg live); the real risk
+  was compile nondeterminism, now provisioned. Added DT's **capture-write sanity
+  check** (one read first; confirm a `runtime` record lands, guarding the
+  import-fallback stub) before driving all reads.
+
+Cycle-1 plan-check (retained):
 
 - **Sibling-check (grep):** the "matched N tools" leak is single-site
   (`_step.py:332`, no sibling) → T5 correctly scoped. `filter_tools_by_message`
