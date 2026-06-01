@@ -78,8 +78,8 @@ def register_tool(
         name:        Tool name — must start with flame_, forge_, format_, or synth_.
         source:      One of "builtin", "synthesized", or "user-taught".
         annotations: Optional MCP tool annotations dict (readOnlyHint, etc.).
-                     For source="synthesized", readOnlyHint defaults to False
-                     per PROV-04 (synthesized tools call bridge.execute()).
+                     For source="synthesized" or "user-taught", readOnlyHint
+                     defaults to False per PROV-04.
         provenance:  Optional dict of shape {"tags": [...], "meta": {...}}
                      produced by the watcher's _read_sidecar helper.
                      Only forge-bridge/* namespaced meta keys are forwarded
@@ -115,16 +115,16 @@ def register_tool(
         if tags:
             merged_meta["forge-bridge/tags"] = list(tags)
 
-    # PROV-04 safety baseline: every synthesized tool gets readOnlyHint=False
-    # unless the caller explicitly set it. Synthesized tools call
-    # bridge.execute() which runs arbitrary Python inside Flame — MCP clients
-    # MUST NOT auto-approve them. Builtin tools keep their original hints.
+    # PROV-04 safety baseline: every synthesized or user-taught tool gets
+    # readOnlyHint=False unless the caller explicitly set it. Both sources are
+    # outside bridge's curated builtin registry, so MCP clients MUST NOT
+    # auto-approve them. Builtin tools keep their original hints.
     effective_annotations: dict[str, Any] | None
     if annotations is not None:
         effective_annotations = dict(annotations)
     else:
         effective_annotations = None
-    if source == "synthesized":
+    if source in {"synthesized", "user-taught"}:
         if effective_annotations is None:
             effective_annotations = {}
         effective_annotations.setdefault("readOnlyHint", False)

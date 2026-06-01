@@ -239,6 +239,12 @@ class TestProvenanceMerge:
         annotations = mock_mcp.add_tool.call_args.kwargs["annotations"]
         assert annotations == {"readOnlyHint": False}
 
+    def test_register_tool_user_taught_defaults_readonly_false(self, mock_mcp):
+        """DI.1: user-taught tools get the same fail-safe readOnlyHint baseline."""
+        register_tool(mock_mcp, self._noop, name="forge_foo", source="user-taught")
+        annotations = mock_mcp.add_tool.call_args.kwargs["annotations"]
+        assert annotations == {"readOnlyHint": False}
+
     def test_register_tool_builtin_no_readonly_baseline(self, mock_mcp):
         """Builtin tools get no readOnlyHint baseline — caller's hints win."""
         register_tool(
