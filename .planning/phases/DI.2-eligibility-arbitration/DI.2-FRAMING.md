@@ -7,7 +7,7 @@ status: cycle-1-draft
 drafted: 2026-06-01
 derives_from: .planning/milestones/v1.10-AUTHORITY-INVARIANCE-FRAMING.md (ratified) + v1.10-DISCUSS.md (Q-DI2) + .planning/phases/DI.1-dispatch-authority-gate/DI.1-CLOSE.md (the meta-finding that makes DI.2 the priority)
 artifact_role: load-bearing — the usefulness half of v1.10. The framing's standing commitment: DI.2 follows DI.1 immediately and actually lands.
-grounding: live reads 2026-06-01 — _step.py:251 (filter_tools_by_message) → :260 (deterministic_narrow) → :326-337 (exactly-one-or-die hard-stop; candidates at :334); DI.1 live confirmation (exact `flame_set_start_frames` matched 9 tools at the resolver and aborted before the gate)
+grounding: live reads 2026-06-01 — _tool_filter.py:292 (filter_tools_by_message — rule-c token-overlap match is why an exact name pulls 9 tools; PR17/PR18 exact bucket exists but lacks precedence) + :425 (deterministic_narrow); _step.py:251 (filter call site) → :326-337 (exactly-one-or-die hard-stop; candidates at :334); DI.1 live confirmation (exact `flame_set_start_frames` matched 9 tools and aborted before the gate)
 ---
 
 # DI.2 — Eligibility Arbitration
@@ -41,30 +41,62 @@ step `flame_set_start_frames` matched **9 tools** and aborted at
 - Resolver paralysis is not a rare edge — it intercepts ordinary reads *and exact
   tool names*. It is the dominant live failure.
 
+## The boundary DI.2 must defend (Creative, cycle-2 — the milestone's success criterion)
+
+DI.1's lesson was *don't let safety work secretly become usability work.* **DI.2's
+lesson: don't let arbitration work secretly become compilation work.** DI.2 owns
+*"choose correctly among available candidates"*; it **explicitly refuses** *"figure
+out what the user really meant."* Those are different jobs — arbitration vs intent
+reconstruction. The live corpus has both failure classes; DI.2 scopes to the first
+and treats the second as evidence the *next* problem exists, not as its own work:
+
+- **Resolver failure = DI.2 territory.** The system understood the request well
+  enough to produce the *correct operation*, but candidate selection failed (exact
+  name → 9 tools; near-identical candidates; overlapping descriptions; narrowing
+  can't choose among a small set). Intent is already present; the resolver just
+  failed to select. Fixing these makes the tool feel smarter.
+- **Compile failure = NOT DI.2.** The system produced the *wrong operation* ("list
+  the projects" → matched staged tools). No arbitration rescues a bad understanding
+  — asking the resolver to fix it makes DI.2 a **shadow compiler**, repeating the
+  exact boundary erosion DI.1 escaped. That's a compile/model problem for a future
+  milestone. **DI.2 succeeds if the system chooses better among plausible
+  interpretations; it fails if it becomes responsible for creating new ones.**
+
 ## What DI.2 delivers (leans given)
 
-1. **Exact-name-wins narrowing (the cheapest, highest-value fix — grounded in the
-   live finding).** A step whose first token is an **exact** registered tool name
-   must resolve to *that* tool, before any fuzzy matching. Today
-   `flame_set_start_frames` fuzzy-matches 9 tools; an exact-name short-circuit
-   fixes that class outright — and it directly unblocks DI.1's live demonstration.
-   *Lean: add exact-name resolution at the top of the narrowing path
-   (`_step.py:251` region), ahead of `filter_tools_by_message`.*
+1. **Exact-name-wins (the highest-leverage fix — grounded + sharpened, cycle-2).**
+   *Why it matters (Creative): exact-name failure is a **trust** hit, not just an
+   accuracy one.* When an operator types `flame_set_start_frames` and gets "9
+   candidates," the reaction is *"the system ignored what I typed."* **Grounded fix
+   shape (Orch read of `_tool_filter.py:292`):** the matcher already has an
+   exact-match bucket (PR17/PR18) — but it returns it **alongside** token-overlap
+   matches (rule c: any name-token in the message → `flame_set_start_frames`'s
+   tokens `flame/set/start/frames` pull in every `flame_*`/`set`/`frames` tool =
+   the 9). So this is **not** "add a path that doesn't exist" — it is *"when a
+   unique exact-name match exists, return **only** it, dropping the token-overlap
+   others."* Precedence/exclusivity, a smaller change than assumed. Removes a
+   category of failures that feel irrational, and unblocks DI.1's live demo.
 2. **Strengthen `deterministic_narrow`** (`:260`) — close the gap that leaves N>1
    for ordinary task phrasings, deterministically where possible.
 3. **Bounded candidate-selection** before the `:326` hard-stop — deterministic
    ranking first; **one** LLM selection among the ≤5 candidates only if needed.
    *Selection is control-flow, not meaning* ([[feedback-orchestrator-control-flow-not-meaning]]):
    it picks from the provided set, never invents a tool, never authors prose.
-4. **Task-term disambiguation as the fallback, not the default.** If it still
-   can't resolve, ask the operator a **task-term** "did you mean?" — **never** the
-   "matched N tools" leak nor tool identifiers (`flame_get_clip` vs
-   `forge_get_shot`); that is the same developer-facing disease one layer up.
-5. **The usefulness redirect DI.1 punted** — *answering a mis-selected read.* DI.1
-   blocks `flame_set_start_frames` picked for "duration in frames"; DI.2 is where
-   the system **re-selects the correct read tool and actually answers the
-   duration** (this needs the narrowing DI.1 was barred from). This is DI.2's win
-   column, explicitly.
+4. **Task-term disambiguation as the fallback, not the default** (Creative,
+   sharpened). Ask the operator to choose an **outcome, not a tool** — *"Show
+   assets used by this shot" / "Show versions in this shot's stack"*, never *"Did
+   you mean `forge_list_assets` or `forge_get_shot_stack`?"* (the artist must never
+   learn the ontology). **Task-label generation is itself best-effort:** derive
+   labels from tool descriptions where they're good enough; **fall back to a
+   generic ambiguity explanation when they're poor.** *Don't invent clarity that
+   isn't present* (the cut line, one layer up). Never the "matched N tools" leak.
+5. **The usefulness redirect DI.1 punted — with a hard boundary** (Creative). DI.2
+   re-selects among *known candidates* and may *ask the user to choose among
+   candidate intentions*. It MUST NOT **generate a new interpretation** of the
+   original request — the moment it says *"maybe you actually meant …"* and
+   synthesizes a fresh operation, it has crossed from arbitration into
+   recompilation (a future milestone, if anywhere). Re-select: yes. Re-interpret:
+   no.
 
 ## Constraints (inherited, binding)
 
@@ -80,10 +112,13 @@ step `flame_set_start_frames` matched **9 tools** and aborted at
 
 ## Open questions for DI.2-discuss (leans given)
 
-- **Q-DI2.1 — exact-name-wins placement.** Top of `narrow_step` before
-  `filter_tools_by_message`, or inside it? *Lean: a pre-filter exact-name check —
-  smallest, most legible.* Confirm no existing exact-name path already exists
-  (the live 9-match says it doesn't, but ground it).
+- **Q-DI2.1 — exact-name-wins placement. GROUNDED (cycle-2):** the exact bucket
+  already exists in `filter_tools_by_message` (`_tool_filter.py:292`, PR17/PR18) —
+  it just lacks *precedence*. So the fix is exclusivity, not a new path: *when the
+  exact bucket has exactly one member, return `[that]` and drop `other_matches`.*
+  Smallest change is inside `filter_tools_by_message` (the bucket logic), not a new
+  pre-filter. *Remaining for discuss:* the multi-exact case (≥2 exact matches) —
+  fall through to ranking, not collapse.
 - **Q-DI2.2 — the LLM selection budget.** When does the ≤5-candidate LLM
   selection fire, and what's its cap/latency? *Lean: only when deterministic
   ranking is genuinely tied; reuse the existing router caps.*
@@ -98,7 +133,23 @@ step `flame_set_start_frames` matched **9 tools** and aborted at
 
 ## Status
 
-**Cycle-1 phase-framing draft, 2026-06-01.** Thesis (routing must resolve, not
-hard-stop), the exact-name-wins lead (grounded in DI.1's live 9-match finding), and
-the control-flow boundary are the load-bearing claims. Five discuss questions carry
-leans. Open for cross-voice review, then DI.2-discuss.
+**Cycle-2 phase-framing draft, 2026-06-01** (Creative pass + Orch matcher grounding
+folded). Cycle-2 changes:
+
+- **The boundary section added (Creative — the milestone's success criterion):**
+  DI.2 owns arbitration (resolver-overmatch class), explicitly refuses
+  recompilation (bad-compile class). *DI.2's lesson: don't let arbitration secretly
+  become compilation* — the mirror of DI.1's discipline.
+- **Exact-name-wins sharpened + grounded (Orch read of `_tool_filter.py:292`):** the
+  exact bucket exists but lacks precedence; the fix is exclusivity-when-unique, a
+  smaller change than the "no path exists" assumption. Trust framing (Creative):
+  exact-name failure reads as *"the system ignored what I typed."*
+- **Did-you-mean → outcome-not-tool, best-effort task labels** with a generic
+  fallback when descriptions are poor ("don't invent clarity that isn't present").
+- **Deliverable 5 hard boundary:** re-select among candidates / ask among candidate
+  intentions = allowed; generate a new interpretation = NOT (recompilation, future
+  milestone).
+
+Five discuss questions (Q-DI2.1 now grounded). Ready for DI.2-discuss — pending only
+DT's class-proportion grounding (how much of live Symptom 2 is resolver-overmatch
+(a) vs bad-compile (b)), which sizes DI.2's reachable win.
