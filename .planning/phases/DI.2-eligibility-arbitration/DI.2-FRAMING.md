@@ -3,7 +3,7 @@ milestone: v1.10
 phase: DI.2
 phase_name: Eligibility Arbitration — make routing resolve instead of hard-stop
 type: phase-framing
-status: cycle-1-draft
+status: cycle-3-draft
 drafted: 2026-06-01
 derives_from: .planning/milestones/v1.10-AUTHORITY-INVARIANCE-FRAMING.md (ratified) + v1.10-DISCUSS.md (Q-DI2) + .planning/phases/DI.1-dispatch-authority-gate/DI.1-CLOSE.md (the meta-finding that makes DI.2 the priority)
 artifact_role: load-bearing — the usefulness half of v1.10. The framing's standing commitment: DI.2 follows DI.1 immediately and actually lands.
@@ -31,15 +31,20 @@ grounding: live reads 2026-06-01 — _tool_filter.py:292 (filter_tools_by_messag
 ## Why DI.2 is now the priority (DI.1's meta-finding)
 
 DI.1 closed with a load-bearing finding: **its gate sits downstream of Symptom 2.**
-In live confirmation, *every* request — chat and deterministic `fbridge exec` —
-died at the resolver before reaching the gate. The sharpest evidence: the **exact**
-step `flame_set_start_frames` matched **9 tools** and aborted at
-`tool_selection_ambiguous`. So:
+**Correction (DT cycle-3, same over-claim family as the 9-match):** the resolver is
+a *dominant* failure, **not the universal one.** Against the original dogfood ledger
+only **3 of 11** reads died at the resolver (R8/R9/R10); R1/R2 reached tools and
+returned data, R4/R5 reached the mutating preview, R6 executed
+`forge_get_batch_iterations` (got `6`) before its injected step, R11 executed
+`flame_set_start_frames`. My earlier "*every* request died at the resolver" was a
+**degraded-model session** observation (today's daemon compiled everything to the
+same staged-tool ambiguity), not the corpus — corrected here. The sharpest valid
+evidence stands: the exact step `flame_set_start_frames` matched **9 tools**. So:
 
-- DI.1's safety value is **latent** until DI.2 lets requests reach the dispatch
-  edge. DI.2 is the wall standing between DI.1's gate and the requests it guards.
-- Resolver paralysis is not a rare edge — it intercepts ordinary reads *and exact
-  tool names*. It is the dominant live failure.
+- DI.1's safety value is **partly** latent until DI.2 lets *more* requests reach the
+  dispatch edge. DI.2 lowers a dominant wall in front of the gate — not the only one.
+- Resolver paralysis intercepts ordinary reads *and exact tool names* — a real,
+  dominant class, but ~3/9 of the live failures, not all of them (see §Sizing).
 
 ## The boundary DI.2 must defend (Creative, cycle-2 — the milestone's success criterion)
 
@@ -61,6 +66,39 @@ and treats the second as evidence the *next* problem exists, not as its own work
   exact boundary erosion DI.1 escaped. That's a compile/model problem for a future
   milestone. **DI.2 succeeds if the system chooses better among plausible
   interpretations; it fails if it becomes responsible for creating new ones.**
+
+## Sizing — DI.2's reachable win is ≤3 of 9 (DT ledger + Creative reframe, cycle-3)
+
+The room now has **a number**, and it reframes the whole milestone. Classifying the
+9 live dogfood failures by whether DI.2's resolver work can move them:
+
+| Class | Reads | DI.2-reachable? |
+|---|---|---|
+| (a) resolver-overmatch — "matched N tools" paralysis | R8, R9, R10 | **Yes** — DI.2's target |
+| (b) bad-compile — `__commit__`/mutation injected, broken step, or wrong single tool picked | R4, R5, R6, R11 | No (compile/model; R4/R5/R11 also DI.1-owned) |
+| other-seam — answer-pass fabrication / session scope | R3, R7 | No (different layers; R7 is a ranked item) |
+
+**DI.2's reachable win = up to 3 of 9 (~33%), and 3/9 is an *upper bound*, not a
+point estimate** — DI.2's selection only reaches the answer if the correct read
+tool is actually in the tied candidate set; if a too-narrow compile excluded it,
+that read is really (b) even though it presents as "matched N." Which it is can't be
+told yet — *the candidate sets were never captured* (see §Measurement).
+
+**Scope-discipline vindicated by the numbers (DT):** R6 (broken `format_result`)
+and R11 (wrong tool forced) *look* like resolver failures but are compile failures.
+"Fix the aborts" would silently annex them — the model-fixing drift the boundary
+exists to prevent.
+
+**The reframe that matters (Creative):** the rough proportions — **~33% resolver
+(DI.2), ~44% compile/model, ~22% other-seam** — show *resolver quality is not even
+the majority problem.* DI.2 is no longer unconsciously asked to solve "make chat
+useful." It materially improves ~1/3 of the observed corpus; it does **not** solve
+compile quality, session scope, or answer fidelity. That is a worthwhile milestone
+*provided the room stops treating it as the whole answer* — and ≤3/9 must not become
+a reason to *weaken* DI.2 either (one-third of real pain is meaningful). **"Make chat
+useful" is now evidenced to be several milestones, not one** — and the
+**compile-quality class (~44%) is the larger hill behind DI.2** (seed:
+`SEED-COMPILE-QUALITY-V1.10+`).
 
 ## What DI.2 delivers (leans given)
 
@@ -128,13 +166,41 @@ and treats the second as evidence the *next* problem exists, not as its own work
 - **Q-DI2.4 — the mis-selected-read answer (deliverable 5).** How much re-selection
   is in scope vs deferred? *Lean: re-select among the candidate reads for the
   user's intent; do not attempt full intent re-compilation.*
-- **Q-DI2.5 — measurement.** Re-run the DI.1 baseline reads post-DI.2; the win is
-  "fewer dead-ends / more reads reach an answer (or DI.1's gate)."
+- **Q-DI2.5 — measurement (sequence FIRST; DT cycle-3).** The (a)/(b) proportion is
+  currently **ledger-grounded, not corpus-reproducible** — *neither corpus captured
+  the compiled step + candidate set* for the live aborts (comprehension recorded
+  only `{outcome,answer:""}`; divergence holds only fixtures, `divergence_capture`
+  was off during the dogfood). The cheap fix is **not new code**: the divergence
+  instrument already records `prompt` + `candidate_set_post_pr14` +
+  `narrower_decision` on the multi-match rejection path (`_step.py:310-324`).
+  *Enable `divergence_capture` on the DI.2 baseline re-run* to harvest candidate
+  sets directly — **reading the existing instrument for measurement, not merging it
+  into the comprehension schema** (respects the CLAUDE.md don't-couple constraint).
+  Then "3 of 9" is confirmed against real sets, and DI.2's win is measurable.
+  **So Q-DI4-style capture lands first in DI.2; plan to a stated ceiling of ≤3/9,
+  explicitly contingent, until then.**
 
 ## Status
 
-**Cycle-2 phase-framing draft, 2026-06-01** (Creative pass + Orch matcher grounding
-folded). Cycle-2 changes:
+**Cycle-3 phase-framing draft, 2026-06-01** (DT class-proportion grounding + Creative
+reframe folded). Cycle-3 changes:
+
+- **DI.2 is SIZED: ≤3 of 9 live failures (~33%), an upper bound, contingent** on the
+  right tool being in the tied candidate set (DT). The room finally has a number;
+  resolver quality is **not the majority problem** (~44% compile, ~22% other-seam —
+  Creative). DI.2 is no longer asked to be "make chat useful."
+- **Over-claim corrected:** "every request died at the resolver" was a degraded-model
+  session, not the corpus (3/11 actually did). Dominant ≠ universal.
+- **Measurement-debt pattern named (DT+Creative):** this is the **3rd** time this
+  milestone the live instruments couldn't substantiate a load-bearing claim (CR.1
+  abort-blindness → DI.1 gate-not-live-demonstrable → DI.2 sizing-not-reproducible).
+  That's dogfood *success* (it found where instrumentation doesn't observe pain) and
+  convergence, not drift — **carry into the v1.10 close.** Q-DI2.5 sequences the
+  capture fix first so the sizing becomes reproducible.
+- **Roadmap seed:** the compile-quality class (~44%, the larger hill behind DI.2;
+  the Python-fallback thread) → `SEED-COMPILE-QUALITY-V1.10+`.
+
+Cycle-2 changes (retained):
 
 - **The boundary section added (Creative — the milestone's success criterion):**
   DI.2 owns arbitration (resolver-overmatch class), explicitly refuses
