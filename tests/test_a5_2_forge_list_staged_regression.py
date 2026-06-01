@@ -25,9 +25,7 @@ A.5 final smoke pass.
 """
 from __future__ import annotations
 
-import asyncio
 import json
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -108,26 +106,30 @@ def test_a5_2_forge_list_staged_via_chat_pr20_short_circuit(real_mcp_with_staged
         async def fake_list_tools():
             # Surface forge_list_staged as a candidate alongside non-matching
             # tools so the narrower collapses to it for "staged" prompts.
-            from mcp.types import Tool
+            from mcp.types import Tool, ToolAnnotations
             return [
                 Tool(
                     name="forge_list_staged",
                     description="list staged pipeline operations awaiting approval",
+                    annotations=ToolAnnotations(readOnlyHint=True),
                     inputSchema={"type": "object", "properties": {}, "required": []},
                 ),
                 Tool(
                     name="flame_alpha",
                     description="alpha flame tool",
+                    annotations=ToolAnnotations(readOnlyHint=True),
                     inputSchema={"type": "object", "properties": {}, "required": []},
                 ),
                 Tool(
                     name="flame_beta",
                     description="beta flame tool",
+                    annotations=ToolAnnotations(readOnlyHint=True),
                     inputSchema={"type": "object", "properties": {}, "required": []},
                 ),
                 Tool(
                     name="synth_gamma",
                     description="gamma synth tool",
+                    annotations=ToolAnnotations(readOnlyHint=True),
                     inputSchema={"type": "object", "properties": {}, "required": []},
                 ),
             ]
@@ -226,21 +228,24 @@ def test_a5_2_forge_list_staged_via_api_v1_exec_deterministic(real_mcp_with_stag
     app = build_console_app(api)
 
     async def fake_list_tools():
-        from mcp.types import Tool
+        from mcp.types import Tool, ToolAnnotations
         return [
             Tool(
                 name="forge_list_staged",
                 description="list staged pipeline operations awaiting approval",
+                annotations=ToolAnnotations(readOnlyHint=True),
                 inputSchema={"type": "object", "properties": {}, "required": []},
             ),
             Tool(
                 name="flame_alpha",
                 description="alpha flame tool",
+                annotations=ToolAnnotations(readOnlyHint=True),
                 inputSchema={"type": "object", "properties": {}, "required": []},
             ),
             Tool(
                 name="flame_beta",
                 description="beta flame tool",
+                annotations=ToolAnnotations(readOnlyHint=True),
                 inputSchema={"type": "object", "properties": {}, "required": []},
             ),
         ]

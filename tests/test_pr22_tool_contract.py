@@ -21,7 +21,7 @@ import asyncio
 import inspect
 import json
 import typing
-from typing import Optional, Union, get_args, get_origin
+from typing import Union, get_args, get_origin
 
 import pytest
 
@@ -187,7 +187,7 @@ def test_pr22_pydantic_arguments_model_accepts_empty_dict(tool_attr):
 def _make_chat_app():
     """Build a chat app + multi-tool registry where ``"fetch versions"``
     narrows to forge_list_versions and triggers PR20 forced execution."""
-    from unittest.mock import AsyncMock, MagicMock, patch
+    from unittest.mock import AsyncMock, MagicMock
     from mcp.types import Tool
 
     from forge_bridge.console.app import build_console_app
@@ -209,9 +209,12 @@ def _make_chat_app():
     app = build_console_app(api)
 
     def _make_tool(name):
+        from mcp.types import ToolAnnotations
+
         return Tool(
             name=name,
             description=f"{name} description",
+            annotations=ToolAnnotations(readOnlyHint=True),
             inputSchema={"type": "object", "properties": {}, "required": []},
         )
 

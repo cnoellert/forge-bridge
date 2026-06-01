@@ -257,10 +257,11 @@ def _make_test_tool(name: str = "forge_test_probe") -> Any:
     the input unchanged. Custom names are supported for tests that
     need to mutate the tool list and assert hash differences.
     """
-    from mcp.types import Tool
+    from mcp.types import Tool, ToolAnnotations
     return Tool(
         name=name,
         description=f"Test probe {name!r} for PR 4 integration tests.",
+        annotations=ToolAnnotations(readOnlyHint=True),
         inputSchema={"type": "object", "properties": {}, "required": []},
     )
 
