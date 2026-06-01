@@ -335,12 +335,12 @@ def _drive_chat_request(
 
     mock_router = MagicMock()
     mock_router.complete_with_tools = AsyncMock(side_effect=_stub_chat_result)
-    # A.1 chat compile branch added compile_intent() as the first await on
-    # the chat path (before complete_with_tools). It is async and returns
-    # list[str]. Without an AsyncMock here, the parent MagicMock auto-
-    # generates a sync MagicMock for the attribute and the handler's
-    # `await router.compile_intent(...)` raises TypeError.
+    # CR.1 keeps these PR4 invariance probes on the compiled read path:
+    # compile_intent receives the operator prompt + tool surface, then
+    # acomplete synthesizes the additive answer. Empty steps keep the probe
+    # focused on handler/capture invariance rather than tool execution.
     mock_router.compile_intent = AsyncMock(return_value=[])
+    mock_router.acomplete = AsyncMock(return_value="OK")
     mock_log = MagicMock()
     mock_log.snapshot.return_value = ([], 0)
 
@@ -441,11 +441,12 @@ def _assert_arbitration_invariance(
       4. ``response.headers`` contains ``X-Request-ID``.
       5. ``body.get("tool_trace", [])`` is empty (stub path; no
          inadvertent invocation).
-      6. ``mock_router.complete_with_tools`` called exactly once.
-      7. ``call_args.kwargs["tools"]`` element-equal (by name) to
+      6. ``mock_router.compile_intent`` called exactly once.
+      7. ``compile_intent`` tools argument element-equal (by name) to
          ``expected_tool_names`` — the arbitration output upstream
          of LLM stochasticity.
-      8. ``call_args.kwargs["sensitive"]`` is True (D-05 invariant).
+      8. ``mock_router.acomplete`` called exactly once with
+         ``sensitive=True`` for local answer synthesis.
 
     Each assertion protects a distinct failure mode. Removing any one
     is a spec amendment, not an implementation choice.
@@ -488,26 +489,28 @@ def _assert_arbitration_invariance(
         f"that should not have."
     )
 
-    # 6. complete_with_tools called exactly once.
-    call_count = mock_router.complete_with_tools.call_count
+    # 6. compile_intent called exactly once.
+    call_count = mock_router.compile_intent.call_count
     assert call_count == 1, (
-        f"complete_with_tools call_count={call_count}; expected exactly 1."
+        f"compile_intent call_count={call_count}; expected exactly 1."
     )
 
-    # 7. tools list passed to LLM matches expected (element-equal by name).
-    call_kwargs = mock_router.complete_with_tools.call_args.kwargs
-    actual_tool_names = _tool_name_list(call_kwargs["tools"])
+    # 7. tools list passed to compile matches expected (element-equal by name).
+    call_args = mock_router.compile_intent.call_args
+    actual_tool_names = _tool_name_list(call_args.args[1])
     assert actual_tool_names == expected_tool_names, (
-        f"tools passed to LLM router differ from expected: "
+        f"tools passed to compile_intent differ from expected: "
         f"got {actual_tool_names!r}, expected {expected_tool_names!r}. "
         f"This is the arbitration output upstream of LLM stochasticity; "
         f"capture state must not perturb it."
     )
 
-    # 8. sensitive=True (D-05).
-    assert call_kwargs.get("sensitive") is True, (
-        f"sensitive kwarg expected True (D-05 invariant); got "
-        f"{call_kwargs.get('sensitive')!r}"
+    # 8. acomplete answer pass uses local routing.
+    mock_router.acomplete.assert_awaited_once()
+    answer_kwargs = mock_router.acomplete.call_args.kwargs
+    assert answer_kwargs.get("sensitive") is True, (
+        f"sensitive kwarg expected True for answer synthesis; got "
+        f"{answer_kwargs.get('sensitive')!r}"
     )
 
 
@@ -886,12 +889,8 @@ def _drive_chain_request(
 
     mock_router = MagicMock()
     mock_router.complete_with_tools = AsyncMock(side_effect=_stub_chat_result)
-    # A.1 chat compile branch added compile_intent() as the first await on
-    # the chat path (before complete_with_tools). It is async and returns
-    # list[str]. Without an AsyncMock here, the parent MagicMock auto-
-    # generates a sync MagicMock for the attribute and the handler's
-    # `await router.compile_intent(...)` raises TypeError.
     mock_router.compile_intent = AsyncMock(return_value=[])
+    mock_router.acomplete = AsyncMock(return_value="OK")
     mock_log = MagicMock()
     mock_log.snapshot.return_value = ([], 0)
 

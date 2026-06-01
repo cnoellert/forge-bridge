@@ -27,7 +27,6 @@ from __future__ import annotations
 import os
 
 import pytest
-import pytest_asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -67,30 +66,9 @@ def chat_app_fixed_response():
 
     mock_router = MagicMock()
 
-    # Phase A: return a ChatTurnResult that echoes the inbound history plus
-    # a final assistant turn — mirrors the handler's pre-Phase-A "input +
-    # final_text" shape so the structural-parity assertions still hold.
-    async def _phase_a_fixed_response(**kwargs):
-        from forge_bridge.llm.router import ChatTurnResult
-        history = list(kwargs.get("messages") or [])
-        return ChatTurnResult(
-            final_text="parity-test-fixed-response",
-            messages=history + [{
-                "role": "assistant",
-                "content": "parity-test-fixed-response",
-            }],
-            tool_trace=[],
-        )
-
-    mock_router.complete_with_tools = AsyncMock(
-        side_effect=_phase_a_fixed_response,
-    )
-    # A.1 chat compile branch added compile_intent() as the first await on
-    # the chat path (before complete_with_tools). It is async and returns
-    # list[str]. Without an AsyncMock here, the parent MagicMock auto-
-    # generates a sync MagicMock for the attribute and the handler's
-    # `await router.compile_intent(...)` raises TypeError.
+    mock_router.complete_with_tools = AsyncMock()
     mock_router.compile_intent = AsyncMock(return_value=[])
+    mock_router.acomplete = AsyncMock(return_value="parity-test-fixed-response")
     ms = ManifestService()
     mock_log = MagicMock()
     mock_log.snapshot.return_value = ([], 0)
@@ -232,15 +210,11 @@ class TestChatParityStructural:
     async def test_chat_parity_envelope_keys_locked(
         self, chat_app_fixed_response,
     ):
-        """Lock the D-03 success-envelope contract to the Phase A canonical
-        9-key schema:
-            {final_text, messages, tool_trace, stop_reason, request_id,
-             tools_available, tools_filtered, tool_enforced, tool_forced}
+        """Lock the CR.1 compiled-read success-envelope contract.
 
-        Phase A (2026-05-05) added final_text + tool_trace and locked
-        tool_forced=False on the LLM-loop path so both paths emit the same
-        keys. If a future change adds/removes keys, this test fires and
-        the consumer-contract migration is forced through review.
+        CR.1 answers successful reads through ``messages`` while preserving
+        the chain payload. ``final_text`` and ``tool_trace`` belonged to the
+        retired agentic-loop path and must not reappear here.
         """
         app = chat_app_fixed_response
         transport = ASGITransport(app=app)
@@ -261,9 +235,9 @@ class TestChatParityStructural:
         assert r.status_code == 200
         body = r.json()
         assert sorted(body.keys()) == sorted([
-            "final_text",
+            "chain",
             "messages",
-            "tool_trace",
+            "preview",
             "stop_reason",
             "request_id",
             "tools_available",
@@ -271,7 +245,9 @@ class TestChatParityStructural:
             "tool_enforced",
             "tool_forced",
         ])
-        assert body["stop_reason"] == "end_turn"
+        assert body["stop_reason"] == "chain_complete"
+        assert "final_text" not in body
+        assert "tool_trace" not in body
 
 
 # ---------------------------------------------------------------------------

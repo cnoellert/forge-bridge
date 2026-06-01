@@ -76,29 +76,16 @@ def chat_app():
     from forge_bridge.console.read_api import ConsoleReadAPI
     _rate_limit._reset_for_tests()
 
-    captured: dict = {"messages_at_router": None}
+    captured: dict = {"compile_prompt": None}
 
-    async def _capturing_complete_with_tools(**kwargs):
-        captured["messages_at_router"] = list(kwargs.get("messages") or [])
-        # Phase A: complete_with_tools must return a ChatTurnResult.
-        from forge_bridge.llm.router import ChatTurnResult
-        history = list(kwargs.get("messages") or [])
-        return ChatTurnResult(
-            final_text="OK from mock LLM",
-            messages=history + [{"role": "assistant", "content": "OK from mock LLM"}],
-            tool_trace=[],
-        )
+    async def _capturing_compile_intent(prompt, _tools, **_kwargs):
+        captured["compile_prompt"] = prompt
+        return []
 
     mock_router = MagicMock()
-    mock_router.complete_with_tools = AsyncMock(
-        side_effect=_capturing_complete_with_tools,
-    )
-    # A.1 chat compile branch added compile_intent() as the first await on
-    # the chat path (before complete_with_tools). It is async and returns
-    # list[str]. Without an AsyncMock here, the parent MagicMock auto-
-    # generates a sync MagicMock for the attribute and the handler's
-    # `await router.compile_intent(...)` raises TypeError.
-    mock_router.compile_intent = AsyncMock(return_value=[])
+    mock_router.complete_with_tools = AsyncMock()
+    mock_router.compile_intent = AsyncMock(side_effect=_capturing_compile_intent)
+    mock_router.acomplete = AsyncMock(return_value="OK from mock LLM")
 
     ms = ManifestService()
     mock_log = MagicMock()
@@ -173,13 +160,13 @@ class TestChatSanitizationE2E:
         ]
         r = await client.post("/api/v1/chat", json={"messages": history})
         assert r.status_code == 200, r.text
-        # The router received the user's verbatim content. NO server-side
-        # sanitization of user-typed prompts.
-        captured_msgs = captured["messages_at_router"]
-        assert captured_msgs == history
+        # The compile stage received the user's verbatim content. NO
+        # server-side sanitization of user-typed prompts.
+        compile_prompt = captured["compile_prompt"]
+        assert compile_prompt == history[0]["content"]
         # Defensive: the marker substring is preserved end-to-end on the
         # user-input path (D-15 inverse).
-        assert _POISON in captured_msgs[0]["content"]
+        assert _POISON in compile_prompt
 
     async def test_injection_markers_present_in_pattern_set(self):
         """CHAT-03 / D-15 sanity: the canonical marker tuple includes
