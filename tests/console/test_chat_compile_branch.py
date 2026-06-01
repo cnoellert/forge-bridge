@@ -1,6 +1,7 @@
 """A.1 D3 compile-branch helper tests."""
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -371,7 +372,9 @@ async def test_run_compile_branch_compile_error_returns_outcome():
 
 def test_chat_handler_json_regime_2_full_path(monkeypatch):
     router = SimpleNamespace(
-        compile_intent=AsyncMock(return_value=["forge_list_shots"])
+        compile_intent=AsyncMock(return_value=["forge_list_shots"]),
+        acomplete=AsyncMock(return_value="No shots were returned."),
+        local_model="qwen-test",
     )
     tools = [_mcp_tool("forge_list_shots", "List shots.")]
     chain_body = {
@@ -385,6 +388,11 @@ def test_chat_handler_json_regime_2_full_path(monkeypatch):
         "run_chain_steps",
         AsyncMock(return_value=chain_body),
     )
+    emit_capture = MagicMock()
+    monkeypatch.setattr(
+        "forge_bridge.console.handlers.emit_comprehension_capture",
+        emit_capture,
+    )
     client, patches = _chat_client(router, tools)
 
     with patches[0], patches[1]:
@@ -395,6 +403,83 @@ def test_chat_handler_json_regime_2_full_path(monkeypatch):
     assert body["stop_reason"] == "chain_complete"
     assert body["chain"] == chain_body["chain"]
     assert body["preview"] is None
+    assert body["messages"] == [{
+        "role": "assistant",
+        "content": "No shots were returned.",
+    }]
+    emit_capture.assert_called_once_with(
+        question="list shots",
+        chain=chain_body["chain"],
+        answer="No shots were returned.",
+        wall_clock_ms=emit_capture.call_args.kwargs["wall_clock_ms"],
+        model="qwen-test",
+    )
+
+
+def test_chat_handler_json_answer_failure_still_delivers_read(monkeypatch):
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(return_value=["forge_list_shots"]),
+        acomplete=AsyncMock(side_effect=RuntimeError("ollama down")),
+    )
+    chain_body = {
+        "status": "success",
+        "request_id": "req",
+        "chain": [{"step": "forge_list_shots", "result": {"shots": []}}],
+        "error": None,
+    }
+    monkeypatch.setattr(
+        _chat_compile,
+        "run_chain_steps",
+        AsyncMock(return_value=chain_body),
+    )
+    client, patches = _chat_client(
+        router, [_mcp_tool("forge_list_shots", "List shots.")]
+    )
+
+    with patches[0], patches[1]:
+        response = _post_chat(client, "list shots")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["chain"] == chain_body["chain"]
+    assert body["messages"] == []
+    assert body["stop_reason"] == "chain_complete"
+
+
+def test_chat_handler_json_answer_timeout_still_delivers_read(monkeypatch):
+    from forge_bridge.console import _answer
+
+    async def _sleep_past_bound(*_args, **_kwargs):
+        await asyncio.sleep(60)
+
+    monkeypatch.setattr(_answer, "_SYNTHESIS_TIMEOUT_S", 0.01)
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(return_value=["forge_list_shots"]),
+        acomplete=_sleep_past_bound,
+    )
+    chain_body = {
+        "status": "success",
+        "request_id": "req",
+        "chain": [{"step": "forge_list_shots", "result": {"shots": []}}],
+        "error": None,
+    }
+    monkeypatch.setattr(
+        _chat_compile,
+        "run_chain_steps",
+        AsyncMock(return_value=chain_body),
+    )
+    client, patches = _chat_client(
+        router, [_mcp_tool("forge_list_shots", "List shots.")]
+    )
+
+    with patches[0], patches[1]:
+        response = _post_chat(client, "list shots")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["chain"] == chain_body["chain"]
+    assert body["messages"] == []
+    assert body["stop_reason"] == "chain_complete"
 
 
 def test_chat_handler_json_regime_2_omits_final_text(monkeypatch):
@@ -467,6 +552,7 @@ def test_chat_handler_json_regime_3_full_path(monkeypatch):
     assert body["stop_reason"] == "preview_emitted"
     assert body["chain"] == []
     assert body["preview"]["summary"]["requires_ratification"] is True
+    assert "messages" not in body
     run_chain.assert_not_awaited()
 
 

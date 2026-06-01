@@ -44,6 +44,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from forge_bridge.console._constants import CHAIN_MAX_STEPS
+from forge_bridge.console._answer import _last_user_question, _synthesize_answer
 from forge_bridge.console._chat_compile import (
     build_compile_system_prompt,
     run_apply_branch,
@@ -79,6 +80,7 @@ from forge_bridge.llm.resolver import (
 )
 from forge_bridge.mcp.arguments import normalize_tool_args
 from forge_bridge.store.staged_operations import StagedOpRepo, StagedOpLifecycleError
+from forge_bridge.comprehension import emit_comprehension_capture
 
 # Shape A — top-level guarded import (PR 4 step 6 topology lock).
 #
@@ -1967,6 +1969,16 @@ async def chat_handler(request: Request) -> Response:
         )
 
     chain_body = outcome.chain_body or {}
+    chain = chain_body.get("chain", [])
+    answer, answer_ms = await _synthesize_answer(router, messages, chain)
+    if answer:
+        emit_comprehension_capture(
+            question=_last_user_question(messages),
+            chain=chain,
+            answer=answer,
+            wall_clock_ms=answer_ms,
+            model=getattr(router, "local_model", "unknown"),
+        )
     logger.info(
         "chat ok request_id=%s client_ip=%s message_count_in=%d "
         "steps=%d tools_offered_count=%d wall_clock_ms=%d "
@@ -1976,7 +1988,8 @@ async def chat_handler(request: Request) -> Response:
     )
     return JSONResponse(
         {
-            "chain": chain_body.get("chain", []),
+            "chain": chain,
+            "messages": [{"role": "assistant", "content": answer}] if answer else [],
             "stop_reason": "chain_complete",
             "request_id": request_id,
             "tools_available": tools_available_count,
