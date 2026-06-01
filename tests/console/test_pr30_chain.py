@@ -61,12 +61,13 @@ def _make_chain_chat_app(
     fake_call_tool: Any,
 ) -> tuple[Any, Any, Any, Any, MagicMock]:
     """App + patches for chain integration tests (passthrough backend filter)."""
-    from mcp.types import Tool
+    from mcp.types import Tool, ToolAnnotations
 
     tools_list = [
         Tool(
             name=n,
             description=f"{n} description",
+            annotations=ToolAnnotations(readOnlyHint=True),
             inputSchema={"type": "object", "properties": {}, "required": []},
         )
         for n in (

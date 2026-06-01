@@ -360,20 +360,22 @@ def test_pr15_malformed_tool_text_validation_retired(chat_client):
 
 def _pr20_make_tool(name: str):
     """Tool with no required params — forced execution sends `{}`."""
-    from mcp.types import Tool
+    from mcp.types import Tool, ToolAnnotations
     return Tool(
         name=name,
         description=f"{name} description",
+        annotations=ToolAnnotations(readOnlyHint=True),
         inputSchema={"type": "object", "properties": {}, "required": []},
     )
 
 
 def _pr20_make_wrapped_tool(name: str):
     """Tool with required top-level params wrapper."""
-    from mcp.types import Tool
+    from mcp.types import Tool, ToolAnnotations
     return Tool(
         name=name,
         description=f"{name} description",
+        annotations=ToolAnnotations(readOnlyHint=True),
         inputSchema={
             "$defs": {
                 "WrappedInput": {

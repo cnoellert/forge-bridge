@@ -15,6 +15,7 @@ from tests.console.test_pr30_chain import _text_block
 def _wrapped_tool(name: str, properties: dict, required: list[str]):
     return SimpleNamespace(
         name=name,
+        annotations=SimpleNamespace(readOnlyHint=True),
         inputSchema={
             "$defs": {
                 "WrappedInput": {

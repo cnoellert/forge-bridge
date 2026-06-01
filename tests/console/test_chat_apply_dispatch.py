@@ -22,11 +22,12 @@ def _reset_rate_limit():
 
 
 def _tool(name: str):
-    from mcp.types import Tool
+    from mcp.types import Tool, ToolAnnotations
 
     return Tool(
         name=name,
         description=f"test tool {name}",
+        annotations=ToolAnnotations(readOnlyHint=True),
         inputSchema={"type": "object", "properties": {}, "required": []},
     )
 

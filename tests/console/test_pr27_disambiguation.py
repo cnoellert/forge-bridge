@@ -292,13 +292,14 @@ def _make_handler_app_for_disambiguation(project_count: int):
     forced-execution target (``forge_list_versions``) and a stubbed
     ``mcp.call_tool`` that returns the requested project count from
     ``forge_list_projects``."""
-    from mcp.types import TextContent, Tool
+    from mcp.types import TextContent, Tool, ToolAnnotations
 
     tools_list = [
         Tool(
             name=n,
             description=f"{n} description",
             inputSchema={"type": "object", "properties": {}, "required": []},
+            annotations=ToolAnnotations(readOnlyHint=True),
         )
         for n in [
             "forge_list_versions",  # the target — narrow filter to 1 hits PR20

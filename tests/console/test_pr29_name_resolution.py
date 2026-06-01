@@ -33,10 +33,8 @@ Per the PR29 brief's eleven tests:
 from __future__ import annotations
 
 import json
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from starlette.testclient import TestClient
 
 from forge_bridge.console._memory import _MEMORY
@@ -289,13 +287,14 @@ def _make_handler_app_for_name_resolution(project_names: list[str]):
 
     Mirrors the PR27 / PR28 fixture shape so behavior diffs across the
     three resolution paths (UUID, name, fall-through) are easy to read."""
-    from mcp.types import TextContent, Tool
+    from mcp.types import TextContent, Tool, ToolAnnotations
 
     tools_list = [
         Tool(
             name=n,
             description=f"{n} description",
             inputSchema={"type": "object", "properties": {}, "required": []},
+            annotations=ToolAnnotations(readOnlyHint=True),
         )
         for n in [
             "forge_list_versions",

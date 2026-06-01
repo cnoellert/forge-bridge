@@ -330,13 +330,14 @@ def _make_handler_app_for_param_injection(project_count: int):
 
     Mirrors the PR27 fixture so behavior diffs between PR27 disambiguation
     and PR28 explicit-injection are easy to read."""
-    from mcp.types import TextContent, Tool
+    from mcp.types import TextContent, Tool, ToolAnnotations
 
     tools_list = [
         Tool(
             name=n,
             description=f"{n} description",
             inputSchema={"type": "object", "properties": {}, "required": []},
+            annotations=ToolAnnotations(readOnlyHint=True),
         )
         for n in [
             "forge_list_versions",

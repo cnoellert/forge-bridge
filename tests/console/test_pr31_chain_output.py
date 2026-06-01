@@ -238,6 +238,7 @@ def test_chain_step_normalizes_wrapper_schema_args():
     calls = []
     tool = SimpleNamespace(
         name="flame_get_sequence_segments",
+        annotations=SimpleNamespace(readOnlyHint=True),
         inputSchema={
             "$defs": {
                 "WrappedInput": {
@@ -276,6 +277,7 @@ def test_chain_step_stops_before_call_when_sequence_unresolved():
     calls = []
     tool = SimpleNamespace(
         name="flame_get_sequence_segments",
+        annotations=SimpleNamespace(readOnlyHint=True),
         inputSchema={
             "$defs": {
                 "WrappedInput": {
@@ -322,6 +324,7 @@ def test_chain_step_injects_previous_result_into_format_terminal():
     calls = []
     tool = SimpleNamespace(
         name="format_result",
+        annotations=SimpleNamespace(readOnlyHint=True),
         inputSchema={
             "$defs": {
                 "FormatInput": {
@@ -371,6 +374,7 @@ def test_chain_step_maps_bullet_list_phrase_to_bullets_format():
     calls = []
     tool = SimpleNamespace(
         name="format_result",
+        annotations=SimpleNamespace(readOnlyHint=True),
         inputSchema={
             "$defs": {
                 "FormatInput": {
@@ -428,6 +432,7 @@ def test_chain_step_extracts_format_class_with_optional_article(
     calls = []
     tool = SimpleNamespace(
         name="format_result",
+        annotations=SimpleNamespace(readOnlyHint=True),
         inputSchema={
             "$defs": {
                 "FormatInput": {
@@ -473,6 +478,7 @@ def test_chain_engine_passes_prior_result_to_format_terminal():
     calls = []
     segment_tool = SimpleNamespace(
         name="flame_get_sequence_segments",
+        annotations=SimpleNamespace(readOnlyHint=True),
         inputSchema={
             "$defs": {
                 "WrappedInput": {
@@ -488,6 +494,7 @@ def test_chain_engine_passes_prior_result_to_format_terminal():
     )
     format_tool = SimpleNamespace(
         name="format_result",
+        annotations=SimpleNamespace(readOnlyHint=True),
         inputSchema={
             "$defs": {
                 "FormatInput": {

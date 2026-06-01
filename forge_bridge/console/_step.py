@@ -21,6 +21,10 @@ import re
 import time
 from typing import Any, Optional
 
+from forge_bridge.console._authority import (
+    dispatch_authority,
+    dispatch_block_message,
+)
 from forge_bridge.core.assent import AssentRecord
 from forge_bridge.console._tool_filter import deterministic_narrow, filter_tools_by_message
 from forge_bridge.mcp.arguments import normalize_tool_args
@@ -403,6 +407,16 @@ async def execute_chain_step(
             "message": message,
             "details": unresolved,
         }}
+
+    if dispatch_authority(filtered[0]):
+        return {
+            "error": {
+                "type": "unauthorized_mutation",
+                "message": dispatch_block_message(tool_name),
+            },
+            "classification": "mutating",
+            "tool": tool_name,
+        }
 
     try:
         params = normalize_tool_args(tool_name, params, [filtered[0]])

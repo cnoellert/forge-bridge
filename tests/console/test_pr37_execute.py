@@ -20,12 +20,13 @@ def _passthrough_filter(tools, **_):
 
 
 def _tools_list(names: tuple[str, ...]) -> list:
-    from mcp.types import Tool
+    from mcp.types import Tool, ToolAnnotations
 
     return [
         Tool(
             name=n,
             description=f"{n} description",
+            annotations=ToolAnnotations(readOnlyHint=True),
             inputSchema={"type": "object", "properties": {}, "required": []},
         )
         for n in names
