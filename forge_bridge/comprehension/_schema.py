@@ -13,9 +13,17 @@ VERDICT_VALUES: Final[frozenset[str]] = frozenset({
     "missed_intent",
 })
 
+OUTCOME_VALUES: Final[frozenset[str]] = frozenset({
+    "answered",
+    "preview_emitted",
+    "chain_aborted",
+    "forced_tool_error",
+})
+
 _REQUIRED_KEYS: Final[frozenset[str]] = frozenset({
     "schema_version",
     "captured_at",
+    "outcome",
     "question",
     "chain",
     "answer",
@@ -55,6 +63,10 @@ def validate_comprehension_record(record: Any) -> None:
         )
     if not isinstance(record["captured_at"], str) or not record["captured_at"]:
         raise SchemaValidationError("captured_at must be a non-empty string")
+    if record["outcome"] not in OUTCOME_VALUES:
+        raise SchemaValidationError(
+            "outcome must be one of: " + ", ".join(sorted(OUTCOME_VALUES))
+        )
     if not isinstance(record["question"], str):
         raise SchemaValidationError("question must be a string")
     if not isinstance(record["chain"], list):

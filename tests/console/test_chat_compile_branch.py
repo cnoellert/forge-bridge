@@ -505,6 +505,11 @@ def test_chat_handler_json_chain_aborted_preserves_error_and_skips_answer(
         "run_chain_steps",
         AsyncMock(return_value=chain_body),
     )
+    emit_capture = MagicMock()
+    monkeypatch.setattr(
+        "forge_bridge.console.handlers.emit_comprehension_capture",
+        emit_capture,
+    )
     client, patches = _chat_client(
         router, [_mcp_tool("forge_list_shots", "List shots.")]
     )
@@ -517,6 +522,14 @@ def test_chat_handler_json_chain_aborted_preserves_error_and_skips_answer(
     assert body["stop_reason"] == "chain_aborted"
     assert body["error"] == chain_body["error"]
     router.acomplete.assert_not_awaited()
+    emit_capture.assert_called_once_with(
+        question="list shots",
+        chain=[],
+        answer="",
+        wall_clock_ms=0,
+        model="unknown",
+        outcome="chain_aborted",
+    )
 
 
 def test_chat_handler_json_regime_2_omits_final_text(monkeypatch):
@@ -578,6 +591,11 @@ def test_chat_handler_json_regime_3_full_path(monkeypatch):
     )
     run_chain = AsyncMock()
     monkeypatch.setattr(_chat_compile, "run_chain_steps", run_chain)
+    emit_capture = MagicMock()
+    monkeypatch.setattr(
+        "forge_bridge.console.handlers.emit_comprehension_capture",
+        emit_capture,
+    )
     tools = [_mcp_tool("flame_rename_shots", "Rename shots.")]
     client, patches = _chat_client(router, tools)
 
@@ -591,6 +609,13 @@ def test_chat_handler_json_regime_3_full_path(monkeypatch):
     assert body["preview"]["summary"]["requires_ratification"] is True
     assert "messages" not in body
     run_chain.assert_not_awaited()
+    emit_capture.assert_called_once()
+    assert emit_capture.call_args.kwargs["question"] == "rename shots"
+    assert emit_capture.call_args.kwargs["answer"] == ""
+    assert emit_capture.call_args.kwargs["outcome"] == "preview_emitted"
+    assert emit_capture.call_args.kwargs["chain"][0]["step"] == (
+        "flame_rename_shots dry_run=False"
+    )
 
 
 def test_chat_handler_json_regime_3_omits_final_text(monkeypatch):

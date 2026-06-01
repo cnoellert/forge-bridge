@@ -16,6 +16,7 @@ def _record(question: str, verdict=None):
     return {
         "schema_version": SCHEMA_VERSION,
         "captured_at": "2026-05-31T00:00:00+00:00",
+        "outcome": "answered",
         "question": question,
         "chain": [{"step": "forge_list_shots", "result": {"shots": []}}],
         "answer": "No shots were returned.",

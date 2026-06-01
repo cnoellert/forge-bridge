@@ -210,3 +210,59 @@ def test_short_circuit_answer_failure_preserves_trace():
     assert body["messages"][2]["content"] == '{"status":"ok"}'
     assert body["tool_trace"][0]["result"] == {"status": "ok"}
     mock_router.acomplete.assert_awaited_once()
+
+
+def test_short_circuit_tool_error_emits_failure_capture():
+    """Forced-tool errors are captured with an outcome tag, but still return."""
+    mock_router = MagicMock()
+    mock_router.complete_with_tools = AsyncMock(return_value=ChatTurnResult(
+        final_text="UNREACHED", messages=[], tool_trace=[],
+    ))
+    mock_router.local_model = "qwen-test"
+    tools = [_tool("forge_ping"), _tool("forge_list_projects")]
+
+    async def _call_tool(name, args):
+        raise RuntimeError("tool failed")
+
+    app, _ = _build_app_with_router(mock_router, tools)
+    emit_capture = MagicMock()
+
+    with patch(
+        "forge_bridge.mcp.server.mcp.list_tools",
+        new=AsyncMock(return_value=tools),
+    ), patch(
+        "forge_bridge.console.handlers.filter_tools_by_reachable_backends",
+        side_effect=_passthrough_filter,
+    ), patch(
+        "forge_bridge.mcp.server.mcp.call_tool",
+        new=AsyncMock(side_effect=_call_tool),
+    ), patch(
+        "forge_bridge.console.handlers.emit_comprehension_capture",
+        emit_capture,
+    ):
+        client = TestClient(app)
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [{"role": "user", "content": "ping the daemon"}]},
+        )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["stop_reason"] == "tool_forced"
+    assert body["tool_trace"][0]["error"] == "RuntimeError: tool failed"
+    emit_capture.assert_called_once_with(
+        question="ping the daemon",
+        chain=[{
+            "step": "forge_ping {}",
+            "result": {
+                "error": {
+                    "type": "RuntimeError",
+                    "message": "tool failed",
+                },
+            },
+        }],
+        answer="",
+        wall_clock_ms=0,
+        model="qwen-test",
+        outcome="forced_tool_error",
+    )

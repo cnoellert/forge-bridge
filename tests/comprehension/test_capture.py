@@ -16,6 +16,7 @@ from forge_bridge.comprehension._schema import SchemaValidationError
 def _emit_args(**overrides):
     args = {
         "question": "what shots are in sequence molecule?",
+        "outcome": "answered",
         "chain": [{"step": "forge_list_shots sequence=molecule", "result": {
             "shots": ["010", "020"],
         }}],
@@ -75,6 +76,7 @@ def test_capture_gate_on_appends_header_and_record(monkeypatch, tmp_path):
         "captured_at": header["captured_at"],
     }
     assert first["question"] == "what shots are in sequence molecule?"
+    assert first["outcome"] == "answered"
     assert first["verdict"] is None
     assert second["question"] == "second question"
     validate_comprehension_record(first)
@@ -100,6 +102,7 @@ def test_validate_accepts_null_and_tagged_verdicts():
     record = {
         "schema_version": SCHEMA_VERSION,
         "captured_at": "2026-05-31T00:00:00+00:00",
+        "outcome": "answered",
         "question": "what shots?",
         "chain": [{"step": "forge_list_shots", "result": {"shots": []}}],
         "answer": "No shots were returned.",
@@ -110,12 +113,15 @@ def test_validate_accepts_null_and_tagged_verdicts():
     validate_comprehension_record(record)
     record["verdict"] = "loved"
     validate_comprehension_record(record)
+    record["outcome"] = "chain_aborted"
+    validate_comprehension_record(record)
 
 
 def test_validate_rejects_missing_required_field_by_name():
     record = {
         "schema_version": SCHEMA_VERSION,
         "captured_at": "2026-05-31T00:00:00+00:00",
+        "outcome": "answered",
         "chain": [],
         "answer": "",
         "wall_clock_ms": 10,

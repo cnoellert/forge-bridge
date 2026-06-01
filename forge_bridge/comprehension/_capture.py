@@ -74,10 +74,12 @@ def _build_record(
     answer: str,
     wall_clock_ms: int,
     model: str,
+    outcome: str,
 ) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
         "captured_at": _now_iso(),
+        "outcome": outcome,
         "question": question,
         "chain": chain,
         "answer": answer,
@@ -94,6 +96,7 @@ def emit_comprehension_capture(
     answer: str,
     wall_clock_ms: int,
     model: str,
+    outcome: str = "answered",
 ) -> None:
     """Append one comprehension record when the env gate is enabled.
 
@@ -110,6 +113,7 @@ def emit_comprehension_capture(
             answer=answer,
             wall_clock_ms=wall_clock_ms,
             model=model,
+            outcome=outcome,
         )
         validate_comprehension_record(record)
 

@@ -798,6 +798,27 @@ async def _execute_forced_tool(
                     wall_clock_ms=answer_ms,
                     model=getattr(router, "local_model", "unknown"),
                 )
+    else:
+        try:
+            parsed_result = json.loads(tool_content)
+        except (TypeError, json.JSONDecodeError, ValueError):
+            parsed_result = tool_content
+        compact_args = json.dumps(
+            params or {},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        emit_comprehension_capture(
+            question=_last_user_question(messages),
+            chain=[{
+                "step": f"{tool_name} {compact_args}",
+                "result": parsed_result,
+            }],
+            answer="",
+            wall_clock_ms=0,
+            model=getattr(router, "local_model", "unknown"),
+            outcome="forced_tool_error",
+        )
 
     elapsed_ms = int((time.monotonic() - started) * 1000)
     logger.info(
@@ -995,6 +1016,10 @@ def _apply_complete_body(outcome, transport: str) -> dict:
         "chat_regime": "ratified_apply",
         "transport": transport,
     }
+
+
+def _capture_chain_from_steps(steps: list[str], result: Any) -> list[dict]:
+    return [{"step": step, "result": result} for step in steps]
 
 
 async def _chat_sse_response(
@@ -1966,6 +1991,14 @@ async def chat_handler(request: Request) -> Response:
     if outcome.regime == "chain_aborted":
         body = dict(outcome.chain_body or {})
         body["stop_reason"] = "chain_aborted"
+        emit_comprehension_capture(
+            question=_last_user_question(messages),
+            chain=body.get("chain", []),
+            answer="",
+            wall_clock_ms=0,
+            model=getattr(router, "local_model", "unknown"),
+            outcome="chain_aborted",
+        )
         logger.info(
             "chat chain_aborted request_id=%s client_ip=%s "
             "steps=%d tools_offered_count=%d wall_clock_ms=%d "
@@ -1979,6 +2012,14 @@ async def chat_handler(request: Request) -> Response:
         )
 
     if outcome.regime == "compiled_mutating_preview":
+        emit_comprehension_capture(
+            question=_last_user_question(messages),
+            chain=_capture_chain_from_steps(outcome.steps, outcome.preview),
+            answer="",
+            wall_clock_ms=0,
+            model=getattr(router, "local_model", "unknown"),
+            outcome="preview_emitted",
+        )
         logger.info(
             "chat preview_emitted request_id=%s client_ip=%s "
             "steps=%d tools_offered_count=%d wall_clock_ms=%d "

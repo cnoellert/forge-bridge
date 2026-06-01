@@ -5,6 +5,7 @@ from forge_bridge.comprehension._capture import (
 )
 from forge_bridge.comprehension._schema import (
     SCHEMA_VERSION,
+    OUTCOME_VALUES,
     SchemaValidationError,
     SchemaVersionMismatch,
     VERDICT_VALUES,
@@ -17,6 +18,7 @@ from forge_bridge.comprehension.reader import (
 
 __all__ = [
     "SCHEMA_VERSION",
+    "OUTCOME_VALUES",
     "SchemaValidationError",
     "SchemaVersionMismatch",
     "VERDICT_VALUES",
