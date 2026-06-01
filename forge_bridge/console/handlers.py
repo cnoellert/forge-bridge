@@ -527,6 +527,7 @@ _CHAT_VALID_ROLES = frozenset({"user", "assistant", "tool"})
 
 async def _execute_forced_tool(
     *,
+    router: Any,
     tool: Any,
     messages: list,
     request_id: str,
@@ -771,6 +772,33 @@ async def _execute_forced_tool(
         "index": 0,
     }]
 
+    answer = ""
+    answer_ms = 0
+    if tool_ok:
+        try:
+            parsed_result = json.loads(tool_content)
+        except (TypeError, json.JSONDecodeError, ValueError):
+            parsed_result = None
+        if parsed_result is not None:
+            compact_args = json.dumps(
+                params or {},
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            chain = [{
+                "step": f"{tool_name} {compact_args}",
+                "result": parsed_result,
+            }]
+            answer, answer_ms = await _synthesize_answer(router, messages, chain)
+            if answer:
+                emit_comprehension_capture(
+                    question=_last_user_question(messages),
+                    chain=chain,
+                    answer=answer,
+                    wall_clock_ms=answer_ms,
+                    model=getattr(router, "local_model", "unknown"),
+                )
+
     elapsed_ms = int((time.monotonic() - started) * 1000)
     logger.info(
         "chat tool_forced request_id=%s client_ip=%s tool=%s "
@@ -786,7 +814,10 @@ async def _execute_forced_tool(
             # final_text is empty by Phase A decision (the assistant turn
             # in messages is the synthetic tool_call entry, not a reply).
             "final_text": "",
-            "messages": out_messages,
+            "messages": (
+                [{"role": "assistant", "content": answer}]
+                if answer else out_messages
+            ),
             "tool_trace": tool_trace,
             "stop_reason": "tool_forced",
             "request_id": request_id,
@@ -1721,6 +1752,7 @@ async def chat_handler(request: Request) -> Response:
             **extract_explicit_params(last_user_text),
         }
         return await _execute_forced_tool(
+            router=router,
             tool=tools[0],
             messages=messages,
             request_id=request_id,
