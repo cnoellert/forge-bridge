@@ -8,7 +8,7 @@ CR.1 answers successful single-result read tools through messages.
 from __future__ import annotations
 
 import pytest
-from mcp.types import Tool
+from mcp.types import Tool, ToolAnnotations
 from starlette.testclient import TestClient
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -26,10 +26,11 @@ def _reset_rate_limit():
     _rate_limit._reset_for_tests()
 
 
-def _tool(name: str) -> Tool:
+def _tool(name: str, *, read_only: bool = True) -> Tool:
     return Tool(
         name=name,
         description=f"test tool {name}",
+        annotations=ToolAnnotations(readOnlyHint=read_only),
         inputSchema={"type": "object", "properties": {}, "required": []},
     )
 
@@ -266,3 +267,45 @@ def test_short_circuit_tool_error_emits_failure_capture():
         model="qwen-test",
         outcome="forced_tool_error",
     )
+
+
+def test_short_circuit_mutating_tool_blocks_before_call_tool():
+    """1B: routing-selected mutating tool is blocked before dispatch."""
+    mock_router = MagicMock()
+    mock_router.complete_with_tools = AsyncMock(return_value=ChatTurnResult(
+        final_text="UNREACHED", messages=[], tool_trace=[],
+    ))
+    mock_router.acomplete = AsyncMock(return_value="UNREACHED")
+    tools = [
+        _tool("flame_set_start_frames", read_only=False),
+        _tool("forge_ping"),
+    ]
+    call_tool = AsyncMock(return_value=[])
+
+    app, _ = _build_app_with_router(mock_router, tools)
+
+    with patch(
+        "forge_bridge.mcp.server.mcp.list_tools",
+        new=AsyncMock(return_value=tools),
+    ), patch(
+        "forge_bridge.console.handlers.filter_tools_by_reachable_backends",
+        side_effect=_passthrough_filter,
+    ), patch(
+        "forge_bridge.mcp.server.mcp.call_tool",
+        new=call_tool,
+    ):
+        client = TestClient(app)
+        r = client.post(
+            "/api/v1/chat",
+            json={"messages": [{"role": "user", "content": "set start frames"}]},
+        )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["stop_reason"] == "blocked_unratified_mutation"
+    assert body["tool"] == "flame_set_start_frames"
+    assert body["classification"] == "mutating"
+    assert "Request stopped before execution." in body["error"]
+    assert "ratified operation" in body["error"]
+    call_tool.assert_not_awaited()
+    mock_router.acomplete.assert_not_awaited()

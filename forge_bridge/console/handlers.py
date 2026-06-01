@@ -45,6 +45,10 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from forge_bridge.console._constants import CHAIN_MAX_STEPS
 from forge_bridge.console._answer import _last_user_question, _synthesize_answer
+from forge_bridge.console._authority import (
+    dispatch_authority,
+    dispatch_block_message,
+)
 from forge_bridge.console._chat_compile import (
     build_compile_system_prompt,
     run_apply_branch,
@@ -718,6 +722,22 @@ async def _execute_forced_tool(
     trace_error: Optional[str] = None
 
     try:
+        if dispatch_authority(tool):
+            return JSONResponse(
+                {
+                    "error": dispatch_block_message(tool_name),
+                    "request_id": request_id,
+                    "tool": tool_name,
+                    "classification": "mutating",
+                    "tools_available": tools_available_count,
+                    "tools_filtered": tools_filtered_count,
+                    "tool_enforced": tool_enforced_flag,
+                    "tool_forced": False,
+                    "stop_reason": "blocked_unratified_mutation",
+                },
+                status_code=200,
+                headers={"X-Request-ID": request_id},
+            )
         params = normalize_tool_args(tool_name, params, [tool])
         raw = await _mcp_server.mcp.call_tool(tool_name, params)
         tool_content = serialize_forced_tool_result(raw)
