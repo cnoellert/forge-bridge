@@ -136,9 +136,27 @@ raises into the read — the constitutional rule holds on this path too).
   to the forced path: the `wait_for` bound + exception/`json.loads` swallow
   apply at the new seam too.
 
+## Dogfood note — corpus does not distinguish the two read paths (DT, known limitation)
+
+With A landed, comprehension records now arrive from **both** read-completion
+paths — compiled-chain reads and forced single-tool reads — and
+`emit_comprehension_capture` gets the same field shape from both sites, so the
+captured record **cannot tell them apart**. For answer-fidelity (did the
+answer help?) this is fine — path-agnostic by design, and the corpus is a
+pressure instrument, not a product. But the dogfood writeup should record it
+as a **known limitation**: the corpus can't later answer "do forced-path
+answers read differently than compile-path answers?" without a schema field.
+Not worth a schema change now; flagged so it's a known limitation, not a later
+surprise.
+
 ## Status
 
 CR.1 architecture sound; correction is scope-completing, not redirecting.
-**Adopted: Option A (A1 shape).** Hands to code as a CR.1 execution
-amendment. Then re-run the pipeline check against a current-code daemon —
-single-result reads should now answer + capture.
+**Adopted: Option A (A1 shape). IMPLEMENTED + verified** at `a95bf0d`
+(`feat(CR.1): answer forced-tool conversational reads`; diff matches A1 —
+guarded `json.loads`, parsed-result wrap, `_synthesize_answer` reused
+unchanged, graceful trace-envelope degrade; 41 + 490 tests green;
+independently re-verified by DT). The structural-discipline invariant is
+restored: the answer-pass lives at **both** read-completion seams, not a
+parallel path. Remaining: re-run the live pipeline check against a current-code
+daemon — single-result reads should now answer + capture.
