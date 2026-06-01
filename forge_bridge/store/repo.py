@@ -169,6 +169,30 @@ class RegistryRepo:
 
         return registry
 
+    async def ensure_builtins(self) -> None:
+        """Idempotently upsert the protected built-in roles + relationship types.
+
+        The built-ins (the standard roles and the system relationship types —
+        member_of, version_of, derived_from, references, peer_of, consumes,
+        produces) are *invariant*: defined in code with canonical UUIDs
+        (``SYSTEM_REL_KEYS`` / ``STANDARD_ROLE_KEYS``) and marked protected.
+
+        A DB whose registry rows were established by migrations alone — rather
+        than by a seeded ``Registry`` — can be missing them. That breaks every
+        consumer creating those edges (e.g. ``version_of`` on a Flame publish),
+        which fails with ``[NOT_FOUND] Relationship type 'version_of' not
+        found``. Upserting by canonical key (``save_*`` match on the stable
+        UUID) makes the registry self-healing on every startup, with no
+        migration required and no risk to custom types.
+        """
+        from forge_bridge.core.registry import Registry
+
+        defaults = Registry.default()
+        for name in defaults.roles.names():
+            await self.save_role(defaults.roles.get_by_name(name))
+        for name in defaults.relationships.names():
+            await self.save_relationship_type(defaults.relationships.get_by_name(name))
+
 
 # ─────────────────────────────────────────────────────────────
 # Project Repository
