@@ -355,6 +355,9 @@ def filter_tools_by_message(
     if not exact_matches and not other_matches:
         return list(tools)
 
+    if len(exact_matches) == 1:
+        return exact_matches
+
     # Exact matches always survive — even if they alone exceed the cap.
     if len(exact_matches) >= max_tools:
         return exact_matches[:max_tools]

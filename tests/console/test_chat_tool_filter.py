@@ -359,7 +359,7 @@ def _names(tools):
 
 
 def test_pr14_message_match_keeps_overlapping_tools_only():
-    """A message that names tools should yield just those (in input order)."""
+    """A message with one exact tool name returns that tool exclusively."""
     from forge_bridge.console._tool_filter import filter_tools_by_message
 
     tools = [
@@ -369,8 +369,7 @@ def test_pr14_message_match_keeps_overlapping_tools_only():
         ]
     ]
     out = filter_tools_by_message(tools, "please run flame_ping for me")
-    # flame_ping matches by full name; flame_list_libraries matches via 'flame'.
-    assert _names(out) == ["flame_ping", "flame_list_libraries"]
+    assert _names(out) == ["flame_ping"]
 
 
 def test_pr14_no_matches_falls_back_to_full_list():
@@ -558,8 +557,7 @@ def test_pr17_exact_matches_alone_exceed_cap_truncated_in_input_order():
 
 
 def test_pr17_other_matches_only_fill_remaining_slots():
-    """When exact_matches=k and max_tools=N, exactly N-k other matches
-    are appended (k+other ≤ N)."""
+    """When there is one exact match, it wins exclusively."""
     from forge_bridge.console._tool_filter import filter_tools_by_message
 
     tools = [
@@ -572,10 +570,7 @@ def test_pr17_other_matches_only_fill_remaining_slots():
         tools, "list flame_list_libraries please", max_tools=2,
     )
     names = _names(out)
-    assert len(names) == 2
-    assert names[0] == "flame_list_libraries"  # exact, at head
-    # Then exactly ONE other match (max_tools=2, exact=1, remaining=1).
-    assert names[1] == "forge_list_projects"   # first in input order
+    assert names == ["flame_list_libraries"]
 
 
 def test_pr17_exact_match_that_also_token_matches_counts_as_exact_only():
@@ -694,8 +689,7 @@ def test_pr18_substring_and_token_complete_both_route_to_exact_bucket():
 
 
 def test_pr18_token_complete_match_survives_when_cap_exceeded():
-    """Token-complete exact matches enjoy the same cap-survival guarantee
-    as substring matches (PR17 contract extended)."""
+    """A unique token-complete exact match wins exclusively."""
     from forge_bridge.console._tool_filter import filter_tools_by_message
 
     # 9 tools that token-overlap "list", + the token-complete winner last.
@@ -706,8 +700,57 @@ def test_pr18_token_complete_match_survives_when_cap_exceeded():
         tools, "list flame libraries", max_tools=2,
     )
     names = _names(out)
-    assert names[0] == "flame_list_libraries"   # exact (token-complete) at head
-    assert len(names) == 2                       # one other match fills remainder
+    assert names == ["flame_list_libraries"]
+
+
+def test_di2_unique_substring_exact_match_wins_exclusively():
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [
+        _make_tool("forge_get_shot_stack"),
+        _make_tool("forge_get_shot"),
+        _make_tool("forge_get_shot_versions"),
+        _make_tool("forge_get_shot_lineage"),
+    ]
+
+    out = filter_tools_by_message(tools, "forge_get_shot")
+
+    assert _names(out) == ["forge_get_shot"]
+
+
+def test_di2_unique_token_complete_exact_match_wins_exclusively():
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [
+        _make_tool("flame_list_start_frames"),
+        _make_tool("flame_set_start_frames"),
+        _make_tool("flame_set_segment_attribute"),
+    ]
+
+    out = filter_tools_by_message(tools, "set start frames")
+
+    assert _names(out) == ["flame_set_start_frames"]
+
+
+def test_di2_multiple_exact_matches_still_fall_through_to_combined_set():
+    from forge_bridge.console._tool_filter import filter_tools_by_message
+
+    tools = [
+        _make_tool("flame_ping"),
+        _make_tool("z_token_match"),
+        _make_tool("forge_widget"),
+    ]
+
+    out = filter_tools_by_message(
+        tools,
+        "call forge_widget and flame_ping with z around",
+        max_tools=8,
+    )
+
+    names = _names(out)
+    assert names[:2] == ["flame_ping", "forge_widget"]
+    assert "z_token_match" in names
+    assert len(names) > 2
 
 
 def test_pr18_ignores_namespace_prefix_for_exact_subset_cap_survival():
@@ -815,16 +858,7 @@ def test_pr18_acceptance_list_projects_does_not_promote_flame_list_libraries():
              _make_tool("flame_list_libraries")]
     out = filter_tools_by_message(tools, "list projects")
     names = _names(out)
-    # forge_list_projects shares 'list' and 'projects' (token overlap, two
-    # of three tokens). flame_list_libraries shares only 'list'. Neither
-    # is token-complete; both end up as token-overlap matches in input
-    # order. The PR18 promise is that flame_list_libraries was NOT
-    # elevated to the exact-match bucket — verify by checking the head.
-    assert names[0] == "forge_list_projects"
-    # And specifically: flame_list_libraries did not jump the queue.
-    assert names.index("forge_list_projects") < names.index(
-        "flame_list_libraries"
-    )
+    assert names == ["forge_list_projects"]
 
 
 # ── PR19: deterministic lexical normalization ─────────────────────────────
