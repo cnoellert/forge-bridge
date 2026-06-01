@@ -3,7 +3,7 @@ milestone: v1.10
 phase: DI.2
 phase_name: Eligibility Arbitration — make routing resolve instead of hard-stop
 type: phase-discuss
-status: cycle-1-draft
+status: cycle-2-draft
 drafted: 2026-06-01
 derives_from: .planning/phases/DI.2-eligibility-arbitration/DI.2-FRAMING.md (cycle-3, sized ≤3/9) + .planning/milestones/v1.10-DISCUSS.md (Q-DI2 → concrete hook)
 artifact_role: resolves the framing's Q-DI2.1..Q-DI2.5 against live code; sequences the capture fix FIRST; reduces the five framing deliverables to a buildable, measurement-gated ladder. Feeds DI.2-PLAN.
@@ -67,17 +67,35 @@ that tells resolver-overmatch (a: right operation, N tools) from bad-compile
   the highest-leverage fix and it is what unblocks DI.1's live demo (the request
   now reaches `_step.py:415`'s gate instead of dying at `:330`).
 
-- **Q-DI2.2 — LLM selection budget. RESOLVED: contingent on Q-DI2.5, single
-  capped call.** It is a *pick-one-from-set* selection, **not** the orchestration
-  loop — control-flow, never meaning ([[feedback-orchestrator-control-flow-not-meaning]]):
-  picks from the provided ≤5, never invents a tool, never authors prose. Fires
-  **only** when `deterministic_narrow` leaves 2..5 survivors, reusing existing
-  router caps (no new budget knobs). **Sequence-gated:** built only if the
-  capture data shows residual (a) cases the deterministic rules (Q-DI2.1 +
-  strengthened narrow) can't reach. Site is between `_step.py:266` and the `:330`
-  ambiguous return; it needs router/mcp access so it lives in a console-layer
-  helper, **not** pure `_tool_filter.py` (which is I/O-free by contract). Exact
-  module deferred to plan.
+- **Q-DI2.2 — LLM selection budget. RESOLVED (operator-ratified cycle-2):
+  contingent, kept — not fully deferred.** *Why kept (operator/Creative): a
+  pure-deterministic DI.2 reads clean but risks another "we protected the boundary
+  and left the user stuck" milestone. A bounded LLM pick among already-resolved
+  candidates is still **arbitration**, not recompilation — it belongs in an
+  eligibility-arbitration phase.* **The governing invariant:** *the LLM may choose
+  among known candidates; it may not create a new candidate.* It is a
+  *pick-one-from-set* selection, **not** the orchestration loop — control-flow,
+  never meaning ([[feedback-orchestrator-control-flow-not-meaning]]). The seven
+  guardrails (binding, all must hold):
+  1. Fires **only after rungs 2+3 fail** to resolve (runtime ordering).
+  2. **Only** when the candidate set is bounded (≤5).
+  3. **Only** over candidate tools the resolver already produced.
+  4. **No new tool invention.**
+  5. **No fresh interpretation** of the original request beyond choosing among
+     the candidates.
+  6. **Timeout-bounded** (reuse the existing router per-tool cap; no new knobs).
+  7. **Captured for corpus review** — the selection is itself a new arbitration
+     decision and must emit to the **divergence** corpus (a versioned schema
+     extension to `narrower_decision`/`ambiguity_state`, *not* a comprehension
+     touch — don't-couple preserved). *Plan-time: this bumps `SCHEMA_VERSION`.*
+
+  Two distinct gates, not one (separated cycle-2): the **build-time gate**
+  (*does rung 4 ship at all?*) is decided by the Q-DI2.5 baseline — if rungs 2+3
+  eliminate the reachable (a) class, rung 4 never ships. The **runtime gate**
+  (guardrail 1, *when it fires if shipped*) is the 2..5-after-deterministic
+  condition. Site is between `_step.py:266` and the `:330` ambiguous return; it
+  needs router/mcp access so it lives in a console-layer helper, **not** pure
+  `_tool_filter.py` (I/O-free by contract). Exact module deferred to plan.
 
 - **Q-DI2.3 — task-term surface. RESOLVED: terminal fallback, outcomes-not-tools,
   best-effort labels.** Replaces the `:330-341` `"Step matched N tools… use a
@@ -114,14 +132,18 @@ own justification, not built speculatively:
    ordinary task phrasings, deterministically. Unconditional; scope sized by the
    capture data.
 4. **Bounded LLM selection (Q-DI2.2).** Single capped pick-one call, 2..5
-   candidates. **Contingent** — built only if task 1 shows residual (a) the
-   deterministic rungs can't reach.
+   candidates, after rungs 2+3, timeout-bounded, captured. **Contingent** —
+   ships only if task 1 shows residual (a) the deterministic rungs can't reach.
+   Governed by the seven guardrails; invariant: *choose among known candidates,
+   never create a new one.*
 5. **Task-term fallback surface (Q-DI2.3).** Replaces the "matched N tools" leak;
    outcomes not tools; best-effort labels with generic fallback. Terminal rung.
 
-**Boundary (constrains every rung, not a rung itself — Q-DI2.4):** re-select among
-known candidates, never re-interpret. No prose, no invented tools, no authority
-decisions; reads-side only — a resolved mutation still hits DI.1's `:415` gate.
+**Boundary (constrains every rung, not a rung itself — Q-DI2.4 + the rung-4
+invariant):** *choose among known candidates; never create a new candidate.*
+Re-select among the resolver's set: yes; re-interpret the request or invent a
+tool: no. No prose, no authority decisions; reads-side only — a resolved mutation
+still hits DI.1's `:415` gate.
 
 ## Carry-forward honesty (into DI.2-PLAN)
 
@@ -136,18 +158,30 @@ decisions; reads-side only — a resolved mutation still hits DI.1's `:415` gate
 
 ## Status
 
-**Cycle-1 phase-discuss, 2026-06-01.** All five Q-DI2.x resolved against live
-code. Headline rulings:
+**Cycle-2 phase-discuss, 2026-06-01** (operator ruling on Q-DI2.2 folded). All
+five Q-DI2.x resolved against live code. Cycle-2 changes:
+
+- **Q-DI2.2 ratified — rung 4 contingent, kept (NOT fully deferred).** Operator
+  rationale elevated: pure-deterministic DI.2 risks a "protected the boundary,
+  left the user stuck" milestone; bounded LLM pick among resolved candidates is
+  arbitration, not recompilation. **Governing invariant added:** *choose among
+  known candidates; never create a new candidate.* Seven binding guardrails
+  enumerated. Two gates separated: build-time (ship rung 4 at all? — Q-DI2.5
+  baseline decides) vs runtime (fires only after rungs 2+3 leave 2..5).
+- **Guardrail 7 is new + load-bearing:** rung 4's selection emits to the
+  divergence corpus (versioned `SCHEMA_VERSION` bump, not a comprehension touch) —
+  instrument the new decision surface rather than add a blind path. Consistent
+  with this milestone's measurement-debt lesson.
+
+Cycle-1 rulings (retained):
 
 - **Q-DI2.5 sequenced first and proven zero-code** — the divergence instrument
   (`_step.py:314` + `handlers.py:1752`) already captures the classifying field;
-  it's an env-var flip + non-degraded re-run. It *gates* rung 4.
+  env-var flip + non-degraded re-run. *Gates* rung 4's build decision.
 - **Q-DI2.1 grounded to ~3 lines** (`filter_tools_by_message` exclusivity-when-unique),
-  with the substring-vs-token-complete distinction flagged for the plan's test
-  matrix.
+  substring-vs-token-complete distinction flagged for the plan's test matrix.
 - **Five framing deliverables collapsed to one measurement-gated ladder;**
-  deliverable 5 reclassified as the boundary that constrains the ladder, keeping
-  DI.2 out of recompilation.
+  deliverable 5 reclassified as the boundary that constrains the ladder.
 
 Ready for DI.2-PLAN — task 1 (capture baseline) plans first so the rest is sized
 against real candidate sets.
