@@ -3,7 +3,7 @@ milestone: v1.10
 phase: DI.2
 phase_name: Eligibility Arbitration — make routing resolve instead of hard-stop
 type: phase-discuss
-status: cycle-2-draft
+status: ratified
 drafted: 2026-06-01
 derives_from: .planning/phases/DI.2-eligibility-arbitration/DI.2-FRAMING.md (cycle-3, sized ≤3/9) + .planning/milestones/v1.10-DISCUSS.md (Q-DI2 → concrete hook)
 artifact_role: resolves the framing's Q-DI2.1..Q-DI2.5 against live code; sequences the capture fix FIRST; reduces the five framing deliverables to a buildable, measurement-gated ladder. Feeds DI.2-PLAN.
@@ -183,5 +183,6 @@ Cycle-1 rulings (retained):
 - **Five framing deliverables collapsed to one measurement-gated ladder;**
   deliverable 5 reclassified as the boundary that constrains the ladder.
 
-Ready for DI.2-PLAN — task 1 (capture baseline) plans first so the rest is sized
-against real candidate sets.
+**RATIFIED 2026-06-01** (operator). All five Q-DI2.x closed; rung 4 invariant +
+guardrails binding. Proceed to DI.2-PLAN — task 1 (capture baseline) plans first
+so the rest is sized against real candidate sets.
