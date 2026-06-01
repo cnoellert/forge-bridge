@@ -4,7 +4,7 @@ phase: CR.1
 type: phase-close
 status: closed-mechanism-shipped-corpus-frozen
 closed: 2026-06-01
-honest_scope: "Shipped the mechanism CR.1 promised — the (b) answer-pass on successful reads + structured passthrough on aborted reads — and ran the author-driven dogfood that produced the comprehension corpus. The dogfood's finding is that the mechanism is attached at the wrong seam for the real failure distribution: mildly-complex reads fail UPSTREAM of chain_complete, so the answer-pass never fires on them. Non-developer artist UAT did NOT happen and stays open; this close makes no artist-comprehension-fidelity claim."
+honest_scope: "Shipped the mechanism CR.1 promised — the (b) answer-pass on successful reads + structured passthrough on aborted reads — and ran the author-driven dogfood that produced the comprehension corpus. The dogfood's finding is that the mechanism is attached at the wrong seam for the real failure distribution: mildly-complex reads fail UPSTREAM of chain_complete, so the answer-pass never fires on them. Non-developer artist UAT did NOT happen and is deliberately NOT carried forward (operator ruling: senseless before the compile-layer fixes land — it would only reproduce these failures louder); this close makes no artist-comprehension-fidelity claim."
 grounding: "Live dogfood 2026-06-01 against the projekt_forge consumer surface (76 tools) on bridge's own :9996 (stdio-held-open, current main). 11 reads, wire captured. Findings: UAT/CR.1-dogfood-findings.md (committed 24c2de5) + 2 screenshots."
 supersedes_question_from: .planning/phases/CA-thread-a-console-authority/CA.1-CLOSE.md (the milestone question "should the chat synthesize?")
 ---
@@ -42,10 +42,12 @@ supersedes_question_from: .planning/phases/CA-thread-a-console-authority/CA.1-CL
 3. **The comprehension corpus — PRODUCED (author-driven), FROZEN at 11 reads.**
    The dogfood ran (`24c2de5`); the wire ledger + taxonomy live in
    `UAT/CR.1-dogfood-findings.md`. **The non-developer artist UAT the framing named
-   (per `project-forge-bridge-ux-philosophy`) did NOT happen.** This was
-   author-driven. Artist UAT is an explicit open carry-forward, and this close does
-   not claim artist-comprehension fidelity
-   (`feedback-operational-maturity-not-completeness`).
+   (per `project-forge-bridge-ux-philosophy`) did NOT happen, and is deliberately NOT
+   carried forward this round** (operator ruling: senseless before the compile-layer
+   fixes land — it would only reproduce the author dogfood's failures louder, i.e.
+   CA.1 UAT-theater). It re-enters scope, if ever, only after the §Ranked-input ①/②
+   items land. This was author-driven; this close makes no artist-comprehension-fidelity
+   claim (`feedback-operational-maturity-not-completeness`).
 
 ## The finding that matters (the real v1.9-CR.1 learning)
 
@@ -105,7 +107,7 @@ two-path (compile-reaching vs forced-tool) limitation.
 ## What this close does NOT do
 
 - Does **not** claim artist-comprehension fidelity. Author-driven only; non-developer
-  UAT stays open.
+  UAT deliberately NOT carried this round (it would be UAT-theater pre-compile-fix).
 - Does **not** fix anything in the substrate. Zero substrate-data failures were
   found; per `project-substrate-to-usability-crossing`, these failures are *meant*
   to be human/legibility — the crossing is working as designed. "Fixing" the
@@ -142,13 +144,15 @@ fix the corpus instrument to capture failure seams.
 
 **CR.1 CLOSED.** Mechanism (b) answer-pass + structured-abort passthrough: shipped,
 live-confirmed. Author-driven comprehension corpus: produced, frozen at 11 reads,
-findings committed (`24c2de5`). Non-developer artist UAT: **open carry-forward.**
-Headline finding — answer-pass attached at the wrong seam; compile layer is the
-legibility bottleneck — handed to the next milestone as ranked framing input. No
-substrate fix; crossing working as designed.
+findings committed (`24c2de5`). Non-developer artist UAT: **struck this round**
+(deliberate operator ruling — pre-compile-fix it would be UAT-theater; re-enters scope
+only after the ①/② dispatch-correctness items land). Headline finding — answer-pass
+attached at the wrong seam; compile layer is the legibility bottleneck — handed to the
+next milestone as ranked framing input. No substrate fix; crossing working as designed.
 
 ---
 
 *Closed 2026-06-01. Mechanism is real and shipped; the corpus is real and frozen;
-the artist UAT is honestly still owed. The seam finding is the asset — it tells the
-next milestone where to aim.*
+the artist UAT is deliberately not run this round (it would be theater before the
+compile layer is fixed). The seam finding is the asset — it tells the next milestone
+where to aim.*
