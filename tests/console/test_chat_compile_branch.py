@@ -33,6 +33,14 @@ def _tool(name: str, description: str):
     return SimpleNamespace(name=name, description=description)
 
 
+def _authority_tool(name: str, *, read_only: bool):
+    return SimpleNamespace(
+        name=name,
+        description=f"{name} description",
+        annotations=SimpleNamespace(readOnlyHint=read_only),
+    )
+
+
 @pytest.fixture(autouse=True)
 def _reset_rate_limit():
     _rate_limit._reset_for_tests()
@@ -267,6 +275,93 @@ async def test_run_compile_branch_mutating_commit_returns_preview(monkeypatch):
     assert outcome.graph_intent_id is None
     assert outcome.assent_record_id is None
     run_chain.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_compile_branch_strips_commit_for_exact_read_tool(monkeypatch):
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(return_value=["forge_list_shots", "commit"])
+    )
+    chain_body = {
+        "status": "success",
+        "request_id": "req-read",
+        "chain": [{"step": "forge_list_shots", "result": {"shots": []}}],
+        "error": None,
+    }
+    run_chain = AsyncMock(return_value=chain_body)
+    monkeypatch.setattr(_chat_compile, "run_chain_steps", run_chain)
+
+    outcome = await run_compile_branch(
+        router=router,
+        user_prompt="list shots",
+        tools=[_authority_tool("forge_list_shots", read_only=True)],
+        mcp=SimpleNamespace(),
+        request_id="req-read",
+        client_ip="127.0.0.1",
+        started=10.0,
+    )
+
+    assert outcome.regime == "compiled_non_mutating"
+    assert outcome.steps == ["forge_list_shots"]
+    assert outcome.preview is None
+    run_chain.assert_awaited_once()
+    assert run_chain.await_args.kwargs["steps"] == ["forge_list_shots"]
+
+
+@pytest.mark.asyncio
+async def test_run_compile_branch_keeps_commit_for_exact_mutating_tool(monkeypatch):
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(return_value=["flame_rename_shots", "commit"])
+    )
+    run_chain = AsyncMock()
+    monkeypatch.setattr(_chat_compile, "run_chain_steps", run_chain)
+
+    outcome = await run_compile_branch(
+        router=router,
+        user_prompt="rename shots",
+        tools=[_authority_tool("flame_rename_shots", read_only=False)],
+        mcp=SimpleNamespace(),
+        request_id="req-mutate",
+        client_ip="127.0.0.1",
+        started=10.0,
+    )
+
+    assert outcome.regime == "compiled_mutating_preview"
+    assert outcome.steps == ["flame_rename_shots", "commit"]
+    assert outcome.preview["summary"]["requires_ratification"] is True
+    run_chain.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_compile_branch_keeps_commit_when_first_token_not_exact_tool(
+    monkeypatch,
+):
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(return_value=["list shots", "commit"])
+    )
+    run_chain = AsyncMock()
+    monkeypatch.setattr(_chat_compile, "run_chain_steps", run_chain)
+
+    outcome = await run_compile_branch(
+        router=router,
+        user_prompt="list shots",
+        tools=[_authority_tool("forge_list_shots", read_only=True)],
+        mcp=SimpleNamespace(),
+        request_id="req-inexact",
+        client_ip="127.0.0.1",
+        started=10.0,
+    )
+
+    assert outcome.regime == "compiled_mutating_preview"
+    assert outcome.steps == ["list shots", "commit"]
+    run_chain.assert_not_awaited()
+
+
+def test_chat_compile_read_strip_does_not_use_fuzzy_narrowing_helpers():
+    source = inspect.getsource(_chat_compile)
+
+    assert "filter_tools_by_message" not in source
+    assert "deterministic_narrow" not in source
 
 
 @pytest.mark.asyncio

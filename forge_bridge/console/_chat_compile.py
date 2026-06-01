@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import uuid
 from typing import Any, Optional
 
+from forge_bridge.console._authority import dispatch_authority
 from forge_bridge.console._engine import run_chain_steps
 from forge_bridge.console._param_extract import extract_explicit_params
 from forge_bridge.graph.commit import graph_contains_commit_node, is_commit_step
@@ -57,6 +58,27 @@ def _tool_description(tool: Any) -> str:
     else:
         value = getattr(tool, "description", "")
     return str(value or "").strip()
+
+
+def _strip_commit_for_exact_read_graph(steps: list[str], tools: list) -> list[str] | None:
+    tools_by_name: dict[str, list[Any]] = {}
+    for tool in tools:
+        name = _tool_name(tool)
+        if name:
+            tools_by_name.setdefault(name, []).append(tool)
+
+    read_steps: list[str] = []
+    for step_text in steps:
+        if is_commit_step(step_text):
+            continue
+
+        first_token = step_text.split(maxsplit=1)[0] if step_text.strip() else ""
+        matches = tools_by_name.get(first_token, [])
+        if len(matches) != 1 or dispatch_authority(matches[0]):
+            return None
+        read_steps.append(step_text)
+
+    return read_steps or None
 
 
 def build_compile_system_prompt(tools: list) -> str:
@@ -156,25 +178,28 @@ async def run_compile_branch(
         )
 
     if graph_contains_commit_node(steps):
-        graph_intent_id: str | None = None
-        assent_record_id: uuid.UUID | None = None
-        if session_factory is not None:
-            async with session_factory() as session:
-                assent_repo = AssentRecordRepo(session)
-                record = await assent_repo.propose(chain_steps=steps)
-                await session.commit()
-            graph_intent_id = record.graph_intent_id
-            assent_record_id = record.id
-        return CompileBranchOutcome(
-            regime="compiled_mutating_preview",
-            steps=steps,
-            preview=build_preview_from_steps(steps, graph_intent_id),
-            chain_body=None,
-            compile_error=None,
-            graph_intent_id=graph_intent_id,
-            assent_record_id=assent_record_id,
-        )
-
+        read_steps = _strip_commit_for_exact_read_graph(steps, tools)
+        if read_steps is not None:
+            steps = read_steps
+        else:
+            graph_intent_id: str | None = None
+            assent_record_id: uuid.UUID | None = None
+            if session_factory is not None:
+                async with session_factory() as session:
+                    assent_repo = AssentRecordRepo(session)
+                    record = await assent_repo.propose(chain_steps=steps)
+                    await session.commit()
+                graph_intent_id = record.graph_intent_id
+                assent_record_id = record.id
+            return CompileBranchOutcome(
+                regime="compiled_mutating_preview",
+                steps=steps,
+                preview=build_preview_from_steps(steps, graph_intent_id),
+                chain_body=None,
+                compile_error=None,
+                graph_intent_id=graph_intent_id,
+                assent_record_id=assent_record_id,
+            )
     chain_body = await run_chain_steps(
         steps=steps,
         tools=tools,
