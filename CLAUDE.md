@@ -20,7 +20,15 @@ The core ideas:
 
 ## Current State
 
-Shipped at tag `v1.4.1` (2026-04-30). `pyproject.toml` version is still `1.4.1` — v1.5 + v1.6 work shipped reader docs (INSTALL.md, GETTING-STARTED.md, RECIPES.md, TROUBLESHOOTING.md), observability extensions (`postgres` + `graph_store` doctor rows, `ollama-turn` / `ollama-compile` log lines), chat-layer convergence, and operator surfaces (`fbridge flame-exec`, `fbridge graph list/show`, `fbridge discover`, `fbridge ratify`) — all as patch-equivalent against the 1.4.1 baseline without public API expansion. 19 symbols in `forge_bridge.__all__`. The v1.7 Artist Readiness milestone is ACTIVE; Thread A A.1 (chat compile + preview) and A.2 (ratification + enforced apply) are shipped. `.planning/STATE.md` is frozen archaeology; current continuity lives in milestone/phase docs, `.planning/JOURNAL.md`, and git history.
+Shipped at tag `v1.5.1` (2026-05-31); `pyproject.toml` version is `1.5.1`. The 19 symbols in `forge_bridge.__all__` have stayed byte-stable since the v1.4.1 baseline — five milestones of behavior (v1.5 → v1.9) deepened the runtime without expanding the public surface. Shipped since v1.4.1:
+
+- **v1.5 Legibility** — reader docs (INSTALL.md, GETTING-STARTED.md, RECIPES.md, TROUBLESHOOTING.md).
+- **v1.6 Operability** — graph-native operational runtime (`graph_store` JSONL append log, `fbridge flame-exec`, `fbridge graph list/show`), doctor observability (`postgres` + `graph_store` rows, daemon-routed Flame probe, `ollama-turn` / `ollama-compile` log lines), chat-layer convergence (default model `qwen2.5-coder:32b → :14b`, SSE streaming, K=2 orchestrator termination).
+- **v1.7 Artist Readiness** — the authority chain end-to-end: NL → `compile_intent()` → `preview_emitted` → `AssentRecord` → `fbridge ratify` / `POST /api/v1/ratify` → store-and-replay apply.
+- **v1.8 Console Authority** — CA.1 projected the ratify chain onto the Web UI (preview render + ratify affordance + the de-blank guard); CA.2/CA.3 unopened.
+- **v1.9 Conversational Reads (ACTIVE)** — CR.1 landed: a `(b)` terminal-synthesis answer-pass at the `chain_complete` read seam (`acomplete`, local Ollama), so reads answer humans in plain language. Reads-only by structure; mutations stay deterministic preview+ratify. The author-driven dogfood (spike-1 comprehension corpus) is pending the projekt-forge v1.5.1 re-pin + `013_13_13` re-publish; non-developer UAT is an explicit carry-forward.
+
+`.planning/STATE.md` is frozen archaeology (stopped at Phase 24.4); current continuity is distributed across milestone/phase docs, `.planning/JOURNAL.md`, `.planning/CONTINUITY-MAP.md`, and git history — there is no single live cursor (see CONTINUITY-MAP.md).
 
 ### What exists and works
 
@@ -121,7 +129,7 @@ forge-bridge/
 │           └── forge_bridge.py   ← HTTP server running inside Flame on :9999
 │
 ├── scripts/
-│   └── install-flame-hook.sh    ← Deploys the Flame hook (defaults pinned to v1.4.1)
+│   └── install-flame-hook.sh    ← Deploys the Flame hook (defaults pinned to v1.5.1)
 │
 ├── tests/                   ← pytest suite (test_*.py); see tests/llm/, tests/integration/, tests/console/
 │
@@ -197,7 +205,7 @@ pip install -e ".[dev,llm]"
 
 # 3. Install the Flame hook
 ./scripts/install-flame-hook.sh
-# or standalone: curl -fsSL https://raw.githubusercontent.com/cnoellert/forge-bridge/v1.4.1/scripts/install-flame-hook.sh | bash
+# or standalone: curl -fsSL https://raw.githubusercontent.com/cnoellert/forge-bridge/v1.5.1/scripts/install-flame-hook.sh | bash
 
 # 4. Run migrations (defaults to forge:forge@localhost:5432/forge_bridge — set FORGE_DB_URL to override)
 alembic upgrade head
@@ -223,36 +231,28 @@ forge-bridge console doctor                                             # CLI + 
 
 ## Active Development Context
 
-Milestone: **v1.6 Operability** (opened 2026-05-14; v1.5 Legibility closed same day). See `.planning/STATE.md` for the live cursor; framing at `.planning/milestones/v1.6-FRAMING.md`.
+Milestone: **v1.9 Conversational Reads** (active). There is no single live state cursor — continuity is distributed across milestone/phase docs under `.planning/`, `.planning/JOURNAL.md`, and git history; `.planning/CONTINUITY-MAP.md` maps which artifact carries what authority. The most recent milestone-close doc plus that map is the cold-resume surface.
 
-Architectural baseline (v1.6-FRAMING §2.5): forge-bridge is **a low-latency conversational runtime + a graph-native operational runtime sharing a common dispatch substrate**. Three engineering domains are now held separately and named explicitly:
+**v1.9 thesis:** the chat surface stopped answering humans — it returns dispatch envelopes (`chain_complete` with raw results), not plain-language answers. v1.9 reattaches a model answer-pass on **reads** as a *pressure instrument*: rough-but-usable, so an artist can finally drive the tool and generate a real comprehension-failure corpus to rank later legibility work. **CR.1 has landed** (the `(b)` terminal-synthesis pass at the `chain_complete` seam, via `LLMRouter.acomplete`); the author-driven dogfood is pending the projekt-forge re-pin + data publish.
 
-1. **Runtime economics** — token budget, KV cache, model size, prompt prefix length.
-2. **Protocol serialization** — provider-native `tool_calls` ingestion + Bug-D salvage normalization (load-bearing on qwen2.5-coder under the 58-tool prefix per Phase 24.1 live measurement).
-3. **Dispatch substrate** — `_execute_python_core` shared body across MCP tool-call path + `fbridge flame-exec` CLI + graph_store JSONL append-only event log.
+**Architectural baseline (inherited from v1.6-FRAMING §2.5, still binding):** forge-bridge is **a low-latency conversational runtime + a graph-native operational runtime sharing a common dispatch substrate**. Three engineering domains held separately: runtime economics (token/model/prefix budget), protocol serialization (provider-native `tool_calls` + Bug-D salvage normalization on qwen2.5-coder), and dispatch substrate (`_execute_python_core` shared across MCP tool-call path + `fbridge flame-exec` + graph_store JSONL log).
 
-Five v1.6 phases shipped under writer's-room cadence (no formal GSD plan substrate; framing + commits + cursors + STATE.md updates carry archaeology):
+**Load-bearing doctrine that constrains every chat/answer change (do not relitigate casually):**
 
-- **Phase 24** (substrate work closed on portofino 2026-05-15) — Operational substrate loop. 4-commit operator arc Exists → See → Trust → Drive: `fbridge graph list/show` + `fbridge doctor graph_store` row (tri-state ok/loaded/fail) + Q8 POSIX append atomicity verified dual-platform (portofino macOS + flame-01 Linux) + `fbridge flame-exec` CLI sharing `_execute_python_core` body with the LLM tool-call path. Substrate-discipline encoded structurally — operator surfaces are projections, not parallel execution paths.
-- **Phase 24.1** (CLOSED 2026-05-14) — KV-cache work + protocol-path observability. `OllamaToolAdapter.send_turn` instrumented with structured `ollama-turn` log line. Three-domain decomposition folded into framing. Bug-D salvage promoted to first-class normalization layer.
-- **Phase 24.2** (CLOSED 2026-05-15) — Doctor probe refactored to daemon-routed dispatch (`POST :9996/api/v1/exec text="flame_ping"`). Architectural invariant: **health surface reflects daemon-observed dispatch truth, not independently reconstructed local truth.** Closes the config-context-divergence class (launchd env vs shell env drift was silent + indefinite pre-24.2).
-- **Phase 24.3** (CLOSED 2026-05-16; PR #4 MERGED) — Chat-layer convergence Layer A + Layer C. (A) Default model `qwen2.5-coder:32b → qwen2.5-coder:14b` per measure-first canonical baseline (~1.5–2× per-iter speedup). (C) SSE history-grows streaming for `POST /api/v1/chat` with `Accept: text/event-stream` (4.4ms first-byte vs 120s budget; JSON path preserved).
-- **Phase 24.4** (CLOSED 2026-05-18; PR #5 MERGED) — Chat-layer convergence Layer B: orchestrator-side K=2 canonical-recurrence trigger at D-07 site (`router.py:639-662`). Three terminal SSE event taxa (`done` = model-decided / `orchestration_terminated` = policy-decided / `error` = transport/runtime) encode architectural truth. Load-bearing invariant: **"orchestrator may terminate but does not impersonate the model."**
+- **The orchestrator may terminate but does not impersonate the model** (24.4, K=2 canonical-recurrence trigger in `router.py`). Three terminal taxa — `done` (model-decided) / `orchestration_terminated` (policy-decided) / `error` (transport) — encode *who decided*, not just *what*. Consumers branch on the taxon.
+- **The cut line for synthesis (v1.9):** the system MAY synthesize *explanations of facts that exist* in the substrate; it MAY NOT synthesize *facts that do not exist* (no invented state, results, authority decisions, provenance, or predicted-outcome-as-fact). The operative axis is not facts-vs-explanations alone — it is **grounded AND understandable AND authored-by-an-entitled-layer**. The model authors answers (attributed `done`); the orchestrator/handler never authors prose; assent stays the operator's.
+- **Reads vs mutations split:** reads may carry a model answer-pass; mutations stay deterministic preview → ratify → apply with no model prose anywhere near `AssentRecord`. In CR.1 this is enforced *structurally* — the answer-pass lives only in the `compiled_non_mutating` branch, not behind a runtime flag.
+- **Substrate, not producer:** bridge ships recording/synthesis/staging machinery; a consumer (projekt-forge in production) feeds it. On a stock install the learning pipeline and staged-ops tables stay dormant.
 
-**24.x A/B/C decomposition complete.**
+**Milestones shipped since the v1.4.1 baseline** (writer's-room cadence — framing + commits + cursors carry archaeology; no formal GSD plan substrate): **v1.5** Legibility (reader docs) · **v1.6** Operability (graph-native runtime, doctor observability, 24.x chat-layer convergence — model bump to `qwen2.5-coder:14b`, SSE streaming, K=2 termination) · **v1.7** Artist Readiness (the NL → compile → preview → ratify → apply authority chain; `AssentRecord` substrate; `fbridge ratify` + `POST /api/v1/ratify`) · **v1.8** Console Authority (CA.1 projected the ratify chain onto the Web UI; CA.2/CA.3 unopened) · **v1.9** Conversational Reads (CR.1 answer-pass, active).
 
-**Next phase (anticipated, not opened): Phase 24.5** — Consumer-side UX of `orchestration_terminated` in Console + CLI. The K-th `event: message` carries the answer that triggered termination; the consumer surfaces this as the user-facing response. Framing constraint per 24.4 §3.1: the chat handler / Console UI / CLI surface the envelope; the orchestrator does NOT synthesize.
+**Constraints (binding):**
 
-**§11 deferral register from 24.4 framing (live "what's next" menu; all explicitly unbound pending evidence, NOT rejected):** (1) affordance-selection regression — iter 1 still picks `flame_find_media` not `flame_execute_python`; (2) orchestrator-side terminal-content surfacing in consumer (24.5); (3) D-07 unification; (4) cross-provider Anthropic termination semantics (production hardcodes `sensitive=True` → Ollama); (5) token-delta streaming (native `tool_calls` reliability unchanged); (6) adaptive / per-tool K; (7) result-hash normalization.
+- Public `forge_bridge.__all__` is **19** and has not moved since v1.4.1; `pyproject.toml` is `1.5.1`. New internal packages (e.g. `forge_bridge/comprehension/`, `forge_bridge/corpus/`) carry their own `__all__` and do NOT touch the top-level 19. No new external libraries.
+- The CR.1 comprehension corpus (`forge_bridge/comprehension/`) is a **distinct instrument** from the v1.6 divergence corpus (`forge_bridge/corpus/`) — mirror the atomic-append-JSONL + versioned-schema pattern, never couple schemas or gates, and keep the two named distinctly forever.
+- Writer's-room cadence persists: framing → discuss → plan → execute, cross-voice review (DT grounding / Creative experience / Orch synthesis), grounded against live file reads.
 
-**v1.6 constraints (binding):**
-
-- Public `forge_bridge.__all__` unchanged at 19 through every 24.x phase. No new external libraries. `pyproject.toml` version still `1.4.1`.
-- Anti-scope §10 (24.4 framing) binding across all 24.x work: no orchestrator-side synthesis, no prompt injection, no system-message changes, no temperature drift, no tool-list narrowing, no semantic-equivalence result-hashing, no cross-provider reach.
-- Per-layer success criteria attached to native layer; UX wins ride as ADDITIONAL, not laundered into convergence success.
-- Writer's-room cadence persists; framing + execution commits + cursors + STATE.md updates carry archaeology.
-
-**Don't break:** the Flame hook + MCP server + Artist Console + CLI + chat endpoint are all in production use across portofino + flame-01 + assist-01. v1.6 added: SSE streaming on `/api/v1/chat`, K=2 termination + `event: orchestration_terminated` taxon, graph_store JSONL emission via `_execute_python_core`, `fbridge flame-exec` + `fbridge graph list/show`, daemon-routed doctor probe, `postgres` + `graph_store` doctor rows, default model bump to `qwen2.5-coder:14b`. All preserve existing surfaces byte-equivalently — refactoring beyond what 24.5 framing explicitly scopes is out of scope.
+**Don't break:** the Flame hook + MCP server + Artist Console + CLI + chat endpoint are all in production use across portofino + flame-01 + assist-01. Every milestone since v1.4.1 has preserved existing surfaces byte-equivalently; the answer-pass is additive (a synthesis failure must never regress a successful read — `acomplete` is bounded and its failure swallowed to an empty answer).
 
 ---
 

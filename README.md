@@ -26,7 +26,7 @@ projekt-forge pins specific forge-bridge versions and builds production workflow
 
 ## Current Status
 
-Shipped at **v1.4.1** (2026-04-30). 19 phases across 6 milestones. Active milestone: **v1.5 Legibility** (Phases 20-23 — install + concept docs + recipes + diagnostics).
+Shipped at **v1.5.1** (2026-05-31). Active milestone: **v1.9 Conversational Reads** — restoring a model answer-pass on read queries so the chat surface answers humans in plain language, not dispatch envelopes. Milestones v1.5 Legibility (install + concept docs + recipes + diagnostics), v1.6 Operability (graph-native operational runtime, doctor observability, chat-layer convergence), v1.7 Artist Readiness (NL → compile → preview → ratify → apply authority chain), and v1.8 Console Authority (ratification projection onto the Console) have all shipped since the v1.4.1 baseline. Public `forge_bridge.__all__` remains **19 symbols** — the surface has stayed stable while behavior deepened.
 
 | Component | Status |
 |-----------|--------|
@@ -41,15 +41,20 @@ Shipped at **v1.4.1** (2026-04-30). 19 phases across 6 milestones. Active milest
 | CLI `fbridge` — top-level commands + `console` / `mcp` / `flame` groups | ✅ Shipped (v1.3.1 Phase 11; expanded through v1.4) |
 | Staged-operations platform (`/api/v1/staged`, MCP tools, lifecycle) | ✅ Shipped (v1.4, FB-A + FB-B) |
 | LLMRouter agentic tool-call loop (`complete_with_tools()`) | ✅ Shipped (v1.4, FB-C) |
-| Chat endpoint (`POST /api/v1/chat`) | ✅ Shipped (v1.4, FB-D + 16.1 + 16.2) |
+| Chat endpoint (`POST /api/v1/chat`) | ✅ Shipped (v1.4, FB-D + 16.1 + 16.2; compile-then-dispatch since v1.7) |
 | Direct execution (`execute_command` / `fbridge exec`, PR31 envelope) | ✅ Shipped — see [docs/DIRECT_EXECUTION.md](docs/DIRECT_EXECUTION.md) |
 | WebSocket event server (`:9998`) | ✅ Shipped (graceful degradation per Phase 07.1) |
 | Learning pipeline (synthesis + probation + manifest) | ✅ Shipped (v1.0; refined through v1.4) |
+| Graph-native operational runtime (`graph_store` JSONL, `fbridge flame-exec` / `graph list/show`) | ✅ Shipped (v1.6) |
+| Runtime doctor observability (`fbridge doctor` — Console/MCP/Flame/postgres/graph_store rows) | ✅ Shipped (v1.6) |
+| Authority chain: NL → compile → preview → ratify → apply (`AssentRecord`, `fbridge ratify`, `POST /api/v1/ratify`) | ✅ Shipped (v1.7 Thread A) |
+| Console ratification projection (preview render + ratify affordance in the Web UI) | ✅ Shipped (v1.8 CA.1) |
+| Conversational read answer-pass (plain-language answers on read queries) | 🚧 In progress (v1.9 CR.1 — landed; author-driven dogfood pending) |
 | Dependency graph traversal engine | 📋 Planned (relationships persist; no traversal module yet) |
 | Canonical event-driven pub/sub abstraction | 📋 Planned (WS server ships; canonical layer does not) |
 | Maya endpoint | 📋 Planned |
 | Editorial / shot-tracking adapters | 📋 Planned |
-| Authentication (multi-user, caller identity) | 📋 Planned (SEED-AUTH-V1.5; v1.6+) |
+| Authentication (multi-user, caller identity) | 📋 Planned (SEED-AUTH-V1.5; `AssentRecord.decided_by` is free-string until then) |
 
 ---
 
@@ -147,7 +152,7 @@ fbridge --help
 # 3. Artist Console Web UI
 curl -fsS http://localhost:9996/ui/ -o /dev/null -w "%{http_code}\n"   # 200
 
-# 4. Chat endpoint (requires Ollama + qwen2.5-coder:32b running)
+# 4. Chat endpoint (requires Ollama + qwen2.5-coder:14b running)
 curl -s -X POST http://localhost:9996/api/v1/chat \
   -H "content-type: application/json" \
   -d '{"messages":[{"role":"user","content":"hello"}]}'
