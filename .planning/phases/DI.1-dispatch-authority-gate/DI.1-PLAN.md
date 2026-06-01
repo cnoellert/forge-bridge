@@ -3,7 +3,7 @@ milestone: v1.10
 phase: DI.1
 phase_name: The Dispatch-Authority Gate
 type: phase-plan
-status: cycle-1-draft
+status: cycle-2-draft
 drafted: 2026-06-01
 derives_from: .planning/phases/DI.1-dispatch-authority-gate/DI.1-FRAMING.md (cycle-3, converged)
 artifact_role: executable task breakdown for DI.1. Shape-locks grounded by direct read at draft time ([[feedback-substrate-shape-grounding-at-plan-stage]]).
@@ -24,6 +24,27 @@ fail-closed) + an **integration** test (each of 1B/1C blocks a known mutation
 tool *at the dispatch edge*, proving it never reaches `call_tool`). The
 integration test is the real invariant lock and it targets **1B/1C only** — not
 1A (1A owns no safety; see framing).
+
+## Dispatch topology — full enumeration (plan-check, cycle-2)
+
+There are **7** `call_tool` sites, not 3. The plan-check classifies every one so
+nothing is silently missed and the authorized path is not broken. **Unifying
+principle:** DI.1 gates exactly the edges where **routing** selected the tool —
+that is where "authority must not depend on routing" applies. Where the **caller**
+chose the tool, or authority was **already granted**, it is not routing's call.
+
+| Site | Disposition | Why |
+|---|---|---|
+| `handlers.py:722` (1B forced) | **GATE (T5)** | routing chose the tool |
+| `_step.py:409` (1C chain) | **GATE (T6)** | routing chose the tool |
+| `_step.py:778` (verify), `:834` (apply) | **EXCLUDE — do NOT gate** | post-ratification apply (`manifest.apply_counterpart`, `mode="verify"`) — *carries* authority; gating it **breaks ratified applies** (regression) |
+| `registry.py:251` (`invoke_tool`) | out of DI.1 scope (name it) | agentic-loop / MCP-client executor; **not on the chat compile path** A.1 replaced. The MCP *client* owns the `readOnlyHint` decision. *If the agentic loop is still reachable with mutation tools, that's a follow-on candidate, not DI.1.* |
+| `cli/run.py:45` (`fbridge run`) | out of DI.1 scope (name it) | operator *explicitly names* the exact tool — not routing |
+| `_tool_chain.py:173` | out of scope (infra) | hardcoded read (`forge_list_projects`) for param resolution |
+
+**The regression guard is load-bearing:** T5/T6 add the check *only* at `:722` and
+`:409` — never at `:778/:834`. The integration test (T8) must include a positive
+case: a **ratified apply still executes** through `:778/:834` unblocked.
 
 ## Tasks (ordered; dependencies noted)
 
@@ -55,12 +76,15 @@ has no flag-day. *Test:* a `user-taught` tool registered with no annotations →
 ### T4 — The shared reader `dispatch_authority` *(the helper)*
 New `dispatch_authority(tool) -> bool` (`is_mutating`), fail-closed:
 returns **read only if** `readOnlyHint is True`; **absent / False / unknown ⇒
-mutating**. Reads `getattr(tool, "annotations", None)` via the existing
-`_annotation_value` logic (`discover.py:89` — extract to a shared util, or import;
-**decision T4a:** placement must avoid an import cycle — *lean: a small
-`forge_bridge/console/_authority.py` importing the discover helper, or relocate
-`_annotation_value` to a neutral module*). *Unit test:* True→read; False/absent/
-unknown→mutating. *Depends on nothing; blocks T5/T6/T7.*
+mutating**. **T4a RESOLVED (grounded):** the reader is `getattr(getattr(tool,
+"annotations", None), "readOnlyHint", None) is True` — the exact runtime access
+`discover.py:89` (`_annotation_value`) proves works (annotations is an object,
+attribute-accessed). `_annotation_value` is pure `getattr` (3 lines, no deps), and
+**`forge_bridge/console/` imports nothing from `forge_bridge/cli/`** (verified) —
+so importing the cli helper would be a new backwards dependency. Therefore: a
+**self-contained `forge_bridge/console/_authority.py`** (no cli import), reader
+inlined. *Unit test:* True→read; False/absent/unknown→mutating. *Depends on
+nothing; blocks T5/T6/T7.*
 
 ### T5 — 1B gate: forced dispatch *(SAFETY FLOOR)*
 `handlers.py` — **before** `:721` (`normalize_tool_args` / `call_tool`): if
@@ -85,15 +109,23 @@ non-commit steps can be **cheaply** confirmed all-reads *without invoking the
 narrowing functions* (`_step.py:251/260` are DI.2's — **off-limits**): strip the
 commit (`[s for s in steps if not is_commit_step(s)]`) and route to execute → the
 read runs the normal pipeline and the **existing** answer-pass answers it for
-free. Else: leave the preview (annoying-but-safe). **Open (T7a):** define
-"cheaply" without reaching narrowing — *lean: only strip when the chain carries
-no mutation-capable token by a local check; otherwise leave preview.* A wrong
-strip cannot mutate (T6/1C backstops). *Depends on T4; lowest priority.*
+free. Else: leave the preview (annoying-but-safe). **T7a RESOLVED (grounded):**
+"cheaply" = each non-commit step's **first token** is the intended tool name
+(`_chat_compile.py:97`, `first_token = step_text.split(maxsplit=1)[0]`, already
+used as `tool_name` at `:100`). So exact-match each `first_token` against the
+in-scope `tools` list and classify via `dispatch_authority`; strip only if
+**every** step exact-matches a single **read** tool, else leave preview. Pure name
+lookup — **never** calls `filter_tools_by_message`/`deterministic_narrow`
+(`:251/260`, DI.2's region). A wrong strip cannot mutate (T6/1C backstops).
+*Depends on T4; lowest priority.*
 
 ### T8 — Regression-lock *(the invariant)*
 Unit (T4 fail-closed) + integration (T5 + T6 each block a known mutation at the
 edge). The integration test is the tested acceptance criterion: **no mutation
-tool executes via any dispatch edge without authority.** *Depends on T5, T6.*
+tool executes via any *routing* dispatch edge without authority** — AND a
+**positive case: a ratified apply still executes** through `_step.py:778/834`
+unblocked (the regression guard for the excluded authorized path). *Depends on
+T5, T6.*
 
 ## Critical path & sequencing
 
@@ -123,6 +155,21 @@ existing read pipeline, not a new model call. Fail-closed everywhere.
 
 ## Status
 
-**Cycle-1 plan draft, 2026-06-01.** Eight tasks; safety floor = T3+T4+T5+T6+T8.
-Two small open sub-decisions (T4a placement, T7a "cheaply"). Shape-locks grounded
-by direct read. Ready for plan-check / cross-voice review, then execute.
+**Cycle-2 plan draft, 2026-06-01 (plan-check folded).** Eight tasks; safety floor
+= T3+T4+T5+T6+T8. Plan-check results:
+
+- **Full dispatch topology enumerated — 7 sites, not 3** (counts load-bearing).
+  New §Dispatch topology classifies every one. **Regression catch:** the
+  authorized post-ratification apply path (`_step.py:778/834`) must be **excluded**
+  from the gate, with a positive T8 test that ratified apply still executes.
+- **Scope principle named:** DI.1 gates where *routing* chose the tool (1B/1C);
+  not where the *caller* chose (`fbridge run`, MCP-direct `invoke_tool`) or
+  authority was already granted (apply). The two out-of-scope edges are named, not
+  silently ignored.
+- **T4a RESOLVED:** self-contained `console/_authority.py` reader (`getattr`,
+  mirrors `discover.py:89`); console imports nothing from cli (verified) — no cycle.
+- **T7a RESOLVED:** "cheaply" = exact first-token name lookup over the tools list;
+  never touches the narrowing functions.
+
+No open sub-decisions remain. Shape-locks grounded by direct read. Ready for
+execute (safety floor T3→T4→T5/T6→T8 first; T7 after).
