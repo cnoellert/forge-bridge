@@ -249,4 +249,18 @@ Cycle-1 plan-check (retained):
   LLM-selects — T4 gives the chain path a *bounded, guardrailed* version of an
   existing reference behavior, not a net-new capability.
 
-Open for cross-voice review before execute.
+**T1 EXECUTED 2026-06-01 → `UAT/DI.2-baseline.md`** (33 samples, post-DI.1 `@82b9062`,
+`qwen2.5-coder:14b`). Result resolves the measure-first gates:
+
+- **Class split reproduced:** (a) resolver-overmatch 3/9 · (b) bad-compile 4/9 ·
+  (c) other-seam 2/9 — matches the framing's ~33/44/22 prediction.
+- **T2 is the whole reachable win:** all 3 (a) reads (R8/R9/R10) compiled to the bare
+  step `forge_get_shot` → exact-name-wins resolves 3/3. Confirmed 3/9, not just upper bound.
+- **GATE DECISIONS:** **T4 does NOT ship** (no stable residual (a) T2 can't reach —
+  the gate condition is empty). **T3 minimal/empty** (no non-exact (a) tie in corpus).
+  **T5 ships defensively** (replaces the leak surface; no live reproducer post-T2 here).
+- **Shippable core narrowed by evidence → T2 + T5 + T6.**
+- **Bonus:** DI.1's live mutation-block is now demonstrated (R5/R11 hit the gate 3/3) —
+  a measurement-debt item retired. R2 stochastic (2/3) validated the N=3 stability clause.
+
+Open for cross-voice review before T2 execution.
