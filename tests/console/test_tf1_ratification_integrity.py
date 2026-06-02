@@ -100,12 +100,19 @@ async def test_tf1_unratified_mutation_still_blocks(
 @pytest.mark.asyncio
 async def test_tf1_explicit_param_wins_same_key_collision(
     session_factory,
+    monkeypatch,
 ):
-    step_text = (
-        f"flame_tf1_mutate project_id={PROJECT_ID} "
-        "sequence_name=explicit_seq "
-        "using sequence 30sec 21"
-    )
+    import forge_bridge.console._step as _step
+
+    def _fake_semantic(step_text):
+        return {
+            "project_id": "99999999-9999-9999-9999-999999999999",
+            "sequence_name": "30sec_21",
+        }
+
+    monkeypatch.setattr(_step, "_extract_semantic_step_params", _fake_semantic)
+
+    step_text = f"flame_tf1_mutate project_id={PROJECT_ID} using sequence 30sec 21"
     async with session_factory() as session:
         repo = AssentRecordRepo(session)
         proposed = await repo.propose([step_text])
@@ -124,5 +131,5 @@ async def test_tf1_explicit_param_wins_same_key_collision(
     )
 
     assert outcome.regime == "apply_complete"
-    assert mcp.calls[0][1]["sequence_name"] == "explicit_seq"
     assert mcp.calls[0][1]["project_id"] == PROJECT_ID
+    assert mcp.calls[0][1]["sequence_name"] == "30sec_21"
