@@ -78,7 +78,9 @@ CLASS_VALUES: Final[frozenset[str]] = frozenset({
 # validator's).
 _OBSERVED_MARKER_TYPES: Final[dict[str, type | tuple[type, ...]]] = {
     "tool_forced": bool,
-    "tools_filtered": int,
+    # int when an instrumented capture recorded it; None on a seed-legibility
+    # trace where the filter count was never captured.
+    "tools_filtered": (int, type(None)),
     "abort_reason": (str, type(None)),
     "tool_selected": (str, type(None)),
     "outcome": (str, type(None)),

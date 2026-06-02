@@ -15,6 +15,10 @@ from forge_bridge.translation_oracle._corpus import (
     coverage_report,
     read_cases,
 )
+from forge_bridge.translation_oracle._transcode import (
+    TranscodeError,
+    transcode_comprehension_record,
+)
 from forge_bridge.translation_oracle._schema import (
     CAPTURE_PROVENANCE_VALUES,
     CLASS_VALUES,
@@ -36,10 +40,12 @@ __all__ = [
     "TRANSLATION_VERDICT_VALUES",
     "SchemaValidationError",
     "SchemaVersionMismatch",
+    "TranscodeError",
     "append_case",
     "capture_observed_trace",
     "coverage_report",
     "observed_trace_from_compile_outcome",
     "read_cases",
+    "transcode_comprehension_record",
     "validate_translation_case",
 ]
