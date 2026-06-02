@@ -10,8 +10,14 @@ from forge_bridge.translation_oracle._capture import (
     capture_observed_trace,
     observed_trace_from_compile_outcome,
 )
+from forge_bridge.translation_oracle._corpus import (
+    append_case,
+    coverage_report,
+    read_cases,
+)
 from forge_bridge.translation_oracle._schema import (
     CAPTURE_PROVENANCE_VALUES,
+    CLASS_VALUES,
     PROVENANCE_VALUES,
     SCHEMA_VERSION,
     SUBSTRATE_VERDICT_VALUES,
@@ -23,13 +29,17 @@ from forge_bridge.translation_oracle._schema import (
 
 __all__ = [
     "CAPTURE_PROVENANCE_VALUES",
+    "CLASS_VALUES",
     "PROVENANCE_VALUES",
     "SCHEMA_VERSION",
     "SUBSTRATE_VERDICT_VALUES",
     "TRANSLATION_VERDICT_VALUES",
     "SchemaValidationError",
     "SchemaVersionMismatch",
+    "append_case",
     "capture_observed_trace",
+    "coverage_report",
     "observed_trace_from_compile_outcome",
+    "read_cases",
     "validate_translation_case",
 ]

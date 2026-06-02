@@ -35,6 +35,7 @@ def _label(**over):
         "expected_graph": ["flame_rename_shots {sequence_name=30sec_21, prefix=noise}"],
         "expected_params": {"sequence_name": "30sec_21", "prefix": "noise"},
         "expected_verdict_pair": {"translation": "fail", "substrate": "pass"},
+        "expected_classes": ["grounding"],
         "world_state": None,
         "expected_provenance": {"prefix": "filled-from-example"},
     }
@@ -114,9 +115,49 @@ def test_verdict_pair_values_enforced():
 
 
 def test_honest_decline_verdict_pair_is_valid():
-    """(translation=pass, substrate=gap) is the rewarded honest-decline cell."""
+    """(translation=pass, substrate=gap) is the rewarded honest-decline cell —
+    a translation SUCCESS, so it carries NO failure classes."""
     validate_translation_case(_case(label=_label(
         expected_verdict_pair={"translation": "pass", "substrate": "gap"},
+        expected_classes=[],
+    )))
+
+
+# --- TF.2 §3-4 class tags + the classes<=>translation-FAIL consistency rule ---
+
+def test_expected_classes_key_required():
+    label = _label()
+    del label["expected_classes"]
+    with pytest.raises(SchemaValidationError, match="expected_classes key is required"):
+        validate_translation_case(_case(label=label))
+
+
+def test_expected_classes_value_enum_enforced():
+    with pytest.raises(SchemaValidationError, match="expected_classes values"):
+        validate_translation_case(_case(label=_label(expected_classes=["typo-class"])))
+
+
+def test_translation_fail_requires_nonempty_classes():
+    with pytest.raises(SchemaValidationError, match="non-empty when translation=fail"):
+        validate_translation_case(_case(label=_label(
+            expected_verdict_pair={"translation": "fail", "substrate": "pass"},
+            expected_classes=[],
+        )))
+
+
+def test_translation_pass_requires_empty_classes():
+    with pytest.raises(SchemaValidationError, match="empty when translation=pass"):
+        validate_translation_case(_case(label=_label(
+            expected_verdict_pair={"translation": "pass", "substrate": "pass"},
+            expected_classes=["routing"],
+        )))
+
+
+def test_multi_tag_classes_accepted():
+    """defect #2 = routing + extraction in one case (multi-tag, TF.2 §4)."""
+    validate_translation_case(_case(label=_label(
+        expected_classes=["routing", "extraction"],
+        defect_ref="defect-2",
     )))
 
 
@@ -126,6 +167,7 @@ def test_unresolved_context_param_accepted():
     validate_translation_case(_case(label=_label(
         input="rename this sequence with prefix noise",
         expected_params={"sequence_name": "unresolved-pending-dispatch"},
+        expected_classes=["contextual"],
         world_state={"open_sequence": "30sec_edit 21_publish"},
         expected_provenance={"sequence_name": "unresolved", "prefix": "grounded-from-intent"},
     )))

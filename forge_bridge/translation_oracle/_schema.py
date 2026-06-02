@@ -59,6 +59,18 @@ PROVENANCE_VALUES: Final[frozenset[str]] = frozenset({
     "unresolved",
 })
 
+# The five translation-failure classes (TF.2 §3). Authored ground truth on a
+# Label: which classes the case is meant to exercise. Multi-tag (TF.2 §4) — a
+# case may carry several. EMPTY for a translation-PASS case (the five classes
+# populate only the translation-FAIL column of the verdict matrix).
+CLASS_VALUES: Final[frozenset[str]] = frozenset({
+    "grounding",
+    "routing",
+    "extraction",
+    "entity-resolution",
+    "contextual",
+})
+
 # Tier-1 observed-signal markers (TF.2 §5). Recognized field names within an
 # ObservedTrace; sparse-or-absent on seed-legibility traces, populated on
 # instrumented-translation captures. Validated type-if-present (the schema does
@@ -144,6 +156,35 @@ def _validate_label(label: Any) -> None:
             "label.expected_verdict_pair is required when a label is present"
         )
     _validate_verdict_pair(label["expected_verdict_pair"])
+    # expected_classes: authored translation-failure-class tags (TF.2 §3-4).
+    # Required key (may be empty list). Values from the DISTINCT class vocab.
+    # Consistency [N]: the five classes populate ONLY translation-FAIL — so
+    # translation=fail <=> non-empty classes, translation=pass <=> empty.
+    if "expected_classes" not in label:
+        raise SchemaValidationError("label.expected_classes key is required (may be empty)")
+    classes = label["expected_classes"]
+    if not isinstance(classes, list):
+        raise SchemaValidationError("label.expected_classes must be a list")
+    for cls in classes:
+        if cls not in CLASS_VALUES:
+            raise SchemaValidationError(
+                "label.expected_classes values must be from: "
+                + ", ".join(sorted(CLASS_VALUES))
+                + f"; got {cls!r}"
+            )
+    translation = label["expected_verdict_pair"]["translation"]
+    if translation == "fail" and not classes:
+        raise SchemaValidationError(
+            "label.expected_classes must be non-empty when translation=fail"
+        )
+    if translation == "pass" and classes:
+        raise SchemaValidationError(
+            "label.expected_classes must be empty when translation=pass "
+            "(the five classes populate only the translation-FAIL column)"
+        )
+    # defect_ref: optional D-series provenance tag (e.g. 'defect-2'), nullable.
+    if "defect_ref" in label and not isinstance(label["defect_ref"], (str, type(None))):
+        raise SchemaValidationError("label.defect_ref must be a string or null")
     # world_state: required key for contextual labels, nullable otherwise. The
     # key must exist (so a contextual case can never silently omit it); its
     # value may be null for text-sufficient inputs.

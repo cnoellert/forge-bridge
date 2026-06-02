@@ -135,14 +135,22 @@ forge_bridge/translation_oracle/
   `UNRESOLVED_REQUIRED_PARAM` → `abort_reason`)/`preview_emitted`/`compile_error` map correctly; the mapped
   ObservedTrace validates as a label-free case. Live capture runs at Step 4.
 
-### Step 3 — Corpus data layer + coverage accounting (`_corpus.py`) (Q2)
-- Atomic-append JSONL under `~/.forge-bridge/translation_oracle/` (mirror `comprehension/_capture.py` topology).
+### Step 3 — Corpus data layer + coverage accounting (`_corpus.py`) (Q2) **[DONE]**
+- **Schema completion folded (cheap now, migration later — zero corpus data existed):** the `Label` gained two
+  authored-ground-truth fields coverage needs — `expected_classes` (TF.2 §3-4 tags, distinct `CLASS_VALUES`
+  vocab) with the **consistency rule [N]** (translation=fail ⟺ non-empty classes; the five classes populate
+  only the FAIL column), and `defect_ref` (optional D-series tag). Not a structural seam (doesn't touch the
+  record model / 3a-3b boundary) — Label field completion.
+- **`_corpus.py`:** `append_case` (validate + atomic-append JSONL, single `cases.jsonl`, header — comprehension
+  topology) / `read_cases` / `coverage_report`.
 - **Coverage accounting [N]:** report per the adequacy matrix — every **verdict-pair cell × translation class ×
-  multi-tag pattern × D-series defect** — with **Tier-2 ≥2 per validated cell** (tune + holdout), **Tier-1 ≥1**.
+  discovery multi-tag pattern × D-series defect** — **Tier-2 ≥2** (tune+holdout), **Tier-1 ≥1**. Label-free (3b)
+  cases don't contribute (coverage = the validation set).
 - **Tier-1 cells gate on `capture_provenance=instrumented-translation` (item 3) — no seed false-green.** A
-  `seed-legibility` trace occupying a Tier-1 cell does NOT count it covered (it lacks the markers the Tier-1
-  detector reads). Coverage is capability-checked, not occupancy-checked — the exact mismatch TF exists to expose.
-- **Verify:** report flags an under-covered cell; a seed-legibility trace in a Tier-1 cell shows RED, not GREEN.
+  `seed-legibility` trace tagged with a Tier-1 class is counted (`tagged`) but does NOT satisfy the requirement
+  (`counting`), and raises a RED flag. Capability-checked, not occupancy-counted.
+- **Verified (9 tests):** empty corpus incomplete; a seed-legibility 'extraction' case → `counting=0` + RED;
+  instrumented counts; Tier-2 needs 2; label-free excluded; a coverage-complete fixture → `complete=True`.
 
 ### Step 4 — Seed + author the corpus (Q2 + Finding 1 split + item 5 transcode)
 - **Tier-2 + expected-graph from seed-32 (TRANSCODE, don't couple — item 5):** *import + transcode* the 32
