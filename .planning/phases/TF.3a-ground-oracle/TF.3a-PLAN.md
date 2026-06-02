@@ -114,17 +114,26 @@ forge_bridge/translation_oracle/
   when a Label is present requires its verdict-pair; accepts an unresolved context-param; rejects a provenance
   value borrowed from the other instruments; round-trips both a label-free and a labeled case.
 
-### Step 2 — Instrumented capture (`_capture.py`) (Finding 1's mechanism)
-- Run an authored input through the **real** compile/dispatch path, recording the `ObservedTrace` markers it
-  emits — **reuse, do not reimplement** (a reimplementation would diverge from production behavior).
-- **Open sub-question for the executor (name, don't silently pick):** capture-by-return (instrument the
-  compile/dispatch fns to surface the markers structurally) vs capture-from-logs (parse the emitted log lines).
-  Lean: capture-by-return — logs are lossy and the markers already exist as response fields (`tool_forced`,
-  `handlers.py:868`). Resolve at Step 2 with a live read of the dispatch return shape.
-- **Contextual capture:** needs a constructed `world_state` fixture (desktop is unwired → the observed trace
-  will show the *failed* resolution; the label's `world_state` holds the ground truth it should have resolved).
-- **Verify:** capture of one known input freezes an `ObservedTrace` whose `tool_forced`/`outcome` match a
-  hand-checked live run.
+### Step 2 — Instrumented capture (`_capture.py`) **[DONE]**
+- **Open sub-question RESOLVED (grounded): capture-by-return via the real seam.** The live read found
+  `run_compile_branch` (`console/_chat_compile.py`) — the non-HTTP orchestration the handler itself calls
+  ("does not own HTTP response shaping"), returning a structured `CompileBranchOutcome {regime, steps,
+  chain_body, compile_error, …}`. So `_capture.py` drives the **production** `filter_tools_by_message` +
+  `run_compile_branch` and maps the outcome → `ObservedTrace`. This is reuse, NOT reimplementation (verified:
+  `_capture` imports both from `console/`). Log-parsing rejected (lossy).
+- **`tool_forced` residual (honest, additive — no production change):** the forced path (`_execute_forced_tool`)
+  is orchestrated ABOVE `run_compile_branch`, gated by `is_tool_enforced`. Step 2 covers the **compile path**
+  (the dominant surface); `tool_forced` is a settable field (False by construction on the compile path). Forced-
+  path capture wires the existing `_execute_forced_tool` fn when routing/shadow cells are authored (Step 4).
+- **Grounding catch folded:** `observed_resolved_params` uses the production (partial) `extract_explicit_params`
+  — which captures only UUID `project_id` today (TF.1-CONTRACT §3), NOT general `key=value`. So for a rename
+  step the captured params are **empty** — and that emptiness IS the defect-#2 extraction signal. Capturing an
+  *idealized* parse would hide the very defect the oracle measures. The mapper exposes observed reality.
+- **Contextual capture:** still needs a constructed `world_state` fixture at authoring (Step 4) — desktop
+  unwired → the trace shows the *failed* resolution; the label's `world_state` holds the ground truth.
+- **Verified:** 6 deterministic mapper tests (no live model/Flame) — `answered`/`chain_aborted`(with `:407`
+  `UNRESOLVED_REQUIRED_PARAM` → `abort_reason`)/`preview_emitted`/`compile_error` map correctly; the mapped
+  ObservedTrace validates as a label-free case. Live capture runs at Step 4.
 
 ### Step 3 — Corpus data layer + coverage accounting (`_corpus.py`) (Q2)
 - Atomic-append JSONL under `~/.forge-bridge/translation_oracle/` (mirror `comprehension/_capture.py` topology).
