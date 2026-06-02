@@ -322,7 +322,8 @@ def _canonicalize_sequence_candidate(
     middle = ""
     if qualifier:
         middle = "_" + qualifier.strip(" _-").casefold()
-    return f"{head.casefold()}{middle}_{tail}"
+        return f"{head.casefold()}{middle} {tail}"
+    return f"{head.casefold()}_{tail}"
 
 
 def _match_known_entity(

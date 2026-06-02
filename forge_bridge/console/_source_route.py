@@ -63,6 +63,8 @@ def apply_source_routing(user_prompt: str, steps: list[str], tools: list) -> lis
         tool_name = _first_token(step)
         if tool_name in _SHOT_ENTITY_READ_TOOLS:
             routed.append(f"flame_get_sequence_segments {sequence_ref}")
+        elif tool_name == "flame_get_sequence_segments":
+            routed.append(f"flame_get_sequence_segments {sequence_ref}")
         else:
             routed.append(step)
     return routed

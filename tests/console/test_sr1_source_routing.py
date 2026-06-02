@@ -74,3 +74,13 @@ def test_sr1_qualified_sequence_ref_preserves_operator_reference():
     )
 
     assert routed == ["flame_get_sequence_segments 30sec_edit 21"]
+
+
+def test_sr1_normalizes_existing_sequence_segment_step_to_prompt_reference():
+    routed = apply_source_routing(
+        "what is the duration of shot 10 on 30sec_edit 21",
+        ["flame_get_sequence_segments 30sec_edit_21"],
+        _tools(),
+    )
+
+    assert routed == ["flame_get_sequence_segments 30sec_edit 21"]

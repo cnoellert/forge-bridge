@@ -30,7 +30,7 @@ def test_resolves_qualified_sequence_name_to_canonical_form():
     resolved = resolve_query_entities("Get the segments on 30sec_edit 21")
 
     assert resolved["sequence_name"] == {
-        "value": "30sec_edit_21",
+        "value": "30sec_edit 21",
         "source": "30sec_edit 21",
     }
 
