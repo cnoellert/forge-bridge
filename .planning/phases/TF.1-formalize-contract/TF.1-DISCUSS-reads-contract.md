@@ -75,3 +75,57 @@ dispatch), and the Phase-3 oracle scores reads at both points (no blind spot on 
 - **Phase 3a** validates reads at both contract points (the oracle's reads verdict is two-part).
 - **Phase 4** lands the contextual fix at the dispatch resolution point (wire `desktop`) — Option B names
   where it goes.
+
+---
+
+## RESOLUTION (DT + Creative — Option B, REFRAMED + hardened)
+
+Option B is adopted, but the room generalized it past "reads have a two-part contract." The grounded
+correction (DT, correcting his own D2; Creative's synthesis):
+
+### The axis is NOT reads-vs-mutations — it's **compile-resolved vs context-resolved**
+
+DT confirmed `desktop` is architecturally **only reachable at dispatch** (the chat handler imports no Flame
+client; `resolve_query_entities`'s `desktop` is a passed-in Mapping the resolver never fetches; only the
+dispatch path via `mcp.call_tool → flame_*` touches Flame — so desktop-at-compile would mean a Flame
+round-trip in the hot stateless-compile path). Consequence: **a contextual mutation straddles too.**
+"rename *this sequence*" compiles to a graph carrying the unresolved ref; desktop resolves it at dispatch —
+**post-ratify**. D2's "mutations: graph IS the contract" held in E2E-01 only because compile happened to
+bake a concrete (wrong, example-lifted) name in. So the real contract axis:
+
+| Parameter class | Contract | Applies to |
+|---|---|---|
+| **compile-resolved** (concrete at compile) | chain-step graph IS the full contract; validate at compile | reads + mutations |
+| **context-resolved** (contextual ref needing desktop/runtime: "this sequence", "last 013 shot", "current project", derived step-text) | **two-point**: graph captures intent + dispatch resolves; validate at *both* | reads + mutations |
+
+The TF.1 contract is organized around this axis, not operation type. (Refines the NLT-DISCOVERY-CLOSE
+reads/mutations framing — the boundary follows *contextuality*.)
+
+### Shape A coupling (explicit contract clause)
+
+Resolving a mutation's contextual target *after* ratify **is Shape A working as designed** (ratify the rule
++ capability; resolve the concrete target at apply) — not a new integrity violation. Visible consequence the
+contract must state: a contextual-mutation preview shows an **unresolved ref** ("rename this sequence"),
+ratifiable **only under Shape A**. Defect #3 is the first concrete architectural expression of Shape A. The
+fork for the future: **Shape A** = ratify intent, resolve target later (today); **Shape B** = ratify the
+concrete resolved target → *requires* desktop-at-compile (the round-trip we reject now). TF.1 records
+`defect-#3-fix-at-dispatch ↔ Shape-A` so a future Shape-B motion knows it inherits this.
+
+### First-class integrity invariant (elevated from companion note → contract clause)
+
+> **Dispatch may resolve refs the graph left unresolved (contextual → concrete); it may NOT override a param
+> the operator explicitly ratified.**
+
+That is the line between Shape A working (resolving "this sequence") and a hidden mutation of the ratified
+graph (`_extract_semantic_step_params` silently changing an explicitly-ratified value on replay). The
+Phase-1 audit checks the `_step.py:254` merge (`{**public_inherited, **semantic_params, **user_params}`)
+against this *specifically* — **resolves-unresolved: yes / overrides-explicit: no** — not "doesn't override"
+in the abstract. *(DT cites the merge as ending in `user_params`; if explicitly-ratified params occupy that
+winning position the invariant may already hold by merge order — the audit confirms, doesn't assume.
+`[[feedback-ground-specs-in-actual-files]]`.)*
+
+### Net for Phase 1 plan
+
+TF.1 produces: (1) the contract organized on the compile-resolved / context-resolved axis; (2) the Shape-A
+coupling clause; (3) the integrity invariant + its `:254`-merge audit; (4) the bounded inventory. Phase 3
+validates context-resolved params at both points (reads *and* mutations).
