@@ -1056,6 +1056,7 @@ async def _chat_sse_response(
     tool_call_count_in: int,
     tools_available_count: int,
     tools_filtered_count: int,
+    execution_tools: Optional[list] = None,
     session_factory: Optional[Any] = None,
 ) -> StreamingResponse:
     """SSE response for the A.1 compile branch."""
@@ -1109,6 +1110,7 @@ async def _chat_sse_response(
                         client_ip=client_ip,
                         started=started,
                         compile_system=build_compile_system_prompt(tools),
+                        execution_tools=execution_tools,
                         session_factory=session_factory,
                     ),
                     timeout=125.0,
@@ -1860,6 +1862,7 @@ async def chat_handler(request: Request) -> Response:
             router=router,
             messages=messages_for_llm,
             tools=tools,
+            execution_tools=tools_post_reachability,
             mcp=_mcp_server.mcp,
             max_iterations=max_iterations,
             tool_result_max_bytes=tool_result_max_bytes,
@@ -1928,6 +1931,7 @@ async def chat_handler(request: Request) -> Response:
                 client_ip=client_ip,
                 started=started,
                 compile_system=compile_system,
+                execution_tools=tools_post_reachability,
                 session_factory=request.app.state.session_factory,
             ),
             timeout=125.0,

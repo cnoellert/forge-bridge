@@ -249,6 +249,51 @@ async def test_run_compile_branch_non_mutating_executes_chain(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_run_compile_branch_source_routing_uses_execution_tools(monkeypatch):
+    compile_tools = [_tool("forge_get_shot", "Get shot details.")]
+    execution_tools = [
+        *compile_tools,
+        _tool("flame_get_sequence_segments", "List Flame sequence segments."),
+    ]
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(return_value=["forge_get_shot"])
+    )
+    chain_body = {
+        "status": "success",
+        "request_id": "req-sr1",
+        "chain": [{
+            "step": "flame_get_sequence_segments 30sec 21",
+            "result": {"segments": []},
+        }],
+        "error": None,
+    }
+    run_chain = AsyncMock(return_value=chain_body)
+    monkeypatch.setattr(_chat_compile, "run_chain_steps", run_chain)
+
+    outcome = await run_compile_branch(
+        router=router,
+        user_prompt="what is the path to shot 10 on 30sec_edit 21",
+        tools=compile_tools,
+        execution_tools=execution_tools,
+        mcp=SimpleNamespace(),
+        request_id="req-sr1",
+        client_ip="127.0.0.1",
+        started=10.0,
+    )
+
+    assert outcome.regime == "compiled_non_mutating"
+    assert outcome.steps == ["flame_get_sequence_segments 30sec 21"]
+    assert outcome.chain_body == chain_body
+    router.compile_intent.assert_awaited_once()
+    assert router.compile_intent.await_args.args[1] == compile_tools
+    run_chain.assert_awaited_once()
+    assert run_chain.await_args.kwargs["steps"] == [
+        "flame_get_sequence_segments 30sec 21"
+    ]
+    assert run_chain.await_args.kwargs["tools"] == execution_tools
+
+
+@pytest.mark.asyncio
 async def test_run_compile_branch_mutating_commit_returns_preview(monkeypatch):
     router = SimpleNamespace(
         compile_intent=AsyncMock(

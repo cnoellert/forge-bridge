@@ -155,6 +155,7 @@ async def run_compile_branch(
     client_ip: str,
     started: float,
     compile_system: Optional[str] = None,
+    execution_tools: Optional[list] = None,
     session_factory: Optional[Any] = None,
 ) -> CompileBranchOutcome:
     """Compile, classify, then either preview or execute chain steps."""
@@ -201,10 +202,12 @@ async def run_compile_branch(
                 graph_intent_id=graph_intent_id,
                 assent_record_id=assent_record_id,
             )
-    steps = apply_source_routing(user_prompt, steps, tools)
+    routed_steps = apply_source_routing(user_prompt, steps, execution_tools or tools)
+    chain_tools = execution_tools if routed_steps != steps and execution_tools else tools
+    steps = routed_steps
     chain_body = await run_chain_steps(
         steps=steps,
-        tools=tools,
+        tools=chain_tools,
         mcp=mcp,
         request_id=request_id,
         client_ip=client_ip,
