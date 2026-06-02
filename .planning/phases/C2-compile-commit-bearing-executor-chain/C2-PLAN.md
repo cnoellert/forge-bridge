@@ -48,9 +48,10 @@ reroute). No overlap.
   itself unconfirmed (candidates: `publish_sequence` / `forge_publish_pipeline` /
   `forge_stage_publish_shots`). **Publish becomes its own future motion** with its own grounding (likely a
   mini-design, since discover mirrors the proposer). `_EXECUTOR_MAP` ships rename-only.
-- **G3 — `count` path in `chain_body` — still gates T3.** Locate the resolved `count` (`_step.py:895`,
-  `result["count"]`) within the `chain_body` returned by `run_chain_steps`. (Bridge-side; confirm at
-  implementation.)
+- **G3 — `count` path in `chain_body` — RESOLVED (grounded).** `chain_body` (= `run_chain_steps` return,
+  `_engine.py:99-104`) carries `chain: [{"step", "result"}, …]`; the commit step's `result` is the
+  `{"type": "commit_applied", …, "count": N}` dict (`_step.py:889-897`). Extract by type-keyed lookup —
+  full `_commit_count` helper specified in T3.
 
 ---
 
@@ -117,20 +118,35 @@ executor is in the narrowed set anyway, matching the "rename" token — the same
 
 Creative's contract: **`count` is data, the sentence is confirmation — surface both.**
 `_apply_complete_body` (`handlers.py:1030-1038`) already passes `chain: outcome.chain_body`; lift the
-resolved `count` to a top-level field, and present a phrased confirmation to the operator:
+resolved `count` to a top-level field, and present a phrased confirmation to the operator.
+
+**G3 — RESOLVED (grounded).** `outcome.chain_body` is the `run_chain_steps` return
+(`_engine.py:99-104`): `{"status", "request_id", "chain": [...], "error"}`. Each `chain` entry is
+`{"step": <text>, "result": <step result>}` (`:83-86`); the commit step's result is the
+`{"type": "commit_applied", …, "count": N}` dict (`_step.py:889-897`). So extract by **type-keyed
+lookup** (robust to position / multi-step), not `[-1]`:
 
 ```python
+def _commit_count(chain_body):
+    if not isinstance(chain_body, dict):
+        return None
+    for entry in chain_body.get("chain", []) or []:
+        result = entry.get("result")
+        if isinstance(result, dict) and result.get("type") == "commit_applied":
+            return result.get("count")
+    return None
+
 def _apply_complete_body(outcome, transport):
     body = { … existing … }
-    count = <extract from outcome.chain_body per G3>
+    count = _commit_count(outcome.chain_body)
     if count is not None:
-        body["count"] = count                       # data
+        body["count"] = count                        # data
     return body
 ```
 
 In `panel.html` (alongside the existing `:160-174` apply-complete `<dd>` rows), render the confirmation
-sentence from `count` — e.g. *"Renamed 38 shots."* (`count` present) so the operator reads a result, not a
-field. Presentation only — does not touch the apply pipeline. **Depends on G3.**
+sentence from `count` — e.g. *"Renamed 38 shots."* (when `count` present) so the operator reads a result,
+not a field. Presentation only — does not touch the apply pipeline.
 
 ### T4 — Tests `tests/console/test_c2_executor_routing.py`
 
