@@ -12,6 +12,7 @@ from typing import Any, Optional
 from forge_bridge.console._authority import dispatch_authority
 from forge_bridge.console._engine import run_chain_steps
 from forge_bridge.console._param_extract import extract_explicit_params
+from forge_bridge.console._source_route import apply_source_routing
 from forge_bridge.graph.commit import graph_contains_commit_node, is_commit_step
 from forge_bridge.llm.router import CompileError
 from forge_bridge.store.assent_record_repo import AssentRecordRepo
@@ -200,6 +201,7 @@ async def run_compile_branch(
                 graph_intent_id=graph_intent_id,
                 assent_record_id=assent_record_id,
             )
+    steps = apply_source_routing(user_prompt, steps, tools)
     chain_body = await run_chain_steps(
         steps=steps,
         tools=tools,
