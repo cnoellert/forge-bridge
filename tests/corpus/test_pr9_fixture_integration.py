@@ -435,13 +435,11 @@ def test_fixture_runs_end_to_end_single_survivor(
     Per A.5.3.2-PR9-SPEC.md §4.5 + §5.1 risk #1: drives the
     fixture ``fix-pr9-single-survivor`` (prompt "ping forge")
     through the real chat_handler arbitration pipeline against
-    the controlled reachable-tool set. PR14 keyword filter
-    yields 2 candidates (forge_ping, forge_list_projects); PR21
-    deterministic_narrow collapses to 1 (forge_ping; max-overlap
-    = 2 tokens vs. 1). Observation record reflects PR20
-    short-circuit semantics: pr20_condition_met=True (single
-    survivor AND filtered < available); collapse_occurred=True
-    (multi-to-single transition).
+    the controlled reachable-tool set. DI.2 exact-name exclusivity means
+    PR14 now yields 1 candidate (forge_ping) directly. Observation record
+    reflects PR20 short-circuit semantics: pr20_condition_met=True (single
+    survivor AND filtered < available); collapse_occurred=False because no
+    PR21 multi-to-single transition was needed.
     """
     corpus_dir = _apply_pr9_patches(monkeypatch, tmp_path)
 
@@ -479,10 +477,10 @@ def test_fixture_runs_end_to_end_single_survivor(
         f"Expected: {FIXTURE_SINGLE_SURVIVOR['expected_narrow']}\n"
         f"Observed: {observation['narrower']['decision']}\n"
     )
-    # PR20 short-circuit fired for single-survivor + collapse
-    # from PR14's 2-candidate output.
+    # PR20 short-circuit fired for the single survivor. DI.2 resolves this at
+    # PR14 exact-name filtering, so there is no PR21 collapse.
     assert observation["narrower"]["pr20_condition_met"] is True
-    assert observation["narrower"]["collapse_occurred"] is True
+    assert observation["narrower"]["collapse_occurred"] is False
 
 
 def test_fixture_runs_end_to_end_multi_match(
