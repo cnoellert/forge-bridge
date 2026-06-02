@@ -39,14 +39,18 @@ shape `forge_apply_rename → commit` was correct; the substrate executed faithf
 the graph was produced). Introducing a new `ResolvedIntent`/`IntentIR` between translation and the graph
 would mint a second boundary to maintain with no evidence we need it (Creative). **Don't.**
 
-**⚠ The seam is a HYPOTHESIS, not yet a fact — the lead Phase-1 question (grounded).** The chain-step graph
-currently *straddles* the boundary: entity resolution runs both **pre-compile** (`handlers.py:1655` enrich)
-AND **at dispatch** — `_step.py:568` does `resolved_entity_params(resolve_query_entities(step_text))` on the
-*stored* step text. So the graph carries *unresolved* references that resolve at execution. If defect #3
-(sequence mangle) occurs at dispatch-time resolution, it is a **translation-class failure on the substrate
-side of the proposed seam** — which would falsify "graph-correct ⇒ translation-passed." Phase 1 must confirm
-the graph *is* the contract, or define where resolution completes (consolidate-up vs contract-at-each-site —
-DT's caution 1, made precise). **Defect #3's pin (D2) is the probe.**
+**✅ The seam HOLDS — path-dependent (D1/D2 grounded, DT; the spine survived).** The straddle caveat was
+right, and it does not threaten the spine:
+- **Mutations: graph-as-boundary HOLDS — LOCK IT.** D2 confirmed defect #3's wrong value (`30sec_21`) was
+  in the *compiled graph* before ratification; the dispatch resolver (`_step.py:568`) never ran (we never
+  ratified). Resolution + compile complete *pre-graph* for the mutation/preview path, so the chain-step
+  graph IS the translation/substrate contract — exactly what E2E-01 demonstrated (wrong values visible at
+  the seam, substrate would have executed faithfully).
+- **Reads: the boundary straddles — DOCUMENT the completion point.** Reads carry unresolved `step_text` and
+  resolve at dispatch (`_step.py:568`), so for reads the graph is *not* fully resolved. Phase 1 defines the
+  reads completion point rather than pretending the graph is the whole contract.
+
+Don't force one rule across two execution models. The reframe survives for the path C2 exercises.
 
 ---
 
@@ -81,16 +85,17 @@ DT's caution 1 flags.)
 
 ## Translation failure taxonomy (recursive triad; Phase-2 seed)
 
-Apply `[[feedback-routing-vs-implementation-vs-reachability]]` *inside* translation. E2E-01 already exhibits
-distinct classes that do NOT share a fix:
+Apply `[[feedback-routing-vs-implementation-vs-reachability]]` *inside* translation. E2E-01's three defects
+landed in **three different classes** (D1/D2 grounded) — strong vindication of "don't assume they share a fix":
 
-| E2E-01 defect | Class | Sub-finding |
+| E2E-01 defect | Class (post-grounding) | Grounded finding |
 |---|---|---|
-| explicit `"prefix 013" → tool_unresolved` | **failed to translate at all** (compile-binding) | sub-layer UNCONFIRMED → **D1 log-glance** |
-| `prefix → "noise"` | **translated to the wrong thing** (grounding / example-salience) | LLM lifted `timeline.py:215/243` field example; `[[feedback-rhetorical-position-as-architectural-control-surface]]` |
-| `30sec_edit 21_publish → 30sec_21` | **translated to the wrong thing** (entity-resolution) | ⚠ grounding-flip: SR.1 hardened the *shared* resolver (`4912e3b`/`9f24fde` touched `llm/resolver.py`), so "reuse SR.1's resolver" is a false premise → routing-gap vs uncovered-case → **D2** |
+| `prefix → "noise"` | **grounding / example-salience** (translated-wrong) | LLM lifted `timeline.py:215/243` field example; `[[feedback-rhetorical-position-as-architectural-control-surface]]`. (Unchanged — the only defect that stayed where framed.) |
+| explicit `"prefix 013" → tool_unresolved` | **routing + extraction** (NOT compile-binding) | D1: log shows `tool_forced` `tools_filtered=1`, `wall_clock_ms=0`, *no ollama-compile* — "prefix" narrowed to 1 tool → **PR20 forced-execution shadowed compile** (`compile_intent` never ran) → `extract_explicit_params` couldn't parse space-separated `"prefix 013"` (key, no value). The "compile-binding" cell is **vacated**. (PR20-shadows-compile = the same seam DT flagged as the C2-reachability risk.) |
+| `30sec_edit 21_publish → 30sec_21` | **contextual-resolution gap** (NOT entity-resolution / NOT SR.1-reuse) | D2: the mangle is at COMPILE time (in the graph; `_step.py:568` never ran). Not a resolver mangle and not "reuse SR.1's resolver" (the shared resolver parses *text*, and the open-sequence name is never *in* the text). Nothing injects the currently-open Flame sequence into compile context → LLM fills `sequence_name` from the docstring example. **= Q1, confirmed real + distinct + load-bearing.** |
 
-Candidate full taxonomy: binding · grounding · entity-resolution · extraction · routing failures (Creative).
+Candidate full taxonomy: grounding · **routing** · **extraction** · entity-resolution · **contextual/stateful
+resolution** failures. (Phase 2 formalizes; the three E2E-01 defects already populate three cells.)
 
 ---
 
@@ -101,16 +106,16 @@ Candidate full taxonomy: binding · grounding · entity-resolution · extraction
 
 E2E-01 is the cleanest proof: old reading "rename failed"; accurate reading "translation failed, substrate
 passed." A coarser generalization of the routing/impl/reachability triad; costs nothing; removes enormous
-noise from every future investigation. DT + Creative both ratify *now*. → candidate methodology memory
-(promotion-grade; pending operator go-ahead, see end).
+noise from every future investigation. DT + Creative ratified; **PROMOTED to methodology memory**
+`[[feedback-substrate-pass-translation-open]]` (2026-06-02).
 
 ---
 
 ## Motion shape (Creative's 4 phases; measure-first-gated)
 
-1. **Formalize** — inventory the existing translation machinery (table above) + establish the chain-step
-   graph as the translation/substrate contract boundary. **Lead question: does the graph hold as the
-   boundary, or does resolution straddle it?** (D2 / defect #3 is the probe.)
+1. **Formalize** — inventory the existing translation machinery (table above) + establish the contract
+   boundary. **Lead question RESOLVED (D2):** chain-step graph IS the boundary for **mutations** (lock);
+   for **reads** it straddles → document the dispatch completion point. Don't force one rule across both.
 2. **Taxonomy** — define the translation failure taxonomy (binding / grounding / entity-resolution /
    extraction / routing). Don't assume the three E2E-01 defects share a fix.
 3. **Validation** — independent translation-pass / substrate-pass as *separately measurable* outcomes
@@ -124,16 +129,15 @@ failure mode of a grand framing is that it never lands — Phase 3 before Phase 
 
 ---
 
-## Discovery's first actions (grounding before scoping — feed Phase 1)
+## Discovery's first actions
 
-- **D1 — log-glance** the E2E-01 run: pin defect #2's sub-layer (compile-binding vs filter vs validation).
-- **D2 — pin defect #3 + the seam:** trace the mutation compile sequence-binding path. Does resolution run
-  at compile or dispatch? Routing-gap vs uncovered-resolver-case? **This also answers whether the chain-step
-  graph holds as the boundary object.**
-- **D3 — example-salience inventory:** enumerate liftable examples across the mutation tool field
-  descriptions (defect #1 is one instance of a class).
-
-D1/D2 live on the host/infra surface (E2E-01 logs + live source) — DT's grounding lane.
+- **D1 — DONE (DT).** Defect #2 = PR20-shadows-compile (routing) + `extract_explicit_params` parse fail
+  (extraction); NOT compile-binding. Log: `tool_forced` `tools_filtered=1` `wall_clock_ms=0`, no compile line.
+- **D2 — DONE (DT).** Defect #3 = contextual-resolution gap at compile time; graph-as-boundary holds for
+  mutations, straddles for reads. Spine confirmed. (Enriched compile-input = optional later evidence for the
+  *fix*, NOT a Phase-1 blocker — room consensus.)
+- **D3 — PENDING (bridge-side, Orch lane):** example-salience inventory — enumerate liftable examples across
+  the mutation tool field descriptions (defect #1 is one instance of a class). Feeds Phase 4's grounding slice.
 
 ---
 
@@ -153,10 +157,12 @@ D1/D2 live on the host/infra surface (E2E-01 logs + live source) — DT's ground
 - **Q0 — milestone placement.** Milestone-scale; reshapes the roadmap. Lean: opens a **new milestone (NL
   Translation)** with v1.12 closing on C2 delivered + Shape B deferred forward — decide after Phase-1
   inventory sizes it (don't pre-commit the milestone to unmeasured scope).
-- **Q1 — contextual/stateful resolution as a distinct sub-class.** "currently open sequence", "last 013
-  shot" need *world state*, not just NL — distinct from static entity resolution, and adjacent to the R7
-  session-scope carry-forward + DI.2's dormant context-eligibility seam. Does the taxonomy (Phase 2) carry a
-  **contextual-resolution** class? (Creative's "Layer A = world-model construction" lives here.)
+- **Q1 — ANSWERED (D2): yes, a distinct class.** Contextual/stateful resolution ("currently open sequence",
+  "last 013 shot", "the current project", "the active timeline") = *state-reference* problems needing
+  runtime world-state injected into compile *before* graph formation — distinct from grounding / routing /
+  extraction / static entity-resolution. Defect #3 is its evidence (moved theory → grounded). Gets its own
+  taxonomy cell + a resolution site that feeds compile. Adjacent to the R7 session-scope carry-forward +
+  DI.2's dormant context-eligibility seam. (Creative's "Layer A = world-model construction" lives here.)
 - **Q2 — uncertainty representation depth.** Today the *only* uncertainty surface is the preview/ratify gate
   (it caught `noise`). Is "represent uncertainty / carry candidate meanings *before* preview" a first-
   milestone slice or a later maturation? This is where the monolith risk concentrates — keep it gated.
