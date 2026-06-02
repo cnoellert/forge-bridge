@@ -338,3 +338,82 @@ proceeds in parallel. Reliability-debt seed parked.
 =============================================================================
 
 
+=============================================================================
+2026-06-01 — v1.11 SR.1 CLOSED · cross-team ADR-003 (Door C/C1) ACCEPTED ·
+forge-bridge owes Constraint 2 (NEXT MOTION, first thing)
+=============================================================================
+
+WHAT LANDED
+-----------
+- v1.10 Authority Invariance CLOSED (DI.1 dispatch-authority gate +
+  DI.2 eligibility arbitration). v1.11 Source-of-Truth Routing / SR.1
+  CLOSED + live-verified: sequence-scoped shot reads route to
+  flame_get_sequence_segments (console/_source_route.py post-compile
+  pass). 2/3 reachable win (R8 path + R10 duration); R9 timewarp =
+  capability gap (no tool emits it). main @ 455a60d (pushed, clean).
+- Cross-team ADR-003 (forge-pipeline <-> forge-bridge) ACCEPTED —
+  Door C / variant C1: chat-initiated mutations traverse the single
+  v1.7 ratify chain (AssentRecord); forge-pipeline staged-ops becomes
+  a manifest-participating apply-EXECUTOR behind ratify, NOT a second
+  authority door. Phase 26 block root cause = a door-mismatch (golden
+  path expected chat -> forge_stage_* proposer; chat's mutation door
+  is the ratify chain), not a _tool_filter bug.
+- Integrity seam = the EXISTING generic commit-node dispatch
+  (_step.py:792-866 replays apply_counterpart tool in verify/apply
+  modes; generic over MutationManifest, not flame-specific). C2
+  (proposer -> async listener) is integrity-incompatible — it falls
+  outside the synchronous verify->apply envelope.
+- 26-05 MutationManifest integrity contract RATIFIED (DT reviewed vs
+  live source; one change-request raised then RETRACTED after tracing
+  _step.py:879-887 — the {"drift":true} envelope IS recognized ->
+  PLAN_STATE_DRIFT -> mark_failed). 26-06 executors DONE
+  (forge_apply_rename / forge_apply_publish, 3-mode discover/verify/
+  apply, on forge-pipeline branch claude/document-action-api-ZYmqX,
+  unpushed). No forge-bridge files edited — generic contract held.
+
+NEXT MOTION (first thing) — forge-bridge Constraint 2
+-----------------------------------------------------
+compile_intent() must emit a commit-bearing executor chain
+(<executor> + commit) for mutating intents, so they reach
+run_compile_branch's preview/ratify branch instead of the DI.1-blocked
+bare-flame_rename_shots direct-dispatch path. Keystone that fires C1
+end-to-end and unblocks 26-04 (live E2E).
+- Mechanism lean: deterministic post-compile transform, sibling of
+  SR.1's _source_route + an intent->executor map (rename->forge_apply_
+  rename, publish->forge_apply_publish). NOT a prompt change.
+- GROUND FIRST (the one unverified item — do NOT assert before
+  tracing): does run_compile_branch run the executor's discover at
+  PREVIEW time so the operator ratifies the real resolved manifest,
+  or is wiring discover-at-preview a Constraint-2 sub-requirement?
+  Contract section 2.1 assumes discover-output-IS-preview; the commit
+  path stores chain TEXT. Trace preview construction + the existing
+  mutation-ratify flow end-to-end before scoping.
+
+METHODOLOGY (the session through-line)
+--------------------------------------
+The grounding-flip pattern fired ~5x: a load-bearing claim that would
+have shaped the work flipped when probed against live source/data
+("9 tools" -> 8 & resolves; "builtins pass none" -> 69/69 annotated;
+"answerability map must be built" -> _NAMESPACE_PREFIXES already
+tokenized; reachable-win 3/3 -> 2/3; the section-2.3 change-request ->
+retracted). Operating rule: ground the SPECIFIC claim against live
+source before it shapes the work — absence-claims and your own review
+assertions especially; trace to the bottom, not the first branch.
+
+CARRIED FORWARD
+---------------
+- forge-bridge Constraint 2 (above) — the active next motion.
+- 26-04 live E2E rerun — blocked on Constraint 2; resumes as a
+  ratify-chain rerun against the new executors (non-autonomous,
+  live-Flame).
+- R9 timewarp — capability gap; needs a segment-effects inspection
+  tool (forge-pipeline). R7 — session/project scope.
+- /gsd-secure-phase 26 before the forge-pipeline branch merges
+  (26-05 STRIDE DT-ratified; 26-06 ships code).
+
+STATE: v1.11 SR.1 closed; cross-team C1 ratified; executor contract +
+executors delivered (forge-pipeline side). Ball in forge-bridge's
+court for Constraint 2. Live cursor: memory passoff UPDATE 9.
+=============================================================================
+
+
