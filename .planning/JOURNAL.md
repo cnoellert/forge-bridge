@@ -416,4 +416,82 @@ executors delivered (forge-pipeline side). Ball in forge-bridge's
 court for Constraint 2. Live cursor: memory passoff UPDATE 9.
 =============================================================================
 
+=============================================================================
+2026-06-02 — C2 SHIPPED + CLOSED (Constraint 2) · v1.12 Mutation
+Delegation OPENED (phase 1 of 2) · Shape A+ intent-ratification
+=============================================================================
+
+WHAT LANDED (main @ 9ecd503, pushed; close docs @ 47574fe)
+----------------------------------------------------------
+Chat RENAME intents now compile to a commit-bearing executor chain
+(flame_rename_shots -> forge_apply_rename <args> -> commit) and reach
+preview/AssentRecord/ratify instead of the DI.1 hard-block. Constraint 2
+done. Five tasks in one commit (9ecd503):
+- T1 console/_executor_route.py — deterministic post-compile rewrite;
+  rename-only _EXECUTOR_MAP; 5-clause guard incl. Finding-1
+  dispatch_authority(executor_tool); multi-mutation fail-safe.
+- T2 hook _chat_compile.py:183 (before graph_contains_commit_node:184),
+  execution_tools or tools.
+- T3 A+ _commit_count (type-keyed on result type==commit_applied,
+  _step.py:889-897) -> count in _apply_complete_body; panel.html renders
+  "Renamed N shots." (data + confirmation).
+- T4 tests/console/test_c2_executor_routing.py (+163).
+- T5 in-chat apply <id> replay aligned onto the reachable surface
+  (relocated Finding 2).
+Verified bridge-side: suite 2688 -> 2697 (+9), __all__=19, ruff clean,
+tree clean, DT sign-off no reservations.
+
+THE DECISION (operator-ratified)
+--------------------------------
+Shape A+ (intent-ratification) NOW; Shape B (manifest-ratification,
+protects the preview->apply Window-2 drift) is the NAMED next motion =
+v1.12 phase 2, deliberately NOT smuggled in. Grounding settled the fork
+honestly: discover does NOT run at preview (commit path stores chain
+TEXT; build_preview_from_steps is lexical) -> a pure-A preview shows no
+count, so silent-count-drift is a Shape-B artifact, not an A risk. The
+A+ count = len(manifest.resolved_plan), computed bridge-side from the
+manifest the commit node holds (robust independent of executor return).
+
+PLAN-CHECK (DT + Creative)
+--------------------------
+Finding 1 (HIGH) adopted -> T1 enforces the mapped executor's own
+mutating authority (G1's one-time annotation check becomes a durable
+runtime invariant). Publish EXCLUDED (G2: no ApplyPublishInput <->
+PublishSequence arg parity, bare tool unconfirmed) -> own future motion;
+"no reshaping" invariant rescoped to rename-proven. Finding 2
+traced-to-bottom + RELOCATED: the C2 hook surface is benign (strip-guard
+robust to the execution_tools-superset); real exposure was a
+pre-existing in-chat apply-replay narrowing C2 was merely first to
+exercise -> T5.
+
+METHODOLOGY (the session through-line)
+--------------------------------------
+Grounding-flip can RELOCATE a finding, not only correct a fact: Finding
+2's seam moved (C2 hook -> apply-replay surface), downgraded, spun out
+T5. Same pattern fired on a housekeeping claim (DT "2-ahead, 34ff8f7
+unpushed" -> grounded: 1-ahead, 34ff8f7 already on origin). And
+Creative's read: grounding REDUCED scope (rename-only map, no mode
+token, no arg reshaping) = convergence signal, the plan fitting the
+system rather than being imposed on it. Candidate amendments parked in
+C2-CLOSE.md §Methodology (not yet written to memory files).
+
+CARRIED FORWARD
+---------------
+- Shape B (manifest-ratification, Window-2) = v1.12 phase 2, named next
+  motion. Maturation condition: room judges Window-2 drift unacceptable
+  in production.
+- 26-04 live E2E — gated on forge-pipeline executors
+  (claude/document-action-api-ZYmqX, ~146 ahead, UNPUSHED) being
+  pushed + registered. C2 degrades honestly to the DI.1 block until then
+  (substrate-before-consumer boundary the plan named).
+- Publish executor delegation = its own future motion (own grounding;
+  discover mirrors the proposer).
+- /gsd-secure-phase 26 before the forge-pipeline executor branch merges.
+- R9 timewarp capability tool; R7 session/project scope (from v1.11).
+
+STATE: v1.12 Mutation Delegation OPENED; phase 1 (C2) shipped + closed +
+verified bridge-side. main @ 47574fe (pushed, in sync, tree clean).
+Live cursor: memory passoff UPDATE 10.
+=============================================================================
+
 
