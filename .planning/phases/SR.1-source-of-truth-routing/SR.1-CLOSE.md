@@ -26,6 +26,40 @@ the commit-node branch. Sequence-ref signal via 24.11; rewrite forge shot/segmen
 `4912e3b` / `9f24fde` closed the predicted trap (rewritten step must carry a faithful,
 mixed-separator sequence ref AND target a reachable tool).
 
+## Conscious divergence (recorded — DT + Creative, not a defect)
+
+SR.1 shipped as a **targeted step-rewrite** — a fixed `_SOURCE_ROUTABLE` set (`forge_get_shot`
+family + `forge_list_shots`) → `flame_get_sequence_segments` when a sequence ref is present —
+**not** the general namespace/substrate bias the discuss converged on. For SR.1's
+deliberately-small scope this is the better call: smallest blast radius, clearest
+verification surface, predictable rollback. **The trade, recorded so it's a known shape not
+a later surprise** ([[feedback-transitional-structure-naming]]): SR.1 is an *explicit
+mapping*, not a general substrate router — **the next substrate-routing case extends the
+list, it does not inherit generality.** The larger pattern held open: a general
+source-of-truth router keyed on the `flame_*`/`forge_*` namespace axis. Maturation
+condition for generalizing: a 2nd/3rd routing case where extending the table becomes the
+friction (then promote the mapping to a namespace-bias rule).
+
+## The honest claim (DT + Creative — do not over-state)
+
+Claim **"R8/R10 reach the answer-pass with real source data,"** NOT "R8/R10 answered." The
+tool returns **25 segments**; the needed fields are in there (`file_path` for R8, `duration`
+for R10), but turning that into "the path of *shot 10*" needs the two next-layer things SR.1
+correctly doesn't own: **ordinal grounding** ("shot 10" → which of 25; `tst_010`/`tst_100`/
+`tst_110` all loosely match, several span L01/L02/L03 — Q1 ambiguity now *grounded in real
+payloads*, not hypothetical) and **answer-pass synthesis** (extract one field from a
+25-row payload, don't dump it). The crossing peeled forward exactly as designed: substrate-
+routing fixed → next exposed seam = ordinal-grounding + answer-pass synthesis.
+
+## Recommended next probe (the SR.1-close → next-milestone signal; cheap, daemon up)
+
+One dogfood read — **"what's the duration of shot 10 on 30sec_edit 21"** — cleanly
+identifies the next hill:
+- returns all 25 segments → **answer-pass synthesis** gap;
+- selects the wrong segment → **ordinal-grounding** gap;
+- right segment, wrong field → **payload-interpretation** gap;
+- correct duration → both layers already partial.
+
 ## Verification
 
 `pytest` 2688 passed / 41 skipped; ruff clean; `__all__`=19. **Live:** R8 + R10 both routed
