@@ -81,6 +81,13 @@ param (`resolver.py:61`) as the context-resolution enablement gap.
   compile/context axis with the Shape-A + integrity clauses first-class.
 - T1 audit has a **verdict**: invariant holds → regression test locks it (suite green, `__all__`==19); or a
   gap is documented + routed to Phase 4 with the Shape-A risk flagged.
+  - **CLOSE-GATE (DT + Creative review of the landed test, `ba4d86a`):** the lock MUST include a **same-key
+    collision** case — explicit `sequence_name=explicit_seq` vs semantic `sequence_name=30sec_21` (same key,
+    conflicting values) → assert dispatched `sequence_name == "explicit_seq"`. Without it `override-explicit-no`
+    is unpinned (the four-leg test proves coexistence, not precedence; a `:261` merge-order flip would stay
+    green — `[[feedback-mock-three-tier]]` stub). **TF.1 does not close until this assertion exists.** Optional
+    (not required): a monkeypatch variant forcing `_extract_semantic_step_params` to a conflicting value,
+    future-proofing the lock against Phase-4 `desktop` wiring.
 - No behavior change; no fixes shipped (those are Phase 4); no detection mechanism built (Phase 2/4).
 
 ## What this plan does NOT do
