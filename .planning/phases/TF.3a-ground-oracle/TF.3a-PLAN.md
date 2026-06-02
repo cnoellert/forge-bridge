@@ -163,8 +163,14 @@ forge_bridge/translation_oracle/
 ### Step 6 — Oracle assembly (`_oracle.py`)
 - **`emit(observed) → verdict-pair + emitted_provenance` — LABEL-FREE** (item 1; this is the function 3b runs
   over unlabeled records). Validation (`compare(emit(observed), label)`) is Step 5's concern, not the oracle's.
-  Settle here which detectors emit label-free (Tier-1 + example-fill via the 3a FP-calibration) vs which are
-  3a-validation-only (entity-resolution needs a canonical label) — so 3b's run is coherent. No ranking/frequency.
+  Settle here which detectors emit label-free vs 3a-validation-only — so 3b's run is coherent. No ranking/frequency.
+  **Entity-resolution is a STRADDLE, not wholly label-required (DT refinement — code it this way so Step 5
+  doesn't rediscover it):** *resolves-to-nonexistent-canonical* fails downstream (tool errors/aborts) → that
+  abort signature is in `ObservedTrace.abort_reason` → **label-free, contributes to 3b frequency**;
+  *resolves-to-wrong-but-existent-canonical* is silent → **label-gated, 3a-validation-only**. So the honest 3b
+  statement is "the silent half of entity-resolution is 3a-only; the failing half rides the abort signal."
+  Schema already supports both (ObservedTrace carries `abort_reason`) — no lock impact. Label-free set =
+  Tier-1 + example-fill (FP-calibrated) + entity-resolution's failing half.
 - **Verify:** `emit` produces a well-formed verdict-pair + emitted provenance from an ObservedTrace-only record
   (no label); round-trips `_schema.validate_*`.
 
