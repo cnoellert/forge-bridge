@@ -262,7 +262,7 @@ async def test_run_compile_branch_source_routing_uses_execution_tools(monkeypatc
         "status": "success",
         "request_id": "req-sr1",
         "chain": [{
-            "step": "flame_get_sequence_segments 30sec 21",
+            "step": "flame_get_sequence_segments 30sec_edit 21",
             "result": {"segments": []},
         }],
         "error": None,
@@ -282,13 +282,13 @@ async def test_run_compile_branch_source_routing_uses_execution_tools(monkeypatc
     )
 
     assert outcome.regime == "compiled_non_mutating"
-    assert outcome.steps == ["flame_get_sequence_segments 30sec 21"]
+    assert outcome.steps == ["flame_get_sequence_segments 30sec_edit 21"]
     assert outcome.chain_body == chain_body
     router.compile_intent.assert_awaited_once()
     assert router.compile_intent.await_args.args[1] == compile_tools
     run_chain.assert_awaited_once()
     assert run_chain.await_args.kwargs["steps"] == [
-        "flame_get_sequence_segments 30sec 21"
+        "flame_get_sequence_segments 30sec_edit 21"
     ]
     assert run_chain.await_args.kwargs["tools"] == execution_tools
 

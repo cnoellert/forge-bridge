@@ -66,11 +66,11 @@ def test_sr1_mutating_step_is_never_rewritten():
     assert routed == ["flame_set_start_frames"]
 
 
-def test_sr1_qualified_sequence_ref_emits_resolver_friendly_reference():
+def test_sr1_qualified_sequence_ref_preserves_operator_reference():
     routed = apply_source_routing(
         "what is the duration of shot 10 on 30sec_edit 21",
         ["forge_get_shot"],
         _tools(),
     )
 
-    assert routed == ["flame_get_sequence_segments 30sec 21"]
+    assert routed == ["flame_get_sequence_segments 30sec_edit 21"]

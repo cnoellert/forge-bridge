@@ -44,7 +44,7 @@ def _sequence_reference(user_prompt: str) -> str | None:
 
     match = _SEQUENCE_WITH_QUALIFIER_RE.search(user_prompt)
     if match:
-        return f"{match.group('head')} {match.group('tail')}"
+        return match.group(0).strip()
     return None
 
 

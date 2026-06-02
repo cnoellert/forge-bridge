@@ -26,6 +26,15 @@ def test_resolves_compact_sequence_name_to_canonical_form():
     }
 
 
+def test_resolves_qualified_sequence_name_to_canonical_form():
+    resolved = resolve_query_entities("Get the segments on 30sec_edit 21")
+
+    assert resolved["sequence_name"] == {
+        "value": "30sec_edit_21",
+        "source": "30sec_edit 21",
+    }
+
+
 def test_resolves_reel_name_with_same_normalization_pattern():
     resolved = resolve_query_entities("Use reel Main Reel")
 

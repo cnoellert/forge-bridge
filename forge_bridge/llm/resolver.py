@@ -19,7 +19,9 @@ _TERMINAL_DIRECTIVE_RE = re.compile(
 )
 _DIRECTIVE_VALUE_INTRODUCERS = frozenset({"prefix", "to", "named", "called"})
 _SEQ_CANDIDATE_RE = re.compile(
-    r"\b(?P<head>\d+[A-Za-z]{2,})[ _-]?(?P<tail>\d{1,4})\b"
+    r"\b(?P<head>\d+[A-Za-z]{2,})"
+    r"(?:(?P<qualifier>[_ -][A-Za-z]+)[ _-]|[ _-]?)"
+    r"(?P<tail>\d{1,4})\b"
 )
 _EXPLICIT_ENTITY_RE = re.compile(
     r"\b(?P<label>sequence|reel|library)\s+"
@@ -144,7 +146,9 @@ def resolve_query_entities(
                 continue
             source = _clean_source(seq_match.group(0))
             value = _canonicalize_sequence_candidate(
-                seq_match.group("head"), seq_match.group("tail"),
+                seq_match.group("head"),
+                seq_match.group("tail"),
+                seq_match.group("qualifier"),
             )
         else:
             value = _canonicalize_entity_name(source)
@@ -156,7 +160,9 @@ def resolve_query_entities(
         if match:
             source = _clean_source(match.group(0))
             value = _canonicalize_sequence_candidate(
-                match.group("head"), match.group("tail"),
+                match.group("head"),
+                match.group("tail"),
+                match.group("qualifier"),
             )
             value = _match_known_entity("sequence_name", value, desktop) or value
             resolved["sequence_name"] = _entity(value=value, source=source)
@@ -301,13 +307,22 @@ def _canonicalize_entity_name(value: str) -> str:
     seq_match = _SEQ_CANDIDATE_RE.fullmatch(compact)
     if seq_match:
         return _canonicalize_sequence_candidate(
-            seq_match.group("head"), seq_match.group("tail"),
+            seq_match.group("head"),
+            seq_match.group("tail"),
+            seq_match.group("qualifier"),
         )
     return re.sub(r"\s+", "_", compact.strip())
 
 
-def _canonicalize_sequence_candidate(head: str, tail: str) -> str:
-    return f"{head.casefold()}_{tail}"
+def _canonicalize_sequence_candidate(
+    head: str,
+    tail: str,
+    qualifier: str | None = None,
+) -> str:
+    middle = ""
+    if qualifier:
+        middle = "_" + qualifier.strip(" _-").casefold()
+    return f"{head.casefold()}{middle}_{tail}"
 
 
 def _match_known_entity(
