@@ -129,6 +129,14 @@ def extract_explicit_params(message: str) -> Dict[str, str]:
     # candidate for matching would be a redundant transformation).
     lower = text.lower()
 
+    sequence_key = "sequence_name="
+    if sequence_key in lower:
+        idx = lower.find(sequence_key) + len(sequence_key)
+        after = text[idx:]
+        candidate = (after.split(maxsplit=1) or [""])[0]
+        if candidate:
+            params["sequence_name"] = candidate
+
     # Explicit keyed form — first occurrence wins. ``find`` on the
     # lowercased view locates the key without forcing the candidate
     # through case-folding; we then slice the ORIGINAL ``text`` from the

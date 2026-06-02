@@ -95,3 +95,34 @@ async def test_tf1_unratified_mutation_still_blocks(
 
     assert result["error"]["type"] == "unauthorized_mutation"
     assert mcp.calls == []
+
+
+@pytest.mark.asyncio
+async def test_tf1_explicit_param_wins_same_key_collision(
+    session_factory,
+):
+    step_text = (
+        f"flame_tf1_mutate project_id={PROJECT_ID} "
+        "sequence_name=explicit_seq "
+        "using sequence 30sec 21"
+    )
+    async with session_factory() as session:
+        repo = AssentRecordRepo(session)
+        proposed = await repo.propose([step_text])
+        ratified = await repo.ratify(proposed.graph_intent_id, actor="operator")
+        await session.commit()
+
+    mcp = CaptureMCP()
+    outcome = await run_apply_branch(
+        graph_intent_id=ratified.graph_intent_id,
+        session_factory=session_factory,
+        tools=[_mutating_tool()],
+        mcp=mcp,
+        request_id="req-tf1-collision",
+        client_ip="127.0.0.1",
+        started=10.0,
+    )
+
+    assert outcome.regime == "apply_complete"
+    assert mcp.calls[0][1]["sequence_name"] == "explicit_seq"
+    assert mcp.calls[0][1]["project_id"] == PROJECT_ID
