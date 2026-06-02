@@ -1,5 +1,39 @@
 # Milestones
 
+## v1.12 Mutation Delegation (Shipped: 2026-06-02)
+
+**Phases completed:** 1 delivered (**C2** — Compile → Commit-Bearing Executor Chain), full writer's-room cadence (framing → discuss → plan → plan-check → lock → implement → verify → close). Shape B (phase 2) deferred.
+**Release tag:** none — patch-equivalent (`__all__` at 19; `pyproject.toml` 1.5.1; no public API change)
+**Stats:** 6 commits (1 code: `9ecd503`, 6 files, +296 / −6)
+**Timeline:** 2026-06-02, single day; live-verified via cross-team E2E-01
+**Audit:** suite 2688 → 2697 (+9); ruff clean on changed Python; `__all__`==19 byte-stable; DT sign-off, no reservations
+
+**Theme — a ratified mutation can execute.** Pre-C2 a mutating intent compiled to a *bare* host-mutation step that the DI.1 gate correctly hard-blocked pre-ratify — authority machinery, but no ratify path. C2 (the ADR-003 / Door-C keystone) gives it one.
+
+**Key accomplishment — C2 (Shape A+ intent-ratification):**
+
+- A rename intent compiles to a **commit-bearing executor chain** (`flame_rename_shots` → `forge_apply_rename <args> -> commit`) via a deterministic post-compile transform (`console/_executor_route.py`), reaching preview / `AssentRecord` / ratify instead of the DI.1 block. Operator assents to capability + intent; resolved `count` (`len(manifest.resolved_plan)`, bridge-side) surfaces at apply as *"Renamed N shots."* Rewrite guard enforces the mapped executor's own mutating authority (Finding 1 → durable runtime invariant). Map rename-only (publish excluded — no arg parity). Relocated Finding 2 → in-chat `apply <id>` replay aligned onto the reachable surface (T5).
+
+**Verification & regression:**
+
+- Bridge-side acceptance met; canonical ratify path clean.
+- **Live-verified (E2E-01, cross-team):** real `013_…portofino`, `preview_emitted`, ratify gate held, **zero mutation**, not PR20-shadowed.
+- Suite 2688 → 2697; `__all__`==19; `pyproject.toml` 1.5.1.
+
+**Honest scope (no overclaim):** v1.12 made a ratified mutation *executable* via delegation; it did **not** make the translation correct. E2E-01 proved the substrate side and exposed the translation side (graph right, params wrong) — the v1.13 frontier, not a v1.12 gap.
+
+**Known deferred items at close (named, not rejected):**
+
+- **Shape B (manifest-ratification, Window-2 drift)** — was phase 2; deferred as a named future motion with maturation condition explicitly unmet (ships only if the room judges Window-2 drift unacceptable in production). NLT/v1.13 outranks it on live evidence.
+- **Bootstrap-console-executor-gap** — supervised daemon runs executor-less; operational follow-up (`[[project-bootstrap-console-executor-gap]]`).
+- **`/gsd-secure-phase 26`** before the forge-pipeline executor branch merges; **publish executor** = own future motion.
+
+**Lessons learned:**
+
+- **Grounding shrinks scope.** The executor-contract grounding made C2 *smaller* (no `mode` token, no arg reshaping, publish dropped) — scope-shrinks-under-grounding as a convergence signal.
+- **Boundary invariant > one-time grounding** (Finding 1): the rewrite gate enforces the executor's mutating authority every time, not just at grounding time.
+- **Grounding-flip relocates a finding** (Finding 2: C2-hook → pre-existing apply-replay surface → T5) — fired repeatedly; candidate amendment to `[[feedback-ground-specs-in-actual-files]]`.
+
 ## v1.10 Authority Invariance (Shipped: 2026-06-01)
 
 **Phases completed:** 2 (DI.1 dispatch-authority gate → DI.2 eligibility arbitration), full writer's-room cadence each (framing → discuss → plan → execute → close), single-day arc
