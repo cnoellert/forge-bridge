@@ -1027,8 +1027,20 @@ def _format_sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+def _commit_count(chain_body: Any) -> Any:
+    if not isinstance(chain_body, dict):
+        return None
+    for entry in chain_body.get("chain", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        result = entry.get("result")
+        if isinstance(result, dict) and result.get("type") == "commit_applied":
+            return result.get("count")
+    return None
+
+
 def _apply_complete_body(outcome, transport: str) -> dict:
-    return {
+    body = {
         "kind": "apply_complete",
         "graph_intent_id": outcome.graph_intent_id,
         "chain": outcome.chain_body,
@@ -1036,6 +1048,10 @@ def _apply_complete_body(outcome, transport: str) -> dict:
         "chat_regime": "ratified_apply",
         "transport": transport,
     }
+    count = _commit_count(outcome.chain_body)
+    if count is not None:
+        body["count"] = count
+    return body
 
 
 def _capture_chain_from_steps(steps: list[str], result: Any) -> list[dict]:
@@ -1080,7 +1096,7 @@ async def _chat_sse_response(
                     outcome = await run_apply_branch(
                         graph_intent_id=apply_match.group(1),
                         session_factory=session_factory,
-                        tools=tools,
+                        tools=execution_tools or tools,
                         mcp=mcp,
                         request_id=request_id,
                         client_ip=client_ip,
@@ -1791,7 +1807,11 @@ async def chat_handler(request: Request) -> Response:
     # no LLM, no fuzzy matching. PR26's precedence chain (explicit > memory >
     # resolver) ensures an explicit value collapses ambiguity before the PR27
     # disambiguation envelope would fire.
-    if tools_filtered_count == 1 and tools_filtered_count < tools_available_count:
+    if (
+        tools_filtered_count == 1
+        and tools_filtered_count < tools_available_count
+        and not _APPLY_GRAMMAR.match(last_user_text.strip())
+    ):
         from forge_bridge.console._param_extract import extract_explicit_params
 
         user_params = {
@@ -1889,7 +1909,7 @@ async def chat_handler(request: Request) -> Response:
         outcome = await run_apply_branch(
             graph_intent_id=apply_match.group(1),
             session_factory=request.app.state.session_factory,
-            tools=tools,
+            tools=tools_post_reachability,
             mcp=_mcp_server.mcp,
             request_id=request_id,
             client_ip=client_ip,

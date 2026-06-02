@@ -172,6 +172,12 @@
             <dd x-text="ratifyOutcome.apply_complete.chat_regime"></dd>
             <dt>chain_status</dt>
             <dd x-text="ratifyOutcome.apply_complete.chain && ratifyOutcome.apply_complete.chain.status"></dd>
+            <template x-if="ratifyOutcome.apply_complete.count !== undefined && ratifyOutcome.apply_complete.count !== null">
+              <dt>confirmation</dt>
+            </template>
+            <template x-if="ratifyOutcome.apply_complete.count !== undefined && ratifyOutcome.apply_complete.count !== null">
+              <dd x-text="`Renamed ${ratifyOutcome.apply_complete.count} shots.`"></dd>
+            </template>
           </dl>
         </div>
       </template>

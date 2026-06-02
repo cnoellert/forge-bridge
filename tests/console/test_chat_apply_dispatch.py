@@ -46,11 +46,12 @@ def _manifest() -> dict:
 
 
 class ApplyMCP:
-    def __init__(self):
+    def __init__(self, tools=None):
         self.calls: list[tuple[str, dict]] = []
+        self._tools = tools or [_tool("emit_plan")]
 
     async def list_tools(self):
-        return [_tool("emit_plan")]
+        return self._tools
 
     async def call_tool(self, name, arguments):
         self.calls.append((name, arguments))
@@ -147,6 +148,34 @@ async def test_chat_apply_json_dispatch_applies_ratified_record(session_factory)
         ("emit_plan", "verify"),
         ("emit_plan", "apply"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_chat_apply_json_replay_uses_reachable_surface_not_apply_narrowing(
+    session_factory,
+):
+    record = await _ratified_record(session_factory)
+    mcp = ApplyMCP(tools=[
+        _tool("emit_plan"),
+        _tool("forge_apply_rename"),
+    ])
+    app, patches = _client(session_factory, mcp)
+
+    with patches[0], patches[1]:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            response = await client.post(
+                "/api/v1/chat",
+                json={"messages": [{
+                    "role": "user",
+                    "content": f"apply {record.graph_intent_id}",
+                }]},
+            )
+
+    assert response.status_code == 200, response.text
+    assert [name for name, _ in mcp.calls] == ["emit_plan", "emit_plan", "emit_plan"]
 
 
 @pytest.mark.asyncio
