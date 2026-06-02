@@ -1,5 +1,42 @@
 # Milestones
 
+## v1.10 Authority Invariance (Shipped: 2026-06-01)
+
+**Phases completed:** 2 (DI.1 dispatch-authority gate → DI.2 eligibility arbitration), full writer's-room cadence each (framing → discuss → plan → execute → close), single-day arc
+**Release tag:** none — patch-equivalent (`__all__` at 19; `pyproject.toml` 1.5.1; no public API change)
+**Stats:** 35 commits (14 code: DI.1 9 + DI.2 5), 52 files changed, +2,844 / −106 lines (code-only 37 files, +749 / −94)
+**Timeline:** 2026-06-01, single day
+**Audit:** suite 2673 (DI.1) → 2679 (DI.2 close) passing; ruff clean on changed Python; `__all__`==19 byte-stable; gates read live before `call_tool`
+
+**Theme — enforcement→consistency.** The v1.9 dogfood surfaced that the system already knew which tools mutate (`readOnlyHint` declared + correct) but wasn't acting on it. Invariant established: **operator authority + execution eligibility must not depend on routing path.**
+
+**Key accomplishments per phase:**
+
+- **DI.1 — Dispatch-authority gate (trust).** A mutation cannot execute outside the authority chain by *any* routing edge. Shared fail-closed `dispatch_authority(tool)` reader (`console/_authority.py`, read iff `readOnlyHint is True`); 1B/1C hard-block before `call_tool` with a `ratified_replay` carve-out sourced from `assent_record.status=='ratified'` (routing-invariant); registration-boundary close (`user-taught`→mutating default, absent-annotation set → ∅); regression-lock incl. ratified-apply-still-executes. Suite-proven + code-verified. (9 code commits `2d01d72..5924818`.)
+- **DI.2 — Eligibility arbitration (usefulness).** Exact-name-wins exclusivity (`_tool_filter.py`: unique exact match returns exclusively) eliminates the resolver-overmatch class; the "matched N tools" leak → outcomes-not-tools surface (descriptions, no identifier leak); regression-lock. **T4 (bounded LLM selection) correctly never shipped** — the T1 baseline's gate condition (a stable residual T2 can't reach) was empty. (5 code commits `feb4d47..2fb40a4`.)
+
+**Verification & regression:**
+
+- DI.1 + DI.2 phase verification gates green; cross-phase test locks "exact mutation still hits DI.1's gate" (DI.2 did not weaken DI.1)
+- DI.2 T1 baseline (33 samples, distribution-not-replay) reproduced the framing's predicted class split: (a) resolver-overmatch 3/9 · (b) bad-compile 4/9 · (c) other-seam 2/9
+- DI.1's live mutation-block **demonstrated** during DI.2 T1 (R5/R11 hit the gate 3/3) — retired a measurement-debt item DI.1-CLOSE could only suite-prove
+- Public API `__all__` length 19; `pyproject.toml` 1.5.1 across the arc
+
+**Honest scope (no overclaim):** v1.10 made authority + eligibility routing-invariant; it did **not** make chat *answer*. DI.2's 3/9 win is **arbitration-layer** — the reads resolve to one tool, then block at parameter resolution. DI.2 removed the resolver wall and revealed the parameter wall behind it. "Make chat useful" remains several milestones out.
+
+**Known deferred items at close:**
+
+- **SEED-COMPILE-QUALITY decomposed** (evidence-ranked successors): compile-shape · param-resolution (*nearest hill*) · context-eligibility (*dormant — named, not built*) · answer-pass (known since CR.1)
+- **Artist UAT struck** (not deferred-with-intent) until the compile/param layer lands
+- **SEED-AUTH-V1.5** (`AssentRecord.decided_by` identity binding) still standing
+- **MILESTONES.md v1.5/v1.6/v1.8/v1.9 gap persists** — optional backfill archaeology
+
+**Lessons learned:**
+
+- **Measure-first gated a rung out of existence.** DI.2's T1 baseline came back with an empty residual for the contingent rung (T4); it correctly never shipped, skip rationale locked in the acceptance test. Building it would have been speculative.
+- **Audit-before-overfit avoided a wrong turn.** A grounded hidden-context audit (Outcome A) tested *what the corpus was actually measuring* before the close hardened on it — confirming DI.1/DI.2 scope and naming a dormant seam rather than mis-attributing failures to arbitration.
+- **Wins stated at their native layer.** "Arbitration resolved 3/9" was held distinct from "3 reads work" — the parameter seam was named, not absorbed.
+
 ## v1.7 Artist Readiness (Shipped: 2026-05-29)
 
 **Threads completed:** 3 threads (B → C → A), 3 phase closures within Thread A (A.1 + A.2 + A.3), 1 thread-level close cursor (Thread A formal closure — first thread-level close in the project)
