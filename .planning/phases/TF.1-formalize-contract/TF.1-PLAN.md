@@ -81,13 +81,15 @@ param (`resolver.py:61`) as the context-resolution enablement gap.
   compile/context axis with the Shape-A + integrity clauses first-class.
 - T1 audit has a **verdict**: invariant holds → regression test locks it (suite green, `__all__`==19); or a
   gap is documented + routed to Phase 4 with the Shape-A risk flagged.
-  - **CLOSE-GATE (DT + Creative review of the landed test, `ba4d86a`):** the lock MUST include a **same-key
-    collision** case — explicit `sequence_name=explicit_seq` vs semantic `sequence_name=30sec_21` (same key,
-    conflicting values) → assert dispatched `sequence_name == "explicit_seq"`. Without it `override-explicit-no`
-    is unpinned (the four-leg test proves coexistence, not precedence; a `:261` merge-order flip would stay
-    green — `[[feedback-mock-three-tier]]` stub). **TF.1 does not close until this assertion exists.** Optional
-    (not required): a monkeypatch variant forcing `_extract_semantic_step_params` to a conflicting value,
-    future-proofing the lock against Phase-4 `desktop` wiring.
+  - **CLOSE-GATE (DT + Creative review — REVISED after the `5313cfa` parser edit was found out-of-scope):**
+    the lock MUST include a **same-key collision** proving `override-explicit-no` (the four-leg test proved
+    coexistence, not precedence; a `:261` flip would stay green — `[[feedback-mock-three-tier]]` stub). But it
+    must lock it **with ZERO production-extraction change**: collide on `project_id` (already-parsed explicit)
+    vs a **monkeypatched conflicting semantic value** (`_step._extract_semantic_step_params`), asserting
+    explicit wins; falsified by flipping `:261`. **The `5313cfa` `sequence_name=` parser addition is REVERTED**
+    — it was a narrow, buggy (space-truncating `30sec_edit 21_publish` → `30sec_edit`), out-of-phase extraction
+    change; general `key=value`/quoted/qualified-name extraction is **Phase 4 / defect #2**, measure-first-gated.
+    **TF.1 does not close until: parser edit reverted + monkeypatch collision case green + suite green.**
 - No behavior change; no fixes shipped (those are Phase 4); no detection mechanism built (Phase 2/4).
 
 ## What this plan does NOT do

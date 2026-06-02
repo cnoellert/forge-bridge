@@ -30,14 +30,31 @@ is only reachable at dispatch — the chat handler imports no Flame client; `res
 ## 3. Ratification-integrity invariant **[N]** (T1-grounded, HOLDS)
 
 > **Dispatch may resolve refs the graph left unresolved (contextual → concrete); it may NEVER override a
-> param the operator explicitly ratified.** "Explicitly ratified" ≡ `extract_explicit_params(ratified_step_text)`.
+> param the operator explicitly ratified.**
 
-**Enforcement (grounded):** the dispatch merge `{**public_inherited, **semantic_params, **user_params}`
-(`_step.py:261`) puts explicit `user_params` last → explicit wins; `semantic_params` fills omitted keys
-only. `ratified_replay` (`:425`) gates only the DI.1 authority block, runs *after* the merge, and never
+**Definition — explicit params [N]:** *any operator-supplied `key=value` form* (not `project_id` only). This
+is the contract **boundary** — the architectural rule, expressed broadly so it describes the rule, not a
+special case.
+
+**Contract vs implementation (a central TF lesson — they do not move in lockstep):** the *boundary* above is
+what the invariant protects; `extract_explicit_params` is the current, **partial** *implementation* of it
+(today it recognizes `project_id`/UUID forms; it does NOT yet recognize general `key=value`, quoted, or
+space-bearing/qualified names like `30sec_edit 21_publish`). **Closing that gap = extraction completeness =
+Phase 4 / defect #2** — measure-first-gated, done generally, NOT a per-key carve-out. The contract states the
+target; the parser's coverage is how much is realized so far. *(So a parser that can't yet parse
+`sequence_name=` is incomplete relative to the contract — not a contract violation, and not license to bolt
+on per-key patches during a formalize phase.)*
+
+**Enforcement (grounded) — precedence is key-agnostic:** the dispatch merge `{**public_inherited,
+**semantic_params, **user_params}` (`_step.py:261`) puts explicit `user_params` last → explicit wins for
+*whatever keys the parser captured*; `semantic_params` fills omitted keys only. The invariant is about merge
+*order*, independent of which keys extraction recognizes. `ratified_replay` (`:425`) gates only the DI.1 authority block, runs *after* the merge, and never
 alters params — so replay re-derives from the ratified text (idempotent today; text-only resolution).
 `project_name` (`:262/:378`) and the `sequence_name` previous-result fallback (`:397`, fires only on
-`UNRESOLVED_KEY`) both fill, never override explicit. **Locked by a ratified-replay regression test** (T1).
+`UNRESOLVED_KEY`) both fill, never override explicit. **Locked by a ratified-replay regression test** (T1) —
+a same-key collision on `project_id` (already-parsed explicit) vs a monkeypatched conflicting semantic value,
+asserting explicit wins; falsified by flipping the `:261` merge order. *(Locks precedence with zero
+production-extraction change — the parser broadening is Phase 4, not TF.1.)*
 
 **Limitation (not a violation):** the merge is *shallow* — an explicit top-level key wins wholesale; you
 **cannot partially override a nested dict** (e.g. `role_overrides` is all-or-nothing per top-level key).
