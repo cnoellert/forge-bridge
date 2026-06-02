@@ -1,158 +1,151 @@
 # TF.3a (Ground the Oracle) — DISCUSS: build + validate the measurement instrument
 
 **Milestone:** v1.13 Translation Fidelity, Phase 3a of 4 (3a = ground / 3b = run). **THE KEYSTONE.**
-**Predecessors:** TF.1 (contract + inventory), TF.2 (taxonomy + 2-tier detection spec). **Deliverable (after room):** `TF.3a-PLAN.md`.
+**Status:** **room-settled** (DT + Creative; 4 endorsements-with-sharpenings + 1 blocking precondition).
+**Predecessors:** TF.1 (contract + inventory), TF.2 (taxonomy + 2-tier detection spec). **Deliverable:** `TF.3a-PLAN.md`.
 **Objective:** build the **labeled reference corpus** + the **example-fill detector with a measured false-positive
 rate**, and **validate the oracle against held-out labels** — so 3b's verdicts are trustworthy enough to gate
 Phase 4. `[[feedback-audit-before-overfit]]`: you cannot measure-first with an unvalidated instrument.
 
+> **North-star (both voices):** the hard problem of v1.13 is **not building detectors — it's proving the
+> detectors observe the right thing.** TF.3a was itself about to inherit the very flaw the milestone exists to
+> detect (measuring against an incomplete representation of reality — see the Q4 finding). Every Q1–Q5 answer
+> serves *earned trust in the instrument*, not instrument mechanics. The right question is "**why should anyone
+> trust this oracle?**", not "how do we build a detector?"
+
 ---
 
-## Grounded realities (read live; these shape every question below)
+## Grounded realities (read live; these shape every question)
 
-1. **The comprehension corpus is real seed material but 100% unlabeled.** `~/.forge-bridge/comprehension/`
-   holds **36 traces** (`question` + `chain[{step,result}]` + `answer`) — but **all 36 verdicts are null**
-   (dogfood pending, per the cursor), 21 are `chain_aborted`, 11 `answered`, **4 malformed** (null question).
-   And its `verdict` vocabulary (loved/hated/overstated/omitted_context/missed_intent) is the
-   **legibility** axis, **orthogonal** to translation-correctness. → Seed exists; *every* translation label is
-   **net-new authored work**.
-2. **Distinct-instrument constraint, now with TWO siblings.** TF.3a's labeled corpus must never couple schemas
-   with `comprehension/` (CR.1) **or** `corpus/` (v1.6 divergence). It is a **third** measurement instrument —
-   mirror the atomic-append-JSONL + versioned-schema pattern; keep all three named distinctly forever.
+1. **The comprehension corpus is real seed material but 100% unlabeled — and skewed.** `~/.forge-bridge/
+   comprehension/` holds **36 traces** (`question` + `chain` + `answer`); all 36 verdicts null, 21 aborts, 4
+   malformed. Its `verdict` axis (loved/hated/…) is **legibility**, orthogonal to translation-correctness. DT's
+   sharpening: 32 well-formed traces are **one reads-dogfood session on the legibility axis** → they clump in a
+   few cells (grounding/routing on reads), and the **contextual class (§3.5) was almost certainly never
+   exercised** (it needs world-state the dogfood didn't set up). Seed exists; every translation label is
+   net-new; and the *geometry* is lopsided.
+2. **Distinct-instrument constraint, now a three-vocabulary rule.** TF.3a's corpus must stay schema-distinct
+   from `comprehension/` (CR.1) and `corpus/` (v1.6). It is a **third** instrument — mirror atomic-append-JSONL
+   + versioned-schema; and (DT/Q5) the distinctness bites at the **label-vocabulary field level**, not just the
+   package name.
 3. **The chain-step graph is a step-text string list** (`parse_chain` → `[{step, result}]`,
-   `handlers.py:1058/1677`); compile emits step text, dispatch resolves params. **No separate IR** — the label's
-   "correct graph" is expressed in this same shape (TF.1-CONTRACT §1).
-4. **The D3 example inventory exists BUT has drifted** (`NLT-…/D3-EXAMPLE-SALIENCE-INVENTORY.md`, scoped to
-   `5f2b2a6`). Re-swept against live HEAD during this discuss (Creative redline #3): HIGH-risk literals persist,
-   **but the `30sec_21` example surface grew** — new worked few-shot blocks (`timeline.py:146-148, :286-287,
-   :687-688, :1100-1102`) D3 doesn't list, each higher-risk than the headlined `Field` examples. The grounding
-   detector's substrate is therefore larger than D3 records → re-sweep is **3a step 0**, not a plan task (Q4).
-5. **Inherited de-scope:** the framing room put "resolve the reads two-part contract" on 3a's plate. **TF.1
-   already resolved it** (reframed reads-vs-mutations → the compile-vs-context axis, commit `041d8a1`). So 3a
-   **inherits a resolved axis** and does NOT re-open it — one fewer keystone obligation than the framing room
-   assumed.
+   `handlers.py:1058/1677`). **No separate IR** — the label's "correct graph" uses this same shape.
+4. **The D3 inventory does NOT match the live salience surface — and it is method-undercount, NOT drift**
+   (DT's git probe, re-verified here). `git log 5f2b2a6..HEAD` is **empty** for timeline/publish/reconform/
+   batch; the `30sec_21` count is **12 at the pin == 12 at HEAD**; the compound exemplar at `timeline.py:286-287`
+   existed **at the pin**. So nothing drifted — **D3's sweep method missed an entire source kind from day one**:
+   it swept `Field(description=…)` + `e.g.`/`Example call:` docstrings but **not** the `Operator query:` /
+   `Tool call:` **few-shot exemplar blocks** (`timeline.py:146-148, 286-287, 687-688, 1100-1102`). *(This
+   corrects my earlier "the surface GREW / drift confirmed" framing in commit `3fd5835` — it was wrong; the
+   worry RELOCATES from docstring-drift to method-undercount, which is a stronger reason to re-derive.)*
 
-## The 3a / 3b boundary (restated)
+## The 3a / 3b boundary
 
-- **3a (this phase):** build the labeled corpus, build + validate the example-fill detector (with its FP rate),
-  validate the oracle against held-out labels. Ships the **instrument**, not a measurement.
-- **3b (next):** run the validated oracle over the corpus → translation-pass/substrate-pass verdict pairs +
-  the example-fill-vs-grounded frequency that **ranks Phase 4** (by deduped defect, TF.2 §4).
+- **3a (this phase):** re-derive D3 (step 0, see Q4), build the labeled corpus, build + validate the detectors,
+  validate the oracle. Ships the **instrument**, not a measurement.
+- **3b (next):** run the validated oracle → translation-pass/substrate-pass verdict pairs + the
+  example-fill-vs-grounded frequency that **ranks Phase 4** (by deduped defect, TF.2 §4).
 
 ---
 
-## Design questions (leads-with-views; → DT room)
+## Q1 — What is a labeled "correct graph"? **LOCKED + world-state is a fifth field (DT).**
 
-### Q1 — What is a labeled "correct graph"? **LOCKED (Creative): an `(input → expected graph + expected params + expected verdict-pair)` tuple — the verdict-pair is foundational, not a detail.**
+The verdict-pair is **locked** (Creative): without it the oracle cannot distinguish honest decline (PASS/GAP)
+from translation failure (FAIL/NO-GAP) from FAIL/GAP. TF.2 made the distinction; TF.3a inherits it as its floor.
 
-The verdict-pair is **locked**: without it the oracle literally cannot distinguish honest decline (PASS/GAP)
-from translation failure (FAIL/NO-GAP) from translation-failure-plus-substrate-gap (FAIL/GAP). TF.2 made that
-distinction; **TF.3a must inherit it** — it is the floor the rest of 3a stands on.
+A label = the NL input plus **five** fields:
+1. the **expected chain-step graph** (the step-text list a correct compile emits);
+2. the **expected resolved params per step** — context-resolved refs labeled *as* unresolved-pending-dispatch
+   (TF.1-CONTRACT §2; the corpus must not demand a concrete value where the contract resolves at dispatch);
+3. the **expected verdict-pair** (translation {pass,fail} × substrate {pass,gap}, TF.2 §2);
+4. the **per-param provenance** (`grounded-from-intent`/`from-context`/`filled-from-example`/`unresolved`);
+5. **[DT add] the captured world-state the input was issued against.** The contextual class (§3.5) is
+   **unscorable from text alone** — "rename *this sequence*" + open=`30sec_edit 21_publish` and the same text +
+   open=`Hyundai_013_final` have **different correct graphs** (Creative's example). Without recorded world-state
+   there is no ground truth for a contextual label. This ties to Q2: contextual cases need **fresh authored
+   capture with world-state**, not replay of CR.1 traces (which never captured it).
 
-A label is **not** "the right answer string." Grounded in the contract, a label = the NL input plus:
-1. the **expected chain-step graph** (the step-text list a correct compile would emit),
-2. the **expected resolved params per step** (compile-resolved values; context-resolved refs labeled *as*
-   unresolved-pending-dispatch, per TF.1-CONTRACT §2 — the corpus must not demand a concrete value where the
-   contract says the ref resolves at dispatch), and
-3. the **expected verdict-pair** (translation {pass,fail} × substrate {pass,gap}, TF.2 §2).
+## Q2 — How do we build the corpus? **Coverage-geometry, not size; ≥2-per-cell for Tier-2 (DT).**
 
-**The verdict-pair target is load-bearing:** without it the oracle has no way to score an **honest decline as a
-*success*** (cell (c)/R9) or to mark a **substrate-gap** (cell (d)) — it would only know "right vs wrong." A
-label that can't express "correctly declined" can't validate the behavior TF.2 most wants to reward.
+"Is 32 enough?" is the wrong question (Creative) — the oracle **validates a taxonomy**, it doesn't estimate a
+population parameter. DT converts size → **geometry**: the real question is *can every taxonomy cell be both
+trained-against AND independently validated?*
 
-### Q2 — How do we build the corpus? **REFRAMED (Creative): coverage-completeness, NOT corpus size. Seed from the 32 traces, augment until every taxonomy obligation is represented; aborts first-class.**
+- **Corpus adequacy [N] = coverage:** every **verdict-pair cell** (a–d), every **translation class** (five),
+  every **multi-tag pattern observed in discovery** (defect #2 routing+extraction), every **D-series defect**.
+- **The authoring target [N] is class-dependent (DT — this replaces the vague "≥1 per class×cell"):**
+  - **Tier-2 classes** (grounding, entity-resolution, routing/wrong-selection) need **≥2 labeled instances per
+    validated verdict-cell** — one to label/tune against, one to **hold out** (Q3). You cannot hold out from a
+    cell with ≤1 instance; "≥1" understates exactly the cells that carry validation weight.
+  - **Tier-1 classes** need **≥1** (the sanity instance — Q3).
+- **Build method:** seed from the **32 well-formed traces**, augment with the **D-series/E2E-01 defects**
+  (pre-diagnosed → cheapest high-value labels), and **author additional inputs (with world-state for contextual
+  cases) until the adequacy + authoring targets above are met.** Do not reuse the comprehension `verdict`.
 
-Creative's correction (folded): "is 32 enough?" is the wrong question — the oracle isn't estimating a
-population parameter, it's **validating a taxonomy**. So adequacy is defined by **coverage, not count**. A
-40-trace coverage-complete corpus beats a 200-trace corpus concentrated in one class.
+## Q3 — How do we validate the oracle? **Tier-1 = positive+negative unit pair; Tier-2 = held-out slice (DT reframe).**
 
-- **Corpus adequacy [N] = every taxonomy obligation represented:** every **verdict-pair cell** (a–d),
-  every **translation class** (the five), every **multi-tag pattern observed in discovery** (e.g. defect #2's
-  routing+extraction), and **every D-series defect**. Raw counts matter only *after* coverage is complete.
-- **Build method:** seed from the **32 well-formed comprehension traces** (drop the 4 malformed), **augment
-  with the D-series/E2E-01 defects** (pre-diagnosed → cheapest high-value labels), and **author additional
-  inputs until every obligation above is covered**. Do **not** reuse the comprehension `verdict` (wrong axis);
-  label fresh.
-- **Aborts are first-class, not noise (21/36).** An abort can be a **correct** honest-decline (cell (c) —
-  label it a *success*) or a **wrong** abort (translation-FAIL). Excluding aborts would discard exactly the
-  cell-(c) evidence Q1's verdict-pair exists to capture. **Lean: label aborts by the decline-vs-misroute
-  discriminator** (TF.2 §2.1).
+The two tiers fail in different ways, so they need different checks — mirroring the §5 detection split:
 
-### Q3 — How do we validate the oracle itself? **Lean: held-out slice for Tier-2; Tier-1 gets LIGHTWEIGHT validation, NOT exemption (Creative).**
+- **Tier-1 (deterministic, substrate-observable):** the risk is a **logic bug** (wrong field, wrong marker,
+  off-by-one). A statistical holdout **wouldn't catch that anyway**. The correct, cheap tool is a
+  **known-positive + known-negative unit assertion per detector** — fires on the grounded defect instance,
+  stays silent on a clean negative. This is **not a downgrade from holdout** for deterministic detectors; it's
+  the right instrument for the logic-error surface. *(Don't open the trust-doctrine phase with an "exempt"
+  class — give it the check that fits.)*
+- **Tier-2 (ground-truth-dependent):** the risk is a **ground-truth error**. Full **held-out statistical
+  slice** + a **pre-declared agreement threshold** (open: per-class, since Tier-2 classes differ in difficulty).
+  This is why Q2's ≥2-per-cell authoring target exists — the held-out instance has to come from somewhere.
 
-The oracle is "validated" when, on a **held-out** slice it never saw during detector tuning, its Tier-2
-verdict-pairs reproduce the human labels within a **pre-declared agreement threshold**. This operationalizes
-`[[feedback-audit-before-overfit]]` (v1.10 carried a 3× measurement-debt pattern — don't repeat it).
+## Q4 — Example-fill FP rate — **BLOCKING PRECONDITION: re-derive D3 first (DT, the load-bearing redline).**
 
-- **Tier-2** (grounding, entity-resolution, routing/wrong-selection): full held-out validation + agreement
-  threshold. **Open:** per-class threshold (Tier-2 classes differ in difficulty)?
-- **Tier-1 — lightweight validation, NOT a full exemption (Creative redline).** TF.3a is establishing *trust
-  doctrine*; declaring "this class needs no validation" introduces a special case **before the validation
-  framework exists** — starting the phase with an exception to its own principle. Compromise (folded): Tier-1
-  gets a **sanity corpus + an explicit falsification case + documented assumptions** — enough to **prove the
-  detector can fail when it should** — but **no held-out requirement and no precision/recall study.**
-- **Open (still small-corpus-sensitive):** does coverage-completeness (Q2) leave a held-out slice large enough
-  to mean anything for Tier-2, or does the authored-input pass need to over-provision the Tier-2 cells
-  specifically?
+FP = the detector flags `filled-from-example` but the value was **genuinely grounded** and merely *happens* to
+equal an example (a real `30sec_21`). But that FP number is **meaningless against an incomplete lift surface** —
+and §grounded-reality-4 shows D3 **is** incomplete (method-undercount).
 
-### Q4 — What is a false positive for example-fill detection? **Lean: a value that matches an example but was NOT lifted (the legitimately-equal real `30sec_21`); measure the rate as a labeled sub-task.**
+- **The compound exemplar is the killer evidence.** `timeline.py:286-287`:
+  `Operator query: "rename the shots on 30sec_21 with prefix 'noise'"` /
+  `Tool call: {"params": {"sequence_name": "30sec_21", "prefix": "noise"}}` — **both grounded defects (#1
+  prefix→noise AND #3 sequence_name→30sec_21) in one liftable exemplar.** This is a **stronger causal candidate**
+  for E2E-01's *compound* failure than "lift `30sec_21` from one tool + `noise` from another": the model can lift
+  the **entire semantic pattern** from a single few-shot block. The richest part of the lift surface is the part
+  D3 never enumerated.
+- **Why it gates the keystone:** if 3a operationalizes D3-as-written, the detector misses lifts from the
+  few-shot blocks → **false negatives** (the inverse of the FP worry), and the FP rate is measured against an
+  **incomplete universe** → not the real number. The detector would inherit the exact milestone-flaw v1.13
+  exists to prevent.
+- **[N] Precondition (Orch-rewritten, both voices):** *TF.3a may NOT operationalize D3 directly. **Step 0** is
+  re-deriving the salience surface with a sweep that includes ALL NL→tool demonstration kinds visible to
+  compilation:* (i) `Field(description=…)`; (ii) docstrings (`e.g.`, `Example call:`); (iii) `Operator query:`
+  exemplars; (iv) `Tool call:` exemplars; (v) any other NL→tool demonstration block. **Only after that refreshed
+  inventory exists is it legitimate detector input / FP-study substrate.** Remaining sub-question: is the
+  refreshed inventory machine-consumable, or does 3a operationalize it into a value-set? (`[[feedback-baseline-drift-invalidates-controls]]`
+  + `[[feedback-ground-specs-in-actual-files]]`.)
 
-FP = the grounding detector flags `filled-from-example`, but the value was **genuinely grounded** and merely
-*happens* to equal a docstring example (a real sequence named `30sec_21`). This is the milestone's **riskiest
-instrument** (TF.2 §5). **Lean:** over the corpus values that match a D3-inventory example, hand-label each
-**lifted** vs **legitimately-equal**, and report the FP rate. **3a may not ship the grounding detector — or let
-3b score the grounding class — without this number.**
+## Q5 — Home + naming. **`translation_oracle/`; three-vocabulary rule at the field level (DT).**
 
-**D3 drift is a GROUNDING PREREQUISITE, not a planning task (Creative redline #3 — folded, and already
-acted on).** D3 is the detector's *measurement substrate*; an unverified D3 = an uncalibrated instrument, and
-the FP study depends on knowing what examples actually exist. So D3 was **re-swept against live HEAD now**, and
-it **has drifted** — materially:
+One package, its own versioned schema, `__all__`-scoped, atomic-append JSONL, zero shared symbols with the
+other two. **One artifact, one home (Creative, strongly endorsed):** DT's *reference corpus* = Creative's
+*operator-facing provenance surface* = Phase-3's *oracle validation* are **projections of one asset** — the
+labeled corpus, the per-param provenance signal, the validation outputs, the operator surface all live together;
+splitting them re-fragments exactly the scattered translation layer v1.13 consolidates. Two sharpenings:
 
-- HIGH-risk literals **persist** (no false-safe drift): `timeline.py:215/243` `prefix "e.g. 'noise', 'tst'"`;
-  `publish.py:317/320` `'test long'`/`'test long_published'`; `publish.py:27` `'noise','spk','gen'`.
-- **But the `30sec_21` surface GREW.** D3 (scoped to `5f2b2a6`) records it as `timeline.py:1094 ×2`; live HEAD
-  now has worked **few-shot example blocks** — `timeline.py:146-148, :286-287, :687-688, :1100-1102` — each
-  showing the **exact param fill** (`"sequence_name": "30sec_21"`, `"prefix": "noise"`). These are **higher**
-  liftability risk than the `Field(description=…)` examples D3 headlined (a worked Tool-call block is directly
-  pluggable), and **D3 does not list them.**
-
-**Consequence:** building the FP study against D3-as-written would under-count its own substrate. **3a step 0 =
-re-sweep D3 against HEAD** (refresh the inventory, add the few-shot blocks) **before** detector design. Remaining
-sub-question: is the refreshed inventory **machine-consumable** (a value-set the detector reads), or does 3a
-operationalize it? (`[[feedback-baseline-drift-invalidates-controls]]` — confirmed live, not assumed.)
-
-### Q5 — Where does the third corpus instrument live + what is it named? **Lean: a new `forge_bridge/<distinct>/` package, named for *translation labels*, never `corpus`/`comprehension`.**
-
-Given the §2 constraint, the labeled reference corpus needs its **own** package with its **own** versioned
-schema — not a module inside `corpus/` or `comprehension/`. **Lean:** `forge_bridge/translation_oracle/` (or
-similar), `__all__`-scoped, atomic-append JSONL, `SCHEMA_VERSION` from day one, **zero shared symbols** with the
-other two.
-
-**One artifact, one home — defend aggressively (Creative, strongly endorsed).** The room keeps rediscovering
-that the same asset is being named from different angles — **DT** calls it a *reference corpus*; **Creative**
-calls it an *operator-facing provenance surface*; **Phase 3** calls it *oracle validation*. These are **not
-separate systems — they are projections of one asset.** So the labeled corpus, the per-param **provenance
-signal** (`grounded-from-intent`/`from-context`/`filled-from-example`/`unresolved`), the validation outputs,
-and the operator surface all live **together** in this one package. Splitting them would re-fragment exactly the
-scattered translation layer v1.13 exists to consolidate. **Open:** confirm the exact name + that the per-param
-provenance signal lives in this schema (so 3b reads it and Phase-4's gate surfaces it).
+- **Three-vocabulary rule [N] (DT):** the provenance vocabulary (`grounded-from-intent`/`from-context`/
+  `filled-from-example`/`unresolved`) must **not** reuse comprehension's verdict vocab (loved/hated/…) **or**
+  corpus's divergence vocab. Three instruments, three distinct label vocabularies — "named distinctly forever"
+  operationalized at the **schema field**, not just the package name.
+- **Internal module split (DT):** keep the **corpus (data+schema)** and the **detector (logic)** as separate
+  modules inside the package, so 3b can import them independently — even though they ship together per the
+  one-artifact call.
 
 ---
 
-## North-star (Creative, recorded)
+## What TF.3a produces (after this settled discuss)
 
-TF.3a is shaping up because it asks **"why should anyone trust this oracle?"** rather than **"how do we build a
-detector?"** That is the distinction that keeps v1.13 from collapsing into another implementation-first
-milestone. Every Q1–Q5 answer is in service of *earned trust in the instrument*, not instrument mechanics.
-
----
-
-## What TF.3a produces (after the room settles Q1–Q5)
-
-`TF.3a-PLAN.md`: the labeled-corpus schema + package incl. the per-param provenance signal (Q1/Q5,
-verdict-pair LOCKED); the **coverage-complete** seeding + hand-labeling method (every taxonomy obligation
-represented, aborts first-class — Q2, not a raw-count floor); the oracle-validation protocol — **Tier-2
-held-out + threshold, Tier-1 lightweight (sanity + falsification case + documented assumptions, no holdout)**
-(Q3); and **step 0 = re-sweep D3 against HEAD** (drift confirmed) → the refreshed example-set + the example-fill
-detector + its measured FP rate (Q4). **No 3b run, no ranking, no Phase-4 fix.** 3a ships a *validated
-instrument*; 3b is the first time it's allowed to measure — *because anyone can say why they trust it* (north-star).
+`TF.3a-PLAN.md`: **Step 0 = re-derive D3** across all five salience-surface source kinds (Q4 gating
+precondition) → the refreshed, possibly machine-consumable example value-set. Then: the `translation_oracle/`
+package with its corpus (data+schema, 5-field label incl. world-state — Q1/Q5) and detector (logic) modules; the
+**coverage-complete** seeding + authoring method (≥2/Tier-2-cell, ≥1/Tier-1-class, world-state for contextual —
+Q2); the oracle-validation protocol (**Tier-1 positive+negative unit pairs; Tier-2 held-out slice + threshold** —
+Q3); the example-fill detector + its FP rate measured **against the refreshed surface** (Q4). **No 3b run, no
+ranking, no Phase-4 fix.** 3a ships a *validated instrument*; 3b is the first time it's allowed to measure —
+because by then anyone can say why they trust it.
