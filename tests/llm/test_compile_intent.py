@@ -275,6 +275,9 @@ async def test_compile_intent_system_none_omits_pr15_language():
     assert "forge_list_shots" in system_prompt
     assert "tool_name arg=value" in system_prompt
     assert "an args object is never its own step" in system_prompt
+    assert "space-bearing entity name is a single quoted literal" in system_prompt
+    assert "never normalize spaces to underscores" in system_prompt
+    assert "never substitute a near-looking known entity" in system_prompt
 
 
 @pytest.mark.asyncio
