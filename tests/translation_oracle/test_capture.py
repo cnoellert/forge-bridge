@@ -105,6 +105,33 @@ def test_compile_error_maps_reason_from_exception_type():
     _is_valid_label_free(obs)
 
 
+def test_compile_error_with_preserved_detached_args_is_classifiable():
+    class CompileInvalidChainShape(RuntimeError):
+        pass
+
+    obs = observed_trace_from_compile_outcome(
+        outcome=_outcome(
+            "compile_error",
+            steps=[
+                "flame_rename_shots prefix=tv",
+                '{"params": {"sequence_name": "30sec_21"}}',
+            ],
+            compile_error=CompileInvalidChainShape("detached args"),
+        ),
+        tools_filtered=1,
+    )
+
+    assert obs["outcome"] == "compile_error"
+    assert obs["observed_graph"] == [
+        "flame_rename_shots prefix=tv",
+        '{"params": {"sequence_name": "30sec_21"}}',
+    ]
+    assert obs["well_formed"] is False
+    assert obs["well_formed_reason"] == "detached_args"
+    assert obs["abort_reason"] == "CompileInvalidChainShape"
+    _is_valid_label_free(obs)
+
+
 def test_observed_resolved_params_reflect_the_partial_extractor():
     """The mapper exposes what the PRODUCTION (partial) extractor captured — not
     an idealized parse. Grounded against TF.1-CONTRACT §3: extract_explicit_params

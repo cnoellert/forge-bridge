@@ -169,6 +169,7 @@ async def run_compile_branch(
         if compile_system is not None
         else build_compile_system_prompt(tools)
     )
+    steps: list[str] = []
     try:
         steps = await router.compile_intent(
             user_prompt,
@@ -179,7 +180,7 @@ async def run_compile_branch(
     except CompileError as exc:
         return CompileBranchOutcome(
             regime="compile_error",
-            steps=[],
+            steps=steps,
             preview=None,
             chain_body=None,
             compile_error=exc,

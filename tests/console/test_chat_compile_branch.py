@@ -404,8 +404,36 @@ async def test_run_compile_branch_returns_compile_error_for_non_tool_step(
 
     assert outcome.regime == "compile_error"
     assert isinstance(outcome.compile_error, CompileInvalidChainShape)
-    assert outcome.steps == []
+    assert outcome.steps == ["list shots", "commit"]
     run_chain.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_compile_branch_compile_error_preserves_detached_args_residual():
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(return_value=[
+            "flame_rename_shots prefix=tv",
+            '{"params": {"sequence_name": "30sec_21"}}',
+        ])
+    )
+
+    outcome = await run_compile_branch(
+        router=router,
+        user_prompt="rename shots",
+        tools=[_tool("flame_rename_shots", "Rename shots.")],
+        mcp=SimpleNamespace(),
+        request_id="req-detached-residual",
+        client_ip="127.0.0.1",
+        started=10.0,
+    )
+
+    assert outcome.regime == "compile_error"
+    assert isinstance(outcome.compile_error, CompileInvalidChainShape)
+    assert outcome.steps == [
+        "flame_rename_shots prefix=tv",
+        '{"params": {"sequence_name": "30sec_21"}}',
+    ]
+    assert "detached args step" in outcome.compile_error.parse_error
 
 
 @pytest.mark.asyncio
@@ -545,6 +573,26 @@ async def test_run_compile_branch_compile_error_returns_outcome():
     assert outcome.steps == []
     assert outcome.preview is None
     assert outcome.chain_body is None
+    assert outcome.compile_error is error
+
+
+@pytest.mark.asyncio
+async def test_run_compile_branch_compile_intent_raise_keeps_empty_steps():
+    error = CompileToolUnknown("missing_tool", 0, "missing_tool")
+    router = SimpleNamespace(compile_intent=AsyncMock(side_effect=error))
+
+    outcome = await run_compile_branch(
+        router=router,
+        user_prompt="missing",
+        tools=[_tool("forge_list_shots", "List shots.")],
+        mcp=SimpleNamespace(),
+        request_id="req-tool-unknown",
+        client_ip="127.0.0.1",
+        started=10.0,
+    )
+
+    assert outcome.regime == "compile_error"
+    assert outcome.steps == []
     assert outcome.compile_error is error
 
 
