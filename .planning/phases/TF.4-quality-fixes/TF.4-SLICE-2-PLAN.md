@@ -1,6 +1,6 @@
 # TF.4 (Quality Fixes) — Slice #2 PLAN: space-mangle / entity-resolution value fidelity
 
-**Status:** re-planned after a plan-breaking grounding finding (DT + Creative, verified). S1/S3/E2 unchanged; **S2 repointed frozen→postgate; S4/E1 narrowed to the `expected_well_formed` nit.** Code-ready.
+**Status:** SHIPPED S1–S3 (`a7b26c2`/`e9aefac`/`bc15158`, 766 green, verified). **S4 PULLED → TF.3b** — grounding the consumer (`_corpus.py:177`) showed `expected_well_formed` is a well-formedness-tier COUNT field, not a per-graph nit; the shared authored label is right-for-frozen/wrong-for-postgate across 3 fields → architecturally unfixable in one slice, folded into the TF.3b shared-label item. S4 below is retained as the as-planned record; **do not execute it.** S1/S3/E2 as written; S2 ran on postgate.
 **Date:** 2026-06-03. **Base:** `main @ b6c3148` (Slice #2 framing committed).
 **Framing:** `TF.4-SLICE-2-FRAMING.md`. **Spine (room-blessed):** measurement BUILT + prevention ATTEMPTED + guarantee DEFERRED.
 
