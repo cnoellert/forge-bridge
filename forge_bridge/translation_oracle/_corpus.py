@@ -25,12 +25,23 @@ from forge_bridge.translation_oracle._schema import validate_translation_case
 _DIR_ENV_VAR: Final[str] = "TRANSLATION_ORACLE_DIR"
 _CASES_FILENAME: Final[str] = "cases.jsonl"
 
-# Class -> detection tier (TF.2 §5). routing's defining defect (#2-a shadow) is
-# Tier-1 (the tool_forced marker); its wrong-selection half is Tier-2 but the
-# class is gated as Tier-1 here (instrumented capture is required for its
-# dominant defect). grounding + entity-resolution are ground-truth/Tier-2.
-_TIER1_CLASSES: Final[frozenset[str]] = frozenset({"extraction", "contextual", "routing"})
-_TIER2_CLASSES: Final[frozenset[str]] = frozenset({"grounding", "entity-resolution"})
+# The labeled REFERENCE corpus is authored ground truth (the oracle's
+# calibration) → it is committed IN THE REPO (reproducible, reviewable), NOT
+# the per-machine ~/.forge-bridge/ runtime dir. Pass this to append_case /
+# read_cases for the reference set; ~/.forge-bridge/ (the default) stays for
+# scratch/runtime-captured traces only.
+REFERENCE_DIR: Final[Path] = Path(__file__).resolve().parent / "reference"
+
+# Class -> detection tier (TF.2 §5 + the routing-straddle ratification, D3).
+# Tier-1 = genuinely needs the instrumented runtime markers: `extraction` reads
+# observed_resolved_params from a real dispatch; `contextual` needs desktop state.
+# Tier-2 = seed-usable (compare observed vs label, both in the data): grounding,
+# entity-resolution, AND `routing` — its dominant/seed-detectable half is
+# wrong-selection (observed tool != labeled tool). routing/SHADOW (tool_forced)
+# would be Tier-1, but it is not represented in this corpus; if it ever is, it
+# needs an instrumented trace, separate from this class-level tiering.
+_TIER1_CLASSES: Final[frozenset[str]] = frozenset({"extraction", "contextual"})
+_TIER2_CLASSES: Final[frozenset[str]] = frozenset({"grounding", "entity-resolution", "routing"})
 
 _TIER1_MIN: Final[int] = 1
 _TIER2_MIN: Final[int] = 2

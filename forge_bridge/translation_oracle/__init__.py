@@ -11,6 +11,7 @@ from forge_bridge.translation_oracle._capture import (
     observed_trace_from_compile_outcome,
 )
 from forge_bridge.translation_oracle._corpus import (
+    REFERENCE_DIR,
     append_case,
     coverage_report,
     read_cases,
@@ -34,6 +35,7 @@ from forge_bridge.translation_oracle._schema import (
 __all__ = [
     "CAPTURE_PROVENANCE_VALUES",
     "CLASS_VALUES",
+    "REFERENCE_DIR",
     "PROVENANCE_VALUES",
     "SCHEMA_VERSION",
     "SUBSTRATE_VERDICT_VALUES",
