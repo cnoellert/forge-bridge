@@ -7,6 +7,7 @@ observed traces.
 Usage:
   python -m forge_bridge.translation_oracle.run_captures --seed-only   # no Ollama; writes the seed cases
   python -m forge_bridge.translation_oracle.run_captures               # full build; needs `ollama serve`
+  python -m forge_bridge.translation_oracle.run_captures --postgate    # writes reference/postgate/
 
 Rebuilds the committed reference corpus (`reference/cases.jsonl`) from scratch each
 run, then prints the coverage report.
@@ -55,17 +56,20 @@ def _seed_observed_for(input_text: str, seed_records: list[dict]):
 
 
 async def build(
-    *, seed_only: bool = False, reuse_observed: bool = False,
+    *,
+    seed_only: bool = False,
+    reuse_observed: bool = False,
+    corpus_dir: Path = REFERENCE_DIR,
 ) -> tuple[list[str], list[tuple[str, str]]]:
     from forge_bridge.translation_oracle._detect import compute_well_formed
 
-    path = REFERENCE_DIR / "cases.jsonl"
+    path = corpus_dir / "cases.jsonl"
 
     # --reuse-observed: re-pair authored labels with already-captured observed
     # traces (no Ollama) — used to relabel/rebuild after a schema or label change.
     cached: dict[str, dict] = {}
     if reuse_observed and path.exists():
-        for c in read_cases(corpus_dir=REFERENCE_DIR):
+        for c in read_cases(corpus_dir=corpus_dir):
             inp = (c.get("label") or {}).get("input")
             if inp is not None:
                 cached[inp] = c["observed"]
@@ -107,7 +111,7 @@ async def build(
             )
         append_case(
             {"schema_version": SCHEMA_VERSION, "observed": observed, "label": label},
-            corpus_dir=REFERENCE_DIR,
+            corpus_dir=corpus_dir,
         )
         written.append(cid)
     return written, skipped
@@ -119,17 +123,35 @@ def main() -> None:
                     help="write only the seed-derived cases (no Ollama)")
     ap.add_argument("--reuse-observed", action="store_true",
                     help="re-pair authored labels with already-captured traces (no Ollama)")
+    ap.add_argument("--postgate", action="store_true",
+                    help="write to the post-gate reference corpus")
+    ap.add_argument("--output", type=Path,
+                    help="write to an explicit corpus directory")
     args = ap.parse_args()
+    if args.postgate and args.output is not None:
+        ap.error("--postgate and --output are mutually exclusive")
+    corpus_dir = (
+        args.output
+        if args.output is not None
+        else REFERENCE_DIR / "postgate"
+        if args.postgate
+        else REFERENCE_DIR
+    )
 
     written, skipped = asyncio.run(
-        build(seed_only=args.seed_only, reuse_observed=args.reuse_observed))
+        build(
+            seed_only=args.seed_only,
+            reuse_observed=args.reuse_observed,
+            corpus_dir=corpus_dir,
+        )
+    )
     print(f"written {len(written)}: {written}")
     if skipped:
         print(f"skipped {len(skipped)}:")
         for cid, why in skipped:
             print(f"  {cid}: {why}")
 
-    report = coverage_report(read_cases(corpus_dir=REFERENCE_DIR))
+    report = coverage_report(read_cases(corpus_dir=corpus_dir))
     print(f"\ncoverage complete: {report['complete']}")
     print(json.dumps(report, indent=2))
 
