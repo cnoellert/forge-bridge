@@ -20,47 +20,51 @@ expected_classes · world_state · defect_ref)`. Verdict cells: (a) pass/pass ·
 
 ---
 
-## §A — Seed-derived labels (distinct inputs from the 32 traces)
+## §A — Seed-derived labels (EXACT tools, grounded against live signatures)
 
-### A1. Clean reads — cell (a), translation PASS / substrate PASS, no classes
-| # | input | expected_graph | verdict | confidence |
+**Tool signatures verified** (`tools/*.py` Input models + `mcp/tools.py`): paramless reads take `{}`;
+`flame_get_sequence_segments`/`flame_inspect_sequence_versions` take `sequence_name`; `flame_rename_shots`
+needs `sequence_name`+`prefix` (both REQUIRED); `flame_get_batch_iterations` is **paramless + operates on the
+currently-OPEN batch**; `forge_get_shot` needs a **Shot UUID** and its docstring routes Flame sequences to
+`flame_get_sequence_segments`.
+
+### A1. Clean reads — cell (a) PASS/PASS, no classes
+| # | input | EXACT expected graph | verdict | note |
 |---|---|---|---|---|
-| A1.1 | "What batch groups are on the desktop" | `flame_list_batch_groups {}` | (a) | HIGH — matches observed answered trace |
-| A1.2 | "What is the name of the current desktop" | `flame_list_desktop {}` | (a) | HIGH |
-| A1.3 | "What reels are on the desktop" | `flame_list_desktop` | (a) | MED — "reels" vs "desktop" tool; flag if reels want `flame_list_reel_*` |
+| A1.1 | "What batch groups are on the desktop" | `flame_list_batch_groups {}` | (a) | exact, paramless |
+| A1.2 | "What is the name of the current desktop" | `flame_list_desktop {}` | (a) | exact, paramless |
+| A1.3 | "What reels are on the desktop" | `flame_list_desktop {}` *(or `flame_list_reel_groups {}`)* | (a) | **⚑D3** which tool surfaces "reels"? |
+| A1.4 | "What is the name of the current reels group" | `flame_get_batch_reels {}` *(observed)* | (a)? | **⚑D3** "reels group" routing — confirm |
 
-### A2. Routing failures — cell (b), translation FAIL / substrate PASS, class `routing` ⚡NEEDS-LIVE-CAPTURE
-*(capability exists; observed `graph=[]` = nothing selected = a routing failure)*
-| # | input | expected_graph (intended) | classes | substrate basis | confidence |
-|---|---|---|---|---|---|
-| A2.1 | "list the projects" | `forge_list_projects {}` | `[routing]` | `forge_list_projects` exists | HIGH — cleanest routing-fail (trivial intent, empty graph) |
-| A2.2 | "What's the duration in frames of 30sec_edit 21" | `flame_inspect_sequence_versions sequence_name=…` | `[routing, entity-resolution]` | seq-inspect exists | MED — multi-tag; the `30sec_edit 21` space-name is the entity half |
-
-### A3. Entity-resolution — cell (b), class `entity-resolution` ⚡NEEDS-LIVE-CAPTURE (Tier-2 half label-gated)
-| # | input | observed | expected | classes | confidence |
-|---|---|---|---|---|---|
-| A3.1 | "What iteration is gen_0460 on?" | `forge_get_batch_iterations` (aborted) | resolve `gen_0460` → iterations | `[entity-resolution]` | MED — `gen_0460` named entity unresolved; could carry `extraction` too |
-| A3.2 | "What is the path to shot 10 on 30sec_edit 21?" | `graph=[]` | resolve shot 10 + seq → path | `[routing, entity-resolution]` | MED — **flag:** confirm a shot-path read capability exists (substrate) |
-
-### A4. Contextual / stateful — class `contextual` ⚡NEEDS-LIVE-CAPTURE
-| # | input | observed | analysis | confidence |
+### A2. Routing failures — cell (b) FAIL/PASS ⚡NEEDS-LIVE-CAPTURE
+*(capability exists; observed `graph=[]` or a non-existent tool = the routing failure)*
+| # | input | EXACT expected graph | classes | substrate basis |
 |---|---|---|---|---|
-| A4.1 | "What is the name of the current batch" | `flame_list_batch_groups` (aborted) | "current batch" = state-ref; selected *list-all* instead of resolving *current* → `[contextual]`. **Verdict judgment:** translation FAIL/(b) if you call list-all a mis-translation; OR substrate-GAP/(d) since resolving "current" needs the unwired desktop (TF.1 §4). **Lean (d)** — the desktop gap is the real blocker. | LOW — operator call |
+| A2.1 | "list the projects" | `forge_list_projects {}` | `[routing]` | exists, paramless — **cleanest routing-fail** (trivial intent → empty graph) |
+| A2.2 | "What's the duration in frames of 30sec_edit 21" | `flame_get_sequence_segments sequence_name="30sec_edit 21"` | `[routing, entity-resolution]` | seg tool exists; **⚑** duration derived from segments (alt `flame_inspect_sequence_versions`) |
+| A2.3 | "What is the path to shot 10 on 30sec_edit 21?" | `flame_get_sequence_segments sequence_name="30sec_edit 21"` | `[routing, entity-resolution]` | **NOT `forge_get_shot`** (that needs a Shot UUID; the tool's own docstring routes Flame sequences here). "shot 10" = a segment in the result |
+| A2.4 | "What's the duration of shot 10 on 30sec_edit 21?" | `flame_get_sequence_segments sequence_name="30sec_edit 21"` | `[routing, entity-resolution]` | same; segment 10's frame extent |
+| A2.5 | "What iteration is gen_0460 on?" | `flame_open_batch_group batch_group_name="gen_0460"` → `flame_get_batch_iterations {}` | `[routing, entity-resolution]` | **2-STEP** (get_batch_iterations reads the *open* batch). Observed `forge_get_batch_iterations` = a **non-existent tool** (only `flame_`) → tool-unknown routing failure; `gen_0460` dropped = entity half |
 
-### A5. Capability gap — the R9 case (THE judgment call)
+### A3. Correct-tool reads that aborted — reclassified ⚡NEEDS-LIVE-CAPTURE
+| # | input | observed | corrected analysis |
+|---|---|---|---|
+| A3.1 | "What is the name of the current batch" | `flame_list_batch_groups` (aborted) | **CORRECTION (grounded):** `flame_list_batch_groups` *does* return which batch is current (batch.py:18) → the tool selection is **CORRECT** = translation PASS. So this is **not** a contextual routing failure. The abort is a runtime/substrate matter → live capture classifies cell (likely (a) had it not aborted, or a substrate fault). **⚑D2** |
+
+### A4. Capability gap — the R9 case (THE judgment call)
 | # | input | observed | grounded fact | proposed verdict |
 |---|---|---|---|---|
-| A5.1 | "Does shot 10 on 30sec_edit 21 have a timewarp?" | `graph=[]` + `chain_aborted` | **NO timewarp-query capability exists** (grep `tools/`+`mcp/` = empty) | **(c) translation-PASS + substrate-GAP — REWARDED honest decline, no classes** — *IF the abort was an honest decline.* **⚠ THE judgment call:** did it decline honestly, or silently fail to route? Verdict hinges on it. Lean (c) given the gap is real; needs the abort mechanism checked at live capture (did `:407`/an honest-decline fire, or just empty?). |
+| A4.1 | "Does shot 10 on 30sec_edit 21 have a timewarp?" | `graph=[]` + `chain_aborted` | **NO timewarp-query capability** (grep `tools/`+`mcp/` empty) | **(c) translation-PASS + substrate-GAP — REWARDED honest decline, no classes** — *IF the abort was honest.* **⚠ D1:** honest decline vs silent routing fail? Verdict hinges on it; needs the live abort mechanism (did the `:407`/decline net fire, or just empty?). |
 
 ---
 
 ## §B — Authored cases (not in the seed; needed for coverage)
 
-| # | input (authored) | expected | classes | cell | defect_ref | capture |
+| # | input (authored) | EXACT expected graph | classes | cell | defect_ref | capture |
 |---|---|---|---|---|---|---|
-| B1 | "rename the shots on 30sec_21 with prefix tv" *(operator-intended prefix)* | `flame_rename_shots sequence_name=30sec_21 prefix=tv` | `[grounding]` | (b) | defect-1 | ⚡LIVE — observed shows `prefix=noise` **lifted** from the example (the grounding defect). Tier-2 so seed-legibility *could* work, but no seed exists → author+capture |
-| B2 | "rename shots on 30sec_edit 21 prefix noise" | correct rename graph w/ both params | `[routing, extraction]` | (b) | defect-2 | ⚡LIVE — the PR20 shadow (routing) + `prefix`/`sequence_name` unparsed (extraction). The multi-tag pattern. |
-| B3 | "rename this sequence with prefix tv" | graph carrying unresolved `sequence_name=unresolved-pending-dispatch` | `[contextual]` | (b) | defect-3 | ⚡LIVE — "this sequence" needs desktop; `world_state={open_sequence: …}` holds ground truth |
+| B1 | "rename the shots on 30sec_21 with prefix tv" | `flame_rename_shots sequence_name="30sec_21" prefix="tv"` | `[grounding]` | (b) | defect-1 | ⚡LIVE — observed shows `prefix="noise"` **lifted** from the docstring example. (`RenameInput`: both REQUIRED) |
+| B2 | "rename shots on 30sec_edit 21 prefix noise" | `flame_rename_shots sequence_name="30sec_edit 21" prefix="noise"` | `[routing, extraction]` | (b) | defect-2 | ⚡LIVE — PR20 shadow (routing) + `prefix`/`sequence_name` unparsed by the partial extractor (extraction). Multi-tag pattern. |
+| B3 | "rename this sequence with prefix tv" | `flame_rename_shots sequence_name="unresolved-pending-dispatch" prefix="tv"` | `[contextual]` | (b) | defect-3 | ⚡LIVE — "this sequence" needs desktop; `world_state={"open_sequence": "<name>"}` holds ground truth |
 
 ---
 
@@ -73,10 +77,10 @@ expected_classes · world_state · defect_ref)`. Verdict cells: (a) pass/pass ·
 - **Multi-tag {routing,extraction}:** B2 ✓.
 
 ## §D — Open judgment calls for the operator (the ones I won't decide solo)
-1. **A5.1 timewarp → (c) honest-decline or translation-FAIL?** The whole verdict-matrix (c)-cell rides on this. Capability gap is grounded-real; the question is whether the abort was *honest*.
-2. **A4.1 "current batch" → (b) mis-translation or (d) desktop-gap?** Lean (d).
-3. **A1.3 / "reels group" routing** — are `flame_list_desktop` for "reels" and `flame_get_batch_reels` for "reels group" correct, or mild routing issues?
-4. **A3.2 shot-path** — confirm a shot-path read capability exists (sets substrate pass vs gap).
-5. **Tier-2 second instances** — accept authoring a 2nd grounding + 2nd entity-resolution case for the ≥2 floor?
+*(D4 from the prior draft is RESOLVED: shot-path = `flame_get_sequence_segments`, capability exists → substrate PASS.)*
+1. **D1 — A4.1 timewarp → (c) honest-decline or translation-FAIL?** The whole verdict-matrix (c)-cell rides on this. The capability gap is grounded-real; the only question is whether the abort was *honest* (decline-net fired) vs silent — resolvable at live capture.
+2. **D2 — A3.1 "current batch":** now reclassified to **translation-PASS** (correct tool surfaces the current batch). Confirm — and the abort's cause (why did a correct read abort?) is a live-capture question, not a labeling one.
+3. **D3 — A1.3/A1.4 reels routing:** are `flame_list_desktop` (for "reels on the desktop") and `flame_get_batch_reels` (for "current reels group") the right reads, or mild routing issues? (alt: `flame_list_reel_groups`/`flame_list_reel_contents`.)
+4. **D5 — Tier-2 second instances:** accept authoring a 2nd grounding + 2nd entity-resolution case for the ≥2 floor (A2.2/A2.3/A2.5 already give multiple entity-resolution instances; grounding has only B1 → needs a 2nd)?
 
-**On ratification:** correct/confirm the above, decide D1–D5, and I write the ratified Tier-2 + (a)/(c)/(d) cases to the corpus immediately; the Tier-1 ⚡ cases get written when their instrumented captures run (stack up).
+**On ratification:** confirm/correct §A–§B, decide D1–D5, and I write the ratified Tier-2 + (a)/(c) cases to the corpus immediately; the Tier-1 ⚡ cases (routing/extraction/contextual) get written when their instrumented captures run (stack up).
