@@ -429,6 +429,8 @@ def _default_compile_system_prompt(tools: list) -> str:
         "Return only the chain-step text. Use the literal `->` separator "
         "between ordered steps. Do not include explanations, Markdown, or "
         "extra natural language around the chain.\n\n"
+        "Each step's arguments travel inline with its tool name "
+        "(`tool_name arg=value ...`); an args object is never its own step.\n\n"
         "Available tools:\n"
         f"{catalogue}\n\n"
         "`commit` is the authority-transition keyword: it is used only "

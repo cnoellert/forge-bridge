@@ -135,6 +135,8 @@ def test_build_compile_system_prompt_renders_tool_catalogue():
     assert "Format a tool result." in prompt
     assert "commit" in prompt
     assert "authority transition" in prompt
+    assert "tool_name arg=value" in prompt
+    assert "an args object is never its own step" in prompt
 
 
 def test_build_compile_system_prompt_omits_pr15_enforcement_language():

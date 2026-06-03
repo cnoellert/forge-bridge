@@ -103,6 +103,8 @@ def build_compile_system_prompt(tools: list) -> str:
         "Return only chain-step text. Use the literal `->` chain syntax "
         "between ordered steps. Do not include Markdown, prose, or code "
         "fences.\n\n"
+        "Each step's arguments travel inline with its tool name "
+        "(`tool_name arg=value ...`); an args object is never its own step.\n\n"
         "Available tools:\n"
         f"{catalogue}\n\n"
         "Authority transition:\n"

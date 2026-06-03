@@ -273,6 +273,8 @@ async def test_compile_intent_system_none_omits_pr15_language():
     # Positive assertions preserved — these were not part of the F-D3-1 defect.
     assert "chain-step text" in system_prompt
     assert "forge_list_shots" in system_prompt
+    assert "tool_name arg=value" in system_prompt
+    assert "an args object is never its own step" in system_prompt
 
 
 @pytest.mark.asyncio
