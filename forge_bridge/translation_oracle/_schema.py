@@ -94,6 +94,8 @@ _OBSERVED_MARKER_TYPES: Final[dict[str, type | tuple[type, ...]]] = {
     # observed verdict; the reason names the malformation.
     "well_formed": (bool, type(None)),
     "well_formed_reason": (str, type(None)),
+    "salvage_applied": bool,
+    "original_reason": (str, type(None)),
 }
 
 

@@ -83,7 +83,7 @@ def observed_trace_from_compile_outcome(
     steps = list(outcome.steps or [])
     mapped_outcome = _REGIME_TO_OUTCOME.get(outcome.regime, outcome.regime)
     well_formed, reason = compute_well_formed(steps, outcome=mapped_outcome)
-    return {
+    trace = {
         "capture_provenance": capture_provenance,
         "observed_graph": steps,
         "observed_resolved_params": _observed_resolved_params(steps),
@@ -94,7 +94,10 @@ def observed_trace_from_compile_outcome(
         "tool_selected": _first_tool(steps),
         "well_formed": well_formed,
         "well_formed_reason": reason,
+        "salvage_applied": bool(getattr(outcome, "salvage_applied", False)),
+        "original_reason": getattr(outcome, "salvage_reason", None),
     }
+    return trace
 
 
 async def capture_observed_trace(

@@ -5,6 +5,9 @@ loudly rather than silently regressing the instrument.
 """
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from forge_bridge.translation_oracle import (
@@ -87,6 +90,25 @@ def test_seed_legibility_trace_may_be_sparse():
         "capture_provenance": "seed-legibility",
         "observed_graph": ["flame_list_batch_groups {}"],
     }))
+
+
+def test_existing_fieldless_corpus_row_still_validates():
+    reference = (
+        Path(__file__).parents[2]
+        / "forge_bridge"
+        / "translation_oracle"
+        / "reference"
+        / "cases.jsonl"
+    )
+    first = next(
+        json.loads(line)
+        for line in reference.read_text().splitlines()
+        if line.strip() and not json.loads(line).get("_header")
+    )
+
+    assert "salvage_applied" not in first["observed"]
+    assert "original_reason" not in first["observed"]
+    validate_translation_case(first)
 
 
 # --- Q1 locked floor: a present Label must carry a verdict-pair + world_state -

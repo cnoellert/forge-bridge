@@ -14,13 +14,23 @@ from forge_bridge.translation_oracle import (
 )
 
 
-def _outcome(regime, *, steps=None, chain_body=None, compile_error=None):
+def _outcome(
+    regime,
+    *,
+    steps=None,
+    chain_body=None,
+    compile_error=None,
+    salvage_applied=False,
+    salvage_reason=None,
+):
     return CompileBranchOutcome(
         regime=regime,
         steps=steps or [],
         preview=None,
         chain_body=chain_body,
         compile_error=compile_error,
+        salvage_applied=salvage_applied,
+        salvage_reason=salvage_reason,
     )
 
 
@@ -130,4 +140,23 @@ def test_tool_forced_is_settable_for_the_forced_path():
         tool_forced=True,
     )
     assert obs["tool_forced"] is True
+    _is_valid_label_free(obs)
+
+
+def test_salvage_observability_maps_from_compile_outcome():
+    obs = observed_trace_from_compile_outcome(
+        outcome=_outcome(
+            "compiled_mutating_preview",
+            steps=[
+                'flame_rename_shots {"params": {"sequence_name": "30sec_21"}}',
+                "commit",
+            ],
+            salvage_applied=True,
+            salvage_reason="detached_args",
+        ),
+        tools_filtered=1,
+    )
+
+    assert obs["salvage_applied"] is True
+    assert obs["original_reason"] == "detached_args"
     _is_valid_label_free(obs)
