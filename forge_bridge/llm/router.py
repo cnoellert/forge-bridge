@@ -487,10 +487,7 @@ def _structured_compile_step_text(item: Any, available_names: set[str], index: i
         text = item.get("step") or item.get("step_text") or item.get("text")
         if isinstance(text, str) and text.strip():
             return text.strip()
-        raise CompileInvalidChainShape(
-            json.dumps(item, default=str),
-            f"step {index} has no tool_name or step_text",
-        )
+        return json.dumps(item, default=str)
     tool_name = tool_name.strip()
     if tool_name not in available_names:
         raise CompileToolUnknown(tool_name, index, json.dumps(item, sort_keys=True))

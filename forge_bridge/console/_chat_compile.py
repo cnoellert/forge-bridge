@@ -15,7 +15,7 @@ from forge_bridge.console._executor_route import apply_executor_routing
 from forge_bridge.console._param_extract import extract_explicit_params
 from forge_bridge.console._source_route import apply_source_routing
 from forge_bridge.graph.commit import graph_contains_commit_node, is_commit_step
-from forge_bridge.llm.router import CompileError
+from forge_bridge.llm.router import CompileError, normalize_chain_shape
 from forge_bridge.store.assent_record_repo import AssentRecordRepo
 
 
@@ -30,6 +30,8 @@ class CompileBranchOutcome:
     compile_error: Optional[Any]
     graph_intent_id: Optional[str] = None
     assent_record_id: Optional[uuid.UUID] = None
+    salvage_applied: bool = False
+    salvage_reason: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -171,6 +173,7 @@ async def run_compile_branch(
             tools,
             system=system,
         )
+        steps, salvage = normalize_chain_shape(steps)
     except CompileError as exc:
         return CompileBranchOutcome(
             regime="compile_error",
@@ -179,6 +182,12 @@ async def run_compile_branch(
             chain_body=None,
             compile_error=exc,
         )
+    salvage_applied = bool(salvage and salvage.get("salvage_applied"))
+    salvage_reason = (
+        str(salvage.get("original_reason"))
+        if salvage and salvage.get("original_reason") is not None
+        else None
+    )
 
     steps = apply_executor_routing(steps, execution_tools or tools)
     if graph_contains_commit_node(steps):
@@ -203,6 +212,8 @@ async def run_compile_branch(
                 compile_error=None,
                 graph_intent_id=graph_intent_id,
                 assent_record_id=assent_record_id,
+                salvage_applied=salvage_applied,
+                salvage_reason=salvage_reason,
             )
     routed_steps = apply_source_routing(user_prompt, steps, execution_tools or tools)
     chain_tools = execution_tools if routed_steps != steps and execution_tools else tools
@@ -226,6 +237,8 @@ async def run_compile_branch(
         preview=None,
         chain_body=chain_body,
         compile_error=None,
+        salvage_applied=salvage_applied,
+        salvage_reason=salvage_reason,
     )
 
 

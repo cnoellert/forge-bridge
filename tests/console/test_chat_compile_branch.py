@@ -23,6 +23,7 @@ from forge_bridge.console.manifest_service import ManifestService
 from forge_bridge.console.read_api import ConsoleReadAPI
 from forge_bridge.llm.router import (
     CompileBudgetExceeded,
+    CompileInvalidChainShape,
     CompileSeamViolation,
     CompileToolUnknown,
     CompileUnresolvableIntent,
@@ -219,12 +220,12 @@ def test_build_preview_from_steps_threads_graph_intent_id():
 @pytest.mark.asyncio
 async def test_run_compile_branch_non_mutating_executes_chain(monkeypatch):
     router = SimpleNamespace(
-        compile_intent=AsyncMock(return_value=["list shots"])
+        compile_intent=AsyncMock(return_value=["forge_list_shots"])
     )
     chain_body = {
         "status": "success",
         "request_id": "req-1",
-        "chain": [{"step": "list shots", "result": {"shots": []}}],
+        "chain": [{"step": "forge_list_shots", "result": {"shots": []}}],
         "error": None,
     }
     run_chain = AsyncMock(return_value=chain_body)
@@ -233,7 +234,7 @@ async def test_run_compile_branch_non_mutating_executes_chain(monkeypatch):
     outcome = await run_compile_branch(
         router=router,
         user_prompt="list shots",
-        tools=[_tool("list", "List things.")],
+        tools=[_tool("forge_list_shots", "List shots.")],
         mcp=SimpleNamespace(),
         request_id="req-1",
         client_ip="127.0.0.1",
@@ -241,10 +242,12 @@ async def test_run_compile_branch_non_mutating_executes_chain(monkeypatch):
     )
 
     assert outcome.regime == "compiled_non_mutating"
-    assert outcome.steps == ["list shots"]
+    assert outcome.steps == ["forge_list_shots"]
     assert outcome.chain_body == chain_body
     assert outcome.preview is None
     assert outcome.compile_error is None
+    assert outcome.salvage_applied is False
+    assert outcome.salvage_reason is None
     run_chain.assert_awaited_once()
 
 
@@ -378,7 +381,7 @@ async def test_run_compile_branch_keeps_commit_for_exact_mutating_tool(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_run_compile_branch_keeps_commit_when_first_token_not_exact_tool(
+async def test_run_compile_branch_returns_compile_error_for_non_tool_step(
     monkeypatch,
 ):
     router = SimpleNamespace(
@@ -397,8 +400,41 @@ async def test_run_compile_branch_keeps_commit_when_first_token_not_exact_tool(
         started=10.0,
     )
 
+    assert outcome.regime == "compile_error"
+    assert isinstance(outcome.compile_error, CompileInvalidChainShape)
+    assert outcome.steps == []
+    run_chain.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_compile_branch_records_salvage_on_repaired_compile(monkeypatch):
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(return_value=[
+            "flame_rename_shots",
+            '{"params": {"sequence_name": "30sec_21", "prefix": "tv"}}',
+            "commit",
+        ])
+    )
+    run_chain = AsyncMock()
+    monkeypatch.setattr(_chat_compile, "run_chain_steps", run_chain)
+
+    outcome = await run_compile_branch(
+        router=router,
+        user_prompt="rename shots",
+        tools=[_authority_tool("flame_rename_shots", read_only=False)],
+        mcp=SimpleNamespace(),
+        request_id="req-salvage",
+        client_ip="127.0.0.1",
+        started=10.0,
+    )
+
     assert outcome.regime == "compiled_mutating_preview"
-    assert outcome.steps == ["list shots", "commit"]
+    assert outcome.steps == [
+        'flame_rename_shots {"params": {"sequence_name": "30sec_21", "prefix": "tv"}}',
+        "commit",
+    ]
+    assert outcome.salvage_applied is True
+    assert outcome.salvage_reason == "detached_args"
     run_chain.assert_not_awaited()
 
 

@@ -86,6 +86,37 @@ def test_normalize_chain_shape_repairs_synthetic_json_list_raise_shape():
 
 
 @pytest.mark.asyncio
+async def test_compile_intent_json_list_bare_args_preserves_repairable_shape():
+    router = LLMRouter()
+    router._async_local = AsyncMock(
+        return_value=(
+            '['
+            '{"tool_name": "flame_rename_shots"}, '
+            '{"params": {"sequence_name": "30sec_21", "prefix": "tv"}}'
+            ']'
+        )
+    )
+
+    parsed = await router.compile_intent(
+        "rename shots",
+        tools=[_tool("flame_rename_shots", "Rename shots.")],
+    )
+    steps, salvage = normalize_chain_shape(parsed)
+
+    assert parsed == [
+        "flame_rename_shots",
+        '{"params": {"sequence_name": "30sec_21", "prefix": "tv"}}',
+    ]
+    assert steps == [
+        'flame_rename_shots {"params": {"sequence_name": "30sec_21", "prefix": "tv"}}'
+    ]
+    assert salvage == {
+        "salvage_applied": True,
+        "original_reason": "detached_args",
+    }
+
+
+@pytest.mark.asyncio
 async def test_compile_intent_parses_valid_chain():
     router = LLMRouter()
     router._async_local = AsyncMock(
