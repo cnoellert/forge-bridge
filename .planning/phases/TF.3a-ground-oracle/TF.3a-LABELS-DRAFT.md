@@ -76,11 +76,18 @@ currently-OPEN batch**; `forge_get_shot` needs a **Shot UUID** and its docstring
 - **D-series:** defect-1 (B1) · defect-2 (B2) · defect-3 (B3) ✓.
 - **Multi-tag {routing,extraction}:** B2 ✓.
 
-## §D — Open judgment calls for the operator (the ones I won't decide solo)
-*(D4 from the prior draft is RESOLVED: shot-path = `flame_get_sequence_segments`, capability exists → substrate PASS.)*
-1. **D1 — A4.1 timewarp → (c) honest-decline or translation-FAIL?** The whole verdict-matrix (c)-cell rides on this. The capability gap is grounded-real; the only question is whether the abort was *honest* (decline-net fired) vs silent — resolvable at live capture.
-2. **D2 — A3.1 "current batch":** now reclassified to **translation-PASS** (correct tool surfaces the current batch). Confirm — and the abort's cause (why did a correct read abort?) is a live-capture question, not a labeling one.
-3. **D3 — A1.3/A1.4 reels routing:** are `flame_list_desktop` (for "reels on the desktop") and `flame_get_batch_reels` (for "current reels group") the right reads, or mild routing issues? (alt: `flame_list_reel_groups`/`flame_list_reel_contents`.)
-4. **D5 — Tier-2 second instances:** accept authoring a 2nd grounding + 2nd entity-resolution case for the ≥2 floor (A2.2/A2.3/A2.5 already give multiple entity-resolution instances; grounding has only B1 → needs a 2nd)?
+## §D — Judgment calls — RATIFIED (operator, 2026-06-02)
+*(D4 RESOLVED earlier: shot-path = `flame_get_sequence_segments`, substrate PASS.)*
+1. **D1 — timewarp = DECLINE → cell (c) PASS/GAP, rewarded.** Locked. (Live capture confirms the abort was the honest-decline net firing, not a silent empty.)
+2. **D2 — "current batch" = translation PASS.** Correct behavior = `flame_list_batch_groups {}` (lists all, current marked). The seed abort's cause is a live-capture question, not a label. Likely cell (a) once it answers.
+3. **D3 — reels route to `flame_list_reel_groups`** (the typical use case). **Consequence:** A1.3 ("reels on the desktop") and A1.4 ("current reels group") observed the WRONG tools (`flame_list_desktop` / `flame_get_batch_reels`) → **reclassified to routing / wrong-selection, cell (b)**. Both are the **Tier-2** half of the routing straddle (observed-tool ≠ labeled-tool) → **seed-usable, no live capture needed** (see refinement below).
+5. **D5 — 2nd grounding case = "set the start frames on 30sec_edit 21"** (real seed, rows 6–8). No frame value given → honest decline *should* fire; example-salience lifts `default_frame=1001` (`timeline.py:697 "e.g. 1001"`). The example-salience-defeats-honest-decline pattern (TF.1-CONTRACT §5). See B4 below.
 
-**On ratification:** confirm/correct §A–§B, decide D1–D5, and I write the ratified Tier-2 + (a)/(c) cases to the corpus immediately; the Tier-1 ⚡ cases (routing/extraction/contextual) get written when their instrumented captures run (stack up).
+## §D-refinements surfaced by ratification
+- **Routing straddle in the coverage tier model:** D3 shows routing/wrong-selection is **Tier-2-detectable** (compare observed vs labeled tool — both in the data, seed-usable), while routing/shadow is **Tier-1** (`tool_forced` marker, needs instrumented). The Step-3 `_corpus` model currently treats ALL `routing` as Tier-1 → over-conservative; it would force A1.3/A1.4 to re-capture needlessly. **Refinement:** let routing satisfy a cell via EITHER an instrumented shadow trace OR a seed-legibility wrong-selection trace (observed-tool present and ≠ labeled). Small `_corpus` change.
+- **Corpus location:** the labeled REFERENCE corpus is authored ground truth → it should be **committed in the repo** (reproducible, reviewable, the oracle's calibration), not the per-machine `~/.forge-bridge/`. `append_case` needs a repo-path target for the reference set; `~/.forge-bridge/` stays for runtime-captured observed traces only.
+
+### B4 — 2nd grounding case (D5)
+| input | EXACT expected (correct) | observed defect | classes | cell | defect_ref |
+|---|---|---|---|---|---|
+| "set the start frames on 30sec_edit 21" | honest decline — `:407` "specify the frame" *(no frame given)* | `flame_set_start_frames sequence_name="30sec_edit 21" default_frame=1001` *(1001 lifted from the `e.g. 1001` docstring)* | `[grounding]` | should-be-(c)→silently-(b) | defect-1b (§5 honest-decline-defeat) |
