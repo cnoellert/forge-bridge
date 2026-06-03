@@ -82,3 +82,18 @@ The distribution (baseline: **4** detached_args, **0** salvage):
 **Net well-formedness improved and held:** baseline wf-False = 6 (4 detached + 1 `non_tool_step` + 1 `invalid_chain_shape`) → postgate stable core = **1** (`list projects` `invalid_chain_shape`, the out-of-scope raise class) + intermittent flicker. The cleared cases stayed cleared across all four runs.
 
 **S5 is now ratifiable:** Prong A retained (no regression, stable-0); Prong B = deterministic guarantee (unexercised live, by design); space-mangling = next content target; `non_tool_step` stays Slice #2 (real but intermittent, not outranked); (c) absent; `list projects` raise = out-of-scope (`compile_raw` carry-forward).
+
+---
+
+## S5 CLOSE — control-skip ruling + carried records (DT, ratified)
+
+**The clause-reverted control is SKIPPED — correct stopping point, not a compromise.** We can already make the maximally-honest claim without it: *"Prong A likely helped; efficacy unproven; Prong B is the sole deterministic guarantee."* The control would only upgrade `likely → proven/inert`, and we **retain Prong A and rely on Prong B regardless of which** — so its outcome feeds no decision and no claim we are making. Running a measurement whose result changes nothing is the one thing this milestone taught us not to do — so this is measure-first applied to itself, not cleanliness deferred. (There is no untidiness to clean: we are not claiming defense-in-depth — we claim one *proven* layer (B) plus a cheap *unproven* prevention (A). That needs no control.)
+
+**Three records carried forward (must not be lost):**
+1. **Prong-B tripwire.** B's only proof is the deterministic Slice-#1 replay bar; `0/60` live = never exercised. **The stable live-0 must NEVER justify weakening or removing the salvage.** Removal condition = *"never, absent an equivalent deterministic guarantee."*
+2. **Honest ceiling.** "Prong A likely helped" — **not** "proven" ([[feedback-baseline-drift-invalidates-controls]]). Replication established stability, not causation.
+3. **Parked control trigger.** The clause-reverted control flips from optional → **mandatory** the moment any future motion proposes *relying* on Prong A (e.g. "drop the salvage, the grammar clause handles it"). That motion may not proceed without it.
+
+**`invalid_chain_shape` residual dispositioned (DT gate — the residual story does not close on `non_tool_step` alone):**
+- **`list projects` → `CompileInvalidChainShape`, stable 4/4, empty graph = GENUINE malformation** (parser rejects the chain shape; the `compile_intent`-raise class, `steps` never bound). A distinct well-formedness sub-shape (neither detached-args nor prose). → **A Slice-#2 sibling** (a real well-formedness defect to address), and the **concrete anchor for the `compile_raw` carry-forward** — raw is exactly what would reveal *why* a trivial "list the projects" compiles to an unparseable shape (empty graph hides it today).
+- **`gen_0460` → `CompileBudgetExceeded`, 1/4 (S3 only) = timeout noise**, out-of-scope (variance/infra).
