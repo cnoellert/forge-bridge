@@ -22,6 +22,7 @@ def _outcome(
     compile_error=None,
     salvage_applied=False,
     salvage_reason=None,
+    compile_raw=None,
 ):
     return CompileBranchOutcome(
         regime=regime,
@@ -31,6 +32,7 @@ def _outcome(
         compile_error=compile_error,
         salvage_applied=salvage_applied,
         salvage_reason=salvage_reason,
+        compile_raw=compile_raw,
     )
 
 
@@ -129,6 +131,54 @@ def test_compile_error_with_preserved_detached_args_is_classifiable():
     assert obs["well_formed"] is False
     assert obs["well_formed_reason"] == "detached_args"
     assert obs["abort_reason"] == "CompileInvalidChainShape"
+    _is_valid_label_free(obs)
+
+
+def test_compile_invalid_chain_shape_trace_carries_compile_raw():
+    class CompileInvalidChainShape(RuntimeError):
+        pass
+
+    raw = '{"steps": [{"params": {"project": "all"}}]}'
+    obs = observed_trace_from_compile_outcome(
+        outcome=_outcome(
+            "compile_error",
+            compile_error=CompileInvalidChainShape("invalid chain"),
+            compile_raw=raw,
+        ),
+        tools_filtered=1,
+    )
+
+    assert obs["compile_raw"] == raw
+    _is_valid_label_free(obs)
+
+
+def test_compile_budget_exceeded_trace_compile_raw_is_none():
+    class CompileBudgetExceeded(RuntimeError):
+        pass
+
+    obs = observed_trace_from_compile_outcome(
+        outcome=_outcome(
+            "compile_error",
+            compile_error=CompileBudgetExceeded("budget"),
+        ),
+        tools_filtered=1,
+    )
+
+    assert obs["compile_raw"] is None
+    _is_valid_label_free(obs)
+
+
+def test_success_trace_compile_raw_is_none():
+    obs = observed_trace_from_compile_outcome(
+        outcome=_outcome(
+            "compiled_non_mutating",
+            steps=["forge_list_projects"],
+            chain_body={"status": "success", "chain": [], "error": None},
+        ),
+        tools_filtered=1,
+    )
+
+    assert obs["compile_raw"] is None
     _is_valid_label_free(obs)
 
 

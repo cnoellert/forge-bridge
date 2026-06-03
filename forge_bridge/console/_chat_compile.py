@@ -32,6 +32,7 @@ class CompileBranchOutcome:
     assent_record_id: Optional[uuid.UUID] = None
     salvage_applied: bool = False
     salvage_reason: Optional[str] = None
+    compile_raw: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -184,6 +185,7 @@ async def run_compile_branch(
             preview=None,
             chain_body=None,
             compile_error=exc,
+            compile_raw=getattr(exc, "raw_response", None),
         )
     salvage_applied = bool(salvage and salvage.get("salvage_applied"))
     salvage_reason = (

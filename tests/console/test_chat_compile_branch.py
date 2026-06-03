@@ -574,6 +574,7 @@ async def test_run_compile_branch_compile_error_returns_outcome():
     assert outcome.preview is None
     assert outcome.chain_body is None
     assert outcome.compile_error is error
+    assert outcome.compile_raw == error.raw_response
 
 
 @pytest.mark.asyncio
@@ -594,6 +595,31 @@ async def test_run_compile_branch_compile_intent_raise_keeps_empty_steps():
     assert outcome.regime == "compile_error"
     assert outcome.steps == []
     assert outcome.compile_error is error
+    assert outcome.compile_raw is None
+
+
+@pytest.mark.asyncio
+async def test_run_compile_branch_invalid_chain_shape_threads_compile_raw():
+    error = CompileInvalidChainShape(
+        '{"steps": [{"params": {"project": "all"}}]}',
+        "step 0 has no tool_name or step_text",
+    )
+    router = SimpleNamespace(compile_intent=AsyncMock(side_effect=error))
+
+    outcome = await run_compile_branch(
+        router=router,
+        user_prompt="list projects",
+        tools=[_tool("forge_list_projects", "List projects.")],
+        mcp=SimpleNamespace(),
+        request_id="req-raw",
+        client_ip="127.0.0.1",
+        started=10.0,
+    )
+
+    assert outcome.regime == "compile_error"
+    assert outcome.steps == []
+    assert outcome.compile_error is error
+    assert outcome.compile_raw == error.raw_response
 
 
 def test_chat_handler_json_regime_2_full_path(monkeypatch):

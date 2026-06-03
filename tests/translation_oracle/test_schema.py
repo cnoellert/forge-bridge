@@ -108,6 +108,7 @@ def test_existing_fieldless_corpus_row_still_validates():
 
     assert "salvage_applied" not in first["observed"]
     assert "original_reason" not in first["observed"]
+    assert "compile_raw" not in first["observed"]
     validate_translation_case(first)
 
 

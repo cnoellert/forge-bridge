@@ -96,6 +96,7 @@ _OBSERVED_MARKER_TYPES: Final[dict[str, type | tuple[type, ...]]] = {
     "well_formed_reason": (str, type(None)),
     "salvage_applied": bool,
     "original_reason": (str, type(None)),
+    "compile_raw": (str, type(None)),
 }
 
 

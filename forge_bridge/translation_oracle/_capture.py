@@ -96,6 +96,7 @@ def observed_trace_from_compile_outcome(
         "well_formed_reason": reason,
         "salvage_applied": bool(getattr(outcome, "salvage_applied", False)),
         "original_reason": getattr(outcome, "salvage_reason", None),
+        "compile_raw": getattr(outcome, "compile_raw", None),
     }
     return trace
 
