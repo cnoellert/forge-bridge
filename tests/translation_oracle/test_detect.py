@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from forge_bridge.translation_oracle import compute_well_formed
+from forge_bridge.translation_oracle._detect import detect_entity_value_fidelity
 
 
 def test_clean_graph_is_well_formed():
@@ -42,3 +43,53 @@ def test_known_tools_gate_catches_unknown_first_token():
     wf, reason = compute_well_formed(
         ["totally_made_up_tool {}"], known_tools={"flame_list_batch_groups"})
     assert wf is False and reason == "non_tool_step"
+
+
+def test_entity_value_fidelity_passes_when_expected_values_are_emitted():
+    faithful, reason = detect_entity_value_fidelity(
+        ['flame_rename_shots sequence_name="30sec_21" prefix="tv"'],
+        {"sequence_name": "30sec_21", "prefix": "tv"},
+    )
+
+    assert faithful is True
+    assert reason is None
+
+
+def test_entity_value_fidelity_flags_conflated_entity_value():
+    faithful, reason = detect_entity_value_fidelity(
+        ["flame_rename_shots sequence_name=30sec_21 prefix=noise"],
+        {"sequence_name": "30sec_edit 21", "prefix": "noise"},
+    )
+
+    assert faithful is False
+    assert reason == "30sec_edit 21"
+
+
+def test_entity_value_fidelity_is_param_location_blind_but_exact():
+    faithful, reason = detect_entity_value_fidelity(
+        ["forge_list_shots project_id=30sec_edit_21 status=pending"],
+        {"sequence_name": "30sec_edit 21"},
+    )
+
+    assert faithful is False
+    assert reason == "30sec_edit 21"
+
+
+def test_entity_value_fidelity_does_not_substring_match():
+    faithful, reason = detect_entity_value_fidelity(
+        ["forge_list_shots project_id=30sec_edit_21"],
+        {"sequence_name": "30sec"},
+    )
+
+    assert faithful is False
+    assert reason == "30sec"
+
+
+def test_entity_value_fidelity_is_routing_orthogonal():
+    faithful, reason = detect_entity_value_fidelity(
+        ['forge_list_shots project_id="30sec_edit 21"'],
+        {"sequence_name": "30sec_edit 21"},
+    )
+
+    assert faithful is True
+    assert reason is None

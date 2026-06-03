@@ -12,6 +12,7 @@ never reach the tool.
 """
 from __future__ import annotations
 
+import shlex
 from typing import Iterable, Optional
 
 
@@ -55,4 +56,37 @@ def compute_well_formed(
             if "_" not in first and first != "commit":
                 return (False, "non_tool_step")
 
+    return (True, None)
+
+
+def _extract_param_values(observed_graph: list) -> set[str]:
+    values: set[str] = set()
+    for step in observed_graph:
+        try:
+            tokens = shlex.split(str(step))
+        except ValueError:
+            tokens = str(step).split()
+        for token in tokens:
+            if "=" not in token:
+                continue
+            _key, value = token.split("=", 1)
+            values.add(value.strip().strip("\"'"))
+    return values
+
+
+def detect_entity_value_fidelity(
+    observed_graph: list,
+    expected_params: dict,
+) -> tuple[bool, Optional[str]]:
+    """Return whether every expected value appears as an emitted param value.
+
+    This detector is param-location-blind and exact: any key in any step may
+    carry the value, but the value must match verbatim after parameter-token
+    extraction. It never performs substring, fuzzy, or nearest-entity matching.
+    """
+    observed_values = _extract_param_values(observed_graph)
+    for value in expected_params.values():
+        canonical = str(value)
+        if canonical not in observed_values:
+            return (False, canonical)
     return (True, None)
