@@ -56,7 +56,24 @@ partly *"a decline that should have happened didn't."*
 
 ---
 
-## 3. The five translation-failure classes
+## 3. The translation-failure classes
+
+> **AMENDED 2026-06-02 (TF.3a live-capture ratification): translation-FAIL is TIERED.** The live capture
+> surfaced a dominant failure the five classes don't name — **chain-step serialization** (the model emits the
+> tool name and its args as separate steps → params never attach). The room ruled it is **not a 6th peer class
+> and not a widened "extraction"** (different component: compile-grammar vs `extract_explicit_params`; folding
+> would violate the §4 clearance rule). Instead translation-FAIL decomposes into two tiers:
+>
+> - **Well-formedness tier** (the gate): the graph is *structurally* invalid — detached args, prose steps,
+>   invalid chain shape. A malformed graph **short-circuits** content evaluation (you cannot ask "was the tool
+>   right?" of a graph whose args never attached). Schema: `ObservedTrace.well_formed` + reason;
+>   `Label.expected_well_formed=False` ⟹ translation=fail, content classes empty.
+> - **Content tier** (the five classes below): the graph is well-formed but *wrong*.
+>
+> Consequence (TF.3a): serialization is **Phase-4 slice #1**, and content-class frequencies are only reliable
+> **after** the gate clears (current measurements are "what survived malformation"). See `TF.3a-CAPTURE-FINDINGS.md`.
+
+### The five content classes
 
 Multi-tag, **collectively exhaustive but NOT mutually exclusive** (§4). Each maps onto a TF.1-INVENTORY
 component. "Detection" rows are specified fully in §5.
