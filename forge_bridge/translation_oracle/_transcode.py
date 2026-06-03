@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from forge_bridge.console._param_extract import extract_explicit_params
+from forge_bridge.translation_oracle._detect import compute_well_formed
 
 
 class TranscodeError(ValueError):
@@ -47,6 +48,8 @@ def transcode_comprehension_record(record: Any) -> dict:
         raise TranscodeError("record.chain must be a list")
 
     steps = [entry.get("step", "") for entry in chain if isinstance(entry, dict)]
+    outcome = record.get("outcome")
+    well_formed, reason = compute_well_formed(steps, outcome=outcome)
     return {
         "capture_provenance": "seed-legibility",
         "observed_graph": steps,
@@ -54,10 +57,12 @@ def transcode_comprehension_record(record: Any) -> dict:
             str(i): extract_explicit_params(step) for i, step in enumerate(steps)
         },
         # coarse signal only — an abort is visible, the fine :407 reason is not.
-        "outcome": record.get("outcome"),
+        "outcome": outcome,
         # the legibility capture never recorded these; absent, not False-meaning.
         "tool_forced": False,
         "tools_filtered": None,
         "abort_reason": None,
         "tool_selected": _first_tool(steps),
+        "well_formed": well_formed,
+        "well_formed_reason": reason,
     }

@@ -54,8 +54,22 @@ def _seed_observed_for(input_text: str, seed_records: list[dict]):
     return transcode_comprehension_record(cands[0])
 
 
-async def build(*, seed_only: bool = False) -> tuple[list[str], list[tuple[str, str]]]:
+async def build(
+    *, seed_only: bool = False, reuse_observed: bool = False,
+) -> tuple[list[str], list[tuple[str, str]]]:
+    from forge_bridge.translation_oracle._detect import compute_well_formed
+
     path = REFERENCE_DIR / "cases.jsonl"
+
+    # --reuse-observed: re-pair authored labels with already-captured observed
+    # traces (no Ollama) — used to relabel/rebuild after a schema or label change.
+    cached: dict[str, dict] = {}
+    if reuse_observed and path.exists():
+        for c in read_cases(corpus_dir=REFERENCE_DIR):
+            inp = (c.get("label") or {}).get("input")
+            if inp is not None:
+                cached[inp] = c["observed"]
+
     if path.exists():
         path.unlink()  # rebuild from scratch
 
@@ -71,6 +85,12 @@ async def build(*, seed_only: bool = False) -> tuple[list[str], list[tuple[str, 
             if observed is None:
                 skipped.append((cid, "no matching seed trace"))
                 continue
+        elif reuse_observed and case["input"] in cached:
+            observed = dict(cached[case["input"]])
+            # recompute well_formed (older captures predate the field)
+            wf, reason = compute_well_formed(
+                observed.get("observed_graph") or [], outcome=observed.get("outcome"))
+            observed["well_formed"], observed["well_formed_reason"] = wf, reason
         else:  # live
             if seed_only:
                 skipped.append((cid, "live (skipped in --seed-only)"))
@@ -97,9 +117,12 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--seed-only", action="store_true",
                     help="write only the seed-derived cases (no Ollama)")
+    ap.add_argument("--reuse-observed", action="store_true",
+                    help="re-pair authored labels with already-captured traces (no Ollama)")
     args = ap.parse_args()
 
-    written, skipped = asyncio.run(build(seed_only=args.seed_only))
+    written, skipped = asyncio.run(
+        build(seed_only=args.seed_only, reuse_observed=args.reuse_observed))
     print(f"written {len(written)}: {written}")
     if skipped:
         print(f"skipped {len(skipped)}:")

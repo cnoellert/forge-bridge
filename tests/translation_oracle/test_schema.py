@@ -161,6 +161,34 @@ def test_multi_tag_classes_accepted():
     )))
 
 
+# --- well-formedness tier (room ratification): malformed graph short-circuits --
+
+def test_wellformedness_failure_requires_fail_and_empty_classes():
+    # malformed (serialization) — valid: fail + empty classes
+    validate_translation_case(_case(label=_label(
+        expected_well_formed=False,
+        expected_verdict_pair={"translation": "fail", "substrate": "pass"},
+        expected_classes=[],
+    )))
+
+
+def test_wellformedness_failure_rejects_content_classes():
+    with pytest.raises(SchemaValidationError, match="requires empty expected_classes"):
+        validate_translation_case(_case(label=_label(
+            expected_well_formed=False,
+            expected_classes=["routing"],  # content short-circuited — illegal
+        )))
+
+
+def test_wellformedness_failure_must_be_translation_fail():
+    with pytest.raises(SchemaValidationError, match="requires translation=fail"):
+        validate_translation_case(_case(label=_label(
+            expected_well_formed=False,
+            expected_verdict_pair={"translation": "pass", "substrate": "pass"},
+            expected_classes=[],
+        )))
+
+
 # --- Q1/TF.1 §2: context-resolved params labeled unresolved-pending-dispatch -
 
 def test_unresolved_context_param_accepted():

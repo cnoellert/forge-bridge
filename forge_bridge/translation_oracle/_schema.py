@@ -86,6 +86,14 @@ _OBSERVED_MARKER_TYPES: Final[dict[str, type | tuple[type, ...]]] = {
     "outcome": (str, type(None)),
     "observed_graph": list,
     "observed_resolved_params": dict,
+    # WELL-FORMEDNESS TIER (room ratification 2026-06-02, the live-capture
+    # finding): translation-FAIL decomposes into a well-formedness tier (the
+    # graph is structurally invalid — detached args, prose steps, invalid shape)
+    # ABOVE the five content classes (the graph is well-formed but wrong). A
+    # malformed graph SHORT-CIRCUITS content evaluation. well_formed is the
+    # observed verdict; the reason names the malformation.
+    "well_formed": (bool, type(None)),
+    "well_formed_reason": (str, type(None)),
 }
 
 
@@ -159,9 +167,6 @@ def _validate_label(label: Any) -> None:
         )
     _validate_verdict_pair(label["expected_verdict_pair"])
     # expected_classes: authored translation-failure-class tags (TF.2 §3-4).
-    # Required key (may be empty list). Values from the DISTINCT class vocab.
-    # Consistency [N]: the five classes populate ONLY translation-FAIL — so
-    # translation=fail <=> non-empty classes, translation=pass <=> empty.
     if "expected_classes" not in label:
         raise SchemaValidationError("label.expected_classes key is required (may be empty)")
     classes = label["expected_classes"]
@@ -175,15 +180,35 @@ def _validate_label(label: Any) -> None:
                 + f"; got {cls!r}"
             )
     translation = label["expected_verdict_pair"]["translation"]
-    if translation == "fail" and not classes:
-        raise SchemaValidationError(
-            "label.expected_classes must be non-empty when translation=fail"
-        )
-    if translation == "pass" and classes:
-        raise SchemaValidationError(
-            "label.expected_classes must be empty when translation=pass "
-            "(the five classes populate only the translation-FAIL column)"
-        )
+    # WELL-FORMEDNESS TIER (room ratification). Two tiers of translation-FAIL:
+    #   expected_well_formed=False -> malformed graph: translation MUST be fail,
+    #     and content classes MUST be empty (content evaluation short-circuits).
+    #   expected_well_formed=True  -> well-formed: the content rule applies
+    #     (fail <=> non-empty content classes; pass <=> empty).
+    expected_well_formed = label.get("expected_well_formed", True)
+    if not isinstance(expected_well_formed, bool):
+        raise SchemaValidationError("label.expected_well_formed must be a bool")
+    if not expected_well_formed:
+        if translation != "fail":
+            raise SchemaValidationError(
+                "label.expected_well_formed=False requires translation=fail"
+            )
+        if classes:
+            raise SchemaValidationError(
+                "label.expected_well_formed=False requires empty expected_classes "
+                "(a malformed graph short-circuits content evaluation)"
+            )
+    else:
+        if translation == "fail" and not classes:
+            raise SchemaValidationError(
+                "label.expected_classes must be non-empty when translation=fail "
+                "and well-formed (else set expected_well_formed=False)"
+            )
+        if translation == "pass" and classes:
+            raise SchemaValidationError(
+                "label.expected_classes must be empty when translation=pass "
+                "(the five classes populate only the translation-FAIL column)"
+            )
     # defect_ref: optional D-series provenance tag (e.g. 'defect-2'), nullable.
     if "defect_ref" in label and not isinstance(label["defect_ref"], (str, type(None))):
         raise SchemaValidationError("label.defect_ref must be a string or null")

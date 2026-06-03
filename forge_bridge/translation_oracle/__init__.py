@@ -16,6 +16,7 @@ from forge_bridge.translation_oracle._corpus import (
     coverage_report,
     read_cases,
 )
+from forge_bridge.translation_oracle._detect import compute_well_formed
 from forge_bridge.translation_oracle._transcode import (
     TranscodeError,
     transcode_comprehension_record,
@@ -45,6 +46,7 @@ __all__ = [
     "TranscodeError",
     "append_case",
     "capture_observed_trace",
+    "compute_well_formed",
     "coverage_report",
     "observed_trace_from_compile_outcome",
     "read_cases",

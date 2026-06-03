@@ -28,6 +28,7 @@ from forge_bridge.console._chat_compile import (
 )
 from forge_bridge.console._param_extract import extract_explicit_params
 from forge_bridge.console._tool_filter import filter_tools_by_message
+from forge_bridge.translation_oracle._detect import compute_well_formed
 
 # regime (CompileBranchOutcome) -> ObservedTrace.outcome
 _REGIME_TO_OUTCOME: dict[str, str] = {
@@ -80,15 +81,19 @@ def observed_trace_from_compile_outcome(
 ) -> dict:
     """Map a CompileBranchOutcome to a frozen ObservedTrace dict (pure)."""
     steps = list(outcome.steps or [])
+    mapped_outcome = _REGIME_TO_OUTCOME.get(outcome.regime, outcome.regime)
+    well_formed, reason = compute_well_formed(steps, outcome=mapped_outcome)
     return {
         "capture_provenance": capture_provenance,
         "observed_graph": steps,
         "observed_resolved_params": _observed_resolved_params(steps),
-        "outcome": _REGIME_TO_OUTCOME.get(outcome.regime, outcome.regime),
+        "outcome": mapped_outcome,
         "tool_forced": tool_forced,
         "tools_filtered": tools_filtered,
         "abort_reason": _abort_reason(outcome),
         "tool_selected": _first_tool(steps),
+        "well_formed": well_formed,
+        "well_formed_reason": reason,
     }
 
 

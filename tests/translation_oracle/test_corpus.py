@@ -15,7 +15,8 @@ from forge_bridge.translation_oracle import (
 
 
 def _case(*, classes, translation="fail", substrate="pass",
-          provenance="instrumented-translation", defect_ref=None, labeled=True):
+          provenance="instrumented-translation", defect_ref=None, labeled=True,
+          well_formed=True):
     case = {
         "schema_version": SCHEMA_VERSION,
         "observed": {"capture_provenance": provenance, "observed_graph": ["x {}"]},
@@ -27,6 +28,7 @@ def _case(*, classes, translation="fail", substrate="pass",
             "expected_params": {},
             "expected_verdict_pair": {"translation": translation, "substrate": substrate},
             "expected_classes": classes,
+            "expected_well_formed": well_formed,
             "world_state": None,
             "defect_ref": defect_ref,
         }
@@ -92,17 +94,20 @@ def test_complete_corpus_reports_green():
         # cell a (pass/pass) + cell c (pass/gap): translation successes, no classes
         _case(classes=[], translation="pass", substrate="pass"),
         _case(classes=[], translation="pass", substrate="gap"),
-        # multi-tag routing+extraction (Tier-1, instrumented) + defect-2 + cell b/d
-        _case(classes=["routing", "extraction"], defect_ref="defect-2"),
-        _case(classes=["routing", "extraction"], substrate="gap"),  # cell d
+        # multi-tag routing+extraction (Tier-1, instrumented) + cell d + space-mangle
+        _case(classes=["routing", "extraction"], defect_ref="space-mangle"),
+        _case(classes=["routing", "extraction"], substrate="gap",
+              defect_ref="capability-gap-misroute"),  # cell d
         # contextual (Tier-1, instrumented) + defect-3
         _case(classes=["contextual"], defect_ref="defect-3"),
-        # grounding x2 (Tier-2) + defect-1
-        _case(classes=["grounding"], defect_ref="defect-1"),
+        # grounding x2 (Tier-2)
+        _case(classes=["grounding"]),
         _case(classes=["grounding"]),
         # entity-resolution x2 (Tier-2)
         _case(classes=["entity-resolution"]),
         _case(classes=["entity-resolution"]),
+        # well-formedness tier (serialization) — the gating tier
+        _case(classes=[], well_formed=False, defect_ref="serialization"),
     ]
     report = coverage_report(cases)
     assert report["red_flags"] == []

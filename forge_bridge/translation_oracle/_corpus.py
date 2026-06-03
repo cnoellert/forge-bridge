@@ -49,8 +49,13 @@ _TIER2_MIN: Final[int] = 2
 # Multi-tag patterns observed in discovery (TF.2 §4). Extend as discovery grows.
 _DISCOVERY_MULTITAG: Final[list[frozenset[str]]] = [frozenset({"routing", "extraction"})]  # defect #2
 
-# Every D-series defect must be represented (via label.defect_ref).
-_DSERIES_DEFECTS: Final[list[str]] = ["defect-1", "defect-2", "defect-3"]
+# Defect families the corpus must represent (via label.defect_ref). Updated
+# 2026-06-02 to the OBSERVED families after the live capture refuted the
+# archaeology-predicted D-series (TF.3a-CAPTURE-FINDINGS.md): serialization is
+# the dominant one; the old defect-1/2 predictions didn't manifest as predicted.
+_DSERIES_DEFECTS: Final[list[str]] = [
+    "serialization", "space-mangle", "defect-3", "capability-gap-misroute",
+]
 
 # verdict-pair (translation, substrate) -> matrix cell (TF.2 §2).
 _VERDICT_CELLS: Final[dict[tuple[str, str], str]] = {
@@ -167,6 +172,12 @@ def coverage_report(cases: list[dict]) -> dict:
         if ref in defect_counts:
             defect_counts[ref] += 1
 
+    # --- well-formedness tier (room ratification) ---------------------------
+    # The gating tier ABOVE content: a malformed graph short-circuits content.
+    well_formedness_fails = sum(
+        1 for c in labeled if c["label"].get("expected_well_formed", True) is False
+    )
+
     complete = (
         not missing_cells
         and all(s["met"] for s in class_status.values())
@@ -179,6 +190,7 @@ def coverage_report(cases: list[dict]) -> dict:
         "verdict_cells": cell_counts,
         "missing_cells": missing_cells,
         "classes": class_status,
+        "well_formedness_fails": well_formedness_fails,
         "multi_tag": multitag_status,
         "defects": defect_counts,
         "red_flags": red_flags,
