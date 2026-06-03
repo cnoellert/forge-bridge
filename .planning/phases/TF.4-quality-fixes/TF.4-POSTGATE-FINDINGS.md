@@ -55,3 +55,30 @@ Still a `compile_intent`-raise (parser-side `CompileInvalidChainShape`), so `ste
 4. `compile_raw` stays a carry-forward (Finding 4 reaffirms its only domain is the out-of-scope raise classes).
 
 **Net:** the gate cleared on paper, but the post-gate measurement refused to let "0 detached_args" mean "done." The instrument did its job twice over — it measured the fix's ecological effect, and its own `salvage_applied` observability **stopped the room from misreading a model-variance 0 as a salvage win**. Without that field this would have entered the roadmap as "Prong B works in the wild," which the data does not support. Measure-first, fourth time this milestone.
+
+---
+
+## ADDENDUM — N≥3 attribution (4 postgate samples: S3 + run1/2/3, qwen2.5-coder:14b @ d355a88)
+
+The distribution (baseline: **4** detached_args, **0** salvage):
+
+| sample | detached_args | salvage_fired | wf=False (reasons) |
+|---|---|---|---|
+| S3 | 0 | 0 | 3 (`invalid_chain_shape`×2, `non_tool_step`×1) |
+| run1 | 0 | 0 | 1 (`invalid_chain_shape`×1) |
+| run2 | 0 | 0 | 1 (`invalid_chain_shape`×1) |
+| run3 | 0 | 0 | 2 (`invalid_chain_shape`×1, `non_tool_step`×1) |
+
+**Disposition 1 — detached_args stably suppressed; Prong B still never exercised.** `0/0/0/0` across four post-clause runs (vs **4** pre-clause), and `salvage_fired = 0/0/0/0`. The stable-0 is no longer a fluke — it's `0/60` post-clause. This is real evidence the detached-args shape is suppressed in the wild (Creative's "0/45 ⇒ Prong A likely helped" outcome). **But Prong B's live efficacy remains unmeasured** — the model never detached, so the salvage never had work; its correctness rests solely on the deterministic Slice-#1 bar. A clean *Prong-A-specifically* attribution would still want the clause-reverted control — but that's now **optional**, because no decision hinges on it (see Disposition 2).
+
+**Disposition 2 — the two S3 "regressions" were VARIANCE, not stable regressions ([[feedback-failure-shape-stability-as-disposition-evidence]]).** N≥3 dissolved both:
+- *duration of shot 10* → `True | True | False` across run1/2/3 (+ `False` in S3) = **2/4 prose-flicker, intermittent** — the `non_tool_step` class flickering stochastically, not a deterministic Prong-A side-effect.
+- *gen_0460* → `True | True | True` across run1/2/3 = the S3 `CompileBudgetExceeded` was a **one-off timeout (1/4)**.
+
+⇒ **Prong A is NOT indicted by a regression** — there is no stable regression. My earlier "Prong A is suspect" is refuted by the distribution. With no downside evidence *and* a stable-0 upside, **Prong A is retained**; the clause-reverted control is downgraded to optional curiosity (it would refine attribution of the 0 but change no action).
+
+**Disposition 3 — space-mangle is STABLE across all 4 runs** (`flame_preview_start_frames sequence_name=30sec_21`, `flame_set_start_frames sequence_name=30sec_edit_21`, `flame_rename_shots sequence_name=30sec_21` in *every* run). Entity-resolution / space-mangling is firmly the **measured dominant content failure** — deterministic, not variance. Re-rank banked with confidence.
+
+**Net well-formedness improved and held:** baseline wf-False = 6 (4 detached + 1 `non_tool_step` + 1 `invalid_chain_shape`) → postgate stable core = **1** (`list projects` `invalid_chain_shape`, the out-of-scope raise class) + intermittent flicker. The cleared cases stayed cleared across all four runs.
+
+**S5 is now ratifiable:** Prong A retained (no regression, stable-0); Prong B = deterministic guarantee (unexercised live, by design); space-mangling = next content target; `non_tool_step` stays Slice #2 (real but intermittent, not outranked); (c) absent; `list projects` raise = out-of-scope (`compile_raw` carry-forward).
