@@ -501,6 +501,73 @@ def _structured_compile_step_text(item: Any, available_names: set[str], index: i
     return f"{tool_name} {args_text}".strip()
 
 
+def _is_bare_args_step(step: str) -> bool:
+    return step.strip().startswith("{")
+
+
+def _is_tool_name_only_step(step: str) -> bool:
+    stripped = step.strip()
+    if not stripped or len(stripped.split()) != 1:
+        return False
+    return "_" in stripped or stripped == "commit"
+
+
+def _validate_chain_shape(steps: list[str]) -> None:
+    for index, step in enumerate(steps):
+        text = str(step).strip()
+        if not text:
+            raise CompileInvalidChainShape(str(step), f"empty step at index {index}")
+        if _is_bare_args_step(text):
+            raise CompileInvalidChainShape(
+                text,
+                f"detached args step at index {index}",
+            )
+        first = text.split(maxsplit=1)[0]
+        if "_" not in first and first != "commit":
+            raise CompileInvalidChainShape(
+                text,
+                f"non-tool step at index {index}",
+            )
+
+
+def normalize_chain_shape(steps: list[str]) -> tuple[list[str], dict | None]:
+    """Reattach a detached bare-args step to its immediately-preceding tool.
+
+    The salvage invariant is intentionally narrow: reattach arguments already
+    present in the emitted chain; never synthesize, merge, infer, or reorder.
+    Repair only when exactly one attachment interpretation exists.
+    """
+    normalized: list[str] = []
+    salvage_record: dict | None = None
+    index = 0
+    while index < len(steps):
+        current = str(steps[index]).strip()
+        next_step = str(steps[index + 1]).strip() if index + 1 < len(steps) else None
+        next_next = (
+            str(steps[index + 2]).strip()
+            if index + 2 < len(steps)
+            else None
+        )
+        if (
+            _is_tool_name_only_step(current)
+            and next_step is not None
+            and _is_bare_args_step(next_step)
+            and (next_next is None or not _is_bare_args_step(next_next))
+        ):
+            normalized.append(f"{current} {next_step}".strip())
+            salvage_record = {
+                "salvage_applied": True,
+                "original_reason": "detached_args",
+            }
+            index += 2
+            continue
+        normalized.append(current)
+        index += 1
+
+    _validate_chain_shape(normalized)
+    return normalized, salvage_record
+
+
 def _parse_compile_output(raw, tools) -> list[str]:
     text = _strip_compile_fence("" if raw is None else str(raw))
     if not text:

@@ -15,11 +15,74 @@ from forge_bridge.llm.router import (
     LLMRouter,
     RecursiveToolLoopError,
     _in_tool_loop,
+    normalize_chain_shape,
 )
 
 
 def _tool(name: str = "forge_list_shots", description: str = "List shots."):
     return SimpleNamespace(name=name, description=description)
+
+
+def test_normalize_chain_shape_reattaches_detached_args():
+    steps, salvage = normalize_chain_shape([
+        "flame_rename_shots",
+        '{"params": {"sequence_name": "30sec_21", "prefix": "tv"}}',
+    ])
+
+    assert steps == [
+        'flame_rename_shots {"params": {"sequence_name": "30sec_21", "prefix": "tv"}}'
+    ]
+    assert salvage == {
+        "salvage_applied": True,
+        "original_reason": "detached_args",
+    }
+
+
+@pytest.mark.parametrize(
+    ("steps", "message"),
+    [
+        (
+            ['{"params": {"sequence_name": "30sec_21"}}'],
+            "detached args step at index 0",
+        ),
+        (
+            [
+                "flame_rename_shots prefix=tv",
+                '{"params": {"sequence_name": "30sec_21"}}',
+            ],
+            "detached args step at index 1",
+        ),
+        (
+            [
+                "flame_rename_shots",
+                '{"params": {"sequence_name": "30sec_21"}}',
+                '{"params": {"prefix": "tv"}}',
+            ],
+            "detached args step at index 1",
+        ),
+        (
+            ["rename the shots"],
+            "non-tool step at index 0",
+        ),
+    ],
+)
+def test_normalize_chain_shape_leaves_unrepairable_shapes_invalid(steps, message):
+    with pytest.raises(CompileInvalidChainShape) as exc_info:
+        normalize_chain_shape(steps)
+
+    assert message in exc_info.value.parse_error
+
+
+def test_normalize_chain_shape_repairs_synthetic_json_list_raise_shape():
+    steps, salvage = normalize_chain_shape([
+        "flame_rename_shots",
+        '{"args": {"sequence_name": "30sec_21", "prefix": "noise"}}',
+    ])
+
+    assert steps == [
+        'flame_rename_shots {"args": {"sequence_name": "30sec_21", "prefix": "noise"}}'
+    ]
+    assert salvage["original_reason"] == "detached_args"
 
 
 @pytest.mark.asyncio
