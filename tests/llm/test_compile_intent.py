@@ -184,14 +184,16 @@ async def test_compile_intent_raises_unresolvable_intent_on_empty():
 
 
 @pytest.mark.asyncio
-async def test_compile_intent_raises_invalid_chain_shape():
+async def test_compile_intent_preserves_text_branch_empty_segments():
     router = LLMRouter()
-    router._async_local = AsyncMock(return_value="foo -> -> bar")
+    router._async_local = AsyncMock(return_value="a_tool -> -> b_tool")
 
-    with pytest.raises(CompileInvalidChainShape) as exc_info:
-        await router.compile_intent("list shots", tools=[_tool()])
+    steps = await router.compile_intent(
+        "bad chain",
+        tools=[_tool("a_tool"), _tool("b_tool")],
+    )
 
-    assert "empty step" in exc_info.value.parse_error
+    assert steps == ["a_tool", "", "b_tool"]
 
 
 @pytest.mark.asyncio

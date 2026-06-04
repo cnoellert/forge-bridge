@@ -468,6 +468,63 @@ async def test_run_compile_branch_records_salvage_on_repaired_compile(monkeypatc
     run_chain.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_run_compile_branch_salvages_trailing_empty_segment(monkeypatch):
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(return_value=["forge_list_projects", ""])
+    )
+    chain_body = {
+        "status": "success",
+        "request_id": "req-trailing",
+        "chain": [{"step": "forge_list_projects", "result": {"projects": []}}],
+        "error": None,
+    }
+    run_chain = AsyncMock(return_value=chain_body)
+    monkeypatch.setattr(_chat_compile, "run_chain_steps", run_chain)
+
+    outcome = await run_compile_branch(
+        router=router,
+        user_prompt="list projects",
+        tools=[_tool("forge_list_projects", "List projects.")],
+        mcp=SimpleNamespace(),
+        request_id="req-trailing",
+        client_ip="127.0.0.1",
+        started=10.0,
+    )
+
+    assert outcome.regime == "compiled_non_mutating"
+    assert outcome.steps == ["forge_list_projects"]
+    assert outcome.salvage_applied is True
+    assert outcome.salvage_reason == "trailing_empty_segment"
+    run_chain.assert_awaited_once()
+    assert run_chain.await_args.kwargs["steps"] == ["forge_list_projects"]
+
+
+@pytest.mark.asyncio
+async def test_run_compile_branch_rejects_mid_chain_empty_segment(monkeypatch):
+    router = SimpleNamespace(
+        compile_intent=AsyncMock(return_value=["a_tool", "", "b_tool"])
+    )
+    run_chain = AsyncMock()
+    monkeypatch.setattr(_chat_compile, "run_chain_steps", run_chain)
+
+    outcome = await run_compile_branch(
+        router=router,
+        user_prompt="bad chain",
+        tools=[_tool("a_tool", "A tool."), _tool("b_tool", "B tool.")],
+        mcp=SimpleNamespace(),
+        request_id="req-mid-empty",
+        client_ip="127.0.0.1",
+        started=10.0,
+    )
+
+    assert outcome.regime == "compile_error"
+    assert isinstance(outcome.compile_error, CompileInvalidChainShape)
+    assert "empty step at index 1" in outcome.compile_error.parse_error
+    assert outcome.steps == ["a_tool", "", "b_tool"]
+    run_chain.assert_not_awaited()
+
+
 def test_chat_compile_read_strip_does_not_use_fuzzy_narrowing_helpers():
     source = inspect.getsource(_chat_compile)
 

@@ -237,3 +237,22 @@ def test_salvage_observability_maps_from_compile_outcome():
     assert obs["salvage_applied"] is True
     assert obs["original_reason"] == "detached_args"
     _is_valid_label_free(obs)
+
+
+def test_trailing_empty_salvage_observability_maps_from_compile_outcome():
+    obs = observed_trace_from_compile_outcome(
+        outcome=_outcome(
+            "compiled_non_mutating",
+            steps=["forge_list_projects"],
+            chain_body={"status": "success", "chain": [], "error": None},
+            salvage_applied=True,
+            salvage_reason="trailing_empty_segment",
+        ),
+        tools_filtered=1,
+    )
+
+    assert obs["salvage_applied"] is True
+    assert obs["original_reason"] == "trailing_empty_segment"
+    assert obs["well_formed"] is True
+    assert obs["well_formed_reason"] is None
+    _is_valid_label_free(obs)

@@ -622,19 +622,10 @@ def _parse_compile_output(raw, tools) -> list[str]:
             for index, item in enumerate(raw_steps)
         ]
     else:
-        segments = _top_level_chain_segments(text)
-        for index, segment in enumerate(segments):
-            if not segment:
-                raise CompileInvalidChainShape(
-                    text, f"empty step at index {index}"
-                )
-        from forge_bridge.console._chain_parse import parse_chain
-        steps = parse_chain(text)
+        steps = _top_level_chain_segments(text)
 
     if not steps:
         raise CompileUnresolvableIntent(text)
-    if not all(isinstance(step, str) and step.strip() for step in steps):
-        raise CompileInvalidChainShape(text, "parsed chain contains empty step")
     return [step.strip() for step in steps]
 
 
