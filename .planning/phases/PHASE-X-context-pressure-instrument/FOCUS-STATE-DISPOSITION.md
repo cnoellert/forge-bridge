@@ -46,3 +46,10 @@ All scalars `PyAttribute`-unwrapped; the whole structure stored verbatim in `wor
 - **Q-focus-2 (reachability):** SETTLED — full focus state reachable on-demand except the (subsumed) numeric playhead frame.
 - **Q-focus-3 (absence vocab):** one entry — `playhead_frame: null / unreachable_api`.
 - The SPEC's focus-hook "first-class OPEN dependency" is now **resolved** to the recipe above. The discuss is ready to move to PLAN once Creative's capture-surface *ergonomics* pass (typed-prompt UX in the Console) clears.
+
+## DT ratification + the meta-finding (banked — the instrument proved its own design principle on itself)
+DT independently confirmed the ruling three ways (clip-level `selected_segments`=7, per-segment `.selected`=7 True on 020–080, `current_segment.selected`=True) and **owns the probe's verdict bug**: the comparisons ran on `_safe()`-stringified values (`"PyAttribute:True"`), so `value is True` and `isinstance(v, list)` both failed → the machine verdict said INCONCLUSIVE while the raw said YES.
+
+The closure worth keeping: **the probe's derived verdict lied; the raw dump (sample + `clip_targeted`) corrected it.** That is the *exact* discipline the capture contract is built on — `raw` is the load-bearing, migration-if-wrong layer; `extracted`/derived views are recomputable and can lie. The instrument accidentally demonstrated its own architecture on itself, and it's the 3rd milestone instance of the same principle (TF.4 `compile_raw` blind-raise; TF.3b well-formedness re-source needing the observed raw; now the probe verdict). **Reuse note:** if this probe is repointed at another signal, unwrap `PyAttribute` *before* `_safe()`; not patched now — this question is answered.
+
+Also falsified in passing: the "console focus clears the Timeline selection" worry — selection survived paste-and-run (7 segments still selected at read-time). Console focus does not drop selection.
