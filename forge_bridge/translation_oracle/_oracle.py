@@ -11,6 +11,7 @@ from typing import Optional
 from forge_bridge.translation_oracle._detect import detect_entity_value_fidelity
 
 _SUBSTRATE_PASS_OUTCOMES = frozenset({None, "answered", "preview_emitted", "apply_complete"})
+_VERDICT_PAIR_KEYS = ("pass/pass", "fail/pass", "pass/gap", "fail/gap")
 
 
 def _substrate_verdict(observed: dict) -> str:
@@ -46,3 +47,23 @@ def emit(observed: dict, *, label: Optional[dict] = None) -> dict:
         "translation": "pass" if faithful else "fail",
         "substrate": substrate,
     }
+
+
+def verdict_frequency(cases: list[dict]) -> dict:
+    """Count observed-sourced verdict-pair emissions for labeled cases.
+
+    This is a manifestation-frequency reader, not a validation-set coverage
+    reader: it scores each observed trace through ``emit`` and leaves the
+    label-sourced coverage dimensions in ``coverage_report`` alone.
+    """
+    counts = {key: 0 for key in _VERDICT_PAIR_KEYS}
+    labeled_count = 0
+    for case in cases:
+        label = case.get("label")
+        if label is None:
+            continue
+        labeled_count += 1
+        verdict = emit(case["observed"], label=label)
+        key = f"{verdict['translation']}/{verdict['substrate']}"
+        counts[key] += 1
+    return {"labeled_count": labeled_count, "verdict_pairs": counts}

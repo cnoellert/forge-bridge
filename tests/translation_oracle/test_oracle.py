@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from forge_bridge.translation_oracle._oracle import emit
+from forge_bridge.translation_oracle._corpus import REFERENCE_DIR, read_cases
+from forge_bridge.translation_oracle._oracle import emit, verdict_frequency
 
 
 def test_emit_malformed_observed_fails_and_short_circuits_content():
@@ -58,3 +59,31 @@ def test_emit_well_formed_label_free_keeps_content_unscored():
         }
 
     detector.assert_not_called()
+
+
+def test_verdict_frequency_counts_observed_sourced_frozen_manifestations():
+    cases = read_cases(corpus_dir=REFERENCE_DIR)
+
+    assert verdict_frequency(cases) == {
+        "labeled_count": 15,
+        "verdict_pairs": {
+            "pass/pass": 4,
+            "fail/pass": 0,
+            "pass/gap": 1,
+            "fail/gap": 10,
+        },
+    }
+
+
+def test_verdict_frequency_counts_observed_sourced_postgate_manifestations():
+    cases = read_cases(corpus_dir=REFERENCE_DIR / "postgate")
+
+    assert verdict_frequency(cases) == {
+        "labeled_count": 15,
+        "verdict_pairs": {
+            "pass/pass": 5,
+            "fail/pass": 2,
+            "pass/gap": 3,
+            "fail/gap": 5,
+        },
+    }
