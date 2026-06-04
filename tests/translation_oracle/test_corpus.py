@@ -7,6 +7,7 @@ markers the detector reads).
 from __future__ import annotations
 
 from forge_bridge.translation_oracle import (
+    REFERENCE_DIR,
     SCHEMA_VERSION,
     append_case,
     coverage_report,
@@ -113,3 +114,15 @@ def test_complete_corpus_reports_green():
     assert report["red_flags"] == []
     assert report["missing_cells"] == []
     assert report["complete"] is True, report
+
+
+def test_reference_corpus_well_formedness_fails_stay_frozen_at_six():
+    cases = read_cases(corpus_dir=REFERENCE_DIR)
+
+    assert coverage_report(cases)["well_formedness_fails"] == 6
+
+
+def test_postgate_corpus_well_formedness_fails_follow_observed_trace():
+    cases = read_cases(corpus_dir=REFERENCE_DIR / "postgate")
+
+    assert coverage_report(cases)["well_formedness_fails"] == 3

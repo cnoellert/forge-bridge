@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 from typing import Any, Final, Optional
 
+from forge_bridge.translation_oracle._oracle import emit
 from forge_bridge.translation_oracle._schema import validate_translation_case
 
 _DIR_ENV_VAR: Final[str] = "TRANSLATION_ORACLE_DIR"
@@ -175,7 +176,7 @@ def coverage_report(cases: list[dict]) -> dict:
     # --- well-formedness tier (room ratification) ---------------------------
     # The gating tier ABOVE content: a malformed graph short-circuits content.
     well_formedness_fails = sum(
-        1 for c in labeled if c["label"].get("expected_well_formed", True) is False
+        1 for c in labeled if emit(c["observed"])["translation"] == "fail"
     )
 
     complete = (
