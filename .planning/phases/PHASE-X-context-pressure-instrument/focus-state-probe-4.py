@@ -34,6 +34,18 @@ def _names(attr):
     except Exception:
         return None
 
+def _norm(value):
+    # Branch-independent mirror of _unwrap: strip PyAttribute: prefix AND a
+    # balanced surrounding quote pair (live str(PyAttribute) single-quotes).
+    if not isinstance(value, str):
+        return value
+    v = value
+    if v.startswith("PyAttribute:"):
+        v = v[len("PyAttribute:"):]
+    if len(v) >= 2 and v[0] in "\"'" and v[-1] == v[0]:
+        v = v[1:-1]
+    return v
+
 def _diag(attr):
     """Discover an attribute's real shape: type, str-repr, iterability."""
     try:
@@ -204,15 +216,20 @@ _check("active_sequence populated", bool(extracted.get("flame.active_sequence"))
 _check("current_shot populated", bool(extracted.get("flame.current_shot")),
        repr(extracted.get("flame.current_shot")))
 _sel = extracted.get("flame.selection")
-_raw_sel = (raw.get("timeline") or {}).get("selection") or []
-_check("selection resolved to names", bool(_sel) and all(isinstance(s, str) and s for s in _sel)
-       and len(_sel) == len([s for s in _raw_sel if s]), repr(_sel))
+# extracted selection is the de-duped, empty-filtered, quote-stripped shot set
+# (the assembler collapses the raw multi-track walk) — assert it's CLEAN, not
+# that it equals the raw walk length.
+_check("selection resolved to clean unique names",
+       bool(_sel) and all(isinstance(s, str) and s and "'" not in s for s in _sel)
+       and len(_sel) == len(set(_sel)), repr(_sel))
 _check("unreachable_api tenant recorded",
        raw.get("playhead_frame") is None and raw.get("playhead_frame_reason") == "unreachable_api")
-# extracted scalars consistent with raw-derived values
+# extracted scalars consistent with raw-derived values — normalize raw the SAME
+# way the assembler does (PyAttribute: prefix AND surrounding quotes).
+_tl = raw.get("timeline") or {}
 _consistent = (
-    extracted.get("flame.active_sequence") == ((raw.get("timeline") or {}).get("active_sequence") or "").replace("PyAttribute:", "")
-    and extracted.get("flame.current_shot") == ((raw.get("timeline") or {}).get("current_shot") or "").replace("PyAttribute:", "")
+    extracted.get("flame.active_sequence") == _norm(_tl.get("active_sequence"))
+    and extracted.get("flame.current_shot") == _norm(_tl.get("current_shot"))
 )
 _check("extracted consistent with raw-derived", _consistent)
 
