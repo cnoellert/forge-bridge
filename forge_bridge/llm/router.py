@@ -532,6 +532,21 @@ def _validate_chain_shape(steps: list[str]) -> None:
             )
 
 
+def _append_salvage_reason(salvage_record: dict | None, reason: str) -> dict:
+    if salvage_record is None:
+        return {
+            "salvage_applied": True,
+            "original_reason": reason,
+        }
+    existing = str(salvage_record.get("original_reason") or "")
+    reasons = [part for part in existing.split("+") if part]
+    reasons.append(reason)
+    return {
+        "salvage_applied": True,
+        "original_reason": "+".join(reasons),
+    }
+
+
 def normalize_chain_shape(steps: list[str]) -> tuple[list[str], dict | None]:
     """Reattach a detached bare-args step to its immediately-preceding tool.
 
@@ -557,14 +572,22 @@ def normalize_chain_shape(steps: list[str]) -> tuple[list[str], dict | None]:
             and (next_next is None or not _is_bare_args_step(next_next))
         ):
             normalized.append(f"{current} {next_step}".strip())
-            salvage_record = {
-                "salvage_applied": True,
-                "original_reason": "detached_args",
-            }
+            salvage_record = _append_salvage_reason(
+                salvage_record,
+                "detached_args",
+            )
             index += 2
             continue
         normalized.append(current)
         index += 1
+
+    if normalized and not normalized[-1]:
+        while normalized and not normalized[-1]:
+            normalized.pop()
+        salvage_record = _append_salvage_reason(
+            salvage_record,
+            "trailing_empty_segment",
+        )
 
     _validate_chain_shape(normalized)
     return normalized, salvage_record

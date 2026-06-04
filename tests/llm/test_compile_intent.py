@@ -85,6 +85,46 @@ def test_normalize_chain_shape_repairs_synthetic_json_list_raise_shape():
     assert salvage["original_reason"] == "detached_args"
 
 
+def test_normalize_chain_shape_salvages_trailing_empty_segment():
+    steps, salvage = normalize_chain_shape(["forge_list_projects", ""])
+
+    assert steps == ["forge_list_projects"]
+    assert salvage == {
+        "salvage_applied": True,
+        "original_reason": "trailing_empty_segment",
+    }
+
+
+def test_normalize_chain_shape_rejects_mid_chain_empty_segment():
+    with pytest.raises(CompileInvalidChainShape) as exc_info:
+        normalize_chain_shape(["a_tool", "", "b_tool"])
+
+    assert "empty step at index 1" in exc_info.value.parse_error
+
+
+def test_normalize_chain_shape_clean_chain_has_no_salvage():
+    steps, salvage = normalize_chain_shape(["a_tool", "b_tool"])
+
+    assert steps == ["a_tool", "b_tool"]
+    assert salvage is None
+
+
+def test_normalize_chain_shape_multi_salvage_records_both_reasons():
+    steps, salvage = normalize_chain_shape([
+        "flame_rename_shots",
+        '{"params": {"sequence_name": "30sec_21", "prefix": "tv"}}',
+        "",
+    ])
+
+    assert steps == [
+        'flame_rename_shots {"params": {"sequence_name": "30sec_21", "prefix": "tv"}}'
+    ]
+    assert salvage == {
+        "salvage_applied": True,
+        "original_reason": "detached_args+trailing_empty_segment",
+    }
+
+
 @pytest.mark.asyncio
 async def test_compile_intent_json_list_bare_args_preserves_repairable_shape():
     router = LLMRouter()
