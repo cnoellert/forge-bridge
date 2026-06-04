@@ -1,0 +1,205 @@
+"""Context Pressure Instrument — S4 counterfactual analysis (dual-mode).
+
+The phase-defining step. A contextual resolver fails TWO ways, and an analyzer
+that sees only the first systematically under-counts the dominant, most-dangerous
+failures and biases the build/don't-build ruling toward *don't-build* (it omits
+exactly what desktop-wiring would fix). So the failure set is dual-mode:
+
+  (a) unresolved_reference — "this sequence" -> no concrete value (honest-decline).
+      Derivable from the captured compiled_graph (no resolved value for the
+      referenced dimension).
+  (b) wrong_resolution — "this sequence" -> resolved to a WRONG concrete value,
+      dispatched as if grounded (the IDX-13 case: focus=30sec_edit 21, compiled
+      sequence_name=30sec_21; the TF.4 space-mangle class). Candidate ⇔ the
+      compiled value != the captured world_state focus signal.
+
+The captured/authored lock holds across the seam:
+  - CANDIDATE-FLAGGING is automatic and captured-derivable (``flag_contextual_
+    failure_candidates``) — it only ever says "this looks suspicious".
+  - CONFIRMATION is AUTHORED (``author_analysis`` writes the analysis layer with
+    authored_at) — only authored analysis says "this WAS wrong" and decides
+    world_state_resolvable.
+
+``resolvable_delta`` is computed over the UNION of both confirmed classes — the
+metric that drives the build/don't-build decision.
+
+The dimension map is the measure-first seam: it starts small and grows additively
+as real captures show which contextual dimensions matter.
+"""
+from __future__ import annotations
+
+import re
+import shlex
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Final, Optional
+
+# Committed seed corpus (authored ground truth exercising BOTH failure modes,
+# incl. the IDX-13 mode-(b) case) — the CR.1-fix gate: the analysis loop is
+# proven closed on a seed before real operator data arrives.
+SEED_DIR: Final[Path] = Path(__file__).resolve().parent / "seed"
+
+# Deictic / contextual-reference tokens that trigger candidate analysis. A prompt
+# without one of these makes no contextual claim, so it is never a candidate.
+_CONTEXTUAL_TOKENS: Final[frozenset[str]] = frozenset({
+    "this", "that", "these", "those", "current", "selected", "active", "here",
+})
+
+
+@dataclass(frozen=True)
+class _Dimension:
+    name: str
+    nouns: frozenset       # prompt nouns that invoke this dimension
+    param_keys: tuple      # compiled-graph param keys carrying its concrete value
+    focus_key: str         # world_state.extracted focus signal (unnamespaced)
+
+
+# Measure-first seam — extend as captures show which dimensions matter.
+_DIMENSIONS: Final[tuple] = (
+    _Dimension("sequence", frozenset({"sequence", "seq", "timeline"}),
+               ("sequence_name", "sequence"), "active_sequence"),
+    _Dimension("shot", frozenset({"shot", "segment"}),
+               ("shot", "shot_name", "segment_name", "segment"), "current_shot"),
+    _Dimension("batch", frozenset({"batch"}),
+               ("batch", "batch_name"), "open_batch"),
+)
+
+
+def _has_contextual_ref(prompt: str) -> bool:
+    return bool(set(re.findall(r"[a-z]+", prompt.lower())) & _CONTEXTUAL_TOKENS)
+
+
+def _graph_params(compiled_graph: list) -> dict:
+    """Collect key=value params across all steps (first value wins per key)."""
+    params: dict = {}
+    for step in compiled_graph:
+        try:
+            tokens = shlex.split(str(step))
+        except ValueError:
+            tokens = str(step).split()
+        for tok in tokens:
+            if "=" not in tok:
+                continue
+            key, value = tok.split("=", 1)
+            params.setdefault(key.strip(), value.strip().strip("\"'"))
+    return params
+
+
+def _focus_value(world_state: dict, focus_key: str) -> Optional[str]:
+    """Read a focus signal from world_state.extracted (source-namespaced or flat)."""
+    extracted = world_state.get("extracted") or {}
+    source = world_state.get("source")
+    for key in (f"{source}.{focus_key}", focus_key):
+        if key in extracted and extracted[key] is not None:
+            return str(extracted[key])
+    return None
+
+
+def flag_contextual_failure_candidates(record: dict) -> list[dict]:
+    """AUTO candidate-flagging over CAPTURED fields only — dual-mode, no authoring.
+
+    Returns a list of candidate dicts (possibly empty). Each candidate:
+    ``{mode, dimension, compiled_value, focus_value, focus_signal_present}`` where
+    ``mode`` ∈ {``unresolved_reference``, ``wrong_resolution``}. This only ever
+    says "suspicious"; ``author_analysis`` confirms.
+    """
+    prompt = record.get("prompt", "") or ""
+    if not _has_contextual_ref(prompt):
+        return []
+    plow = prompt.lower()
+    params = _graph_params((record.get("observed_translation") or {}).get("compiled_graph") or [])
+    world_state = record.get("world_state") or {}
+
+    candidates: list[dict] = []
+    for dim in _DIMENSIONS:
+        if not any(noun in plow for noun in dim.nouns):
+            continue
+        focus = _focus_value(world_state, dim.focus_key)
+        compiled = next((params[k] for k in dim.param_keys if k in params), None)
+
+        if compiled is None:
+            # (a) unresolved: a contextual ref to this dimension, no concrete value.
+            candidates.append({
+                "mode": "unresolved_reference",
+                "dimension": dim.name,
+                "compiled_value": None,
+                "focus_value": focus,
+                "focus_signal_present": focus is not None,
+            })
+        elif focus is not None and compiled != focus:
+            # (b) wrong_resolution: resolved to a value that differs from focus.
+            candidates.append({
+                "mode": "wrong_resolution",
+                "dimension": dim.name,
+                "compiled_value": compiled,
+                "focus_value": focus,
+                "focus_signal_present": True,
+            })
+        # else: compiled present and == focus (correct), or no focus to compare
+        # against (unanalyzable — left for authored review, not auto-flagged).
+    return candidates
+
+
+def author_analysis(
+    record: dict,
+    *,
+    authored_at: str,
+    failure_class: Optional[str] = None,
+    referent: Optional[str] = None,
+    world_state_resolvable: Optional[bool] = None,
+    resolving_signal: Optional[str] = None,
+) -> dict:
+    """The distinct AUTHORING pass — returns a NEW record with ``analysis`` set.
+
+    Crosses the captured/authored seam by hand: the author supplies ``referent``
+    and ``world_state_resolvable`` as judgement; observed context is NOT copied
+    in automatically. Does not mutate the input. Validated before return.
+    """
+    from forge_bridge.context_pressure._schema import validate_context_pressure_record
+
+    authored = dict(record)
+    authored["analysis"] = {
+        "authored_at": authored_at,
+        "failure_class": failure_class,
+        "referent": referent,
+        "world_state_resolvable": world_state_resolvable,
+        "resolving_signal": resolving_signal,
+    }
+    validate_context_pressure_record(authored)
+    return authored
+
+
+def resolvable_delta(records: list[dict]) -> dict:
+    """The decision metric over the UNION of both confirmed failure classes.
+
+    A confirmed contextual failure = a record whose authored ``analysis`` carries
+    a ``failure_class``. Of those, how many would the captured world_state have
+    resolved (``world_state_resolvable is True``)? Ranked by ``resolving_signal``.
+    Computes over BOTH modes — never just unresolved refs.
+    """
+    failures = [
+        r for r in records
+        if (r.get("analysis") or {}).get("failure_class") is not None
+    ]
+    resolvable = [
+        r for r in failures
+        if r["analysis"].get("world_state_resolvable") is True
+    ]
+    by_failure_class: dict = {}
+    for r in failures:
+        fc = r["analysis"]["failure_class"]
+        by_failure_class[fc] = by_failure_class.get(fc, 0) + 1
+    signal_rank: dict = {}
+    for r in resolvable:
+        sig = r["analysis"].get("resolving_signal") or "unspecified"
+        signal_rank[sig] = signal_rank.get(sig, 0) + 1
+    total = len(failures)
+    return {
+        "total_contextual_failures": total,
+        "world_state_resolvable_count": len(resolvable),
+        "resolvable_rate": (len(resolvable) / total) if total else 0.0,
+        "by_failure_class": by_failure_class,
+        "resolving_signal_ranking": dict(
+            sorted(signal_rank.items(), key=lambda kv: (-kv[1], kv[0]))
+        ),
+    }

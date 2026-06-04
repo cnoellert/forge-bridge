@@ -10,6 +10,12 @@ Captured facts vs authored analysis are locked apart (the TranslationCase lock,
 one instrument downstream): ``build_record`` cannot author; only a distinct
 later pass writes ``analysis``.
 """
+from forge_bridge.context_pressure._analysis import (
+    SEED_DIR,
+    author_analysis,
+    flag_contextual_failure_candidates,
+    resolvable_delta,
+)
 from forge_bridge.context_pressure._capture import (
     append_record,
     build_record,
@@ -30,10 +36,14 @@ __all__ = [
     "FAILURE_CLASS_VALUES",
     "OUTCOME_VALUES",
     "SCHEMA_VERSION",
+    "SEED_DIR",
     "SchemaValidationError",
     "SchemaVersionMismatch",
     "append_record",
+    "author_analysis",
     "build_record",
+    "flag_contextual_failure_candidates",
     "read_records",
+    "resolvable_delta",
     "validate_context_pressure_record",
 ]
