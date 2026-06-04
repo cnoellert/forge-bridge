@@ -47,6 +47,18 @@ All scalars `PyAttribute`-unwrapped; the whole structure stored verbatim in `wor
 - **Q-focus-3 (absence vocab):** one entry — `playhead_frame: null / unreachable_api`.
 - The SPEC's focus-hook "first-class OPEN dependency" is now **resolved** to the recipe above. The discuss is ready to move to PLAN once Creative's capture-surface *ergonomics* pass (typed-prompt UX in the Console) clears.
 
+## S2 CLOSED end-to-end — probe #4 CONTRACT VERIFIED (live Flame 2026.2.2)
+
+The live read → `assemble_world_state` → S4 contract is verified on real Flame (project `013_…portofino`, sequence `30sec_edit 21`): `extracted` clean (no `PyAttribute`, no quotes), selection deduped to 20 unique shots, S4 match → `[]` / mismatch → `wrong_resolution`. **Three production-shape findings the dev-box fixtures structurally could not surface — caught and pinned as regressions before one operator record was captured:**
+
+1. **Flame selection attrs are non-iterable `PyAttribute` value-wrappers** — `list(batch.selected_nodes)` / `clip.selected_segments` raise `TypeError` (unlike `versions`/`tracks`/`segments`, which iterate). Timeline selection therefore comes from the segment-walk (`seg.selected`), not the wrapper. Fix: defensive `_names()`; the diagnostics confirm both are `PyAttribute`, non-iterable.
+2. **Live `str(PyAttribute)` single-quotes the value** — `str(clip.name)` → `"'30sec_edit 21'"`. The compiled side is quote-stripped by the param parser, so `extracted` must be too or S4 false-positives `wrong_resolution` on *correct* records (this was the genuine `CONTRACT FAILURE`). Fix: `_unwrap` strips a balanced surrounding quote pair (raw stays quoted = provenance; extracted bare = meaning).
+3. **The multi-track selection walk yields cross-track dupes + gap empties** — fix: `extracted` selection is empty-filtered + order-preserving-deduped (`raw` keeps the faithful walk).
+
+All three are pinned in `tests/context_pressure/test_focus.py` with the **actual probe #4 live raw** as the fixture — the fixture-mirrors-production gap closed permanently. The probe also re-ran the methodology lesson twice on itself (a `CONTRACT FAILURE` that was *real*, then stale self-checks lagging the fix): the derived verdict can lie, the raw cannot.
+
+**Remaining: S3 only** (Console capture wiring — prompt → compile → preview → `assemble_world_state` → `build_record` → `append_record`).
+
 ## DT ratification + the meta-finding (banked — the instrument proved its own design principle on itself)
 DT independently confirmed the ruling three ways (clip-level `selected_segments`=7, per-segment `.selected`=7 True on 020–080, `current_segment.selected`=True) and **owns the probe's verdict bug**: the comparisons ran on `_safe()`-stringified values (`"PyAttribute:True"`), so `value is True` and `isinstance(v, list)` both failed → the machine verdict said INCONCLUSIVE while the raw said YES.
 
