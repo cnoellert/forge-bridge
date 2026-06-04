@@ -132,6 +132,26 @@ def test_chat_sse_accept_returns_event_stream_content_type(make_client):
     assert [name for name, _ in events] == ["compile_complete", "chain_complete"]
 
 
+def test_compile_complete_exposes_compiled_graph_exposure_only(make_client):
+    """S3.1 — compile_complete surfaces compiled_graph == list(outcome.steps).
+    Exposed, never transformed: a copy of the steps, steps_count unchanged, event
+    sequence identical (no behavior change to compile/dispatch/ratify)."""
+    mock_router = _build_compile_mock_router(steps=["forge_test_probe", "forge_test_probe"])
+    client, patches = make_client(mock_router)
+    with patches[0], patches[1], patches[2]:
+        response = client.post(
+            "/api/v1/chat",
+            json={"messages": [{"role": "user", "content": "hi"}]},
+            headers={"Accept": "text/event-stream"},
+        )
+    assert response.status_code == 200, response.text
+    events = dict(_parse_sse_stream(response.text))
+    cc = events["compile_complete"]
+    assert cc["compiled_graph"] == ["forge_test_probe", "forge_test_probe"]  # exposed verbatim
+    assert cc["steps_count"] == 2 and cc["steps_count"] == len(cc["compiled_graph"])  # unchanged
+    assert "chain_complete" in events  # same terminal taxon — behavior unchanged
+
+
 def test_chat_sse_no_accept_header_returns_json(make_client):
     """No Accept header routes to the JSON transport, not SSE."""
     mock_router = _build_compile_mock_router()

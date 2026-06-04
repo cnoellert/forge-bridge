@@ -12,6 +12,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
+from forge_bridge.console._context_capture import context_capture_handler  # Phase X
 from forge_bridge.console.handlers import (
     api_v1_exec_handler,
     chat_handler,                      # NEW (Phase 16 / FB-D)
@@ -111,6 +112,10 @@ def build_console_app(
         Route("/api/v1/chat", chat_handler, methods=["POST"]),
         # A.2 — ratify + apply endpoint
         Route("/api/v1/ratify", ratify_endpoint, methods=["POST"]),
+        # Phase X (Context Pressure Instrument) — storage-only capture endpoint,
+        # route-separated from the compile path (handler imports no compile
+        # entrypoint); resolver-blindness is structural + tested.
+        Route("/api/v1/context-capture", context_capture_handler, methods=["POST"]),
     ]
     middleware = [
         Middleware(

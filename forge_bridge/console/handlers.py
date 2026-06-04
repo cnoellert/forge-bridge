@@ -1210,6 +1210,12 @@ async def _chat_sse_response(
                 await msg_queue.put(("compile_complete", {
                     "request_id": request_id,
                     "steps_count": len(outcome.steps),
+                    # S3.1 (Context Pressure Instrument) — EXPOSURE-ONLY: surface the
+                    # already-computed compiled graph so the Console-side capture reads
+                    # it uniformly (reads + mutations) without reconstructing from
+                    # chain_complete vs preview. Exposed, never transformed — a copy of
+                    # outcome.steps; no change to compile/dispatch/ratify behavior.
+                    "compiled_graph": list(outcome.steps),
                 }))
 
             if outcome.regime == "chain_aborted":
