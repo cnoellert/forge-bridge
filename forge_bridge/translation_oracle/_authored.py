@@ -40,6 +40,7 @@ def _case(
             "expected_params": params,
             "expected_verdict_pair": {"translation": verdict[0], "substrate": verdict[1]},
             "expected_classes": classes,
+            # VESTIGIAL verdict snapshot; readers use observed.well_formed via emit().
             "expected_well_formed": well_formed,
             "world_state": world_state,
             "defect_ref": defect_ref,

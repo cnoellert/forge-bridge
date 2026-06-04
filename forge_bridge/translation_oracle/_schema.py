@@ -184,6 +184,13 @@ def _validate_label(label: Any) -> None:
             )
     translation = label["expected_verdict_pair"]["translation"]
     # WELL-FORMEDNESS TIER (room ratification). Two tiers of translation-FAIL:
+    #
+    # VESTIGIAL: expected_well_formed is the original frozen-capture verdict
+    # snapshot. Do NOT read it for a well-formedness verdict; that verdict
+    # lives on observed.well_formed and is read through _oracle.emit(). Retained
+    # because the corpora are immutable and this schema coupling still validates
+    # authored/frozen rows for self-consistency.
+    #
     #   expected_well_formed=False -> malformed graph: translation MUST be fail,
     #     and content classes MUST be empty (content evaluation short-circuits).
     #   expected_well_formed=True  -> well-formed: the content rule applies
