@@ -61,8 +61,11 @@ except Exception as e:
     report["clip_error"] = f"{type(e).__name__}: {e}"
 
 # THE decisive walk: clip → versions → tracks → segments → .selected
+# 3-way verdict — distinguish UNREADABLE (definitive no) from READABLE-BUT-ZERO
+# (re-run / console-focus cleared selection) from READABLE-AND-SELECTED (yes).
 seg_sample = []
 n_selected = 0
+n_readable = 0   # segments where .selected returned ok (readable), regardless of value
 n_total = 0
 try:
     for ver in list(getattr(clip, "versions", []) or [])[:1]:
@@ -70,6 +73,8 @@ try:
             for s in list(getattr(trk, "segments", []) or [])[:40]:
                 n_total += 1
                 sel = _read(s, "selected")
+                if sel.get("ok"):
+                    n_readable += 1
                 if sel.get("value") is True:
                     n_selected += 1
                 if len(seg_sample) < 12:
@@ -78,15 +83,42 @@ try:
                         "type": type(s).__name__,
                         "selected": sel,
                     })
+
+    # second path: clip-level selection accessors (selection may be readable here
+    # even if per-segment .selected is not)
+    clip_sel = _read(clip, "selected_segments")
+    clip_sel2 = _read(clip, "selection")
+    clip_level_selection = None
+    for cand in (clip_sel, clip_sel2):
+        v = cand.get("value")
+        if cand.get("ok") and isinstance(v, list) and v:
+            clip_level_selection = v
+            break
+    clip_accessor_readable = clip_sel.get("ok") or clip_sel2.get("ok")
+
+    if n_selected > 0 or clip_level_selection:
+        verdict = "ON-DEMAND SELECTION READABLE — Console is selection-capable"
+    elif n_total > 0 and n_readable == 0 and not clip_accessor_readable:
+        verdict = (
+            "UNREADABLE — .selected absent/raises on every segment AND no clip-level "
+            "accessor reads; timeline selection needs a UI-action surface"
+        )
+    else:
+        verdict = (
+            f"INCONCLUSIVE — .selected reads fine (readable={n_readable}/{n_total}) "
+            "but ZERO segments selected at read-time. Either nothing was selected, OR "
+            "console focus cleared the Timeline selection before this ran. RE-RUN with "
+            "2-3 segments confirmed selected; if still zero with readable>0, the finding "
+            "is 'console-focus clears selection' = Console selection-blind in practice."
+        )
+
     report["segment_walk"] = {
         "total_segments_seen": n_total,
+        "selected_readable_count": n_readable,
         "selected_count": n_selected,
+        "clip_level_selection": _safe(clip_level_selection) if clip_level_selection else None,
         "sample": seg_sample,
-        "verdict": (
-            "ON-DEMAND SELECTION READABLE" if n_selected > 0
-            else "no segment reported selected=True — either none selected, or "
-                 ".selected is not on-demand readable (re-run with segments selected)"
-        ),
+        "verdict": verdict,
     }
 except Exception as e:
     report["segment_walk"] = f"<err {type(e).__name__}: {e}>"

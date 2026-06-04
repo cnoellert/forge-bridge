@@ -16,7 +16,19 @@ This is elevated (Creative) from implementation detail to **first-class architec
 - If `analysis` is wrong → re-author it.
 - **If focus state was never captured → the evidence is gone forever.**
 
-Therefore **`world_state.raw` completeness on the focus snapshot is THE migration-if-wrong surface of this phase** — not the record shape (which is sound). `world_state.raw` = `flame_context` output **+ a focus snapshot** (active sequence · open batch · current selection · active tab · playhead · focus state). The focus snapshot is **new hook work** — central, not minor. **The next room discussion (before PLAN) is the focus-hook itself:** what exactly constitutes operator focus state inside Flame, and how do we guarantee we capture it completely enough that future contextual analysis remains possible?
+Therefore **`world_state.raw` completeness on the focus snapshot is THE migration-if-wrong surface of this phase** — not the record shape (which is sound).
+
+**RESOLVED by live probing (Flame 2026.2.2, probes #1–#3 → `FOCUS-STATE-DISPOSITION.md`).** Full operator focus state reads **on-demand** from any surface (incl. the Python Console — the surface decision is ruled: Console is selection-capable, no UI-action hook required). The focus snapshot recipe stored verbatim into `world_state.raw`:
+```
+project/workspace/desktop/tab   ← flame_context + flame.get_current_tab()
+batch                           ← flame.batch {name, opened, current_iteration, selected_nodes, current_node}
+loaded_sequence                 ← flame.timeline.clip {name, duration, frame_rate}
+playhead_segment ("this shot")  ← flame.timeline.current_segment {shot_name, name, start_frame, record_in/out}
+timeline_selection              ← flame.timeline.clip.selected_segments → [{shot_name, name, record_in/out} …]
+marker/effect/transition        ← flame.timeline.current_marker / current_effect / current_transition
+playhead_frame                  ← null / unreachable_api  (no current_frame on PyTimeline; subsumed by current_segment)
+```
+**Implementation constraint (grounded):** Flame scalar attrs return **`PyAttribute` wrappers**, not raw scalars (`.selected`→`PyAttribute:True`) — the extractor must **unwrap PyAttribute**; `raw` stores the stringified form so unwrap bugs stay recoverable. The remaining room energy is Creative's capture-surface *ergonomics* pass (typed-prompt UX in the Console), not the focus-hook reachability (settled).
 
 ## Package
 `forge_bridge/context_pressure/` — 4th instrument (distinct from `comprehension/`, `corpus/`, `translation_oracle/`). Own `__all__`, `SCHEMA_VERSION = "1"`, atomic-append JSONL with a `{"_header": True, ...}` first line (mirror `corpus`/`comprehension`). **Net-new authored vocab** (the distinct-instrument constraint bites on the *authored* `failure_class` — the evaluation vocab). The observed *fact* vocab (`outcome`) is **aligned to the real runtime SSE taxa** (genuinely shared, zero-mapping for the aligned states — see `OUTCOME_VALUES`), with one net-new state for the executor-gap case.
