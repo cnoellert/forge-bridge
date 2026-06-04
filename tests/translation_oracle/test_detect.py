@@ -1,8 +1,18 @@
 """TF.3a — well-formedness detector tests (the gating Tier-1 check)."""
 from __future__ import annotations
 
-from forge_bridge.translation_oracle import compute_well_formed
-from forge_bridge.translation_oracle._detect import detect_entity_value_fidelity
+import forge_bridge.translation_oracle as translation_oracle
+from forge_bridge.translation_oracle import (
+    compute_well_formed,
+    detect_entity_value_fidelity,
+)
+
+
+def test_translation_oracle_exports_consumed_detectors_only():
+    assert "compute_well_formed" in translation_oracle.__all__
+    assert "detect_entity_value_fidelity" in translation_oracle.__all__
+    assert "emit" not in translation_oracle.__all__
+    assert len(translation_oracle.__all__) == 19
 
 
 def test_clean_graph_is_well_formed():
