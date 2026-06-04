@@ -85,6 +85,22 @@ def test_correct_resolution_is_not_flagged():
     assert flag_contextual_failure_candidates(rec) == []
 
 
+def test_mode_a_placeholder_and_segment_fallback_unresolved_for_right_reason():
+    """R1-shape (synthetic, the live-corpus four-gap regression): all four fixes in
+    one record — placeholder shot_id nulls to unresolved (not a coincidental
+    param-key miss); empty current_shot is skipped so the shot focus falls through
+    to current_segment_name. Locks the four-gap patch against future regression."""
+    rec = _by_prompt(_seed(), "how long is this shot")
+    cands = flag_contextual_failure_candidates(rec)
+    assert len(cands) == 1
+    c = cands[0]
+    assert c["mode"] == "unresolved_reference"   # shot_id=UUID placeholder -> compiled None
+    assert c["dimension"] == "shot"
+    assert c["compiled_value"] is None           # gap #3 (shot_id read) + #4 (UUID nulled)
+    assert c["focus_value"] == "seg_010A_01"     # gap #1 ("" skipped) + #2 (segment fallback)
+    assert c["focus_signal_present"] is True
+
+
 # --- Gate 3: candidate (auto) vs confirmation (authored) split --------------
 
 def test_author_analysis_writes_layer_validates_and_does_not_mutate():

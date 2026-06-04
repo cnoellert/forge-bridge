@@ -78,10 +78,12 @@ def test_extracted_recomputable_from_raw_but_not_vice_versa():
     ws = assemble_world_state(raw)
     # extracted is a pure function of raw — recompute, identical
     assert assemble_world_state(raw)["extracted"] == ws["extracted"]
-    # raw carries strictly more than extracted (current_segment_name, the
-    # unreachable_api reason, batch internals) — not regenerable from extracted
+    # raw carries strictly more than extracted (the unreachable_api reason,
+    # batch internals, plus the raw nesting/provenance) — not regenerable from
+    # extracted. current_segment_name now deliberately projects as the shot
+    # fallback focus signal for S4.
     assert "current_segment_name" in raw["timeline"]
-    assert "current_segment_name" not in str(ws["extracted"])
+    assert ws["extracted"]["flame.current_segment_name"] == "tst_020_graded_L01"
     assert raw["playhead_frame_reason"] == "unreachable_api"
 
 

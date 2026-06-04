@@ -45,23 +45,33 @@ _CONTEXTUAL_TOKENS: Final[frozenset[str]] = frozenset({
     "this", "that", "these", "those", "current", "selected", "active", "here",
 })
 
+# Seed-minimal placeholder sentinels (measure-first — observed forms only; do NOT
+# pre-lock a taxonomy: over-broad matching mis-classifies real values as unresolved).
+_PLACEHOLDER_EXACT: Final[frozenset[str]] = frozenset({"UUID"})
+_PLACEHOLDER_RE: Final = re.compile(r"^<.*>$")
+
 
 @dataclass(frozen=True)
 class _Dimension:
     name: str
     nouns: frozenset       # prompt nouns that invoke this dimension
     param_keys: tuple      # compiled-graph param keys carrying its concrete value
-    focus_key: str         # world_state.extracted focus signal (unnamespaced)
+    focus_keys: tuple      # priority-ordered world_state.extracted focus signals
 
 
 # Measure-first seam — extend as captures show which dimensions matter.
 _DIMENSIONS: Final[tuple] = (
     _Dimension("sequence", frozenset({"sequence", "seq", "timeline"}),
-               ("sequence_name", "sequence"), "active_sequence"),
+               ("sequence_name", "sequence"), ("active_sequence",)),
+    # current_segment_name is a fallback focus signal on the shot dimension, not
+    # a new dimension. shot.focus_keys = ("current_shot", "current_segment_name"),
+    # first non-empty wins. Revisit only if a capture shows an operator
+    # expressing segment != shot as distinct referents in one world_state.
     _Dimension("shot", frozenset({"shot", "segment"}),
-               ("shot", "shot_name", "segment_name", "segment"), "current_shot"),
+               ("shot", "shot_name", "shot_id", "segment_name", "segment"),
+               ("current_shot", "current_segment_name")),
     _Dimension("batch", frozenset({"batch"}),
-               ("batch", "batch_name"), "open_batch"),
+               ("batch", "batch_name"), ("open_batch",)),
 )
 
 
@@ -85,13 +95,19 @@ def _graph_params(compiled_graph: list) -> dict:
     return params
 
 
-def _focus_value(world_state: dict, focus_key: str) -> Optional[str]:
-    """Read a focus signal from world_state.extracted (source-namespaced or flat)."""
+def _is_placeholder(value: str) -> bool:
+    return value in _PLACEHOLDER_EXACT or bool(_PLACEHOLDER_RE.match(value))
+
+
+def _focus_value(world_state: dict, focus_keys: tuple) -> Optional[str]:
+    """First present, non-empty focus signal across priority-ordered keys."""
     extracted = world_state.get("extracted") or {}
     source = world_state.get("source")
-    for key in (f"{source}.{focus_key}", focus_key):
-        if key in extracted and extracted[key] is not None:
-            return str(extracted[key])
+    for focus_signal_key in focus_keys:
+        for key in (f"{source}.{focus_signal_key}", focus_signal_key):
+            val = extracted.get(key)
+            if val is not None and str(val) != "":
+                return str(val)
     return None
 
 
@@ -114,8 +130,10 @@ def flag_contextual_failure_candidates(record: dict) -> list[dict]:
     for dim in _DIMENSIONS:
         if not any(noun in plow for noun in dim.nouns):
             continue
-        focus = _focus_value(world_state, dim.focus_key)
+        focus = _focus_value(world_state, dim.focus_keys)
         compiled = next((params[k] for k in dim.param_keys if k in params), None)
+        if compiled is not None and _is_placeholder(compiled):
+            compiled = None
 
         if compiled is None:
             # (a) unresolved: a contextual ref to this dimension, no concrete value.

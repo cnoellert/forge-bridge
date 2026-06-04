@@ -84,6 +84,7 @@ def assemble_world_state(raw: dict, *, source: str = "flame") -> dict:
     timeline = raw.get("timeline") or {}
     put("active_sequence", timeline.get("active_sequence"))
     put("current_shot", timeline.get("current_shot"))
+    put("current_segment_name", timeline.get("current_segment_name"))
 
     # selection: the live segment walk crosses multiple tracks, so it yields
     # gaps/transitions (empty shot_name) and cross-track duplicates. extracted
