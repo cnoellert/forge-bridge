@@ -39,10 +39,12 @@ CONTEXT_SOURCE_VALUES: Final[frozenset[str]] = frozenset({
     "bridge_ui",
 })
 
-# outcome: the captured terminal FACT. Aligned to the real runtime SSE taxa
-# (genuinely shared, zero transcode-mapping for these) + one net-new state:
-# blocked_at_ratify = an Option-B mutation reached preview but gated at ratify
-# with no executor wired (a captured outcome, not a failure).
+# outcome: the captured terminal FACT — the observed terminal SSE taxon, verbatim.
+# Aligned EXACTLY to the runtime SSE taxa (zero transcode-mapping). Outcome records
+# observation, not interpretation: an Option-B mutation's terminal observation is
+# `preview_emitted` (it reached preview); nothing attempts ratification, so nothing
+# is "blocked" — `blocked_at_ratify` would be interpretation and is deliberately
+# NOT a value (room ruling, Fork 2). Analysis interprets these facts later.
 OUTCOME_VALUES: Final[frozenset[str]] = frozenset({
     "chain_complete",
     "preview_emitted",
@@ -50,7 +52,6 @@ OUTCOME_VALUES: Final[frozenset[str]] = frozenset({
     "chain_aborted",
     "compile_error",
     "error",
-    "blocked_at_ratify",
 })
 
 # failure_class: the AUTHORED evaluation vocab (net-new — the distinct-instrument

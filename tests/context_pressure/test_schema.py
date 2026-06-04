@@ -28,7 +28,7 @@ def _valid_record() -> dict:
             ],
             "ratified_graph": None,
         },
-        "outcome": "blocked_at_ratify",
+        "outcome": "preview_emitted",
         "world_state": {
             "source": "flame",
             "raw": {"flame_context": {"project": "p"}, "timeline": {"clip": "30sec_edit 21"}},

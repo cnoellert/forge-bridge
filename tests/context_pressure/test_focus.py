@@ -94,7 +94,7 @@ def _record_with(ws, compiled):
                     "capture_surface": "python_console", "capture_adapter": "v1"},
         prompt="rename this sequence with prefix tv",
         observed_translation={"compiled_graph": [compiled], "ratified_graph": None},
-        outcome="blocked_at_ratify", world_state=ws,
+        outcome="preview_emitted", world_state=ws,
     )
 
 
