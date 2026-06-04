@@ -4,9 +4,14 @@ ROUTE-SEPARATION INVARIANT (room ruling, Fork 1 / Option B). This module imports
 ONLY ``forge_bridge.context_pressure`` (the canonical assembler/builder/append) +
 starlette + the compile-free ``_rate_limit``. It MUST NOT import ``compile_intent``
 / ``run_compile_branch`` / ``_chat_compile`` / ``handlers`` (which pulls the compile
-path) / any compile-path entrypoint. Resolver-blindness is enforced structurally
-here and verified in ``tests/console/test_context_capture_route_separation.py``:
-the compile route never receives world_state; the capture route never compiles.
+path) / any compile-path entrypoint. Resolver-blindness holds in BOTH directions,
+each with its own guard:
+  - the CAPTURE route never compiles — structural (AST) + behavioral (patch-to-
+    explode) in ``tests/console/test_context_capture_route_separation.py``;
+  - the COMPILE route never receives world_state — the ``/chat`` contract is
+    messages-only (``test_chat_handler_sse.py::test_chat_ignores_injected_world_
+    state_compile_stays_desktop_blind``), and the S3.4 Console client posts
+    world_state ONLY here, never to ``/chat``.
 
 The Console posts the raw Flame world_state snapshot + the compiled graph + the
 observed terminal outcome; this endpoint runs the CANONICAL context_pressure

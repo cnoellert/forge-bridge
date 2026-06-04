@@ -17,7 +17,7 @@ import pytest
 from starlette.testclient import TestClient
 
 import forge_bridge.console._context_capture as capture_mod
-from forge_bridge.console import _chat_compile, _rate_limit
+from forge_bridge.console import _rate_limit, handlers
 from forge_bridge.console.app import build_console_app
 from forge_bridge.console.manifest_service import ManifestService
 from forge_bridge.console.read_api import ConsoleReadAPI
@@ -72,8 +72,11 @@ def test_behavioral_capture_succeeds_with_compile_exploded(tmp_path, monkeypatch
     api = ConsoleReadAPI(execution_log=mock_log, manifest_service=ManifestService(), llm_router=MagicMock())
     client = TestClient(build_console_app(api))
 
+    # Patch the PRODUCTION binding: handlers.py:55 imported run_compile_branch into
+    # the handlers module namespace, and the chat call sites use that binding. So
+    # this is the symbol a real compile would go through.
     boom = MagicMock(side_effect=AssertionError("compile path must not be reached from capture"))
-    with patch.object(_chat_compile, "run_compile_branch", boom):
+    with patch.object(handlers, "run_compile_branch", boom):
         r = client.post("/api/v1/context-capture", json={
             "captured_at": "2026-06-04T12:00:00Z",
             "prompt": "what is the duration of this shot",
