@@ -113,3 +113,49 @@ def test_s2_output_feeds_s4_match_is_not_flagged():
     ws = assemble_world_state(_probe_raw())
     rec = _record_with(ws, 'flame_rename_shots sequence_name="30sec_edit 21" prefix=tv commit=true')
     assert flag_contextual_failure_candidates(rec) == []
+
+
+# --- PRODUCTION SHAPE (probe #4 live finding): str(PyAttribute) single-quotes -
+
+def _live_raw():
+    """The ACTUAL raw shape live FOCUS_SNAPSHOT_PY emits (probe #4, Flame 2026.2.2):
+    str(PyAttribute) wraps values in single quotes, and the selection walk yields
+    cross-track dupes + empty gaps. The dev-box fixture above used probe-_safe
+    shape; THIS mirrors production (fixture-mirrors-production)."""
+    return {
+        "project": "013_13_13_2026_2_1_portofino",
+        "current_tab": "Timeline",
+        "batch": {"name": "'FCX_METAL_TEST'", "opened": True, "current_iteration": "'FCX_METAL_TEST_001'", "selected_nodes": None},
+        "timeline": {
+            "active_sequence": "'30sec_edit 21'",      # single-quoted by str(PyAttribute)
+            "current_shot": "'tst_020'",
+            "current_segment_name": "'tst_020_graded_L01'",
+            "selection": ["'tst_010'", "'tst_020'", "'tst_010'", "''", "'tst_110'", "''", "''"],
+        },
+        "playhead_frame": None,
+        "playhead_frame_reason": "unreachable_api",
+    }
+
+
+def test_live_quoted_values_are_unwrapped_in_extracted():
+    e = assemble_world_state(_live_raw())["extracted"]
+    assert e["flame.active_sequence"] == "30sec_edit 21"   # quotes stripped
+    assert e["flame.current_shot"] == "tst_020"
+    assert e["flame.open_batch"] == "FCX_METAL_TEST"
+    assert "'" not in "".join(str(v) for v in e.values() if isinstance(v, str))
+
+
+def test_live_selection_deduped_and_empty_filtered():
+    e = assemble_world_state(_live_raw())["extracted"]
+    assert e["flame.selection"] == ["tst_010", "tst_020", "tst_110"]  # order-preserved, no dupes, no empties
+
+
+def test_live_shape_s4_match_is_not_flagged_the_probe4_regression():
+    """The probe #4 CONTRACT FAILURE, pinned: a genuine match must NOT flag.
+    With quoted focus + quote-stripped compiled, the buggy path false-positived."""
+    ws = assemble_world_state(_live_raw())
+    seq = ws["extracted"]["flame.active_sequence"]  # "30sec_edit 21" (clean)
+    match = _record_with(ws, 'flame_rename_shots sequence_name="%s" prefix=tv commit=true' % seq)
+    assert flag_contextual_failure_candidates(match) == []
+    mismatch = _record_with(ws, "flame_rename_shots sequence_name=30sec_21 prefix=tv commit=true")
+    assert [c["mode"] for c in flag_contextual_failure_candidates(mismatch)] == ["wrong_resolution"]

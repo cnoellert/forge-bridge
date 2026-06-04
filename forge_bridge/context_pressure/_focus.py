@@ -35,14 +35,27 @@ UNREACHABLE_API: Final[str] = "unreachable_api"
 
 
 def _unwrap(value: Any) -> Any:
-    """Strip a leading ``PyAttribute:`` wrapper from a stringified Flame scalar.
+    """Normalize a stringified Flame scalar into its bare semantic value.
 
-    Idempotent: a clean value passes through unchanged. This is what keeps the
-    wrapper out of ``extracted`` (and thus out of S4's comparison).
+    Two real Flame representations are stripped (idempotent — a clean value
+    passes through unchanged):
+      - a leading ``PyAttribute:`` wrapper (probe-_safe form), and
+      - a BALANCED SURROUNDING QUOTE PAIR: live ``str(PyAttribute)`` wraps the
+        value in single quotes — ``str(clip.name) -> "'30sec_edit 21'"`` (probe #4
+        live finding). The compiled-graph side is quote-stripped by the param
+        parser, so extracted must be too or a genuine match compares UNEQUAL and
+        S4 false-positives ``wrong_resolution`` on correct records.
+    This is what keeps both wrappers out of ``extracted`` (and out of S4's
+    comparison); ``raw`` retains the faithful quoted form for recoverability.
     """
-    if isinstance(value, str) and value.startswith(_PYATTR_PREFIX):
-        return value[len(_PYATTR_PREFIX):]
-    return value
+    if not isinstance(value, str):
+        return value
+    v = value
+    if v.startswith(_PYATTR_PREFIX):
+        v = v[len(_PYATTR_PREFIX):]
+    if len(v) >= 2 and v[0] in "\"'" and v[-1] == v[0]:
+        v = v[1:-1]
+    return v
 
 
 def assemble_world_state(raw: dict, *, source: str = "flame") -> dict:
@@ -72,8 +85,20 @@ def assemble_world_state(raw: dict, *, source: str = "flame") -> dict:
     put("active_sequence", timeline.get("active_sequence"))
     put("current_shot", timeline.get("current_shot"))
 
-    selection = timeline.get("selection") or []
-    shots = [_unwrap(s) for s in selection if s is not None]
+    # selection: the live segment walk crosses multiple tracks, so it yields
+    # gaps/transitions (empty shot_name) and cross-track duplicates. extracted
+    # holds the de-duped, empty-filtered, order-preserved shot set; raw keeps the
+    # faithful per-segment walk.
+    seen: set = set()
+    shots: list = []
+    for entry in (timeline.get("selection") or []):
+        if entry is None:
+            continue
+        value = _unwrap(entry)
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        shots.append(value)
     if shots:
         extracted[f"{source}.selection"] = shots
 

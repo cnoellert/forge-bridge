@@ -98,9 +98,14 @@ except Exception:
     _PYATTR_PREFIX = "PyAttribute:"
 
     def _unwrap(value):
-        if isinstance(value, str) and value.startswith(_PYATTR_PREFIX):
-            return value[len(_PYATTR_PREFIX):]
-        return value
+        if not isinstance(value, str):
+            return value
+        v = value
+        if v.startswith(_PYATTR_PREFIX):
+            v = v[len(_PYATTR_PREFIX):]
+        if len(v) >= 2 and v[0] in "\"'" and v[-1] == v[0]:
+            v = v[1:-1]
+        return v
 
     def assemble_world_state(raw, source="flame"):
         extracted = {}
@@ -116,8 +121,16 @@ except Exception:
         timeline = raw.get("timeline") or {}
         put("active_sequence", timeline.get("active_sequence"))
         put("current_shot", timeline.get("current_shot"))
-        selection = timeline.get("selection") or []
-        shots = [_unwrap(s) for s in selection if s is not None]
+        seen = set()
+        shots = []
+        for entry in (timeline.get("selection") or []):
+            if entry is None:
+                continue
+            u = _unwrap(entry)
+            if not u or u in seen:
+                continue
+            seen.add(u)
+            shots.append(u)
         if shots:
             extracted["%s.selection" % source] = shots
         return {"source": source, "raw": raw, "extracted": extracted}
