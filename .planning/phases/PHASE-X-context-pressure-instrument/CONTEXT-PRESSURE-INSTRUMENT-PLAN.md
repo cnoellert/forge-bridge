@@ -1,6 +1,8 @@
 # Context Pressure Instrument — PLAN
 
-**Status:** PLAN open (DT + Creative ruled (b): open now, Console ergonomics rides as a parallel redline, not a blocker). **Base:** `main @ <head>`. Discuss settled; all migration-if-wrong decisions closed (SPEC rev 2 + `FOCUS-STATE-DISPOSITION.md`). **No implementation until this PLAN is ratified.**
+**Status:** PLAN open, **plan-check folded** (DT + Creative: passes with one required fix — S4 must detect *both* contextual-failure modes; + reject-threshold cost-anchoring made explicitly pre-delta). **Ratify-ready.** Base: `main @ 77243e0`. Discuss settled; all migration-if-wrong decisions closed (SPEC rev 2 + `FOCUS-STATE-DISPOSITION.md`).
+
+**Authorized now:** S1 (it does not depend on the S4 fix — clean dev-box start). **S4 implementation must carry both failure modes + the mode-(b) seed before S4 is claimed closed**, or the CR.1 fix is only half-made (capture exists, analysis exists, analysis blind to the dominant failure). Console ergonomics (Creative) runs alongside.
 
 ---
 
@@ -36,9 +38,17 @@ operator prompt → `compile_intent` (existing, **desktop-blind**) → preview v
 - **Acceptance:** a real Console prompt yields a valid paired record; `world_state` present; `analysis=None`; no compile path reads `world_state`.
 
 ### S4 — counterfactual analysis reader  *(dev-box, testable — the SECOND non-negotiable: ships WITH capture)*
-The Q3 metric, computable from captured fields: for each contextual failure (unresolved ref at compile/preview), `world_state_resolvable` = was the referent present in captured `world_state`? + `resolving_signal` + per-signal frequency ranking. Authoring path writes the `analysis` layer (`failure_class`, `referent`, `authored_at`) as a distinct pass.
-- **Exercised on a seed corpus at build time** (a handful of hand-authored or early-captured records) so the loop is proven closed *before* real operator data — the CR.1 fix ("capture exists, analysis does not" must not recur).
-- **Acceptance:** referent-in-world_state → resolvable=True; absent → False (symmetric); per-signal ranking emitted.
+**The failure set has TWO modes — S4 MUST detect both (DT+Creative ratify-gate; goal-backward).** A contextual resolver fails two ways, and catching only the first systematically under-counts the dominant/most-dangerous failures and biases the ruling toward *don't-build* (it omits exactly what desktop-wiring fixes):
+- **(a) Unresolved ref** — "this sequence" → no concrete value (honest-decline / `UNRESOLVED_REQUIRED_PARAM`). **Derivable from `compiled_graph` alone.**
+- **(b) Confident-wrong resolution** — "this sequence" → resolved to a *wrong concrete value*, dispatched as if grounded (the IDX-13 case from this phase's own discuss: `world_state` focus = `30sec_edit 21`, compiled `sequence_name=30sec_21`; the TF.4 space-mangle class). **Not unresolved — resolved, confidently, wrong.** This is the common, silent, dangerous mode.
+
+Both ride the captured/authored lock cleanly:
+- **Candidate-flagging is AUTOMATIC (captured-derivable):** mode (b) candidate ⇔ `compiled_graph`'s resolved value ≠ the captured `world_state` focus signal. Both operands are captured fields — no authoring needed to *flag*.
+- **Confirmation is AUTHORED:** "was that focus signal actually the intended referent?" → `analysis.failure_class` + `referent` + `authored_at`. The system says "this looks suspicious"; only authored analysis says "this was wrong."
+
+The Q3 metric over the confirmed failure set: `world_state_resolvable` = was the referent present in captured `world_state`? + `resolving_signal` + per-signal frequency ranking.
+- **Exercised on a seed corpus at build time** so the loop is proven closed *before* real operator data (the CR.1 fix). **The seed MUST contain a mode-(b) IDX-13-shaped case** (operator "this sequence"; `world_state` focus `30sec_edit 21`; compiled `sequence_name=30sec_21`) — else the seed validates only the mode S4 already handles, a false-green analyzer (`[[feedback-fixture-shape-mirrors-production]]`).
+- **Acceptance (both modes):** (1) unresolved-ref case → flagged contextual failure; (2) **compiled-value-≠-captured-focus case → flagged contextual-failure candidate**; (3) referent-in-`world_state` → resolvable=True, absent → False (symmetric); (4) per-signal ranking emitted. *Acceptance #2 is the load-bearing addition — without it the analyzer is quietly blind to the dominant failure.*
 
 ### S5 — transcode path  *(designed; build deferred per substrate-before-consumer)*
 Lock the mapping (`context_pressure` record → `translation_oracle.TranslationCase`): `observed_translation.compiled_graph → ObservedTrace.observed_graph`; `outcome → oracle outcome` (only `blocked_at_ratify` needs a map; rest align); **`world_state → label.world_state` by AUTHORING, never copy**; new oracle `capture_provenance="operator-pressure"` (additive bump). **Build when the oracle consumes operator-pressure records — document only this phase.**
@@ -49,7 +59,8 @@ Creative owns the operator-experience pass: persistent console panel vs command-
 ## 5. Success criteria (the phase, not just the build)
 - **Build:** S1–S4 delivered + tested (S5 documented). The analysis loop (S4) is exercised on a seed corpus — closed before real data.
 - **RUN (phase value):** operators drive the Console; the corpus accumulates **paired** records (every record carries world_state, every focus signal captured-or-explicitly-absent-with-reason). Analysis produces the **resolvable-delta** + per-signal ranking.
-- **Decision:** phase close answers the 5 Desired-Outcome questions and applies the **symmetric, cost-anchored reject rule** (lives in the Q3/success-criteria artifact — precommit the rule, set the number from data) → **build OR don't-build desktop-wiring**, both valid conclusions.
+- **Decision:** phase close answers the 5 Desired-Outcome questions and applies the **symmetric, cost-anchored reject rule** → **build OR don't-build desktop-wiring**, both valid conclusions.
+- **Reject-threshold sequencing (DT+Creative ratify-gate):** the **cost-anchoring method** — *what resolvable-delta justifies the engineering cost of desktop-wiring* — must be **reasoned and written BEFORE the measured delta exists.** Otherwise the threshold gets reverse-engineered from the result ("set X just below the observed delta → always build"). **Precommit the cost reasoning; the data fills the delta, not the threshold.** Lives in the Q3/success-criteria artifact, authored pre-RUN.
 
 ## 6. Sequencing + what needs a Flame workstation
 Dev-box-testable first: **S1** (schema) → **S4** (analysis reader, on seed) → **S2 assembler/unwrap** (fixture-tested). Flame-gated (workstation): **S2 live read** → **S3 capture flow**. This honors substrate-before-consumer (schema + analysis land and test on their own commits before the Flame-side capture rides).
