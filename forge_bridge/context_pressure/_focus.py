@@ -96,6 +96,17 @@ def _v(attr):
     except Exception:
         return None
 
+def _names(attr):
+    # LIVE FINDING (probe #4): Flame SELECTION attributes (batch.selected_nodes,
+    # clip.selected_segments) are PyAttribute value-wrappers, NOT iterable
+    # containers — list()/for raises TypeError (unlike versions/tracks/segments,
+    # which DO iterate). Best-effort; non-critical (the assembler does not extract
+    # selected_nodes; timeline selection comes from the segment walk below).
+    try:
+        return [_v(getattr(n, "name", n)) for n in list(attr)]
+    except Exception:
+        return None
+
 proj = flame.projects.current_project
 batch = flame.batch
 tl = flame.timeline
@@ -123,7 +134,7 @@ raw = {
         "name": _v(batch.name),
         "opened": bool(batch.opened),
         "current_iteration": _v(getattr(batch, "current_iteration", None) and batch.current_iteration.name),
-        "selected_nodes": [_v(n.name) for n in (list(batch.selected_nodes) if batch.selected_nodes else [])],
+        "selected_nodes": _names(batch.selected_nodes),
     },
     "timeline": {
         "active_sequence": _v(getattr(tl.clip, "name", None)) if getattr(tl, "clip", None) else None,

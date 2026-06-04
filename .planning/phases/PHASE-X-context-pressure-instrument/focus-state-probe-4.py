@@ -26,6 +26,26 @@ def _v(attr):
     except Exception:
         return None
 
+def _names(attr):
+    # LIVE FINDING (probe #4): Flame selection attrs are PyAttribute value-wrappers,
+    # NOT iterable — list()/for raises TypeError. Best-effort, non-critical.
+    try:
+        return [_v(getattr(n, "name", n)) for n in list(attr)]
+    except Exception:
+        return None
+
+def _diag(attr):
+    """Discover an attribute's real shape: type, str-repr, iterability."""
+    try:
+        iterable = True
+        try:
+            list(attr)
+        except TypeError:
+            iterable = False
+        return {"type": type(attr).__name__, "str": _v(attr), "iterable": iterable}
+    except Exception as e:
+        return {"error": "%s: %s" % (type(e).__name__, e)}
+
 def _live_raw():
     proj = flame.projects.current_project
     batch = flame.batch
@@ -55,7 +75,7 @@ def _live_raw():
             "name": _v(batch.name),
             "opened": bool(batch.opened),
             "current_iteration": _v(getattr(batch, "current_iteration", None) and batch.current_iteration.name),
-            "selected_nodes": [_v(n.name) for n in (list(batch.selected_nodes) if batch.selected_nodes else [])],
+            "selected_nodes": _names(batch.selected_nodes),
         },
         "timeline": {
             "active_sequence": _v(getattr(tl.clip, "name", None)) if getattr(tl, "clip", None) else None,
@@ -199,6 +219,17 @@ else:
     _check("S4 compatibility", False, "SKIPPED — no active_sequence; load a sequence in Timeline and re-run")
 
 # ============================ 3. REPORT =====================================
+# ---- shape diagnostics (learn the real PyAttribute selection shapes) ----
+shape_diag = {}
+try:
+    shape_diag["batch.selected_nodes"] = _diag(flame.batch.selected_nodes)
+except Exception as e:
+    shape_diag["batch.selected_nodes"] = {"error": "%s: %s" % (type(e).__name__, e)}
+try:
+    shape_diag["clip.selected_segments"] = _diag(getattr(flame.timeline.clip, "selected_segments", None))
+except Exception as e:
+    shape_diag["clip.selected_segments"] = {"error": "%s: %s" % (type(e).__name__, e)}
+
 verified = all(c["pass"] for c in checks)
 report = {
     "probe_version": "4",
@@ -206,6 +237,7 @@ report = {
     "assembler_source": _SOURCE,
     "raw_capture": raw,
     "assembled_extracted": extracted,
+    "shape_diagnostics": shape_diag,
     "contract_checks": checks,
     "verdict": "CONTRACT VERIFIED" if verified else "CONTRACT FAILURE",
 }
