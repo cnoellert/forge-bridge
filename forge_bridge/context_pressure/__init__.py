@@ -21,6 +21,7 @@ from forge_bridge.context_pressure._capture import (
     build_record,
     read_records,
 )
+from forge_bridge.context_pressure._focus import assemble_world_state
 from forge_bridge.context_pressure._schema import (
     CONTEXT_SOURCE_VALUES,
     FAILURE_CLASS_VALUES,
@@ -40,6 +41,7 @@ __all__ = [
     "SchemaValidationError",
     "SchemaVersionMismatch",
     "append_record",
+    "assemble_world_state",
     "author_analysis",
     "build_record",
     "flag_contextual_failure_candidates",
