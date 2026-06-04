@@ -1,5 +1,23 @@
 # Milestones
 
+## v1.13 Translation Fidelity (Shipped: 2026-06-03)
+
+**Phases completed:** 5 — TF.1 Formalize · TF.2 Taxonomy · TF.3a Ground-the-oracle (keystone) · TF.4 Quality-fixes · TF.3b Corpus-instrument. Full writer's-room cadence; close: `v1.13-TRANSLATION-FIDELITY-MILESTONE-CLOSE.md`.
+**Release tag:** none — patch-equivalent (`__all__` at 19; `pyproject.toml` 1.5.1; no public API change; `translation_oracle.__all__` 19, internal).
+**Timeline:** 2026-06-02 → 2026-06-03; live-capture-driven (the corpus refuted the archaeology-driven roadmap and re-ranked it).
+
+**Theme — translation success became a separately measurable verdict.** The substrate is trustworthy (v1.12); the weak point is language→substrate. v1.13 formalized/bounded/validated the existing translation machinery as a first-class subsystem. Boundary = the chain-step graph; translation and substrate scored independently.
+
+**Durable findings:** (1) **fixability is governed by faithful content-recoverability, orthogonal to the well-formedness/content tier** (TF.4 2×2; `non_tool_step` + `space-mangle` are the off-diagonal proofs). (2) **The system got better by deleting a dependency, not repairing data** (TF.3b retired `expected_well_formed` as a verdict source rather than fixing the label).
+
+**Verification:** 788 green (llm+console+oracle); keystone count flip verified (frozen 6→6 no-op, postgate 6→3 observed-sourced); `__all__`==19 byte-stable; 0 corpus mutations; `parse_chain` untouched.
+
+**Honest scope (no overclaim):** v1.13 made translation fidelity *measurable* and fixed the *recoverable* defects; it did not make every translation correct. Entity value-fidelity / space-mangle has detector+prevention but no deterministic guarantee (external-ground-truth-gated).
+
+**Deferred at close (named, with re-entry triggers):** `non_tool_step` (measured class, detector-only — re-enter on a prevention slice) · multi-salvage `+`-split counting (re-enter on a salvage-reason-frequency report) · `defect_ref` manifestation split (re-enter on manifestation-granular ranking) · desktop-wiring/contextual Shape-A (re-enter on measurement justification) · honest-decline restoration (re-enter after model-free-vs-routing grounding) · example-strip (measured-rare) · space-mangle deterministic guarantee (substrate-gated). Full table + the measured-class-vs-accounting-refinement distinction in the close doc.
+
+**Two-stroke read:** substrate is now measured/instrumented/corrected enough — the next pass is **human-pressure, not substrate** (`[[project-substrate-pressure-two-stroke]]`). v1.14 → human-facing workflow (communicating uncertainty/failure/preview/correction/intent to the operator).
+
 ## v1.12 Mutation Delegation (Shipped: 2026-06-02)
 
 **Phases completed:** 1 delivered (**C2** — Compile → Commit-Bearing Executor Chain), full writer's-room cadence (framing → discuss → plan → plan-check → lock → implement → verify → close). Shape B (phase 2) deferred.
