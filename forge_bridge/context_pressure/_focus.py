@@ -86,29 +86,34 @@ def assemble_world_state(raw: dict, *, source: str = "flame") -> dict:
     put("current_shot", timeline.get("current_shot"))
     put("current_segment_name", timeline.get("current_segment_name"))
 
-    # selection: the live segment walk crosses multiple tracks, so it yields
-    # gaps/transitions (empty shot_name) and cross-track duplicates. extracted
-    # holds the de-duped, empty-filtered, order-preserved shot set; raw keeps the
-    # faithful per-segment walk.
-    seen: set = set()
-    shots: list = []
-    for entry in (timeline.get("selection") or []):
-        if entry is None:
-            continue
-        value = _unwrap(entry)
-        if not value or value in seen:
-            continue
-        seen.add(value)
-        shots.append(value)
-    if shots:
-        extracted[f"{source}.selection"] = shots
+    # typed selection (probe #5b): pulled per-context via get_value() — the old
+    # bool(seg.selected) segment-walk is ABANDONED (the flag was a truthy-for-all
+    # PyAttribute, so the walk captured EVERY segment, not the selected set). This
+    # is the REFERENTIAL signal (selected typed object), primary over the
+    # loaded/playhead signals above (which remain as fallback). Names are
+    # unwrapped; the source context is tagged. S4 matches the dimension's
+    # selection_type against the captured ``type``.
+    combined: list = []
+    for ctx in ("media_panel", "timeline", "batch"):
+        for it in ((raw.get(ctx) or {}).get("selected") or []):
+            if not isinstance(it, dict):
+                continue
+            name = _unwrap(it["name"]) if it.get("name") is not None else None
+            shot = _unwrap(it["shot_name"]) if it.get("shot_name") is not None else None
+            if not name and not shot:
+                continue
+            combined.append({"type": it.get("type"), "name": name,
+                             "shot_name": shot, "context": ctx})
+    if combined:
+        extracted[f"{source}.selected"] = combined
 
     return {"source": source, "raw": raw, "extracted": extracted}
 
 
 # --- S2 LIVE read (Flame-gated; workstation-validated, NOT dev-box tested) ----
 # Runs inside Flame (SGTK Python Console / bridge.execute). Implements the
-# FOCUS-STATE-DISPOSITION recipe; reachability proven by probes #1-#3. Stores
+# FOCUS-STATE-DISPOSITION recipe; reachability proven by probes #1-#3, typed
+# context-scoped selection via .get_value() proven by probe #5b. Stores
 # faithful values in `raw`; `assemble_world_state` does the unwrap into
 # `extracted`. The numeric playhead frame is recorded null/unreachable_api.
 FOCUS_SNAPSHOT_PY: Final[str] = '''
@@ -122,51 +127,61 @@ def _v(attr):
     except Exception:
         return None
 
-def _names(attr):
-    # LIVE FINDING (probe #4): Flame SELECTION attributes (batch.selected_nodes,
-    # clip.selected_segments) are PyAttribute value-wrappers, NOT iterable
-    # containers — list()/for raises TypeError (unlike versions/tracks/segments,
-    # which DO iterate). Best-effort; non-critical (the assembler does not extract
-    # selected_nodes; timeline selection comes from the segment walk below).
-    try:
-        return [_v(getattr(n, "name", n)) for n in list(attr)]
-    except Exception:
+def _selected(attr):
+    # PROBE #5b: Flame SELECTION attributes (media_panel.selected_entries,
+    # clip.selected_segments, batch.selected_nodes) are PyAttribute wrappers.
+    # The wrapper is NOT opaque: every container path (len/subscript/list()/
+    # iterate) raises TypeError, but .get_value() returns the real list of
+    # selected objects. (The old bool(seg.selected) segment-walk was a
+    # truthy-for-all PyAttribute flag — it captured EVERY segment, not the
+    # selection — and is abandoned.) Capture type + name + shot_name faithfully;
+    # assemble_world_state() unwraps. isinstance is the clean discriminator
+    # downstream; here we record type(it).__name__ verbatim.
+    if attr is None:
         return None
+    try:
+        items = attr.get_value()
+    except Exception:
+        try:
+            items = list(attr)   # media_panel.selected_entries is directly iterable
+        except Exception:
+            return None
+    out = []
+    for it in (items or []):
+        try:
+            out.append({
+                "type": type(it).__name__,
+                "name": _v(getattr(it, "name", None)),
+                "shot_name": _v(getattr(it, "shot_name", None)),
+            })
+        except Exception:
+            pass
+    return out
 
 proj = flame.projects.current_project
 batch = flame.batch
 tl = flame.timeline
-
-def _selection():
-    out = []
-    try:
-        for ver in list(tl.clip.versions)[:1]:
-            for trk in list(ver.tracks):
-                for seg in list(trk.segments):
-                    try:
-                        if bool(seg.selected):
-                            out.append(_v(seg.shot_name) or _v(seg.name))
-                    except Exception:
-                        pass
-    except Exception:
-        pass
-    return out
-
+mp = getattr(flame, "media_panel", None)
+clip = getattr(tl, "clip", None)
 cur = getattr(tl, "current_segment", None)
+
 raw = {
     "project": _v(proj.project_name),
     "current_tab": _v(flame.get_current_tab()),
+    "media_panel": {
+        "selected": _selected(getattr(mp, "selected_entries", None)) if mp is not None else None,
+    },
     "batch": {
         "name": _v(batch.name),
         "opened": bool(batch.opened),
         "current_iteration": _v(getattr(batch, "current_iteration", None) and batch.current_iteration.name),
-        "selected_nodes": _names(batch.selected_nodes),
+        "selected": _selected(getattr(batch, "selected_nodes", None)),
     },
     "timeline": {
-        "active_sequence": _v(getattr(tl.clip, "name", None)) if getattr(tl, "clip", None) else None,
+        "active_sequence": _v(getattr(clip, "name", None)) if clip is not None else None,
         "current_shot": _v(getattr(cur, "shot_name", None)) if cur else None,
         "current_segment_name": _v(getattr(cur, "name", None)) if cur else None,
-        "selection": _selection(),
+        "selected": _selected(getattr(clip, "selected_segments", None)) if clip is not None else None,
     },
     "playhead_frame": None,          # unreachable_api (no current_frame on PyTimeline)
     "playhead_frame_reason": "unreachable_api",

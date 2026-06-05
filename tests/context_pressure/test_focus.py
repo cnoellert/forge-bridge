@@ -15,17 +15,22 @@ def _probe_raw():
     return {
         "project": "PyAttribute:013_13_13_2026_2_1_portofino",
         "current_tab": "Timeline",
+        "media_panel": {"selected": []},
         "batch": {
             "name": "PyAttribute:FCX_OFX_TEST",
             "opened": True,
             "current_iteration": "PyAttribute:FCX_OFX_TEST_001",
-            "selected_nodes": [],
+            "selected": [],
         },
         "timeline": {
             "active_sequence": "PyAttribute:30sec_edit 21",
             "current_shot": "PyAttribute:tst_020",
             "current_segment_name": "PyAttribute:tst_020_graded_L01",
-            "selection": ["PyAttribute:tst_020", "PyAttribute:tst_030", "PyAttribute:tst_040"],
+            "selected": [
+                {"type": "PySegment", "name": "PyAttribute:tst_020_graded_L01", "shot_name": "PyAttribute:tst_020"},
+                {"type": "PySegment", "name": "PyAttribute:tst_030_graded_L01", "shot_name": "PyAttribute:tst_030"},
+                {"type": "PySegment", "name": "PyAttribute:tst_040_graded_L01", "shot_name": "PyAttribute:tst_040"},
+            ],
         },
         "playhead_frame": None,
         "playhead_frame_reason": "unreachable_api",
@@ -50,10 +55,20 @@ def test_extracted_is_unwrapped_semantic_value():
     assert e["flame.current_shot"] == "tst_020"
     assert e["flame.open_batch"] == "FCX_OFX_TEST"
     assert e["flame.project"] == "013_13_13_2026_2_1_portofino"
-    assert e["flame.selection"] == ["tst_020", "tst_030", "tst_040"]
-    # no wrapper string leaked anywhere into extracted
+    # typed selection (probe #5b shape): unwrapped name/shot_name, context-tagged
+    assert e["flame.selected"] == [
+        {"type": "PySegment", "name": "tst_020_graded_L01", "shot_name": "tst_020", "context": "timeline"},
+        {"type": "PySegment", "name": "tst_030_graded_L01", "shot_name": "tst_030", "context": "timeline"},
+        {"type": "PySegment", "name": "tst_040_graded_L01", "shot_name": "tst_040", "context": "timeline"},
+    ]
+    # no wrapper string leaked anywhere into extracted (scalar fields)
     assert not any(
         isinstance(v, str) and v.startswith("PyAttribute:") for v in e.values()
+    )
+    # ...nor inside the typed selection
+    assert not any(
+        str(x).startswith("PyAttribute:")
+        for item in e["flame.selected"] for x in item.values()
     )
 
 
@@ -120,19 +135,25 @@ def test_s2_output_feeds_s4_match_is_not_flagged():
 # --- PRODUCTION SHAPE (probe #4 live finding): str(PyAttribute) single-quotes -
 
 def _live_raw():
-    """The ACTUAL raw shape live FOCUS_SNAPSHOT_PY emits (probe #4, Flame 2026.2.2):
-    str(PyAttribute) wraps values in single quotes, and the selection walk yields
-    cross-track dupes + empty gaps. The dev-box fixture above used probe-_safe
+    """The ACTUAL raw shape live FOCUS_SNAPSHOT_PY emits (probe #4 + #5b, Flame
+    2026.2.2): str(PyAttribute) wraps values in single quotes; typed selection is
+    pulled via .get_value() (probe #5b) as {type, name, shot_name} per object,
+    with empty-name segments possible. The dev-box fixture above used probe-_safe
     shape; THIS mirrors production (fixture-mirrors-production)."""
     return {
         "project": "013_13_13_2026_2_1_portofino",
         "current_tab": "Timeline",
-        "batch": {"name": "'FCX_METAL_TEST'", "opened": True, "current_iteration": "'FCX_METAL_TEST_001'", "selected_nodes": None},
+        "media_panel": {"selected": []},
+        "batch": {"name": "'FCX_METAL_TEST'", "opened": True, "current_iteration": "'FCX_METAL_TEST_001'", "selected": None},
         "timeline": {
             "active_sequence": "'30sec_edit 21'",      # single-quoted by str(PyAttribute)
             "current_shot": "'tst_020'",
             "current_segment_name": "'tst_020_graded_L01'",
-            "selection": ["'tst_010'", "'tst_020'", "'tst_010'", "''", "'tst_110'", "''", "''"],
+            "selected": [
+                {"type": "PySegment", "name": "'tst_010_graded'", "shot_name": "'tst_010'"},
+                {"type": "PySegment", "name": "'tst_110_graded'", "shot_name": "'tst_110'"},
+                {"type": "PySegment", "name": "''", "shot_name": "''"},   # gap/transition -> filtered
+            ],
         },
         "playhead_frame": None,
         "playhead_frame_reason": "unreachable_api",
@@ -147,9 +168,12 @@ def test_live_quoted_values_are_unwrapped_in_extracted():
     assert "'" not in "".join(str(v) for v in e.values() if isinstance(v, str))
 
 
-def test_live_selection_deduped_and_empty_filtered():
+def test_live_selection_typed_unwrapped_and_empty_filtered():
     e = assemble_world_state(_live_raw())["extracted"]
-    assert e["flame.selection"] == ["tst_010", "tst_020", "tst_110"]  # order-preserved, no dupes, no empties
+    assert e["flame.selected"] == [
+        {"type": "PySegment", "name": "tst_010_graded", "shot_name": "tst_010", "context": "timeline"},
+        {"type": "PySegment", "name": "tst_110_graded", "shot_name": "tst_110", "context": "timeline"},
+    ]  # quotes stripped; the empty-name item filtered out
 
 
 def test_live_shape_s4_match_is_not_flagged_the_probe4_regression():

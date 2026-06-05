@@ -101,6 +101,42 @@ def test_mode_a_placeholder_and_segment_fallback_unresolved_for_right_reason():
     assert c["focus_signal_present"] is True
 
 
+# --- Gate 2b: the axis correction — selected typed object is PRIMARY ---------
+
+def test_selected_pysequence_is_primary_over_loaded_active_sequence():
+    """Probe #5b axis correction: the selected `PySequence` is the referent,
+    PRIMARY over the loaded `active_sequence`. Here compiled == loaded ("Backup")
+    but != selected ("30sec_edit 21") -> still wrong_resolution, sourced from
+    selection. Under the OLD loaded-axis this would NOT have flagged."""
+    rec = {
+        "prompt": "rename this sequence with prefix tv",
+        "observed_translation": {"compiled_graph": ['flame_rename_shots sequence_name="Backup"'], "ratified_graph": None},
+        "world_state": {"source": "flame", "raw": {}, "extracted": {
+            "flame.active_sequence": "Backup",   # loaded — matches compiled (would be no-flag, old axis)
+            "flame.selected": [
+                {"type": "PySequence", "name": "30sec_edit 21", "shot_name": None, "context": "media_panel"},
+            ],
+        }},
+    }
+    cands = flag_contextual_failure_candidates(rec)
+    assert [c["mode"] for c in cands] == ["wrong_resolution"]
+    assert cands[0]["focus_value"] == "30sec_edit 21"   # selected, not loaded "Backup"
+    assert cands[0]["focus_source"] == "selected"
+
+
+def test_loaded_focus_is_fallback_when_no_typed_selection():
+    """No selected object of the dimension's type -> fall back to loaded/playhead."""
+    rec = {
+        "prompt": "rename this sequence with prefix tv",
+        "observed_translation": {"compiled_graph": ["flame_rename_shots sequence_name=30sec_21"], "ratified_graph": None},
+        "world_state": {"source": "flame", "raw": {}, "extracted": {"flame.active_sequence": "Backup"}},
+    }
+    c = flag_contextual_failure_candidates(rec)[0]
+    assert c["mode"] == "wrong_resolution"
+    assert c["focus_value"] == "Backup"
+    assert c["focus_source"] == "loaded"
+
+
 # --- Gate 3: candidate (auto) vs confirmation (authored) split --------------
 
 def test_author_analysis_writes_layer_validates_and_does_not_mutate():

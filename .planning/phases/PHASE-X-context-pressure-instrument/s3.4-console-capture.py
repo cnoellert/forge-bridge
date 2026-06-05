@@ -44,7 +44,7 @@ _TERMINAL = {"chain_complete", "preview_emitted", "apply_complete",
              "chain_aborted", "compile_error", "error"}
 
 
-# ---- 1. world_state RAW snapshot (mirror of FOCUS_SNAPSHOT_PY; probe #4) -------
+# ---- 1. world_state RAW snapshot (mirror of FOCUS_SNAPSHOT_PY; typed selection via probe #5b get_value()) -------
 def _v(attr):
     try:
         return None if attr is None else str(attr)
@@ -52,50 +52,62 @@ def _v(attr):
         return None
 
 
-def _names(attr):
-    # Flame selection attrs are non-iterable PyAttribute wrappers (probe #4) —
-    # best-effort; non-critical (the assembler does not extract selected_nodes).
-    try:
-        return [_v(getattr(n, "name", n)) for n in list(attr)]
-    except Exception:
+def _selected(attr):
+    # PROBE #5b: Flame selection attrs (media_panel.selected_entries,
+    # clip.selected_segments, batch.selected_nodes) are PyAttribute wrappers —
+    # container paths (len/subscript/list()/iterate) raise TypeError, but
+    # .get_value() returns the real selected-object list. media_panel.selected_entries
+    # is directly iterable (the list() fallback). The old bool(seg.selected) walk
+    # was truthy-for-all (captured EVERY segment, not the selection) and is
+    # abandoned. EXACT MIRROR of forge_bridge.context_pressure._focus._selected —
+    # keep in sync.
+    if attr is None:
         return None
+    try:
+        items = attr.get_value()
+    except Exception:
+        try:
+            items = list(attr)
+        except Exception:
+            return None
+    out = []
+    for it in (items or []):
+        try:
+            out.append({
+                "type": type(it).__name__,
+                "name": _v(getattr(it, "name", None)),
+                "shot_name": _v(getattr(it, "shot_name", None)),
+            })
+        except Exception:
+            pass
+    return out
 
 
 def world_state_raw():
     proj = flame.projects.current_project
     batch = flame.batch
     tl = flame.timeline
+    mp = getattr(flame, "media_panel", None)
+    clip = getattr(tl, "clip", None)
     cur = getattr(tl, "current_segment", None)
-
-    def _selection():
-        out = []
-        try:
-            for ver in list(tl.clip.versions)[:1]:
-                for trk in list(ver.tracks):
-                    for seg in list(trk.segments):
-                        try:
-                            if bool(seg.selected):
-                                out.append(_v(seg.shot_name) or _v(seg.name))
-                        except Exception:
-                            pass
-        except Exception:
-            pass
-        return out
 
     return {
         "project": _v(proj.project_name),
         "current_tab": _v(flame.get_current_tab()),
+        "media_panel": {
+            "selected": _selected(getattr(mp, "selected_entries", None)) if mp is not None else None,
+        },
         "batch": {
             "name": _v(batch.name),
             "opened": bool(batch.opened),
             "current_iteration": _v(getattr(batch, "current_iteration", None) and batch.current_iteration.name),
-            "selected_nodes": _names(batch.selected_nodes),
+            "selected": _selected(getattr(batch, "selected_nodes", None)),
         },
         "timeline": {
-            "active_sequence": _v(getattr(tl.clip, "name", None)) if getattr(tl, "clip", None) else None,
+            "active_sequence": _v(getattr(clip, "name", None)) if clip is not None else None,
             "current_shot": _v(getattr(cur, "shot_name", None)) if cur else None,
             "current_segment_name": _v(getattr(cur, "name", None)) if cur else None,
-            "selection": _selection(),
+            "selected": _selected(getattr(clip, "selected_segments", None)) if clip is not None else None,
         },
         "playhead_frame": None,
         "playhead_frame_reason": "unreachable_api",
