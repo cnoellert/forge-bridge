@@ -82,3 +82,19 @@ The five-item vertical executed. Steps 1-3 landed in `15adc31` (pin) + `190d71d`
 
 ### Still open after this vertical
 Generators (`generation`) is not installed in `forge` and was not exercised (not in the mandatory bar). The classification rung **landed** (`eff4f0a`, above); **registry-type separation** (split capability declaration/snapshot from handler/driver binding per "the architectural target" §) is the next rung. The pre-existing full-tree pytest collection fragility (`tests/translation_oracle/test_capture.py`) and 3 pre-existing ruff errors in `planner.py`/`planner_passes.py` are untouched and unrelated.
+
+### Registry-type separation — framing input (grounded 2026-06-05: DECOMPOSITION, not a rewrite)
+The alignment report flagged the discovery/invocation split as "the architectural target… more important than any single rename," and DT/Creative queued a framing pass before code. **Grounding answers Creative's load-bearing framing question — *"how much of the planner/snapshot/discovery needs invocation data?"* — definitively: none.** Evidence (live reads):
+- **`.handler` is read NOWHERE downstream of registration.** `grep '\.handler' forge_bridge/orchestration/*.py store/orch_capability_snapshot_repo.py` excluding `registration.py` → empty. All 12 handler references are in `registration.py` (registration-time generation-validation + driver-wiring).
+- **The planner reads only declaration fields** — `tool.tool_id`, `tool.capabilities` (the metadata dict carrying `backend_identity_triple` = *which backend*, a declaration concern), `by_family(...)`. Never handler/driver/schema-as-invocation.
+- **The persisted snapshot record is already declaration-only**: `pass_1` builds `{backend_identity_triple, declaration_hash, capabilities_opaque}` — zero invocation state.
+
+**⇒ The discovery/invocation collapse is confined to exactly ONE place:** the `ToolRegistration` dataclass (carries declaration fields *and* `handler`) + `ToolRegistry.register`'s generation-handler validation. The downstream substrate (planner, snapshot, queries) is already declaration-pure, so the separation is a **bounded decomposition**, not a subsystem rewrite.
+
+**Shape this gives the framing pass:**
+- **The minimal declaration-only object** (Creative's framing artifact) ≈ `CapabilityDeclaration` itself (`capability_id, family, payload_family, metadata`) — exactly what the planner already reads + the snapshot already persists. The bridge-owned adapter Creative wants exists in embryo: `tool_registration_from_capability`.
+- **The two-layer split is lopsided:** the *discovery* layer (declarations, snapshots, classification, queries) is built and declaration-pure; the *invocation* layer (handlers, drivers, generation-validation, dispatch) is the small contained part — and most of it (`GenerationDriverRegistry`) already lives separately in `drivers.py`.
+- **The genuinely open question is NOT "untangle the planner" (already untangled) but "where does the handler/driver binding live at *invocation* time, and what resolves it?"** — Creative's `Capability selected → invocation binding resolved → execution` step. It reads collapsed because the **invocation path isn't built yet**, not because discovery is tangled.
+- **Decomposition scope:** split `ToolRegistration` → declaration + handler-binding; retype `ToolRegistry` → a declaration registry; route the driver binding to the existing `GenerationDriverRegistry` at registration; leave a named seam for the invocation-time resolver. Downstream confirmed untouched.
+
+Frame the rung as a decomposition (target model on paper: declaration object + invocation-binding home), confirm downstream untouched (it is), then implement. Also fold in the **Step-2.1 context-shadow** swap (adopt the published `BridgeRegistrationContext` + `RegisterCapabilityCallable`) while in the registration files.
