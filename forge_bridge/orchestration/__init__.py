@@ -1,7 +1,6 @@
 """Orchestration service layer (Phase 4B)."""
 
 from forge_bridge.orchestration.discovery import (
-    DEFAULT_CAPABILITY_KINDS,
     DEFAULT_ENTRY_POINT_GROUP,
     RegistrationOutcome,
     SiblingResolution,
@@ -52,9 +51,11 @@ from forge_bridge.orchestration.planner import (
 )
 from forge_bridge.orchestration.registration import (
     BridgeRegistrationContext,
+    RegisterCapabilityCallable,
     RegisterToolCallable,
     ToolRegistration,
     ToolRegistry,
+    tool_registration_from_capability,
 )
 from forge_bridge.orchestration.rule_checks import (
     DEFAULT_PLANNING_RULES,
@@ -99,12 +100,13 @@ __all__ = [
     "ToolRegistration",
     "ToolRegistry",
     "RegisterToolCallable",
+    "RegisterCapabilityCallable",
+    "tool_registration_from_capability",
     "SiblingResolution",
     "RegistrationOutcome",
     "resolve_siblings",
     "register_all_siblings",
     "make_db_event_appender",
-    "DEFAULT_CAPABILITY_KINDS",
     "DEFAULT_ENTRY_POINT_GROUP",
     "Planner",
     "PlanningContext",

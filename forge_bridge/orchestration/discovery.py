@@ -11,6 +11,8 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from forge_contracts import CapabilityRegistration
+
 from forge_bridge.orchestration.errors import (
     DuplicateToolIdError,
     InvalidGenerationDriverError,
@@ -18,12 +20,15 @@ from forge_bridge.orchestration.errors import (
 from forge_bridge.orchestration.registration import (
     BridgeRegistrationContext,
     ToolRegistry,
+    tool_registration_from_capability,
 )
 from forge_bridge.store.repo import EventRepo
 
-DEFAULT_CAPABILITY_KINDS: frozenset[str] = frozenset(
-    {"perceptual", "validation", "generation", "matte", "editorial"}
-)
+# Discovery requests ALL families by default (empty ``requested_families``) and
+# classifies what siblings declare against the contract vocabulary. Bridge's old
+# local family allowlist {perceptual, validation, generation, matte, editorial}
+# was retired: it misspelled ``perception`` and omitted ``execution``/``packaging``,
+# silently filtering out both primary siblings (see PHASE-6A-DISCOVERY-ALIGNMENT.md).
 DEFAULT_ENTRY_POINT_GROUP = "forge_bridge.siblings"
 
 
@@ -83,9 +88,9 @@ def _load_sibling_callable(target: str) -> Any:
 async def _invoke_sibling(
     sibling_func: Any,
     ctx: BridgeRegistrationContext,
-    register_tool: Callable[..., None],
+    register_capability: Callable[..., None],
 ) -> None:
-    result = sibling_func(ctx, register_tool)
+    result = sibling_func(ctx, register_capability)
     if inspect.isawaitable(result):
         await result
 
@@ -96,11 +101,13 @@ async def register_all_siblings(
     tool_registry: ToolRegistry,
     event_appender: Callable[[str, dict], Awaitable[None]],
     bridge_version: str,
-    capability_kinds: frozenset[str] | None = None,
+    requested_families: frozenset[str] = frozenset(),
     config_by_sibling: Mapping[str, Mapping[str, Any]] | None = None,
     dry_run: bool = False,
 ) -> RegistrationOutcome:
-    kinds = capability_kinds or DEFAULT_CAPABILITY_KINDS
+    # Empty ``requested_families`` = request-all: siblings register every declared
+    # capability and bridge classifies against the contract vocabulary. Do NOT
+    # default to a bridge-local family allowlist (see PHASE-6A-DISCOVERY-ALIGNMENT).
     sibling_config = config_by_sibling or {}
 
     siblings_attempted = 0
@@ -130,19 +137,20 @@ async def register_all_siblings(
 
         ctx = BridgeRegistrationContext(
             bridge_version=bridge_version,
-            capability_kinds=kinds,
+            requested_families=requested_families,
             dry_run=dry_run,
             config=dict(sibling_config.get(sibling_name, {})),
         )
 
         families_registered: set[str] = set()
 
-        def register_tool(tr):
-            tool_registry.register(tr, sibling_name=sibling_name)
-            families_registered.add(tr.family)
+        def register_capability(registration: CapabilityRegistration):
+            tool = tool_registration_from_capability(registration)
+            tool_registry.register(tool, sibling_name=sibling_name)
+            families_registered.add(tool.family)
 
         try:
-            await _invoke_sibling(sibling_func, ctx, register_tool)
+            await _invoke_sibling(sibling_func, ctx, register_capability)
         except (DuplicateToolIdError, InvalidGenerationDriverError):
             raise
         except Exception as exc:

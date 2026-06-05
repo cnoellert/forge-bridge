@@ -7,6 +7,7 @@ import types
 from typing import Any
 
 import pytest
+from forge_contracts import CapabilityDeclaration, CapabilityRegistration
 
 from forge_bridge.orchestration.discovery import (
     make_db_event_appender,
@@ -39,6 +40,26 @@ def _tool(
         schema={"type": "object"},
         handler=handler or (lambda: None),
         capabilities={},
+    )
+
+
+def _cap(
+    tool_id: str,
+    *,
+    family: str = "validation",
+    handler: Any = None,
+) -> CapabilityRegistration:
+    """Sibling-side registration in the published forge-contracts protocol.
+    ``handler=None`` is declaration-only discovery (the common case)."""
+    return CapabilityRegistration(
+        declaration=CapabilityDeclaration(
+            capability_id=tool_id,
+            family=family,
+            owner="test-sibling",
+            payload_family="perception_validation_v1",
+            input_schema={"type": "object"},
+        ),
+        handler=handler,
     )
 
 
@@ -225,9 +246,9 @@ def test_resolve_siblings_required_capability_kinds() -> None:
 async def test_register_all_siblings_success_two_tools() -> None:
     events: list[tuple[str, dict]] = []
 
-    async def register_bridge_adapters(ctx, register_tool):
-        register_tool(_tool("sibling.tool.one"))
-        register_tool(_tool("sibling.tool.two", family="generation", handler=_ValidGenerationDriver()))
+    async def register_bridge_adapters(ctx, register_capability):
+        register_capability(_cap("sibling.tool.one"))
+        register_capability(_cap("sibling.tool.two", family="generation", handler=_ValidGenerationDriver()))
 
     target = _install_module("tests.mock_sibling_two_tools", register_bridge_adapters)
     resolution = resolve_siblings(
@@ -256,11 +277,11 @@ async def test_register_all_siblings_success_two_tools() -> None:
 async def test_register_all_siblings_adapter_raises_other_sibling_continues() -> None:
     events: list[tuple[str, dict]] = []
 
-    async def failing(ctx, register_tool):
+    async def failing(ctx, register_capability):
         raise RuntimeError("boom")
 
-    async def ok(ctx, register_tool):
-        register_tool(_tool("ok.tool"))
+    async def ok(ctx, register_capability):
+        register_capability(_cap("ok.tool"))
 
     bad = _install_module("tests.mock_sibling_failing", failing)
     good = _install_module("tests.mock_sibling_ok", ok)
@@ -288,7 +309,7 @@ async def test_register_all_siblings_adapter_raises_other_sibling_continues() ->
 async def test_register_all_siblings_empty_sibling() -> None:
     events: list[tuple[str, dict]] = []
 
-    async def empty(ctx, register_tool):
+    async def empty(ctx, register_capability):
         return None
 
     target = _install_module("tests.mock_sibling_empty", empty)
@@ -331,8 +352,8 @@ async def test_register_all_siblings_missing_entry_point() -> None:
 async def test_register_all_siblings_degraded_missing_generation() -> None:
     events: list[tuple[str, dict]] = []
 
-    async def validation_only(ctx, register_tool):
-        register_tool(_tool("only.validation"))
+    async def validation_only(ctx, register_capability):
+        register_capability(_cap("only.validation"))
 
     target = _install_module("tests.mock_sibling_validation_only", validation_only)
     resolution = resolve_siblings(
@@ -356,9 +377,9 @@ async def test_register_all_siblings_degraded_missing_generation() -> None:
 async def test_register_all_siblings_complete_when_required_present() -> None:
     events: list[tuple[str, dict]] = []
 
-    async def generation(ctx, register_tool):
-        register_tool(
-            _tool("gen.tool", family="generation", handler=_ValidGenerationDriver())
+    async def generation(ctx, register_capability):
+        register_capability(
+            _cap("gen.tool", family="generation", handler=_ValidGenerationDriver())
         )
 
     target = _install_module("tests.mock_sibling_generation", generation)
@@ -381,7 +402,7 @@ async def test_register_all_siblings_complete_when_required_present() -> None:
 async def test_register_all_siblings_dry_run_propagates_to_context() -> None:
     captured: list[BridgeRegistrationContext] = []
 
-    async def capture_ctx(ctx, register_tool):
+    async def capture_ctx(ctx, register_capability):
         captured.append(ctx)
 
     target = _install_module("tests.mock_sibling_capture_ctx", capture_ctx)
@@ -407,9 +428,9 @@ async def test_register_all_siblings_dry_run_propagates_to_context() -> None:
 async def test_register_all_siblings_event_ordering() -> None:
     events: list[tuple[str, dict]] = []
 
-    async def two_tools(ctx, register_tool):
-        register_tool(_tool("order.tool.one"))
-        register_tool(_tool("order.tool.two"))
+    async def two_tools(ctx, register_capability):
+        register_capability(_cap("order.tool.one"))
+        register_capability(_cap("order.tool.two"))
 
     target = _install_module("tests.mock_sibling_order", two_tools)
     resolution = resolve_siblings(
@@ -436,9 +457,9 @@ async def test_register_all_siblings_driver_registry_side_effect() -> None:
     driver_registry = GenerationDriverRegistry()
     driver = _ValidGenerationDriver()
 
-    async def generation(ctx, register_tool):
-        register_tool(
-            _tool("gen.side_effect", family="generation", handler=driver),
+    async def generation(ctx, register_capability):
+        register_capability(
+            _cap("gen.side_effect", family="generation", handler=driver),
         )
 
     target = _install_module("tests.mock_sibling_side_effect", generation)

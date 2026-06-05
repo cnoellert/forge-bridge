@@ -7,28 +7,44 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from forge_contracts import CapabilityDeclaration, CapabilityRegistration
+
 from forge_bridge.orchestration.drivers import GenerationDriverRegistry
 from forge_bridge.orchestration.errors import (
     DuplicateToolIdError,
     InvalidGenerationDriverError,
 )
 
+# Bridge consumes the published forge-contracts registration protocol: siblings
+# call ``register_capability(CapabilityRegistration(declaration=..., handler=...))``.
+# ``RegisterToolCallable`` is retained as a back-compat alias of the bridge-internal
+# shape for the existing ToolRegistry unit surface.
+RegisterCapabilityCallable = Callable[[CapabilityRegistration], None]
 RegisterToolCallable = Callable[["ToolRegistration"], None]
 
 
 @dataclass(frozen=True)
 class BridgeRegistrationContext:
-    """Bridge → sibling. Passed to ``register_bridge_adapters(ctx, register_tool)``."""
+    """Bridge → sibling. Passed to ``register_bridge_adapters(ctx, register_capability)``.
+
+    ``requested_families`` is the family filter bridge asks siblings to honor;
+    **empty means request-all** (siblings register every declared capability).
+    Discovery must NOT pass bridge's local family vocabulary here — that silently
+    filters out contract families bridge doesn't enumerate (see
+    .planning/PHASE-6A-DISCOVERY-ALIGNMENT.md).
+    """
 
     bridge_version: str
-    capability_kinds: frozenset[str]
+    requested_families: frozenset[str]
     dry_run: bool
     config: Mapping[str, Any]
 
 
 @dataclass(frozen=True)
 class ToolRegistration:
-    """Sibling → bridge (via ``register_tool`` callable)."""
+    """Bridge-internal registration shape. Sibling capabilities arrive as
+    forge-contracts ``CapabilityRegistration`` and are adapted via
+    :func:`tool_registration_from_capability`; the planner consumes this shape."""
 
     tool_id: str
     family: str
@@ -36,6 +52,25 @@ class ToolRegistration:
     schema: dict
     handler: Any
     capabilities: Any
+
+
+def tool_registration_from_capability(
+    registration: CapabilityRegistration,
+) -> ToolRegistration:
+    """Adapt a published ``CapabilityRegistration`` to the bridge-internal
+    ``ToolRegistration`` consumed by ToolRegistry + the planner. Declaration-first:
+    the family/id come from the serializable ``CapabilityDeclaration``; the
+    ``handler`` is the optional, opaque invocation binding (``None`` for
+    declaration-only discovery)."""
+    declaration: CapabilityDeclaration = registration.declaration
+    return ToolRegistration(
+        tool_id=declaration.capability_id,
+        family=declaration.family,
+        payload_family=declaration.payload_family or "",
+        schema=dict(declaration.input_schema or {}),
+        handler=registration.handler,
+        capabilities=dict(declaration.metadata or {}),
+    )
 
 
 def _validate_generation_handler(tool_id: str, handler: Any) -> None:
@@ -61,7 +96,10 @@ class ToolRegistry:
         if tool.tool_id in self._tools:
             raise DuplicateToolIdError(tool.tool_id)
 
-        if tool.family == "generation":
+        # Handler binding is invocation-time and optional. A declaration-only
+        # generation capability (handler=None) is discoverable but not yet
+        # invocable; validate + wire the driver only when a handler is present.
+        if tool.family == "generation" and tool.handler is not None:
             _validate_generation_handler(tool.tool_id, tool.handler)
             if self._generation_driver_registry is not None:
                 self._generation_driver_registry.register_driver(tool.handler)
