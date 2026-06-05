@@ -94,6 +94,13 @@ class PlanningContext:
     partial_fidelity_snapshot: dict[str, Any] | None = None
     inputs_catalog: dict[str, Any] | None = None
     capability_snapshot: dict[str, Any] | None = None
+    # Phase-6A referent seam (DEFERRED, not reserved): this context carries no
+    # resolved-referent / desktop world-state field. The planner is pure
+    # capability-family routing — it must NOT assume plan steps arrive with
+    # referents pre-resolved. A future referent-resolution pass (deixis -> entity)
+    # would add its field here and run before pass_2_filter_candidates. Leaving the
+    # room is cheap now; retrofitting after the spine hardens is not.
+    # See .planning/PHASE-6A-DISCOVERY-ALIGNMENT.md (one-spine-two-resolvers).
 
     candidates: list[dict[str, Any]] = field(default_factory=list)
     transforms_inserted: list[dict[str, Any]] = field(default_factory=list)

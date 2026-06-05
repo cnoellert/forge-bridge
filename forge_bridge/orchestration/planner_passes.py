@@ -115,6 +115,11 @@ async def pass_1_validate_completeness(planner: Planner, ctx: PlanningContext) -
 
 
 async def pass_2_filter_candidates(planner: Planner, ctx: PlanningContext) -> None:
+    # Phase-6A referent seam (DEFERRED): this pass filters capability candidates
+    # from the snapshot — it does NOT resolve referents. A future referent pass
+    # (deixis -> entity) slots immediately *before* this one, so steps arrive here
+    # with referents already resolved. Do not fold referent resolution into the
+    # capability filter. See PHASE-6A-DISCOVERY-ALIGNMENT.md (one-spine-two-resolvers).
     assert ctx.intent is not None
     assert ctx.capability_snapshot is not None
 
