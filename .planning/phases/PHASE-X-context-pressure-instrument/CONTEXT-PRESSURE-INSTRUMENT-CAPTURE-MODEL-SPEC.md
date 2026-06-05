@@ -132,3 +132,14 @@ The four-gap patch is **not reverted** — its compiled-side fixes (#3 `shot_id`
 6. **Q3 cost-anchoring (blind) → first MEASURED narrowed-delta** ("how often does typed selection explain failures loaded/playhead cannot?").
 
 The recall-plausibility pass on the existing 8 records (does R3/R4 explain once the selected `PySequence` is treated as referent?) is offline and may run now — **suggestive, NOT the gate number** (the capture never recorded selection).
+
+## 8. Forward-pointer — the resolver's output is an ALREADY-SHIPPED federation contract (added 2026-06-05, DT)
+
+This spec's referent ontology is, in federation terms, the bridge-side knowledge that produces a **`ReferenceResolution`** — a contract that **already exists** in `forge-contracts` v0.1 (`src/forge_contracts/references.py`). When the live re-capture re-opens this spec, build toward the contract, not around it:
+
+- **`ResolutionStatus = Literal["resolved", "unresolved", "ambiguous"]`** maps 1:1 onto S4's analysis: success → `resolved`; `wrong_referent` → `resolved`-but-wrong (the ratify-caught case); `unresolved_reference` → `unresolved`; multiple-selection-can't-disambiguate → `ambiguous` + `candidates`; `unreachable_api`/`unreconstructable_guard` → `reason_code` (honest-absence). The instrument is, unframed, the **measurement pass for bridge's `ReferenceResolution` quality** — a capability the federation's Phase 5 (Bridge Discovery) and Phase 7 (E2E Demonstrator) consume, independent of chat.
+- **Two implications, neither changing the measure-first discipline or the blind Q3 threshold:**
+  1. If Q3's R clears BUILD, the resolver **emits `ReferenceResolution`**, not a bridge-internal shape.
+  2. The §2.3 op→(context, required-selection-type) map **wants to be pipeline-declared capability metadata** (extending `CapabilityDeclaration`), consumed by bridge — NOT reverse-engineered from hook source. Reading `~/GitHub/forge-pipeline/flame_hooks/forge_tools/` to derive §2.3 (this spec's provenance) is an interim that violates the ADR-000 no-sibling-internals boundary; the clean form is pipeline *declaring* its referent requirements. The output contract is done; this is the missing input half.
+
+Full context + cross-voice asks: `CONTEXT-PRESSURE-INSTRUMENT-FEDERATION-SURFACING.md`. Constitution: `forge-contracts/docs/adr/ADR-000-ecosystem-constitution.md` + `FEDERATION-PROOF-SEQUENCE.md`.
