@@ -37,18 +37,18 @@ def test_seed_exercises_both_failure_modes():
     for r in _seed():
         for c in flag_contextual_failure_candidates(r):
             modes.add(c["mode"])
-    assert modes == {"unresolved_reference", "wrong_resolution"}, (
+    assert modes == {"unresolved_reference", "wrong_referent"}, (
         "seed must exercise both modes — a mode-(a)-only seed validates a half-blind analyzer"
     )
 
 
-def test_idx13_mode_b_confident_wrong_resolution_flagged():
+def test_idx13_mode_b_confident_wrong_referent_flagged():
     """Mode (b): compiled concrete value != captured focus signal."""
     rec = _by_prompt(_seed(), "rename this sequence with prefix tv")
     cands = flag_contextual_failure_candidates(rec)
     assert len(cands) == 1
     c = cands[0]
-    assert c["mode"] == "wrong_resolution"
+    assert c["mode"] == "wrong_referent"
     assert c["dimension"] == "sequence"
     assert c["compiled_value"] == "30sec_21"
     assert c["focus_value"] == "30sec_edit 21"
@@ -106,7 +106,7 @@ def test_mode_a_placeholder_and_segment_fallback_unresolved_for_right_reason():
 def test_selected_pysequence_is_primary_over_loaded_active_sequence():
     """Probe #5b axis correction: the selected `PySequence` is the referent,
     PRIMARY over the loaded `active_sequence`. Here compiled == loaded ("Backup")
-    but != selected ("30sec_edit 21") -> still wrong_resolution, sourced from
+    but != selected ("30sec_edit 21") -> still wrong_referent, sourced from
     selection. Under the OLD loaded-axis this would NOT have flagged."""
     rec = {
         "prompt": "rename this sequence with prefix tv",
@@ -119,7 +119,7 @@ def test_selected_pysequence_is_primary_over_loaded_active_sequence():
         }},
     }
     cands = flag_contextual_failure_candidates(rec)
-    assert [c["mode"] for c in cands] == ["wrong_resolution"]
+    assert [c["mode"] for c in cands] == ["wrong_referent"]
     assert cands[0]["focus_value"] == "30sec_edit 21"   # selected, not loaded "Backup"
     assert cands[0]["focus_source"] == "selected"
 
@@ -132,7 +132,7 @@ def test_loaded_focus_is_fallback_when_no_typed_selection():
         "world_state": {"source": "flame", "raw": {}, "extracted": {"flame.active_sequence": "Backup"}},
     }
     c = flag_contextual_failure_candidates(rec)[0]
-    assert c["mode"] == "wrong_resolution"
+    assert c["mode"] == "wrong_referent"
     assert c["focus_value"] == "Backup"
     assert c["focus_source"] == "loaded"
 

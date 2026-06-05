@@ -115,11 +115,11 @@ def _record_with(ws, compiled):
     )
 
 
-def test_s2_output_feeds_s4_mismatch_flags_wrong_resolution():
+def test_s2_output_feeds_s4_mismatch_flags_wrong_referent():
     ws = assemble_world_state(_probe_raw())  # focus active_sequence = 30sec_edit 21
     rec = _record_with(ws, "flame_rename_shots sequence_name=30sec_21 prefix=tv commit=true")
     cands = flag_contextual_failure_candidates(rec)
-    assert [c["mode"] for c in cands] == ["wrong_resolution"]
+    assert [c["mode"] for c in cands] == ["wrong_referent"]
     assert cands[0]["compiled_value"] == "30sec_21"
     assert cands[0]["focus_value"] == "30sec_edit 21"
 
@@ -184,4 +184,4 @@ def test_live_shape_s4_match_is_not_flagged_the_probe4_regression():
     match = _record_with(ws, 'flame_rename_shots sequence_name="%s" prefix=tv commit=true' % seq)
     assert flag_contextual_failure_candidates(match) == []
     mismatch = _record_with(ws, "flame_rename_shots sequence_name=30sec_21 prefix=tv commit=true")
-    assert [c["mode"] for c in flag_contextual_failure_candidates(mismatch)] == ["wrong_resolution"]
+    assert [c["mode"] for c in flag_contextual_failure_candidates(mismatch)] == ["wrong_referent"]

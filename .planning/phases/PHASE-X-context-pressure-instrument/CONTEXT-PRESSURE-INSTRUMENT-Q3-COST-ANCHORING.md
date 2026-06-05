@@ -31,6 +31,8 @@ Two asymmetries set the bar:
 - **The resolver is THIN** (Creative's hooks-as-ontology read; capture is already done): the remaining build is "match the selected object's type to the op's required type, inject its `.name` as the referent into the compile path." The op→(context,type) ontology is mechanically derivable from the hooks (Capture-Model Spec §2). So **build cost is low** — which lowers the bar to justify it.
 - **Failures are ratify-CAUGHT, not dangerous**: a `wrong_resolution` that reaches preview is caught by the operator at ratify (they see the wrong value and reject). So the cost of a contextual failure is **operator friction** (re-prompt / manual correction), not data corruption. This **raises** the bar somewhat (the pain is annoyance × frequency, not catastrophe) — but high-frequency friction on the dominant op class (sequence rename) is real drag worth removing if the signal explains enough of it.
 
+> *Post-commit annotation (2026-06-05, NOT part of the blind precommit): the term `wrong_resolution` above was the auto-flag mode name; it was reconciled to `wrong_referent` (matching the authored `failure_class`) — see CAPTURE-MODEL-SPEC §8. Terminology only; the threshold and reasoning are untouched. This doc's original prose is preserved to keep the blind-precommit record intact.*
+
 Net: a thin build against ratify-caught friction means the bar is **a meaningful majority, not near-certainty** — we don't need typed selection to explain *almost all* failures, but it must explain *enough* that the thin resolver removes real, recurring friction rather than chasing a long tail of other causes (translation mangles, genuine ambiguity, no-selection cases).
 
 ## 3. The threshold (RECOMMENDED — room/operator ratifies the numbers)

@@ -12,7 +12,7 @@ For every Flame signal:
   - ``world_state.extracted`` holds the NORMALIZED semantic value, with any
     ``PyAttribute`` wrapper removed.
 
-This is load-bearing, not hygiene: S4's ``wrong_resolution`` detector compares a
+This is load-bearing, not hygiene: S4's ``wrong_referent`` detector compares a
 compiled concrete value against ``extracted[...]``. If a ``PyAttribute:30sec_edit 21``
 wrapper string leaks into ``extracted``, every compiled value mismatches it and
 S4 floods the corpus with false-positive failures — deterministically, with all
@@ -44,7 +44,7 @@ def _unwrap(value: Any) -> Any:
         value in single quotes — ``str(clip.name) -> "'30sec_edit 21'"`` (probe #4
         live finding). The compiled-graph side is quote-stripped by the param
         parser, so extracted must be too or a genuine match compares UNEQUAL and
-        S4 false-positives ``wrong_resolution`` on correct records.
+        S4 false-positives ``wrong_referent`` on correct records.
     This is what keeps both wrappers out of ``extracted`` (and out of S4's
     comparison); ``raw`` retains the faithful quoted form for recoverability.
     """

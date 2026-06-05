@@ -8,7 +8,7 @@ exactly what desktop-wiring would fix). So the failure set is dual-mode:
   (a) unresolved_reference — "this sequence" -> no concrete value (honest-decline).
       Derivable from the captured compiled_graph (no resolved value for the
       referenced dimension).
-  (b) wrong_resolution — "this sequence" -> resolved to a WRONG concrete value,
+  (b) wrong_referent — "this sequence" -> resolved to a WRONG concrete value,
       dispatched as if grounded (the IDX-13 case: focus=30sec_edit 21, compiled
       sequence_name=30sec_21; the TF.4 space-mangle class). Candidate ⇔ the
       compiled value != the captured world_state focus signal.
@@ -146,7 +146,7 @@ def flag_contextual_failure_candidates(record: dict) -> list[dict]:
     Returns a list of candidate dicts (possibly empty). Each candidate:
     ``{mode, dimension, compiled_value, focus_value, focus_signal_present,
     focus_source}`` where ``mode`` ∈ {``unresolved_reference``,
-    ``wrong_resolution``} and ``focus_source`` ∈ {``selected``, ``loaded``,
+    ``wrong_referent``} and ``focus_source`` ∈ {``selected``, ``loaded``,
     ``None``} records WHICH signal won (referential selected-typed vs the
     loaded/playhead fallback). This only ever says "suspicious";
     ``author_analysis`` confirms.
@@ -183,9 +183,9 @@ def flag_contextual_failure_candidates(record: dict) -> list[dict]:
                 "focus_source": focus_source,
             })
         elif focus is not None and compiled != focus:
-            # (b) wrong_resolution: resolved to a value that differs from focus.
+            # (b) wrong_referent: resolved to a value that differs from focus.
             candidates.append({
-                "mode": "wrong_resolution",
+                "mode": "wrong_referent",
                 "dimension": dim.name,
                 "compiled_value": compiled,
                 "focus_value": focus,
