@@ -274,6 +274,44 @@ async def test_register_all_siblings_success_two_tools() -> None:
     assert events[-1][0] == "bridge_registration_complete"
 
 
+async def test_register_all_siblings_classifies_off_contract_family() -> None:
+    """Classify against KNOWN_CAPABILITY_FAMILIES as observability, not a gate:
+    an off-contract family (``editorial``) is still registered, but surfaced on
+    the outcome + events. Contract families are not flagged."""
+    events: list[tuple[str, dict]] = []
+
+    async def register_bridge_adapters(ctx, register_capability):
+        register_capability(_cap("sibling.known", family="validation"))
+        register_capability(_cap("sibling.offcontract", family="editorial"))
+
+    target = _install_module(
+        "tests.mock_sibling_off_contract", register_bridge_adapters
+    )
+    resolution = resolve_siblings(
+        entry_points_loader=lambda _group: {"mock_sibling": target},
+    )
+    tool_registry = ToolRegistry()
+    append = await _memory_event_appender(events)
+
+    outcome = await register_all_siblings(
+        resolution,
+        tool_registry=tool_registry,
+        event_appender=append,
+        bridge_version="1.5.1",
+    )
+
+    # Not gated: both families registered.
+    assert outcome.tools_registered == 2
+    assert {"validation", "editorial"} <= outcome.capability_kinds_present
+    # Classified: only the off-contract family is flagged.
+    assert outcome.off_contract_families == frozenset({"editorial"})
+    # Surfaced on both the per-sibling and completion events.
+    sibling_event = next(e for e in events if e[0] == "sibling_registered")
+    assert sibling_event[1]["off_contract_families"] == ["editorial"]
+    complete = next(e for e in events if e[0] == "bridge_registration_complete")
+    assert complete[1]["off_contract_families"] == ["editorial"]
+
+
 async def test_register_all_siblings_adapter_raises_other_sibling_continues() -> None:
     events: list[tuple[str, dict]] = []
 

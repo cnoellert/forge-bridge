@@ -11,7 +11,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from forge_contracts import CapabilityRegistration
+from forge_contracts import KNOWN_CAPABILITY_FAMILIES, CapabilityRegistration
 
 from forge_bridge.orchestration.errors import (
     DuplicateToolIdError,
@@ -48,6 +48,12 @@ class RegistrationOutcome:
     capability_kinds_present: frozenset[str]
     missing_required_capability_kinds: frozenset[str]
     degraded: bool
+    # Families siblings declared that are NOT in the contract's
+    # ``KNOWN_CAPABILITY_FAMILIES``. Observability only — off-contract families are
+    # still registered (the contract treats ``CapabilityFamily`` as an open string,
+    # ``KNOWN_CAPABILITY_FAMILIES`` as a soft set). This surfaces vocabulary drift
+    # (e.g. a sibling declaring ``editorial``) without gating discovery.
+    off_contract_families: frozenset[str] = frozenset()
 
 
 def _enumerate_entry_points(group: str) -> dict[str, str]:
@@ -187,10 +193,18 @@ async def register_all_siblings(
                     "sibling_name": sibling_name,
                     "tool_count": tool_count,
                     "families": sorted(families_registered),
+                    # Classify (observe, don't gate): which of this sibling's
+                    # families fall outside the contract's known vocabulary.
+                    "off_contract_families": sorted(
+                        families_registered - KNOWN_CAPABILITY_FAMILIES
+                    ),
                 },
             )
 
     capability_kinds_present = tool_registry.registered_capability_kinds()
+    # Classify against the contract vocabulary (observe, never gate): families
+    # outside KNOWN_CAPABILITY_FAMILIES are still registered, just surfaced.
+    off_contract_families = capability_kinds_present - KNOWN_CAPABILITY_FAMILIES
     missing_required = (
         resolution.required_capability_kinds - capability_kinds_present
     )
@@ -209,6 +223,7 @@ async def register_all_siblings(
             "bridge_registration_complete",
             {
                 "capability_kinds": sorted(capability_kinds_present),
+                "off_contract_families": sorted(off_contract_families),
                 "tool_count": len(tool_registry.all()),
             },
         )
@@ -222,6 +237,7 @@ async def register_all_siblings(
         capability_kinds_present=capability_kinds_present,
         missing_required_capability_kinds=missing_required,
         degraded=degraded,
+        off_contract_families=off_contract_families,
     )
 
 
