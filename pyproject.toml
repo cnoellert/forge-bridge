@@ -51,6 +51,13 @@ test-e2e = [
     "pytest-playwright>=0.5",
 ]
 
+[tool.hatch.metadata]
+# Required for the `forge-contracts @ git+...` direct reference in dependencies.
+# Without this, `pip install -e .` fails at metadata generation (hatchling rejects
+# direct references), which silently forces a non-editable `pip install .` copy —
+# the daemon then can't track the checkout and doctor warns "non-git source".
+allow-direct-references = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["forge_bridge"]
 include = [
