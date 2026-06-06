@@ -64,6 +64,22 @@ Leave `ToolRegistration` as-is. Motion 2 ends here.
 4. **Cost of the naming divergence under C** — is `tool_id`≠`capability_id` a real ongoing cost, or harmless once documented?
 5. **Reversibility** — which positions are cheap to change later? (C→B′ and C→A are both adapter-local; A→B′ requires re-introducing a type. Does "start minimal, escalate on evidence" favor C/B′?)
 
+## DT grounding — Q1 / Q2 / ripple RESOLVED (live reads @ `0eb9e72`)
+
+**Ripple surface — EXACTLY 5 read-sites, all in `planner_passes.py`** (confirmed; nothing in `planner.py`/`manifest.py`/`replay.py`/`rule_checks.py` reads the record):
+- `:84` `tool.capabilities` → `.metadata`
+- `:86`, `:92` `tool.tool_id` → `.capability_id`
+- `:258`, `:261` `provider.tool_id` → `.capability_id`
+- (+ `ToolRegistry.by_family` reads `.family` — name unchanged; method moves onto the type.)
+
+**No reflective access to this record.** A scan for `asdict(...)` / `dataclasses.fields` / `getattr(tool, …)` / `**tool` across `forge_bridge/` returns hits **only on the MCP `Tool` object** (`.name`/`.description`/`.inputSchema` in `llm/`, `mcp/`, `console/`, `cli/discover.py`) — a *different* "tool" concept, not the orchestration `ToolRegistration`. ⇒ A's dataclass→pydantic change is safe (nothing `asdict`s this record). This disambiguation matters: "tool" is overloaded; only the explicit 5 sites touch the registry record.
+
+**Q1 — NO defect attributable to the shadow.** The 4 contract fields the bridge record drops (`owner`, `summary`, `output_schema`, `contract_version`) are read **nowhere** in bridge (`grep` clean). The record duck-types; the only downstream consumers are the 5 explicit reads above. A's single-source-of-truth buys **nothing functional**; the shadow costs **nothing functional**. The burden-flip core (Q1) answers **no** — A loses its strongest justification.
+
+**Q2 — Phase-7 invocation does NOT flip the calculus.** The only invocation primitive that exists today (`drivers.py`) reads `backend_id` + the runtime `DBOrchGenerationArtifact`, **not** `CapabilityDeclaration` fields — `resolve_backend_id` keys off `artifact.execution_provenance.backend_identity_triple`; the driver protocol is `backend_id` + `poll(artifact)`. **Zero declaration-field consumption.** So: (a) no grounded Phase-7 requirement for the raw type or its unconsumed fields; predicting one is *inventing requirements before the path exists* ([[feedback_transitional_structure_naming]]); (b) even a *real* future need (e.g. `output_schema` to shape dispatch results) is **cheaply retrofittable adapter-locally** — B′/C add the field on evidence. So A's "fields available the moment Phase-7 wants them" is not a real advantage. **Q2 does not rescue A.**
+
+**DT verdict feeding the convergence:** with Q1 = no-defect and Q2 = no-payoff, **A has zero positive evidence and pays a real cost** (planner coupled to contract churn + loss of the insulation seam). On the room's own "which smell has positive evidence?" test, A fails it. **I'd reject A.** Between **B′ and C** the deciding axis is Q4 — whether `tool_id`≠`capability_id` is *felt friction* — which is experience, not grounding (Creative's call). Grounding only says: the divergence is fully absorbed by the adapter (one place), costs nothing functional, and **reversibility (Q5) favors C/B′** — `C→B′` is adapter-local and cheap; `A→B′` requires re-introducing a type. Start-minimal-escalate-on-evidence ⇒ **lean C, with B′ acceptable iff Creative judges the naming divergence bites.**
+
 ## What each voice brings
 - **DT (grounding/verify):** is question 1 truly "no defect"? Confirm the planner ripple surface is exactly the 5 sites above and nothing reads the record reflectively elsewhere. Ground question 2 against the actual Phase-7 invocation needs if any are knowable.
 - **Creative (experience/architecture):** the insulation-vs-single-source philosophy (Q3); whether the naming divergence (Q4) is felt friction; whether B is an inherited pre-2A obligation that should simply be retired.
