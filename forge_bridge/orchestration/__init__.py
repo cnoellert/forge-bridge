@@ -13,6 +13,9 @@ from forge_bridge.orchestration.dispatcher import (
     InvocationEnvelope,
     dispatch_plan,
 )
+from forge_bridge.orchestration.dispatch_consumer import (
+    DispatchOnExecutionEntryConsumer,
+)
 from forge_bridge.orchestration.drivers import (
     DriverPollResult,
     DriverReregisteredWarning,
@@ -99,6 +102,7 @@ __all__ = [
     "InvocationEnvelope",
     "DispatchResult",
     "dispatch_plan",
+    "DispatchOnExecutionEntryConsumer",
     "GenerationDriverProtocol",
     "GenerationDriverRegistry",
     "DriverPollResult",
