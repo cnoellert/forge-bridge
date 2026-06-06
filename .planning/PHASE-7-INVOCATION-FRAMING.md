@@ -1,6 +1,6 @@
 # FRAMING — Phase 7: capability invocation / dispatch (the federation E2E demonstrator)
 
-**Status:** FRAMING — OPEN (not ratified, not started). Opens the next Bridge Discovery frontier after motion 2 closed (`PHASE-6A-RUNG-2B-FRAMING.md` / `…-RUNG-B-CONVERGENCE.md`). Grounded against `main @ 4e43c56` via three parallel Explore passes over forge-bridge + forge-contracts + the three siblings (citations inline). Opened by Orch 2026-06-05.
+**Status:** FRAMING — **D1 CONVERGED = generation-first, thin** (unanimous; Orch synthesis at foot). D2–D5 ratifiable at discuss; first-vertical brief next. Opens the next Bridge Discovery frontier after motion 2 closed (`PHASE-6A-RUNG-2B-FRAMING.md` / `…-RUNG-B-CONVERGENCE.md`). Grounded against `main @ 4e43c56` via three parallel Explore passes over forge-bridge + forge-contracts + the three siblings (citations inline). Opened by Orch 2026-06-05.
 
 **Naming:** the proof sequence (`forge-contracts/docs/FEDERATION-PROOF-SEQUENCE.md:174`) calls this **"Phase 7 — End-To-End Demonstrator"** (ADR-000 = Phase 0, so this is *planning* Phase 8 in offset numbering). Use the name **Phase 7 / E2E demonstrator**. This is bridge's deliverable and the capstone of the federation proof.
 
@@ -19,7 +19,7 @@ Discovery (Phase 6A) and planning (phase-4b six-pass) are **done**. Phase 7 is t
 **Execution today is `generation`-only AND poll-only.** (Explore pass 1)
 - The only execution loop is `worker.py` `GenerationPoller` — it *polls already-submitted* generation artifacts (`worker.py:32-212`); it does not submit/launch anything.
 - The driver protocol is **poll-only**: `GenerationDriverProtocol` declares `backend_id` + async `poll(artifact)` (`drivers.py:17-32`) — **no `submit()`/`invoke()`**.
-- The planner produces `ExecutionPlan.operator_sequence` (`planner_passes.py:336-351`: a hard-coded `operator_id="generate_video_from_image"`, `backend_id`, `output_artifact_id`) + `backend_assignments`. **Nothing consumes `operator_sequence` for dispatch** — only `manifest.py:378` reads it, for provenance.
+- The planner produces `ExecutionPlan.operator_sequence` (`planner_passes.py:336-351`: a hard-coded `operator_id="generate_video_from_image"`, `backend_id`, `output_artifact_id`) + `backend_assignments`. **Nothing consumes `operator_sequence` for dispatch** — it is read at **4 sites** (`lineage_graph.py`, `rule_checks.py:44`, manifest, `orch_entity_views.py:183`), all provenance/validation, none dispatch (count corrected by DT verify — see § "DT grounding verification").
 - Transition to the `"execution"` stage just stores `plan_id` (`replay.py:274-324`) — **no artifact is spawned, nothing is invoked.**
 
 **⇒ The gap (the void):** plan produced → lifecycle says "execution" → **[nothing executes]**. Even for generation, the submit step doesn't exist; for execution/perception families, no invocation machinery exists at all.
@@ -100,3 +100,25 @@ All three flagged findings **VERIFIED**.
 
 ## Orch's prior (held lightly)
 Lean **generation-deep first.** It's the family with the most existing substrate and the smallest *new* surface that still exercises the actual hard parts — the dispatcher and the now-due backend_id seam. Vision-first proves a degenerate path; all-shallow pays three fronts before any one is proven. Generation-deep gives a real end-to-end spine that Pipeline (receipt-reconcile) and Vision (sync) then widen onto — exactly the Phase-6A "prove the seam, then widen" shape that's served us. Converge me.
+
+---
+
+## Orch synthesis — D1 CONVERGED (2026-06-05)
+
+**D1 = generation-first, thin. UNANIMOUS** (Orch lean + DT-on-the-merits + Creative vote).
+
+**The decisive reframe (Creative):** generation is chosen **not** because it's the most *realistic* path but because — post-grounding — it's the only path that actually **exercises the missing architecture.** DT's grounding showed the three genuinely-new things Phase 7 must build (the **submit** verb · the now-due **backend_id** seam · the **surface** mismatch) form a **cluster, all on the generation pathway.** A cluster of unimplemented seams on one path is where the architecture still has unanswered questions. ⇒ *Choose the path that teaches the federation the most, not the one that proves it fastest.* Perception-first or execution-first would each be another green check that leaves the hard substrate untouched. (Phase-X echo: the meaningful findings lived exactly where the system met reality it had never been exercised against — loaded-vs-selected, push-vs-pull, `get_value()`. The submit gap has that same smell.) [[feedback_ecological_validity_after_converged_phase]]
+
+**The converged thin-vertical bar (Creative's shape — the proof is the LIFECYCLE, not image generation):**
+> capability discovered → capability selected → **submit invoked** → bridge obtains a handle/receipt → **poll finds it again**
+
+If that round-trips, four unknowns retire in one slice: submit exists · backend resolution exists · surface resolution exists · poll attaches to the right thing.
+
+**Scope discipline (carry into the brief):** *don't build all of generation.* Brief-shaping notes for when I draft it:
+- **Stub driver, faithfully mirroring Generators' real `BackendDriver` protocol** (`submit()→(request_id, ts)` + `poll(request_id)→PollResult`, **surface keying**) — NOT a real remote backend call. The point is the *bridge-owned* lifecycle. **But the stub must mirror the real sibling protocol exactly** or the vertical proves a degenerate lifecycle and misses the surface-reconciliation ([[feedback_fixture_shape_mirrors_production]]). The resolution path (plan-step `backend_id` → registry → driver) stays **real bridge code** so backend/surface reconciliation is genuinely exercised; only the remote call is stubbed. Real Generators backend = a later widening step.
+- **The `backend_id`-vs-`surface` mismatch (D3) MUST be reconciled in this vertical** — it sits on the generation path, so it can't be deferred. Whether bridge re-keys to `surface` or adapts at dispatch is a brief/design call.
+- Driver protocol alignment: bridge's poll-only `GenerationDriverProtocol` gains `submit()` to match the sibling.
+
+**D2–D5 — ratifiable at discuss** (their leans now rest on DT-verified facts): D2 dispatcher spine at the execution-stage transition · D3 resolve-and-validate-at-dispatch + protocol/keying reconcile · D4 three pathways no uniform abstraction · D5 bridge-local envelope + Pipeline-owned receipts.
+
+**Next:** ratify D2–D5, then I draft the **first-vertical brief** (generation lifecycle round-trip, stubbed backend, real resolution). Then it's the usual loop — you route to code, DT verifies the round-trip + the surface-reconcile.
