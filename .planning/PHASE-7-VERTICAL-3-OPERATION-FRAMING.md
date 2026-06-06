@@ -1,6 +1,6 @@
 # FRAMING — Phase 7, Vertical 3: prove the spine is ALIVE (daemon-start the execution runtime)
 
-**Status:** FRAMING — OPEN (strong leans; small decision set). Grounded against `main @ 1842996`. Follows V2 (`447fc8d`, DT-verified). Parent: `PHASE-7-INVOCATION-FRAMING.md`.
+**Status:** RATIFIED — **D1 = full execution-runtime set** (Creative ruling; DT direction; Orch concur). Start in `:9996` lifespan; one shared registry (empty in prod); stub injected only for the proof. Boundary: *"V3 establishes the runtime; it does not expand the federation."* Brief: `PHASE-7-VERTICAL-3-OPERATION-BRIEF.md`. Grounded against `main @ 1842996`. Follows V2 (`447fc8d`, DT-verified). Parent: `PHASE-7-INVOCATION-FRAMING.md`.
 
 **Why this, not widening (DT forward-pointer + Creative vote A, Orch concur):** V1 proved dispatch *can* exist; V2 proved it *attaches* to execution. The largest remaining uncertainty is no longer architectural — it's **operational**: the consumer works but **nothing starts it.** Widening to Pipeline/Vision now means debugging capability-family + plugin + daemon-lifecycle differences *at once*; starting the runtime first asks the clean question — *does the proven spine survive contact with the actual daemon lifecycle?* The progression: **V1 can-it-exist → V2 can-it-attach → V3 does-it-run.** [[feedback_substrate_before_consumer_landing]]
 
