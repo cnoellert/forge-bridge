@@ -1,6 +1,6 @@
 # CONVERGENCE SEED — D3 / Rung B: does raw `CapabilityDeclaration` adoption earn its planner re-ripple?
 
-**Status:** CONVERGENCE — OPEN. Seed drafted by Orch for DT + Creative (+ operator). Grounded against `main @ 9761fa6` (2A `a9ca444`, D4 `85ce467`, D2 `02293f6` all landed + verified). Parent framing: `PHASE-6A-RUNG-2B-FRAMING.md` § D3.
+**Status:** CONVERGED — A rejected (unanimous); lean **C (close motion 2)** with B′ as a pre-grounded evidence-triggered fast-follow; **one operator judgment outstanding** (is `tool_id`≠`capability_id` felt friction in steady-state workflow? yes → B′-now). Seed drafted by Orch for DT + Creative (+ operator). Grounded against `main @ 9761fa6` (2A `a9ca444`, D4 `85ce467`, D2 `02293f6` all landed + verified). Parent framing: `PHASE-6A-RUNG-2B-FRAMING.md` § D3.
 
 This is the **last piece of motion 2**. D1 (split), D4 (perceptual routing defect), D2 (context de-shadow) are closed. D3 is the one genuinely contested call — opened as a convergence, **not** a foregone "do B."
 
@@ -87,3 +87,19 @@ Leave `ToolRegistration` as-is. Motion 2 ends here.
 
 ## Orch's prior (held lightly — this is a convergence, not a brief)
 Leaning **B′ or C over A.** The burden-flip is decisive for me: A pays a planner re-ripple and removes the insulation seam for *no present defect*, betting on a Phase-7 payoff that doesn't exist yet — which is exactly the "design the reconciler before an execution path exists" trap we've named elsewhere. Between B′ and C: B′ if the `tool_id`/`capability_id` divergence is felt friction worth one contained rename; C if it isn't. I do **not** see positive evidence for A today — but Q2 (Phase-7) is the one place that could flip it, and that's DT's to ground. Converge me.
+
+---
+
+## Orch synthesis — CONVERGED (2026-06-05)
+
+**A is DEAD — unanimous, on burden-of-proof.** DT: Q1 no-defect + Q2 no-Phase-7-payoff ⇒ A has zero positive evidence and a real cost (planner coupled to contract churn + insulation seam lost). Creative: once Q1 = none, A moves from *remediation* to *preference*, and preference doesn't buy planner ripples + contract coupling + churn exposure. Off the board — stop spending room energy on it. *(Meta-win worth recording, Creative's catch: the debate collapsing from "store `CapabilityDeclaration`?" to "should `tool_id` and `capability_id` be the same name?" is itself **evidence 2A succeeded** — the architecture problem evaporated; what's left is language. That is a good outcome, not a loose end.)*
+
+**The decisive sharpening (follows from DT's ripple grounding): B′ pays the SAME planner ripple as A.** The 5-site retarget (`tool.tool_id`→`.capability_id`, `tool.capabilities`→`.metadata`) lands under B′ exactly as under A — B′ merely keeps the bridge-owned type + adapter instead of swapping to the contract type. So **the planner ripple is not what separates the live options.** A's *only* marginal cost over B′ is the type-coupling + 4 unused fields (which is why A loses). And C-vs-B′ reduces to one thing: **pay the rename now, or defer it.**
+
+**C vs B′ = one question only the room can answer:** is `tool_id`≠`capability_id` *felt friction in steady-state workflow* (docs, plans, tests, reviews, debugging)? DT correctly refused to ground it (experience, not code); Creative framed it as "is the friction actually occurring," and would not invent a future justification for it.
+
+**One suggestive-but-not-decisive data point:** the `tool_id`↔`capability_id` mapping recurred in *every artifact of this rung* — the field-mapping tables, all four briefs, DT's ripple list. That is exactly the friction Creative describes, visible in the paper trail. **But it is rung-time friction** (we were working *on* the seam); it does not prove steady-state friction when nobody is touching the registry types. Weight it lightly.
+
+**Converged lean: C now — close motion 2 at D2 — with B′ recorded as a pre-grounded, evidence-triggered fast-follow.** Rationale: the burden-flip standard the room set applies *recursively* to B′ — pay the rename for *proven* friction, not anticipated. Reversibility is decisively asymmetric and the grounding is already done, so B′ is **shovel-ready** (5 sites enumerated, adapter identified, dataclass→pydantic-or-rename confirmed safe) the instant the friction is felt. Deferring costs ~nothing; doing B′ prematurely pays a planner-touching rename for a benefit not yet demonstrated in steady state. **B′ trigger:** the `tool_id`/`capability_id` translation showing up in *ordinary* (non-rung) human workflow → at which point B′ is a same-day brief.
+
+**The one operator override (the last bit of this convergence):** if you judge the divergence is *already* biting in steady-state workflow — not just during this rung — then **B′-now** is correct: it's decided and shovel-ready, and there's no reason to defer a rename you already know you want. That judgment is yours; everything else has converged.
