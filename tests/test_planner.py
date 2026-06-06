@@ -398,7 +398,6 @@ async def test_plan_trained_identity_expired(session_factory) -> None:
 
 async def test_plan_identity_reuse_forbidden(session_factory) -> None:
     identity_id = uuid.uuid4()
-    shot_id = uuid.uuid4()
     trained = InMemoryTrainedIdentityRegistry()
     trained.register(
         TrainedIdentityRecord(
