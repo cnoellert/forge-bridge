@@ -259,6 +259,25 @@ class ProjectRepo:
 # Entity Repository
 # ─────────────────────────────────────────────────────────────
 
+# Keys that `_attrs_to_dict` promotes from formal entity properties into the
+# JSONB column, per entity_type. `_to_core` reconstructs these into typed
+# fields; everything else in the column is open `entity.metadata` (e.g. a
+# media's `role`) and must be restored so the round-trip is symmetric — see
+# the residual-restore at the tail of `_to_core`. Keep in lockstep with
+# `_attrs_to_dict`.
+_TYPED_ATTR_KEYS: dict[str, frozenset[str]] = {
+    "sequence":         frozenset({"frame_rate", "duration_tc"}),
+    "shot":             frozenset({"cut_in", "cut_out", "sequence_id"}),
+    "asset":            frozenset({"asset_type"}),
+    "version":          frozenset({"version_number", "parent_id", "parent_type", "created_by"}),
+    "media":            frozenset({"format", "resolution", "colorspace", "bit_depth", "version_id", "frame_range"}),
+    "layer":            frozenset({"role_key", "order", "stack_id", "version_id"}),
+    "stack":            frozenset({"shot_id"}),
+    "staged_operation": frozenset({"operation", "proposer", "parameters", "result",
+                                   "approver", "executor", "approved_at", "executed_at"}),
+}
+
+
 class EntityRepo:
     """Persist and load all non-project entities.
 
@@ -525,6 +544,16 @@ class EntityRepo:
         else:
             e = BridgeEntity.__new__(BridgeEntity)
             BridgeEntity.__init__(e, id=db.id, metadata=a)
+
+        # Restore residual open attributes that `_attrs_to_dict` merged into the
+        # JSONB column. The typed branches above reset metadata={} and lift only
+        # their formal fields; the remaining keys (e.g. a media's `role`, which
+        # "travels with the media entity as media.attributes.role") would
+        # otherwise be silently dropped on read-back. The `else` branch already
+        # restored the full dict, so only override for the typed branches.
+        typed = _TYPED_ATTR_KEYS.get(t)
+        if typed is not None:
+            e.metadata = {k: v for k, v in a.items() if k not in typed}
 
         return e
 
