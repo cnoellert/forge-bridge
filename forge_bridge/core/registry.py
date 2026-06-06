@@ -72,14 +72,15 @@ STANDARD_ROLE_KEYS: dict[str, uuid.UUID] = {
     "foreground": uuid.UUID("10000000-0000-0000-0000-000000000005"),
     "color":      uuid.UUID("10000000-0000-0000-0000-000000000006"),
     "audio":      uuid.UUID("10000000-0000-0000-0000-000000000007"),
-    # Media roles — pipeline stage that produced the media atom
-    # Must match _MEDIA_ROLE_KEYS in migration 0002 exactly.
+    # Media roles — pipeline stage that produced the media atom.
+    # raw..comp seeded by migration 0002; `render` seeded by migration 0010.
     "raw":        uuid.UUID("00000000-0000-0000-0010-000000000001"),
     "grade":      uuid.UUID("00000000-0000-0000-0010-000000000002"),
     "denoise":    uuid.UUID("00000000-0000-0000-0010-000000000003"),
     "prep":       uuid.UUID("00000000-0000-0000-0010-000000000004"),
     "roto":       uuid.UUID("00000000-0000-0000-0010-000000000005"),
     "comp":       uuid.UUID("00000000-0000-0000-0010-000000000006"),
+    "render":     uuid.UUID("00000000-0000-0000-0010-000000000007"),
 }
 _STANDARD_ROLE_NAMES: dict[uuid.UUID, str] = {v: k for k, v in STANDARD_ROLE_KEYS.items()}
 

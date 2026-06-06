@@ -175,6 +175,10 @@ STANDARD_ROLES = {
     "roto":       Role("roto",       order=14, aliases={"role_class": "media", "generation_floor": "1"}),
     # comp: composite render output — generation 1+.
     "comp":       Role("comp",       order=15, aliases={"role_class": "media", "generation_floor": "1"}),
+    # render: DCC render output (Blender is the first DCC to emit a `render`;
+    #         Flame renders remain `comp`) — generation 1+. A media classification,
+    #         not a relationship: render media is member_of its Shot.
+    "render":     Role("render",     order=16, aliases={"role_class": "media", "generation_floor": "1"}),
 }
 
 
