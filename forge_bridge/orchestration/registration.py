@@ -42,15 +42,17 @@ class BridgeRegistrationContext:
 
 @dataclass(frozen=True)
 class ToolRegistration:
-    """Bridge-internal registration shape. Sibling capabilities arrive as
-    forge-contracts ``CapabilityRegistration`` and are adapted via
-    :func:`tool_registration_from_capability`; the planner consumes this shape."""
+    """Bridge-internal DECLARATION record (discovery-side, invocation-free).
+    Sibling capabilities arrive as forge-contracts ``CapabilityRegistration`` and
+    are adapted via :func:`tool_registration_from_capability`; the planner consumes
+    this shape. The invocation binding (handler/driver) is NOT stored here — it is
+    routed to its family-shaped binding home at register time; see
+    :meth:`ToolRegistry.register`."""
 
     tool_id: str
     family: str
     payload_family: str
     schema: dict
-    handler: Any
     capabilities: Any
 
 
@@ -59,16 +61,15 @@ def tool_registration_from_capability(
 ) -> ToolRegistration:
     """Adapt a published ``CapabilityRegistration`` to the bridge-internal
     ``ToolRegistration`` consumed by ToolRegistry + the planner. Declaration-first:
-    the family/id come from the serializable ``CapabilityDeclaration``; the
-    ``handler`` is the optional, opaque invocation binding (``None`` for
-    declaration-only discovery)."""
+    the family/id come from the serializable ``CapabilityDeclaration``. The
+    ``registration.handler`` is the optional, opaque invocation binding — it is NOT
+    placed on the record; ``ToolRegistry.register`` routes it to its binding home."""
     declaration: CapabilityDeclaration = registration.declaration
     return ToolRegistration(
         tool_id=declaration.capability_id,
         family=declaration.family,
         payload_family=declaration.payload_family or "",
         schema=dict(declaration.input_schema or {}),
-        handler=registration.handler,
         capabilities=dict(declaration.metadata or {}),
     )
 
@@ -92,17 +93,27 @@ class ToolRegistry:
         self._tools: dict[str, ToolRegistration] = {}
         self._pending_events: list[tuple[str, dict[str, Any]]] = []
 
-    def register(self, tool: ToolRegistration, *, sibling_name: str) -> None:
+    def register(
+        self, tool: ToolRegistration, *, sibling_name: str, handler: Any = None
+    ) -> None:
         if tool.tool_id in self._tools:
             raise DuplicateToolIdError(tool.tool_id)
 
-        # Handler binding is invocation-time and optional. A declaration-only
-        # generation capability (handler=None) is discoverable but not yet
+        # The registry stores declaration-only records. Invocation binding is
+        # family-shaped + invocation-time: route the handler to its binding home
+        # (generation -> GenerationDriverRegistry); never store it on the record.
+        # A declaration-only capability (handler=None) is discoverable but not yet
         # invocable; validate + wire the driver only when a handler is present.
-        if tool.family == "generation" and tool.handler is not None:
-            _validate_generation_handler(tool.tool_id, tool.handler)
+        #
+        # SEAM (named, not filled): backend_id reconciliation. The driver's own
+        # handler.backend_id is independent of the planner's declaration-derived
+        # backend_identity_triple (planner_passes.pass_1); nothing reconciles them.
+        # Materialize the reconciler only when a plan step first needs to EXECUTE a
+        # selected capability (Phase 7). See PHASE-6A-DISCOVERY-ALIGNMENT.md.
+        if tool.family == "generation" and handler is not None:
+            _validate_generation_handler(tool.tool_id, handler)
             if self._generation_driver_registry is not None:
-                self._generation_driver_registry.register_driver(tool.handler)
+                self._generation_driver_registry.register_driver(handler)
 
         self._tools[tool.tool_id] = tool
         self._pending_events.append(

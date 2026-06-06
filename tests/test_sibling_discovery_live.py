@@ -61,7 +61,9 @@ async def test_live_discovery_mandatory_pair() -> None:
         f"{[t.tool_id for t in execution]}"
     )
 
-    # Declaration-first: discovered capabilities carry no handler binding.
-    assert all(t.handler is None for t in registry.all()), (
-        "declaration-only discovery should not bind handlers"
+    # Declaration-first (rung 2A): the stored record is invocation-free — the
+    # handler/driver binding is decomposed out of the record entirely (routed to
+    # its binding home at register time), so no record carries a handler field.
+    assert all(not hasattr(t, "handler") for t in registry.all()), (
+        "discovery records must be declaration-only (no handler stored on the record)"
     )

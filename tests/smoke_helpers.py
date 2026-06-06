@@ -115,7 +115,6 @@ def build_smoke_setup(
             family="generation",
             payload_family="generation_v1",
             schema={"type": "object"},
-            handler=driver,
             capabilities={
                 "backend_identity_triple": {
                     "surface": surface,
@@ -128,6 +127,7 @@ def build_smoke_setup(
             },
         ),
         sibling_name="forge_generators",
+        handler=driver,
     )
     return SmokeFixtures(
         tool_registry=tool_registry,

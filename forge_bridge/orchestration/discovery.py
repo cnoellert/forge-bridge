@@ -152,7 +152,9 @@ async def register_all_siblings(
 
         def register_capability(registration: CapabilityRegistration):
             tool = tool_registration_from_capability(registration)
-            tool_registry.register(tool, sibling_name=sibling_name)
+            tool_registry.register(
+                tool, sibling_name=sibling_name, handler=registration.handler
+            )
             families_registered.add(tool.family)
 
         try:

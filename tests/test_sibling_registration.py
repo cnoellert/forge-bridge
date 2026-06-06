@@ -31,14 +31,14 @@ def _tool(
     tool_id: str,
     *,
     family: str = "validation",
-    handler: Any = None,
 ) -> ToolRegistration:
+    """Bridge-internal declaration record (invocation-free). Handlers are passed
+    separately to ``ToolRegistry.register(..., handler=...)``, never on the record."""
     return ToolRegistration(
         tool_id=tool_id,
         family=family,
         payload_family="perception_validation_v1",
         schema={"type": "object"},
-        handler=handler or (lambda: None),
         capabilities={},
     )
 
@@ -100,8 +100,9 @@ def test_tool_registry_register_and_query() -> None:
     registry = ToolRegistry()
     registry.register(_tool("a.validation.one"), sibling_name="sibling_a")
     registry.register(
-        _tool("b.generation.one", family="generation", handler=_ValidGenerationDriver()),
+        _tool("b.generation.one", family="generation"),
         sibling_name="sibling_b",
+        handler=_ValidGenerationDriver(),
     )
 
     assert registry.get("a.validation.one") is not None
@@ -125,12 +126,9 @@ def test_tool_registry_invalid_generation_missing_backend_id() -> None:
     registry = ToolRegistry()
     with pytest.raises(InvalidGenerationDriverError):
         registry.register(
-            _tool(
-                "gen.bad",
-                family="generation",
-                handler=_MissingBackendIdDriver(),
-            ),
+            _tool("gen.bad", family="generation"),
             sibling_name="sibling",
+            handler=_MissingBackendIdDriver(),
         )
 
 
@@ -138,12 +136,9 @@ def test_tool_registry_invalid_generation_missing_poll() -> None:
     registry = ToolRegistry()
     with pytest.raises(InvalidGenerationDriverError):
         registry.register(
-            _tool(
-                "gen.bad",
-                family="generation",
-                handler=_MissingPollDriver(),
-            ),
+            _tool("gen.bad", family="generation"),
             sibling_name="sibling",
+            handler=_MissingPollDriver(),
         )
 
 
@@ -152,8 +147,9 @@ def test_tool_registry_generation_wires_driver_registry() -> None:
     registry = ToolRegistry(generation_driver_registry=driver_registry)
     driver = _ValidGenerationDriver()
     registry.register(
-        _tool("gen.ok", family="generation", handler=driver),
+        _tool("gen.ok", family="generation"),
         sibling_name="sibling",
+        handler=driver,
     )
     assert driver_registry.get_driver("test.mock_backend") is driver
 
@@ -161,8 +157,9 @@ def test_tool_registry_generation_wires_driver_registry() -> None:
 def test_tool_registry_generation_without_driver_registry() -> None:
     registry = ToolRegistry()
     registry.register(
-        _tool("gen.ok", family="generation", handler=_ValidGenerationDriver()),
+        _tool("gen.ok", family="generation"),
         sibling_name="sibling",
+        handler=_ValidGenerationDriver(),
     )
     assert len(registry.all()) == 1
 

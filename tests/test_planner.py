@@ -158,7 +158,6 @@ def _generation_tool(**caps) -> ToolRegistration:
         family="generation",
         payload_family="generation_v1",
         schema={"type": "object"},
-        handler=_GenDriver(),
         capabilities=capabilities,
     )
 
@@ -316,7 +315,9 @@ async def test_plan_capability_snapshot_unresolvable(session_factory) -> None:
 
 async def test_plan_auto_creates_capability_snapshot(session_factory) -> None:
     tools = ToolRegistry()
-    tools.register(_generation_tool(), sibling_name="forge_generators")
+    tools.register(
+        _generation_tool(), sibling_name="forge_generators", handler=_GenDriver()
+    )
     async with session_factory() as session:
         ids = await _seed_base(session)
         planner = _make_planner(session, tools=tools)
@@ -483,7 +484,6 @@ async def test_plan_transform_inserted_when_provider_exists(session_factory) -> 
             family="perceptual",
             payload_family="perception_validation_v1",
             schema={},
-            handler=lambda: None,
             capabilities={},
         ),
         sibling_name="forge_vision",
