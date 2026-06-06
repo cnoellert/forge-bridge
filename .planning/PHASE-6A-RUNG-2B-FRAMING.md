@@ -60,8 +60,10 @@ Apply the room's own A-now-B-later test — *which smell has positive evidence?*
 
 So B's real payload may reduce to "rename bridge fields to match the contract + fix the vocab" — which can be had **without** coupling the registry to the contract type. **This is the convergence question:** does the room want true type-adoption (accept the coupling) or name-alignment-with-insulation? And is either worth a planner re-ripple absent a proven defect? [[feedback_deferral_first_class_governance]]
 
-### D4 — The latent `perceptual` defect: fix independently, or fold into B? **[Orch lean: FIX NOW, independently]**
+### D4 — The latent `perceptual` defect: fix independently, or fold into B? **[Orch lean: FIX NOW, independently] — LANDED `85ce467`**
 It is a **live bug**, exists regardless of B (both record shapes carry `declaration.family`), and is a one-line vocab correction + a regression test that exercises pass_3 against a real `perception` provider (and de-masks the `test_planner.py:483` fixture). Gating it behind the B convergence leaves a production defect latent for an aesthetic rung. Recommend a **small standalone fix-rung BEFORE B**, scanned for the full `by_family(...)` equivalence class (grep all consumer-side family-string literals against `KNOWN_CAPABILITY_FAMILIES`). [[feedback_grep_c_completion_invariant]]
+
+**RESOLVED `85ce467` (brief: `PHASE-6A-RUNG-2B-D4-BRIEF.md`).** pass_3 routes through `by_family("perception")` (matte still fallback); test fixture un-masked to `family="perception"`; discriminating regression added (perception wins over matte when both registered) + **verified to fail under the old source by selecting matte** — the unmask proof. Residual grep `rg perceptual forge_bridge tests/test_planner.py` → **zero**; one stale comment cleaned. `pytest test_planner + test_sibling_registration + test_sibling_discovery_live` → 55 passed / 1 skipped; ruff clean; `forge_bridge.__all__` → 19. Equivalence class closed (1 divergent literal + 1 mask → 0 residual). *Pending DT independent verify as the closing gate (per role split).*
 
 ---
 
@@ -78,3 +80,9 @@ It is a **live bug**, exists regardless of B (both record shapes carry `declarat
 
 ## Convergence recommendation
 **D3 is the convergence-worthy decision** (true type-adoption vs name-alignment-with-insulation; and whether B earns a planner re-ripple at all without a proven defect). D1/D2/D4 have strong enough leans to ratify at discuss without a full convergence. Suggested move: **land D4 now (it's a bug), do Step-2.1 (D2) as a clean de-shadow, then run convergence on D3 (B) on its own merits** — rather than carrying B as a foregone conclusion.
+
+### Sequencing state (2026-06-05)
+- **D1 SPLIT** — ratified (DT + Creative). Motion 2 is not one rung.
+- **D4 LANDED `85ce467`** — pending DT independent verify.
+- **D2 discuss-ready** — Step-2.1 clean de-shadow; strong lean YES, ratify at discuss (no convergence needed).
+- **D3 unresolved-by-design** — burden flipped per Creative: B is no longer an inherited deferred obligation. Re-open as a real convergence pass framed narrowly — *"what defect remains that ONLY raw `CapabilityDeclaration` adoption solves?"* — **after** D4 + D2 land, so it argues against the strongest post-cleanup evidence.
