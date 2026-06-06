@@ -468,10 +468,17 @@ def role_delete(name: str, migrate_to: str | None = None) -> Message:
 # Constructors — server → client messages
 # ─────────────────────────────────────────────────────────────
 
+def _correlation(request_id: str | None) -> dict:
+    # Echo the correlation id under every key a client might match on:
+    #   "id"         — bridge-native clients
+    #   "ref_msg_id" — forge_core response branch (ok/error)
+    #   "msg_id"     — forge_core pong branch matches on the reply's own msg_id
+    # See .planning/STATE-WS-CORRELATION-CONTRACT.md.
+    return {"id": request_id, "ref_msg_id": request_id, "msg_id": request_id}
+
+
 def ok(request_id: str, result: Any = None) -> Message:
-    # Echo the correlation id under both "id" (bridge clients) and "ref_msg_id"
-    # (forge_core clients correlate on ref_msg_id first). See STATE-WS-CORRELATION.
-    msg = Message({"type": MsgType.OK, "id": request_id, "ref_msg_id": request_id})
+    msg = Message({"type": MsgType.OK, **_correlation(request_id)})
     if result is not None:
         msg["result"] = result
     return msg
@@ -484,11 +491,10 @@ def error(
     details: dict | None = None,
 ) -> Message:
     msg = Message({
-        "type":       MsgType.ERROR,
-        "id":         request_id,
-        "ref_msg_id": request_id,
-        "code":       code,
-        "message":    message,
+        "type":    MsgType.ERROR,
+        **_correlation(request_id),
+        "code":    code,
+        "message": message,
     })
     if details:
         msg["details"] = details
@@ -503,8 +509,7 @@ def welcome(
 ) -> Message:
     return Message({
         "type":             MsgType.WELCOME,
-        "id":               request_id,
-        "ref_msg_id":       request_id,
+        **_correlation(request_id),
         "session_id":       session_id,
         "server_version":   server_version,
         "registry_summary": registry_summary or {},
@@ -512,7 +517,7 @@ def welcome(
 
 
 def pong(request_id: str) -> Message:
-    return Message({"type": MsgType.PONG, "id": request_id, "ref_msg_id": request_id})
+    return Message({"type": MsgType.PONG, **_correlation(request_id)})
 
 
 def event(

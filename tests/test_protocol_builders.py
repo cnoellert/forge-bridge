@@ -138,7 +138,7 @@ def test_is_request_true_for_both_envelopes():
     assert Message({"type": "ping", "msg_id": "X"}).is_request()
 
 
-def test_replies_echo_ref_msg_id_for_forge_core_correlation():
+def test_replies_echo_correlation_under_all_keys():
     rid = "req-123"
     for reply in (
         ok(rid, {"k": "v"}),
@@ -146,18 +146,24 @@ def test_replies_echo_ref_msg_id_for_forge_core_correlation():
         pong(rid),
         welcome("sess-1", rid),
     ):
-        # bridge clients correlate on "id"; forge_core clients on "ref_msg_id"
-        assert reply["id"] == rid
-        assert reply["ref_msg_id"] == rid
+        # Every client correlation strategy must match:
+        assert reply["id"] == rid          # bridge-native clients
+        assert reply["ref_msg_id"] == rid  # forge_core response branch (ok/error)
+        assert reply["msg_id"] == rid      # forge_core pong branch (bare msg_id)
 
 
-def test_round_trip_correlation_forge_core_envelope():
-    # Simulate the forge_core path end-to-end at the envelope level:
-    # client sends id under "msg_id"; server reads it; reply carries it as
-    # "ref_msg_id" which forge_core's recv loop matches first.
-    request = Message({"type": "ping", "msg_id": "abc"})
-    server_seen_id = request.msg_id            # server reads correlation id
-    reply = pong(server_seen_id)               # server echoes into the reply
+def test_round_trip_correlation_response_branch():
+    # forge_core ok/error path: matches on ref_msg_id (fallback msg_id).
+    request = Message({"type": "entity.get", "msg_id": "abc"})
+    reply = error(request.msg_id, "NOT_FOUND", "nope")
     forge_core_ref = reply.get("ref_msg_id") or reply.msg_id
-    assert server_seen_id == "abc"
-    assert forge_core_ref == "abc"             # forge_core resolves _pending["abc"]
+    assert forge_core_ref == "abc"
+
+
+def test_round_trip_correlation_pong_branch():
+    # forge_core pong path is SEPARATE: it matches on the reply's bare msg_id,
+    # NOT ref_msg_id. This is the gap that left ping hanging until msg_id was
+    # echoed on replies too.
+    request = Message({"type": "ping", "msg_id": "ping-xyz"})
+    reply = pong(request.msg_id)
+    assert reply.msg_id == "ping-xyz"      # forge_core resolves _pending["ping-xyz"]
