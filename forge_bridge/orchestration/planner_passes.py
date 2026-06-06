@@ -15,7 +15,6 @@ from forge_bridge.store.orch_partial_fidelity_snapshot_repo import (
 )
 from forge_bridge.store.orch_pipeline_run_repo import PipelineRunRepo
 from forge_bridge.store.orch_rule_snapshot_repo import RuleSnapshotRepo
-from forge_bridge.store.orch_spec_convergence_trace_repo import SpecConvergenceTraceRepo
 
 if TYPE_CHECKING:
     from forge_bridge.orchestration.planner import Planner, PlanningContext
@@ -245,13 +244,13 @@ async def pass_3_insert_transforms(planner: Planner, ctx: PlanningContext) -> No
             continue
 
         ctx.content_policy_transform_required = True
-        perceptual = planner.tool_registry.by_family("perceptual")
+        perception = planner.tool_registry.by_family("perception")
         matte = planner.tool_registry.by_family("matte")
-        provider = perceptual[0] if perceptual else (matte[0] if matte else None)
+        provider = perception[0] if perception else (matte[0] if matte else None)
         if provider is None:
             _raise_refusal(
                 "transform_unavailable",
-                "Content-policy bypass transform required but no perceptual/matte provider",
+                "Content-policy bypass transform required but no perception/matte provider",
             )
 
         ctx.transforms_inserted.append(

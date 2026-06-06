@@ -480,7 +480,7 @@ async def test_plan_transform_inserted_when_provider_exists(session_factory) -> 
     tools.register(
         ToolRegistration(
             tool_id="forge_vision.depth.estimate",
-            family="perceptual",
+            family="perception",
             payload_family="perception_validation_v1",
             schema={},
             capabilities={},
@@ -510,6 +510,56 @@ async def test_plan_transform_inserted_when_provider_exists(session_factory) -> 
         await session.commit()
     assert plan.feasibility_verdict == "feasible"
     assert len(plan.transforms_inserted) == 1
+
+
+async def test_plan_transform_prefers_perception_provider_over_matte(session_factory) -> None:
+    tools = ToolRegistry()
+    tools.register(
+        ToolRegistration(
+            tool_id="forge_vision.perception.classify",
+            family="perception",
+            payload_family="perception_validation_v1",
+            schema={},
+            capabilities={},
+        ),
+        sibling_name="forge_vision",
+    )
+    tools.register(
+        ToolRegistration(
+            tool_id="forge_vision.matte.extract",
+            family="matte",
+            payload_family="matte_v1",
+            schema={},
+            capabilities={},
+        ),
+        sibling_name="forge_vision",
+    )
+    async with session_factory() as session:
+        ids = await _seed_base(
+            session,
+            capability={
+                "snapshots": [
+                    {
+                        "backend_identity_triple": {"surface": "test", "path": "backend"},
+                        "capabilities_opaque": {
+                            "first_frame_guarantee": True,
+                            "content_policy_real_person_classifier": True,
+                            "acceptance_score": 0.8,
+                            "estimated_cost": 1.0,
+                        },
+                    }
+                ]
+            },
+            inputs={"inputs": [{"photoreal_motion_source": True}]},
+        )
+        planner = _make_planner(session, tools=tools)
+        plan = await planner.plan(**_plan_kwargs(ids))
+        await session.commit()
+
+    assert plan.feasibility_verdict == "feasible"
+    assert plan.transforms_inserted[0]["providing_operator"] == (
+        "forge_vision.perception.classify"
+    )
 
 
 async def test_plan_anchor_lineage_violation(session_factory) -> None:
