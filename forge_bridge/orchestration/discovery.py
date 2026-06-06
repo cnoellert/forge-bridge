@@ -26,7 +26,8 @@ from forge_bridge.store.repo import EventRepo
 
 # Discovery requests ALL families by default (empty ``requested_families``) and
 # classifies what siblings declare against the contract vocabulary. Bridge's old
-# local family allowlist {perception, validation, generation, matte, editorial}
+# local family allowlist {perceptual, validation, generation, matte, editorial}  (sic:
+# ``perceptual`` is the original typo, preserved as evidence — do not "fix" to grep-zero)
 # was retired: it misspelled ``perception`` and omitted ``execution``/``packaging``,
 # silently filtering out both primary siblings (see PHASE-6A-DISCOVERY-ALIGNMENT.md).
 DEFAULT_ENTRY_POINT_GROUP = "forge_bridge.siblings"
