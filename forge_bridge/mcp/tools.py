@@ -280,6 +280,25 @@ def _err(message: str, code: str = "ERROR") -> str:
     return json.dumps({"error": message, "code": code}, indent=2)
 
 
+def _attr(entity: dict, key: str, default=None):
+    """Read a field from an *entity* wire dict (to_dict shape).
+
+    Entities serialize typed fields at the top level and open/pipeline
+    attributes under ``metadata`` (legacy reads used a top-level ``attributes``
+    key that ``to_dict`` never emits). This reads either — typed top-level
+    first (matching the write-side "typed wins on collision" precedence), then
+    the open dict, with ``attributes`` as a back-compat fallback.
+
+    NOTE: this is for ENTITY dicts only. Relationship/edge dicts legitimately
+    carry a top-level ``attributes`` (edge attrs like ``track_role``) — read
+    those with ``.get("attributes")`` directly, not through this helper.
+    """
+    if key in entity:
+        return entity[key]
+    open_attrs = entity.get("metadata") or entity.get("attributes") or {}
+    return open_attrs.get(key, default)
+
+
 # ─────────────────────────────────────────────────────────────
 # Health
 # ─────────────────────────────────────────────────────────────
@@ -1449,7 +1468,8 @@ async def get_shot_lineage(params: GetShotLineageInput) -> str:
                 m = media_by_id.get(mid)
                 if not m:
                     continue
-                m_attrs = m.get("attributes", {})
+                m_attrs = m.get("metadata") or m.get("attributes", {})
+                role = m_attrs.get("role") or m_attrs.get("kind", "")
                 locs = m.get("locations", [])
                 path = next((l["path"] for l in locs if l.get("storage_type") == "local"), "")
                 if not path and locs:
@@ -1458,9 +1478,10 @@ async def get_shot_lineage(params: GetShotLineageInput) -> str:
                     "media_id":    m["id"],
                     "name":        m.get("name", ""),
                     "status":      m.get("status", "pending"),
+                    "role":        role,
                     "kind":        m_attrs.get("kind", ""),
-                    "colour_space": m_attrs.get("colour_space", ""),
-                    "resolution":  m.get("resolution", ""),
+                    "colour_space": m.get("colorspace") or m_attrs.get("colour_space", ""),
+                    "resolution":  m.get("resolution") or m_attrs.get("resolution", ""),
                     "layer_index": m_attrs.get("layer_index"),
                     "path":        path,
                 })
@@ -1532,7 +1553,7 @@ async def blast_radius(params: BlastRadiusInput) -> str:
             media_id = match["id"]
 
         media = await client.request(entity_get(media_id))
-        m_attrs = media.get("attributes", {})
+        m_attrs = media.get("metadata") or media.get("attributes", {})
         locs = media.get("locations", [])
         path = next((l["path"] for l in locs if l.get("storage_type") == "local"), "")
 
