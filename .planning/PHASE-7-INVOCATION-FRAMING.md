@@ -1,6 +1,6 @@
 # FRAMING — Phase 7: capability invocation / dispatch (the federation E2E demonstrator)
 
-**Status:** FRAMING — **D1 CONVERGED = generation-first, thin** (unanimous; Orch synthesis at foot). D2–D5 ratifiable at discuss; first-vertical brief next. Opens the next Bridge Discovery frontier after motion 2 closed (`PHASE-6A-RUNG-2B-FRAMING.md` / `…-RUNG-B-CONVERGENCE.md`). Grounded against `main @ 4e43c56` via three parallel Explore passes over forge-bridge + forge-contracts + the three siblings (citations inline). Opened by Orch 2026-06-05.
+**Status:** FRAMING — D1 CONVERGED (generation-first, thin); D2–D5 ratified. **Vertical 1 LANDED `6d22d14`, pending DT verify** (brief: `PHASE-7-VERTICAL-1-GENERATION-BRIEF.md`). Opens the next Bridge Discovery frontier after motion 2 closed (`PHASE-6A-RUNG-2B-FRAMING.md` / `…-RUNG-B-CONVERGENCE.md`). Grounded against `main @ 4e43c56` via three parallel Explore passes over forge-bridge + forge-contracts + the three siblings (citations inline). Opened by Orch 2026-06-05.
 
 **Naming:** the proof sequence (`forge-contracts/docs/FEDERATION-PROOF-SEQUENCE.md:174`) calls this **"Phase 7 — End-To-End Demonstrator"** (ADR-000 = Phase 0, so this is *planning* Phase 8 in offset numbering). Use the name **Phase 7 / E2E demonstrator**. This is bridge's deliverable and the capstone of the federation proof.
 
@@ -122,3 +122,12 @@ If that round-trips, four unknowns retire in one slice: submit exists · backend
 **D2–D5 — ratifiable at discuss** (their leans now rest on DT-verified facts): D2 dispatcher spine at the execution-stage transition · D3 resolve-and-validate-at-dispatch + protocol/keying reconcile · D4 three pathways no uniform abstraction · D5 bridge-local envelope + Pipeline-owned receipts.
 
 **Next:** ratify D2–D5, then I draft the **first-vertical brief** (generation lifecycle round-trip, stubbed backend, real resolution). Then it's the usual loop — you route to code, DT verifies the round-trip + the surface-reconcile.
+
+---
+
+## Vertical 1 — LANDED `6d22d14`, pending DT verify (2026-06-05)
+Code report: `submit()` added (port `poll(artifact)` kept); registry keys from `backend_identity_triple → surface.path` (with a **legacy fallback** for existing test drivers); bridge-local `InvocationEnvelope`/`DispatchResult`/`dispatch_plan()`; dispatcher resolves → refuses `dispatch_no_driver` when unresolved → submits → writes a submitted artifact with execution provenance → emits dispatch/lineage events; round-trip test (discover→plan→dispatch→`poll_once`→terminal) + negative no-driver test. Self-report green: `73 passed/1 skipped` on the focused subset; **full run `2855 passed/42 skipped` via `--import-mode=importlib`**; ruff clean; `__all__`=19.
+
+**Two things for DT's verify (both echo prior cycles):**
+1. **Legacy-fallback must not mask the surface-reconcile** ([[feedback_fixture_shape_mirrors_production]]). Confirm the V1 round-trip stub resolves via the **new `backend_identity_triple → surface.path` derivation**, NOT the legacy `backend_id` fallback — else the test proves a degenerate path and the surface reconcile (the whole point of generation-first) is unexercised. This is acceptance criterion #2 (resolution real, not bypassed); verify the mismatched-triple→`no_driver` assertion genuinely fires.
+2. **Confirm the `test_capture.py` collision is PRE-EXISTING, not V1-introduced** ([[feedback_ancestry_check_before_reimplement]]). Code used `--import-mode=importlib` to work around a duplicate `test_capture.py` collection collision (known pre-existing — `tests/translation_oracle/test_capture.py` vs the context_pressure capture tests). V1 added a uniquely-named test, so it shouldn't be the cause — confirm, and confirm the importlib full-run (2855) is a sound substitute for the blocked plain run.
