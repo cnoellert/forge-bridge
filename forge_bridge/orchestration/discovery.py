@@ -24,12 +24,6 @@ from forge_bridge.orchestration.registration import (
 )
 from forge_bridge.store.repo import EventRepo
 
-# Discovery requests ALL families by default (empty ``requested_families``) and
-# classifies what siblings declare against the contract vocabulary. Bridge's old
-# local family allowlist {perceptual, validation, generation, matte, editorial}  (sic:
-# ``perceptual`` is the original typo, preserved as evidence — do not "fix" to grep-zero)
-# was retired: it misspelled ``perception`` and omitted ``execution``/``packaging``,
-# silently filtering out both primary siblings (see PHASE-6A-DISCOVERY-ALIGNMENT.md).
 DEFAULT_ENTRY_POINT_GROUP = "forge_bridge.siblings"
 
 
@@ -112,9 +106,6 @@ async def register_all_siblings(
     config_by_sibling: Mapping[str, Mapping[str, Any]] | None = None,
     dry_run: bool = False,
 ) -> RegistrationOutcome:
-    # Empty ``requested_families`` = request-all: siblings register every declared
-    # capability and bridge classifies against the contract vocabulary. Do NOT
-    # default to a bridge-local family allowlist (see PHASE-6A-DISCOVERY-ALIGNMENT).
     sibling_config = config_by_sibling or {}
 
     siblings_attempted = 0
@@ -142,9 +133,14 @@ async def register_all_siblings(
             )
             continue
 
+        # Empty ``requested_families`` = request-all: siblings register every
+        # declared capability and bridge classifies against the contract
+        # vocabulary. Do NOT pass bridge's local family vocabulary here — that
+        # silently filters out contract families bridge does not enumerate (see
+        # PHASE-6A-DISCOVERY-ALIGNMENT.md).
         ctx = BridgeRegistrationContext(
             bridge_version=bridge_version,
-            requested_families=requested_families,
+            requested_families=list(requested_families or []),
             dry_run=dry_run,
             config=dict(sibling_config.get(sibling_name, {})),
         )

@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 from forge_contracts import CapabilityDeclaration, CapabilityRegistration
+from forge_contracts.registration import (
+    BridgeRegistrationContext,  # noqa: F401 - re-exported by this module
+    RegisterCapabilityCallable,  # noqa: F401 - re-exported by this module
+)
 
 from forge_bridge.orchestration.drivers import GenerationDriverRegistry
 from forge_bridge.orchestration.errors import (
@@ -19,25 +23,7 @@ from forge_bridge.orchestration.errors import (
 # call ``register_capability(CapabilityRegistration(declaration=..., handler=...))``.
 # ``RegisterToolCallable`` is retained as a back-compat alias of the bridge-internal
 # shape for the existing ToolRegistry unit surface.
-RegisterCapabilityCallable = Callable[[CapabilityRegistration], None]
 RegisterToolCallable = Callable[["ToolRegistration"], None]
-
-
-@dataclass(frozen=True)
-class BridgeRegistrationContext:
-    """Bridge → sibling. Passed to ``register_bridge_adapters(ctx, register_capability)``.
-
-    ``requested_families`` is the family filter bridge asks siblings to honor;
-    **empty means request-all** (siblings register every declared capability).
-    Discovery must NOT pass bridge's local family vocabulary here — that silently
-    filters out contract families bridge doesn't enumerate (see
-    .planning/PHASE-6A-DISCOVERY-ALIGNMENT.md).
-    """
-
-    bridge_version: str
-    requested_families: frozenset[str]
-    dry_run: bool
-    config: Mapping[str, Any]
 
 
 @dataclass(frozen=True)

@@ -8,7 +8,10 @@ from typing import Any
 
 import pytest
 from forge_contracts import CapabilityDeclaration, CapabilityRegistration
+import forge_contracts.registration as contract_registration
 
+import forge_bridge
+import forge_bridge.orchestration as orchestration
 from forge_bridge.orchestration.discovery import (
     make_db_event_appender,
     register_all_siblings,
@@ -21,6 +24,7 @@ from forge_bridge.orchestration.errors import (
 )
 from forge_bridge.orchestration.registration import (
     BridgeRegistrationContext,
+    RegisterToolCallable,
     ToolRegistration,
     ToolRegistry,
 )
@@ -94,6 +98,19 @@ async def _memory_event_appender(events: list[tuple[str, dict]]):
 
 
 # ── ToolRegistry ──────────────────────────────────────────────────────────────
+
+
+def test_registration_context_reexport_is_published_contract_type() -> None:
+    assert BridgeRegistrationContext is contract_registration.BridgeRegistrationContext
+    assert orchestration.BridgeRegistrationContext is (
+        contract_registration.BridgeRegistrationContext
+    )
+    assert orchestration.RegisterCapabilityCallable is (
+        contract_registration.RegisterCapabilityCallable
+    )
+    assert "RegisterToolCallable" in orchestration.__all__
+    assert RegisterToolCallable is orchestration.RegisterToolCallable
+    assert len(forge_bridge.__all__) == 19
 
 
 def test_tool_registry_register_and_query() -> None:
@@ -456,8 +473,35 @@ async def test_register_all_siblings_dry_run_propagates_to_context() -> None:
     )
 
     assert len(captured) == 1
+    assert isinstance(captured[0], contract_registration.BridgeRegistrationContext)
+    assert captured[0].contract_version == "v0.1"
+    assert captured[0].requested_families == []
     assert captured[0].dry_run is True
     assert captured[0].config == {"api_key": "secret"}
+
+
+async def test_register_all_siblings_requested_families_are_published_list() -> None:
+    captured: list[BridgeRegistrationContext] = []
+
+    async def capture_ctx(ctx, register_capability):
+        captured.append(ctx)
+
+    target = _install_module("tests.mock_sibling_capture_requested", capture_ctx)
+    resolution = resolve_siblings(
+        entry_points_loader=lambda _group: {"mock": target},
+    )
+    events: list[tuple[str, dict]] = []
+    append = await _memory_event_appender(events)
+    await register_all_siblings(
+        resolution,
+        tool_registry=ToolRegistry(),
+        event_appender=append,
+        bridge_version="1.4.1",
+        requested_families=frozenset({"generation", "perception"}),
+    )
+
+    assert sorted(captured[0].requested_families) == ["generation", "perception"]
+    assert isinstance(captured[0].requested_families, list)
 
 
 async def test_register_all_siblings_event_ordering() -> None:
