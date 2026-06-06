@@ -299,6 +299,23 @@ def _attr(entity: dict, key: str, default=None):
     return open_attrs.get(key, default)
 
 
+_NON_FIELD_KEYS = frozenset({"metadata", "attributes", "locations", "relationships"})
+
+
+def _entity_fields(entity: dict) -> dict:
+    """Flattened read-view of an *entity* wire dict: open attributes merged with
+    typed top-level fields (typed wins on collision, mirroring the write-side
+    `_attrs_to_dict` precedence). For call sites that read many fields off one
+    entity — so `fields.get("shot_id")` (open) and `fields.get("version_number")`
+    (typed) both resolve. Entity dicts only — not relationship/edge dicts.
+    """
+    fields = dict(entity.get("metadata") or entity.get("attributes") or {})
+    for k, v in entity.items():
+        if k not in _NON_FIELD_KEYS:
+            fields[k] = v
+    return fields
+
+
 # ─────────────────────────────────────────────────────────────
 # Health
 # ─────────────────────────────────────────────────────────────
@@ -953,7 +970,7 @@ async def list_versions(params: Optional[ListVersionsInput] = None) -> str:
         if params.shot_id:
             versions = [
                 v for v in versions
-                if v.get("attributes", {}).get("parent_id") == params.shot_id
+                if _attr(v, "parent_id") == params.shot_id
             ]
         return _ok({
             "project_id": params.project_id,
@@ -1157,7 +1174,7 @@ async def check_shots(params: CheckShotsInput) -> str:
         # Group versions by parent shot id
         versions_by_shot: dict[str, list] = {}
         for v in versions_result.get("entities", []):
-            parent = v.get("attributes", {}).get("parent_id", "")
+            parent = _attr(v, "parent_id", "")
             versions_by_shot.setdefault(parent, []).append(v)
 
         results = []
@@ -1167,7 +1184,7 @@ async def check_shots(params: CheckShotsInput) -> str:
                 shot_id = shot["id"]
                 vers = versions_by_shot.get(shot_id, [])
                 last_v = max(
-                    (v.get("attributes", {}).get("version_number", 0) for v in vers),
+                    (_attr(v, "version_number", 0) for v in vers),
                     default=0,
                 )
                 results.append({
@@ -1265,7 +1282,7 @@ async def register_publish(params: RegisterPublishInput) -> str:
         versions_result = await client.request(entity_list("version", project_id))
         shot_versions = [
             v for v in versions_result.get("entities", [])
-            if v.get("attributes", {}).get("shot_id") == shot_id
+            if _attr(v, "shot_id") == shot_id
         ]
         next_version = len(shot_versions) + 1
 
@@ -1449,7 +1466,7 @@ async def get_shot_lineage(params: GetShotLineageInput) -> str:
         all_versions = (await client.request(entity_list("version", project_id))).get("entities", [])
         shot_versions = [
             v for v in all_versions
-            if v.get("attributes", {}).get("shot_id") == shot_id
+            if _attr(v, "shot_id") == shot_id
         ]
 
         # Get all media for this project
@@ -1458,8 +1475,8 @@ async def get_shot_lineage(params: GetShotLineageInput) -> str:
 
         # For each version, find its produced media via dependents
         lineage = []
-        for v in sorted(shot_versions, key=lambda x: x.get("attributes", {}).get("version_number", 0)):
-            attrs = v.get("attributes", {})
+        for v in sorted(shot_versions, key=lambda x: _attr(x, "version_number", 0)):
+            attrs = _entity_fields(v)
             deps = await client.request(query_dependents(v["id"]))
             dependent_ids = deps.get("dependents", [])
 
@@ -1573,7 +1590,7 @@ async def blast_radius(params: BlastRadiusInput) -> str:
             v = versions_by_id.get(did)
             if not v:
                 continue
-            v_attrs = v.get("attributes", {})
+            v_attrs = _entity_fields(v)
             shot_id = v_attrs.get("shot_id", "")
             shot = shots_lookup.get(shot_id, {})
             shot_name = shot.get("name", "unknown")
@@ -1765,7 +1782,7 @@ async def list_published_plates(params: ListPublishedPlatesInput) -> str:
 
         plates = []
         for v in versions:
-            attrs = v.get("attributes", {})
+            attrs = _entity_fields(v)
 
             # Apply filters
             if params.shot_name and attrs.get("shot_id"):
@@ -1868,14 +1885,14 @@ async def get_shot_versions(params: GetShotVersionsInput) -> str:
         all_versions = (await client.request(entity_list("version", project_id))).get("entities", [])
         shot_versions = [
             v for v in all_versions
-            if v.get("attributes", {}).get("shot_id") == shot_id
-            and (v.get("attributes", {}).get("asset_name") or v.get("attributes", {}).get("colour_space"))
+            if _attr(v, "shot_id") == shot_id
+            and (_attr(v, "asset_name") or _attr(v, "colour_space"))
         ]
 
         # Build output records
         records = []
         for v in shot_versions:
-            attrs = v.get("attributes", {})
+            attrs = _entity_fields(v)
             locs = v.get("locations", [])
             path = locs[0].get("path", "") if locs else ""
             records.append({
