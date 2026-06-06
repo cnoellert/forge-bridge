@@ -1638,13 +1638,18 @@ async def list_media(params: ListMediaInput) -> str:
 
         records = []
         for m in all_media:
-            m_attrs = m.get("attributes", {})
+            # Open attributes ride under `metadata` in the entity wire shape
+            # (to_dict); accept legacy `attributes` for back-compat.
+            m_attrs = m.get("metadata") or m.get("attributes", {})
             status = m.get("status") or "pending"
+            # Media classification is the media role (raw/grade/comp/render);
+            # `kind` is the legacy key for the same vocabulary.
+            role = m_attrs.get("role") or m_attrs.get("kind", "")
 
             # Filters
             if params.status and status != params.status:
                 continue
-            if params.kind and m_attrs.get("kind", "") != params.kind:
+            if params.kind and params.kind not in (role, m_attrs.get("kind", "")):
                 continue
             if shot_id_filter:
                 # Media links to shot via version — skip if no version_id match
@@ -1662,9 +1667,10 @@ async def list_media(params: ListMediaInput) -> str:
                 "media_id":     m["id"],
                 "name":         m.get("name", ""),
                 "status":       status,
+                "role":         role,
                 "kind":         m_attrs.get("kind", ""),
-                "colour_space": m_attrs.get("colour_space", ""),
-                "resolution":   m.get("resolution", ""),
+                "colour_space": m.get("colorspace") or m_attrs.get("colour_space", ""),
+                "resolution":   m.get("resolution") or m_attrs.get("resolution", ""),
                 "layer_index":  m_attrs.get("layer_index"),
                 "sequence_name": m_attrs.get("sequence_name", ""),
                 "path":         path,
