@@ -75,6 +75,26 @@ Define a bridge-local invocation envelope on contract reference currency (`Artif
 - **IS (proposed):** a dispatcher spine that executes a planned capability; the first thin vertical (family TBD by D1) end-to-end (plan → invoke → record references/events/lineage/provenance); fill the backend_id seam at dispatch; align the generation driver protocol (submit+poll).
 - **IS NOT (this first vertical):** ❌ all three families at once (unless D1 says all-shallow) · ❌ a contract invocation-envelope type (contract-light is constitutional) · ❌ absorbing Pipeline's receipts into bridge (reference + reconcile only) · ❌ a uniform `InvocationHandler` · ❌ the full E2E demonstrator/manifest-of-all-three (that's the capstone the vertical builds toward).
 
+## DT grounding verification (live reads — bridge @ HEAD, sibling repos @ `/Users/cnoellert/GitHub`)
+All three flagged findings **VERIFIED**.
+
+**Finding 2 — submit-missing / plan-never-dispatched: VERIFIED.**
+- `drivers.py` `GenerationDriverProtocol` is **poll-only** (`async def poll` :27; no `submit`/`invoke`/`dispatch`). `worker.py` `GenerationPoller` = `poll_once`/`run_forever`/`_poll_artifact` — polls *already-submitted* artifacts, no submit.
+- `operator_sequence`: produced at `planner_passes.py:336` (hard-coded `operator_id="generate_video_from_image"`); **consumed for provenance/validation only** and **never for dispatch.** ⚠ **Count correction:** it is read at **4 sites** (`lineage_graph.py`, `rule_checks.py:44`, `manifest`, `orch_entity_views.py:183` accessor), not "only `manifest.py:378`." The substantive *no-dispatch-consumer* claim is unaffected.
+- `replay.py` execution transition (`:277`, `:321`) stores `plan_id`; spawns/invokes nothing.
+
+**Finding 1 — three irreducible pathways: VERIFIED (sibling protocols read).**
+- **generation** (`forge-generators/src/forge_generators/drivers/types.py:45-67`): `BackendDriver` Protocol = `async submit()→(request_id, datetime)` **+** `async poll(request_id)→PollResult` **+** `cancel` — full async lifecycle. Bridge's `GenerationDriverProtocol` has the **poll half only** → submit genuinely missing, and the two protocols diverge.
+- **execution** (`forge-pipeline/forge_core/operations/receipts.py`): `ExecutionReceipt` "Durable execution receipts **owned by Pipeline**," points-at bridge identities via contract `Reference`; `contract_registry` advertises "receipt reference for later Bridge reconciliation." Bridge reconciles a *reference*, does not own or poll receipts.
+- **perception** (`forge-vision/forge_vision/bridge/adapters.py`): `classify_shot()` calls `forge_vision.runtime.executor.invoke`, returns the §4.1 dict, emits exactly one graph event — stateless **sync** call, no backend_id, no lifecycle.
+- ⇒ three genuinely different dispatch shapes; the **2A no-uniform-abstraction ruling reconfirmed.**
+
+**Finding 3 — backend_id-vs-surface keying mismatch: VERIFIED.**
+- bridge `GenerationDriverRegistry.get_driver(backend_id)` (`drivers.py:76`) keys by the **composite** `backend_id` (`f"{surface}.{path}"`).
+- Generators `bridge/context.py:23` `get_driver(backend_surface)` keys by **surface alone** (`self.drivers[backend_surface]`). `BackendIdentityTriple` = surface+path+auth+revision (`identity.py:23`) — surface is one component. Real bridge-protocol-vs-sibling-protocol mismatch to reconcile at dispatch (D3).
+
+**DT read on D1 (sequencing philosophy is Creative's):** the three things Phase 7 must *newly* build — the submit verb, the now-due `backend_id` seam, and the surface mismatch — **all live in the generation pathway.** So generation-deep genuinely exercises the hard substrate (not a degenerate proof); the grounding supports Orch's lean *on the merits*. The de-risk-hard-vs-hit-proof-bar trade itself remains Creative's call.
+
 ## Convergence recommendation
 **D1 (thin-vertical shape) is the convergence-worthy decision** — it sequences the entire phase and trades "de-risk the hard substrate" (generation-deep) against "hit the proof bar directly" (all-shallow) against "smallest first step" (Vision-thinnest). D2–D5 have strong enough leans (and direct grounding) to ratify at discuss. Suggested: **converge D1, ratify D2–D5 at discuss, then I draft the first-vertical brief.** Per the split: DT to verify the grounding here (especially the three-pathway claim + the submit-missing / backend_id-vs-surface findings), Creative on D1's sequencing philosophy.
 
