@@ -57,7 +57,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
-from forge_bridge.core.traits import SYSTEM_REL_KEYS, _SYSTEM_REL_NAMES
+from forge_bridge.core.traits import SYSTEM_REL_KEYS
 from forge_bridge.core.vocabulary import Role, STANDARD_ROLES
 
 
