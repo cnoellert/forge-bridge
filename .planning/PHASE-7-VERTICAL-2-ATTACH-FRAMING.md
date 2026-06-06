@@ -1,6 +1,6 @@
 # FRAMING — Phase 7, Vertical 2: attach the dispatcher to the real lifecycle
 
-**Status:** FRAMING — OPEN (one decision for the room). Grounded against `main @ ffb7bc9`. Follows V1 (`6d22d14`, RESOLVED). Parent: `PHASE-7-INVOCATION-FRAMING.md`.
+**Status:** RATIFIED — **B (event-driven, execution-stage event → dispatch consumer)**, with Creative's two-seam split (prove via replay; primary `routing→execution` is a separate later seam). Brief: `PHASE-7-VERTICAL-2-ATTACH-BRIEF.md`. Grounded against `main @ ffb7bc9`. Follows V1 (`6d22d14`, RESOLVED). Parent: `PHASE-7-INVOCATION-FRAMING.md`.
 
 **Why this, not Pipeline (Creative's sequencing call, ratified by the room's "ready for the widening"):** *the seam is solved; the attachment point is not.* V1 proved the dispatcher round-trips in isolation. The highest-value unknown now is what happens when it's attached to the **real lifecycle** — that's where hidden assumptions surface. Pipeline/Vision already benefit from V1's spine but don't stress the integration point. **Consume the proven callable, don't redesign it; wire it and see what breaks** — not another abstraction pass. [[feedback_substrate_before_consumer_landing]]
 
@@ -33,3 +33,17 @@ The fork (A vs B) is the only real decision; my lean is **B (event-driven, exist
 
 ## Orch's prior (held lightly)
 Attach event-driven (B); thread one shared registry; prove it by re-running the generation round-trip through `ingest→…→execution→dispatch→submit→poll→terminal`. Expect the attach to surface at least one hidden assumption (the primary path doesn't even transition to execution today — that alone is a finding). That discovery is the point of the rung.
+
+---
+
+## RATIFIED — B, with the two-seam split (Creative, strong; Orch concur; 2026-06-05)
+**B ratified as the attachment model:** *"execution" is a STATE, not an action — the dispatcher is what happens **because** something entered execution, not what causes execution to exist.* Inline (A) encodes `transition→dispatch` at every callsite, which is exactly the divergence class grounding already caught (replay enters execution; primary doesn't; a third path would forget too). B flips the dependency: *if a run reaches execution, dispatch happens* — the failure mode becomes "why didn't we reach execution?" not "which codepath forgot to dispatch?" Registry ownership resolves cleanly: one `GenerationDriverRegistry` owned by the execution-runtime path, shared by dispatch-in and poll-out (worker already depends on it).
+
+**The load-bearing refinement — SPLIT the two seams (do NOT solve in one motion):**
+1. *"What causes a fresh plan to enter execution?"* — the primary `routing→execution` trigger. **Separate seam, NOT this vertical.**
+2. *"What happens after a run reaches execution?"* — dispatch is consumed. **THIS vertical.**
+Bundling them makes any failure ambiguous (routing-gap vs dispatch-consumption). So V2 changes **exactly one thing — entering execution causes dispatch — and proves it against the path that ALREADY reaches execution (replay).** Everything else stays identical, so whatever breaks is genuinely lifecycle-attachment-related.
+
+**Success criterion (Creative — NOT "generation completed"):** *a real lifecycle transition reaches execution and the dispatcher is consumed automatically, with **no callsite-specific dispatch logic**.* The generation terminal is the evidence; the *property* being proven is automatic consumption-on-state-entry.
+
+**Architecture symmetry (grounding):** the existing `GraphEngineEventConsumer` already consumes the **end** of execution (`generation_artifact_terminal` → advance to audit). V2's dispatch consumer is its **mirror** — consume the **entry** to execution (the `to_stage="execution"` stage-transition event, `engine.py:166`) → `dispatch_plan`. Both bookends, same event-consumer shape. ⇒ V2 brief: `PHASE-7-VERTICAL-2-ATTACH-BRIEF.md`.
