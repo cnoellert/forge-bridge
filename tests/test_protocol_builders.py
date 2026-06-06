@@ -11,11 +11,16 @@ Covers:
 from __future__ import annotations
 
 from forge_bridge.server.protocol import (
+    Message,
     MsgType,
     entity_list,
+    error,
     media_scan,
+    ok,
+    pong,
     query_lineage,
     query_shot_deps,
+    welcome,
 )
 
 
@@ -110,3 +115,49 @@ def test_entity_list_with_only_shot_id_narrowing():
     assert msg["shot_id"] == "s-1"
     assert "role" not in msg
     assert "source_name" not in msg
+
+
+# ── Cross-repo state_ws correlation contract ──────────────────────────────
+# Bridge's native correlation key is "id"; forge_core clients key the request id
+# as "msg_id" and correlate replies on "ref_msg_id" (fallback "msg_id"). The
+# state_ws must read either inbound key and echo "ref_msg_id" so EVERY client
+# correlates. See .planning/STATE-WS-CORRELATION-CONTRACT.md.
+
+
+def test_msg_id_reads_bridge_native_id_key():
+    assert Message({"type": "ping", "id": "Y"}).msg_id == "Y"
+
+
+def test_msg_id_reads_forge_core_msg_id_key():
+    # forge_core envelope: request id under "msg_id", no "id"
+    assert Message({"type": "ping", "msg_id": "X"}).msg_id == "X"
+
+
+def test_is_request_true_for_both_envelopes():
+    assert Message({"type": "ping", "id": "Y"}).is_request()
+    assert Message({"type": "ping", "msg_id": "X"}).is_request()
+
+
+def test_replies_echo_ref_msg_id_for_forge_core_correlation():
+    rid = "req-123"
+    for reply in (
+        ok(rid, {"k": "v"}),
+        error(rid, "INVALID", "bad"),
+        pong(rid),
+        welcome("sess-1", rid),
+    ):
+        # bridge clients correlate on "id"; forge_core clients on "ref_msg_id"
+        assert reply["id"] == rid
+        assert reply["ref_msg_id"] == rid
+
+
+def test_round_trip_correlation_forge_core_envelope():
+    # Simulate the forge_core path end-to-end at the envelope level:
+    # client sends id under "msg_id"; server reads it; reply carries it as
+    # "ref_msg_id" which forge_core's recv loop matches first.
+    request = Message({"type": "ping", "msg_id": "abc"})
+    server_seen_id = request.msg_id            # server reads correlation id
+    reply = pong(server_seen_id)               # server echoes into the reply
+    forge_core_ref = reply.get("ref_msg_id") or reply.msg_id
+    assert server_seen_id == "abc"
+    assert forge_core_ref == "abc"             # forge_core resolves _pending["abc"]

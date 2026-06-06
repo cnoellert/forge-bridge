@@ -54,8 +54,7 @@ Message types are grouped:
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field, asdict
-from typing import Any, Optional
+from typing import Any
 import json
 
 
@@ -179,10 +178,14 @@ class Message(dict):
 
     @property
     def msg_id(self) -> str | None:
-        return self.get("id")
+        # Cross-repo envelope tolerance: bridge's native correlation key is "id",
+        # but forge_core clients key the request id as "msg_id". Accept either so
+        # the state_ws correlates replies for every client. See
+        # .planning/STATE-WS-CORRELATION-CONTRACT.md.
+        return self.get("id") or self.get("msg_id")
 
     def is_request(self) -> bool:
-        return "id" in self
+        return "id" in self or "msg_id" in self
 
     def __repr__(self) -> str:
         return f"Message(type={self.type!r}, id={self.msg_id!r})"
@@ -466,7 +469,9 @@ def role_delete(name: str, migrate_to: str | None = None) -> Message:
 # ─────────────────────────────────────────────────────────────
 
 def ok(request_id: str, result: Any = None) -> Message:
-    msg = Message({"type": MsgType.OK, "id": request_id})
+    # Echo the correlation id under both "id" (bridge clients) and "ref_msg_id"
+    # (forge_core clients correlate on ref_msg_id first). See STATE-WS-CORRELATION.
+    msg = Message({"type": MsgType.OK, "id": request_id, "ref_msg_id": request_id})
     if result is not None:
         msg["result"] = result
     return msg
@@ -479,10 +484,11 @@ def error(
     details: dict | None = None,
 ) -> Message:
     msg = Message({
-        "type":    MsgType.ERROR,
-        "id":      request_id,
-        "code":    code,
-        "message": message,
+        "type":       MsgType.ERROR,
+        "id":         request_id,
+        "ref_msg_id": request_id,
+        "code":       code,
+        "message":    message,
     })
     if details:
         msg["details"] = details
@@ -498,6 +504,7 @@ def welcome(
     return Message({
         "type":             MsgType.WELCOME,
         "id":               request_id,
+        "ref_msg_id":       request_id,
         "session_id":       session_id,
         "server_version":   server_version,
         "registry_summary": registry_summary or {},
@@ -505,7 +512,7 @@ def welcome(
 
 
 def pong(request_id: str) -> Message:
-    return Message({"type": MsgType.PONG, "id": request_id})
+    return Message({"type": MsgType.PONG, "id": request_id, "ref_msg_id": request_id})
 
 
 def event(
