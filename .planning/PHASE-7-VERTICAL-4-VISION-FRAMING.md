@@ -46,3 +46,12 @@ D1/D3/D4 have strong grounded leans → ratify at discuss. **D2 is the real deci
 
 ## Orch's prior (held lightly)
 Vision-first is right. Expect it to reveal the spine is generation-shaped at the completion end (it is) — that revelation *is* the value. Lean D2-(b) family-agnostic advancement as the true answer, (a) as the acceptable thin-first if (b) overruns; route by family (D1); seed+replay to keep the planner deferred (D3). Converge me on D2.
+
+---
+
+## Convergence so far (DT pending — Orch synthesis after)
+**Creative: D2 = (b), with a scope guard. D1/D3/D4 ratify.** Reasoning: (a) only proves "Vision can *pretend* to be Generation" — it dodges the architectural question V4 exists to ask; (c) is near-disqualified (handler-advances escapes the runtime — the exact coupling V2 removed). The three-years-from-now test: a new sync/structured/no-artifact/immediate family should hear "the runtime understands completion independently of generation," not "manufacture a fake generation artifact." This is the referent-resolution echo — *the value isn't getting Vision to run, it's discovering the runtime is **artifact-shaped** instead of **completion-shaped.***
+
+**SCOPE GUARD (Creative, load-bearing):** do NOT build the universal capability runtime in the abstract. Build the **minimum family-agnostic completion primitive** — the smallest thing that lets a synchronous perception result be recorded and execution→audit advance *without* a generation artifact — then run Vision through it. If Vision passes: **completion is now the runtime concept; artifacts are merely one way to reach it.** That's the architectural result, not "Vision works." [[feedback_decomposition_recomposition_validation_arc]]
+
+*Awaiting DT grounding/verify on D2-(b) feasibility (what's the smallest completion primitive that the existing terminal consumer / advancement path can be made to honor?), then Orch synthesis → V4 brief.*
