@@ -8,6 +8,11 @@ from forge_bridge.orchestration.discovery import (
     register_all_siblings,
     resolve_siblings,
 )
+from forge_bridge.orchestration.dispatcher import (
+    DispatchResult,
+    InvocationEnvelope,
+    dispatch_plan,
+)
 from forge_bridge.orchestration.drivers import (
     DriverPollResult,
     DriverReregisteredWarning,
@@ -91,6 +96,9 @@ __all__ = [
     "UNSET",
     "GenerationPoller",
     "PollPassResult",
+    "InvocationEnvelope",
+    "DispatchResult",
+    "dispatch_plan",
     "GenerationDriverProtocol",
     "GenerationDriverRegistry",
     "DriverPollResult",

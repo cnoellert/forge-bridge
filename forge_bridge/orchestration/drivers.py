@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from forge_bridge.store.orch_entity_views import DBOrchGenerationArtifact
+
+if TYPE_CHECKING:
+    from forge_bridge.orchestration.dispatcher import InvocationEnvelope
 
 
 class DriverReregisteredWarning(UserWarning):
@@ -23,6 +27,13 @@ class GenerationDriverProtocol(Protocol):
     """
 
     backend_id: str
+    backend_identity_triple: dict[str, Any]
+
+    async def submit(
+        self,
+        invocation: "InvocationEnvelope",
+    ) -> "DriverSubmitResult":
+        """Submit a generation invocation and return the backend request handle."""
 
     async def poll(
         self,
@@ -39,6 +50,22 @@ class DriverPollResult:
     partial_fidelity_report: dict | None = None
 
 
+@dataclass
+class DriverSubmitResult:
+    request_id: str
+    submitted_at: datetime
+    raw_response_summary: dict
+
+
+def backend_id_from_identity_triple(triple: dict[str, Any]) -> str | None:
+    """Composite bridge backend id from a backend_identity_triple."""
+    surface = triple.get("surface")
+    path = triple.get("path")
+    if not surface or not path:
+        return None
+    return f"{surface}.{path}"
+
+
 def resolve_backend_id(artifact: DBOrchGenerationArtifact) -> str | None:
     """Canonical backend_id from execution_provenance.backend_identity_triple."""
     execution_provenance = artifact.execution_provenance
@@ -47,11 +74,7 @@ def resolve_backend_id(artifact: DBOrchGenerationArtifact) -> str | None:
     triple = execution_provenance.get("backend_identity_triple")
     if not isinstance(triple, dict):
         return None
-    surface = triple.get("surface")
-    path = triple.get("path")
-    if not surface or not path:
-        return None
-    return f"{surface}.{path}"
+    return backend_id_from_identity_triple(triple)
 
 
 class GenerationDriverRegistry:
@@ -64,7 +87,17 @@ class GenerationDriverRegistry:
         self._drivers: dict[str, GenerationDriverProtocol] = {}
 
     def register_driver(self, driver: GenerationDriverProtocol) -> None:
-        backend_id = driver.backend_id
+        # Bridge keys generation drivers by the same composite id the planner
+        # emits and the poller reverse-resolves from artifact provenance:
+        # backend_identity_triple -> "surface.path". Generators' native runtime
+        # keys by surface/request_id; the real-driver adapter reconciles that
+        # later while this registry keeps bridge-side resolution consistent.
+        triple = getattr(driver, "backend_identity_triple", None)
+        backend_id = (
+            backend_id_from_identity_triple(triple)
+            if isinstance(triple, dict)
+            else None
+        ) or driver.backend_id
         if backend_id in self._drivers:
             warnings.warn(
                 f"Overwriting existing driver for backend_id={backend_id!r}",
