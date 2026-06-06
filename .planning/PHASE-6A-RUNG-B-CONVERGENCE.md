@@ -1,6 +1,6 @@
 # CONVERGENCE SEED — D3 / Rung B: does raw `CapabilityDeclaration` adoption earn its planner re-ripple?
 
-**Status:** CONVERGED — A rejected (unanimous); lean **C (close motion 2)** with B′ as a pre-grounded evidence-triggered fast-follow; **one operator judgment outstanding** (is `tool_id`≠`capability_id` felt friction in steady-state workflow? yes → B′-now). Seed drafted by Orch for DT + Creative (+ operator). Grounded against `main @ 9761fa6` (2A `a9ca444`, D4 `85ce467`, D2 `02293f6` all landed + verified). Parent framing: `PHASE-6A-RUNG-2B-FRAMING.md` § D3.
+**Status:** RESOLVED — A rejected (unanimous); **C ratified by operator** (2026-06-05: *"we can leave — capability is implied"* = no felt friction; `tool_id` reads as the capability in context). **Motion 2 closed.** B′ recorded as a pre-grounded, evidence-triggered fast-follow (trigger below). Seed drafted by Orch for DT + Creative (+ operator). Grounded against `main @ 9761fa6` (2A `a9ca444`, D4 `85ce467`, D2 `02293f6` all landed + verified). Parent framing: `PHASE-6A-RUNG-2B-FRAMING.md` § D3.
 
 This is the **last piece of motion 2**. D1 (split), D4 (perceptual routing defect), D2 (context de-shadow) are closed. D3 is the one genuinely contested call — opened as a convergence, **not** a foregone "do B."
 
@@ -103,3 +103,10 @@ Leaning **B′ or C over A.** The burden-flip is decisive for me: A pays a plann
 **Converged lean: C now — close motion 2 at D2 — with B′ recorded as a pre-grounded, evidence-triggered fast-follow.** Rationale: the burden-flip standard the room set applies *recursively* to B′ — pay the rename for *proven* friction, not anticipated. Reversibility is decisively asymmetric and the grounding is already done, so B′ is **shovel-ready** (5 sites enumerated, adapter identified, dataclass→pydantic-or-rename confirmed safe) the instant the friction is felt. Deferring costs ~nothing; doing B′ prematurely pays a planner-touching rename for a benefit not yet demonstrated in steady state. **B′ trigger:** the `tool_id`/`capability_id` translation showing up in *ordinary* (non-rung) human workflow → at which point B′ is a same-day brief.
 
 **The one operator override (the last bit of this convergence):** if you judge the divergence is *already* biting in steady-state workflow — not just during this rung — then **B′-now** is correct: it's decided and shovel-ready, and there's no reason to defer a rename you already know you want. That judgment is yours; everything else has converged.
+
+---
+
+## RULING — operator (2026-06-05): C. Motion 2 closed.
+*"We can leave. Capability is implied."* — the `tool_id`≠`capability_id` divergence does **not** register as steady-state friction; `tool_id` reads as the capability in context. So no rename is bought today. **Motion 2 (registry-type separation) is closed:** 2A (decompose, `a9ca444`) + D4 (perceptual routing fix, `85ce467`) + D2 (context de-shadow, `02293f6`) landed & verified; D3 = **C** (no B). **A is rejected of record** (no positive evidence; same-ripple-as-B′ plus type-coupling).
+
+**B′ — DEFERRED with a live re-entry trigger (not rejected).** It is fully pre-grounded and *shovel-ready* (rename `ToolRegistration` fields → `capability_id`/`input_schema`/`metadata`; retarget the 5 `planner_passes.py` sites; keep the bridge-owned type + adapter). **Trigger:** the `tool_id`/`capability_id` translation showing up as friction in *ordinary* (non-rung) human workflow — docs, plans, reviews, debugging. When that's felt, B′ is a same-day brief. [[feedback_explicitly_unbound_vs_implicitly_rejected]]
