@@ -166,6 +166,7 @@ class DispatchOnExecutionEntryConsumer:
             driver_registry=self._driver_registry,
             session_factory=self._session_factory,
             event_appender=self._append_event,
+            run_id=run_id,
         )
         action: DispatchConsumerAction = (
             "dispatched" if dispatch.status == "submitted" else "refused"

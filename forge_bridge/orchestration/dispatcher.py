@@ -82,6 +82,7 @@ async def dispatch_plan(
     driver_registry: GenerationDriverRegistry,
     session_factory: async_sessionmaker[AsyncSession],
     event_appender: Callable[[str, dict], Awaitable[None]],
+    run_id: uuid.UUID | None = None,
 ) -> DispatchResult:
     """Dispatch the selected generation step and create a submitted artifact."""
 
@@ -137,6 +138,8 @@ async def dispatch_plan(
         },
         "polling_history": [],
     }
+    if run_id is not None:
+        body["run_id"] = str(run_id)
 
     async with session_factory() as session:
         artifact = await GenerationArtifactRepo(session).insert_submitted(body)
@@ -150,6 +153,7 @@ async def dispatch_plan(
             "operator_id": step["operator_id"],
             "backend_id": backend_id,
             "request_id": handle.request_id,
+            "run_id": str(run_id) if run_id is not None else None,
         },
     )
     await event_appender(

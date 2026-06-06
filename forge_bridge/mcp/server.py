@@ -50,6 +50,7 @@ from forge_bridge.store.session import get_async_session_factory
 if TYPE_CHECKING:
     from forge_bridge.console.manifest_service import ManifestService
     from forge_bridge.learning.execution_log import ExecutionLog
+    from forge_bridge.orchestration.drivers import GenerationDriverRegistry
     from forge_bridge.console.read_api import ConsoleReadAPI  # Phase 16.1 D-07 #1
 
 logger = logging.getLogger(__name__)
@@ -130,6 +131,11 @@ class _BootstrapResult:
     manifest_service: Any
     console_read_api: Any
     watcher_task: asyncio.Task
+    generation_driver_registry: GenerationDriverRegistry
+    execution_runtime_shutdown: asyncio.Event
+    dispatch_consumer_task: asyncio.Task
+    generation_poller_task: asyncio.Task
+    terminal_consumer_task: asyncio.Task
     console_task: Optional[asyncio.Task]
     console_server: Optional[Any]
 
@@ -193,6 +199,50 @@ async def _wait_for_bus(
     return False
 
 
+def _execution_runtime_interval_seconds() -> float:
+    """Worker polling cadence for the daemon-owned execution runtime."""
+    return float(os.environ.get("FORGE_EXECUTION_RUNTIME_INTERVAL_SECONDS", "1.0"))
+
+
+async def _run_terminal_consumer(
+    session_factory: Any,
+    *,
+    poll_interval_seconds: float,
+    shutdown_event: asyncio.Event,
+) -> None:
+    """Run the terminal consumer with daemon-owned commit boundaries."""
+    from forge_bridge.orchestration.engine import GraphEngine
+    from forge_bridge.orchestration.event_consumer import GraphEngineEventConsumer
+
+    async with session_factory() as session:
+        consumer = GraphEngineEventConsumer(
+            session,
+            graph_engine=GraphEngine(session),
+        )
+        last_event_id = None
+        while True:
+            try:
+                results = await consumer.process_pending(after_event_id=last_event_id)
+                if results:
+                    last_event_id = results[-1].event_id
+                    await session.commit()
+            except Exception:
+                await session.rollback()
+                logger.exception("terminal consumer pass failed")
+
+            if shutdown_event.is_set():
+                return
+            await asyncio.sleep(poll_interval_seconds)
+
+
+async def _cancel_task(task: asyncio.Task) -> None:
+    task.cancel()
+    try:
+        await task
+    except (asyncio.CancelledError, Exception):
+        pass
+
+
 async def bootstrap_daemon(mcp_server: FastMCP) -> _BootstrapResult:
     """Single source of truth for daemon initialization (Phase A.4).
 
@@ -210,8 +260,9 @@ async def bootstrap_daemon(mcp_server: FastMCP) -> _BootstrapResult:
       2. Instantiate canonical ExecutionLog + ManifestService.
       3. Launch the registry watcher task.
       4. Construct ConsoleReadAPI with LLMRouter wired in (Bug B fix).
-      5. Build the console Starlette app + register MCP resources.
-      6. Launch the console uvicorn task on :9996.
+      5. Start the execution runtime workers (Phase 7 V3).
+      6. Build the console Starlette app + register MCP resources.
+      7. Launch the console uvicorn task on :9996.
 
     Returns a ``_BootstrapResult`` carrying the singletons + tasks the
     lifespan needs to expose (for tools, the chat handler, telemetry)
@@ -268,7 +319,47 @@ async def bootstrap_daemon(mcp_server: FastMCP) -> _BootstrapResult:
     )
     _canonical_console_read_api = console_read_api
 
-    # Step 5 — Starlette app + MCP resources/tools registration.
+    # Step 5 — execution runtime (Phase 7 V3).
+    # V3 establishes the runtime; it does not expand the federation. Production
+    # starts with an empty registry and degrades to dispatch_no_driver until a
+    # later adapter rung registers real generation drivers.
+    from forge_bridge.orchestration.dispatch_consumer import (
+        DispatchOnExecutionEntryConsumer,
+    )
+    from forge_bridge.orchestration.drivers import GenerationDriverRegistry
+    from forge_bridge.orchestration.worker import GenerationPoller
+
+    generation_driver_registry = GenerationDriverRegistry()
+    execution_runtime_shutdown = asyncio.Event()
+    runtime_interval_seconds = _execution_runtime_interval_seconds()
+    dispatch_consumer_task = asyncio.create_task(
+        DispatchOnExecutionEntryConsumer(
+            session_factory,
+            driver_registry=generation_driver_registry,
+        ).run_forever(
+            poll_interval_seconds=runtime_interval_seconds,
+            shutdown_event=execution_runtime_shutdown,
+        ),
+        name="dispatch_consumer_task",
+    )
+    generation_poller_task = asyncio.create_task(
+        GenerationPoller(
+            session_factory,
+            generation_driver_registry,
+            poll_interval_seconds=runtime_interval_seconds,
+        ).run_forever(shutdown_event=execution_runtime_shutdown),
+        name="generation_poller_task",
+    )
+    terminal_consumer_task = asyncio.create_task(
+        _run_terminal_consumer(
+            session_factory,
+            poll_interval_seconds=runtime_interval_seconds,
+            shutdown_event=execution_runtime_shutdown,
+        ),
+        name="terminal_consumer_task",
+    )
+
+    # Step 6 — Starlette app + MCP resources/tools registration.
     from forge_bridge.console.app import build_console_app
     from forge_bridge.console.resources import register_console_resources
 
@@ -278,7 +369,7 @@ async def bootstrap_daemon(mcp_server: FastMCP) -> _BootstrapResult:
         session_factory=session_factory,
     )
 
-    # Step 6 — launch console uvicorn task (may degrade per D-29 / API-06).
+    # Step 7 — launch console uvicorn task (may degrade per D-29 / API-06).
     console_task, console_server = await _start_console_task(
         app, "127.0.0.1", console_port,
     )
@@ -288,6 +379,11 @@ async def bootstrap_daemon(mcp_server: FastMCP) -> _BootstrapResult:
         manifest_service=manifest_service,
         console_read_api=console_read_api,
         watcher_task=watcher_task,
+        generation_driver_registry=generation_driver_registry,
+        execution_runtime_shutdown=execution_runtime_shutdown,
+        dispatch_consumer_task=dispatch_consumer_task,
+        generation_poller_task=generation_poller_task,
+        terminal_consumer_task=terminal_consumer_task,
         console_task=console_task,
         console_server=console_server,
     )
@@ -297,8 +393,8 @@ async def teardown_daemon(result: _BootstrapResult) -> None:
     """Reverse of ``bootstrap_daemon`` — every daemon entry point's
     lifespan exit MUST go through this function.
 
-    Order: console uvicorn → watcher task → bridge client. Mirrors the
-    prior ``_lifespan`` finally block verbatim.
+    Order: console uvicorn → execution runtime → watcher task → bridge
+    client. Mirrors construction order in reverse.
     """
     global _server_started, _canonical_execution_log, _canonical_manifest_service, _canonical_watcher_task, _canonical_console_read_api
 
@@ -315,11 +411,11 @@ async def teardown_daemon(result: _BootstrapResult) -> None:
         except (asyncio.CancelledError, Exception):
             pass
 
-    result.watcher_task.cancel()
-    try:
-        await result.watcher_task
-    except asyncio.CancelledError:
-        pass
+    result.execution_runtime_shutdown.set()
+    await _cancel_task(result.terminal_consumer_task)
+    await _cancel_task(result.generation_poller_task)
+    await _cancel_task(result.dispatch_consumer_task)
+    await _cancel_task(result.watcher_task)
 
     await shutdown_bridge()
     _server_started = False
