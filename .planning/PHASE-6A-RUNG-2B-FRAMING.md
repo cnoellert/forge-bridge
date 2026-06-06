@@ -49,8 +49,10 @@ This is the **second member of the family-reconcile equivalence class**: the thi
 ### D1 — Sequencing: is motion (2) one rung or two? **[Orch lean: SPLIT]**
 Step-2.1 is a contained de-shadow with no planner ripple; B re-ripples the planner. Do **Step-2.1 first** (cheap, pure, low-risk), then frame B on its own evidence. Bundling re-conflates the two axes Rung 2 separated. *One change per seam.* [[feedback_arbitration_boundary_discipline]]
 
-### D2 — Step-2.1 adoption: clean swap to published types? **[Orch lean: YES, low-risk]**
+### D2 — Step-2.1 adoption: clean swap to published types? **[Orch lean: YES, low-risk] — LANDED `02293f6`, pending DT verify**
 Published `BridgeRegistrationContext` ⊇ bridge's constructed fields; `RegisterCapabilityCallable` is a type alias. Swap is contained to `registration.py` + `discovery.py:144`. **Open sub-question (DT grounding):** does any bridge-side reader depend on `requested_families` being a `frozenset` (set ops / membership semantics), or on the absence of `contract_version`? Request-all passes empty, so likely moot — confirm, don't assume.
+
+**LANDED `02293f6` (brief: `PHASE-6A-RUNG-2B-D2-BRIEF.md`).** Local `BridgeRegistrationContext` + `RegisterCapabilityCallable` deleted; both re-exported from `forge_contracts.registration`; `RegisterToolCallable` kept local (not over-scrubbed); published pydantic context constructed at `discovery.py:141-146` with `requested_families=list(...)` + default `contract_version`; request-all guidance relocated to the construction site (`:136-140`). Tests added for identity / list-shaped `requested_families` / default contract-version / unchanged export names. Self-report: `pytest test_sibling_registration + test_planner + test_sibling_discovery_live` → 57 passed / 1 skipped; ruff clean; identity proof passed; `__all__` → 19. *Pending DT independent verify as the closing gate.*
 
 ### D3 — Rung B: is it worth doing at all — and if so, raw `CapabilityDeclaration` or a bridge-owned record mirroring contract field *names*? **[Orch lean: CONVERGENCE — genuinely balanced]**
 Apply the room's own A-now-B-later test — *which smell has positive evidence?*
@@ -86,5 +88,5 @@ It is a **live bug**, exists regardless of B (both record shapes carry `declarat
 ### Sequencing state (2026-06-05)
 - **D1 SPLIT** — ratified (DT + Creative). Motion 2 is not one rung.
 - **D4 RESOLVED `85ce467`** (+ doc-provenance comment correction) — DT verify PASSED.
-- **D2 discuss-ready** — Step-2.1 clean de-shadow; strong lean YES, ratify at discuss (no convergence needed).
+- **D2 LANDED `02293f6`** — Step-2.1 de-shadow; pending DT independent verify. Bridge + siblings now share one registration context type.
 - **D3 unresolved-by-design** — burden flipped per Creative: B is no longer an inherited deferred obligation. Re-open as a real convergence pass framed narrowly — *"what defect remains that ONLY raw `CapabilityDeclaration` adoption solves?"* — **after** D4 + D2 land, so it argues against the strongest post-cleanup evidence.
