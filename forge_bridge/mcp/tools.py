@@ -1466,7 +1466,7 @@ async def get_shot_lineage(params: GetShotLineageInput) -> str:
         all_versions = (await client.request(entity_list("version", project_id))).get("entities", [])
         shot_versions = [
             v for v in all_versions
-            if _attr(v, "shot_id") == shot_id
+            if _attr(v, "parent_id") == shot_id
         ]
 
         # Get all media for this project
@@ -1783,9 +1783,10 @@ async def list_published_plates(params: ListPublishedPlatesInput) -> str:
         plates = []
         for v in versions:
             attrs = _entity_fields(v)
+            shot_id = attrs.get("parent_id", "")
 
             # Apply filters
-            if params.shot_name and attrs.get("shot_id"):
+            if params.shot_name and shot_id:
                 # need shot name — we'll filter after building the shot map
                 pass
             if params.colour_space and attrs.get("colour_space", "") != params.colour_space:
@@ -1806,7 +1807,7 @@ async def list_published_plates(params: ListPublishedPlatesInput) -> str:
             plates.append({
                 "version_id":     v["id"],
                 "version_name":   v.get("name", ""),
-                "shot_id":        attrs.get("shot_id", ""),
+                "shot_id":        shot_id,
                 "asset_name":     attrs.get("asset_name", ""),
                 "track":          attrs.get("track", ""),
                 "colour_space":   attrs.get("colour_space", ""),
@@ -1885,7 +1886,7 @@ async def get_shot_versions(params: GetShotVersionsInput) -> str:
         all_versions = (await client.request(entity_list("version", project_id))).get("entities", [])
         shot_versions = [
             v for v in all_versions
-            if _attr(v, "shot_id") == shot_id
+            if _attr(v, "parent_id") == shot_id
             and (_attr(v, "asset_name") or _attr(v, "colour_space"))
         ]
 

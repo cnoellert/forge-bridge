@@ -16,8 +16,20 @@ production linkage is a distinct producer/data-model concern.
 import asyncio
 import json
 
-from forge_bridge.mcp.tools import _attr, _entity_fields, list_versions, ListVersionsInput
+from forge_bridge.mcp.tools import (
+    GetShotLineageInput,
+    GetShotVersionsInput,
+    ListPublishedPlatesInput,
+    ListVersionsInput,
+    _attr,
+    _entity_fields,
+    get_shot_lineage,
+    get_shot_versions,
+    list_published_plates,
+    list_versions,
+)
 import forge_bridge.mcp.tools as fbt
+from forge_bridge.server.protocol import MsgType
 
 
 # ── pure accessor coverage ───────────────────────────────────────────────
@@ -97,3 +109,88 @@ def test_list_versions_filters_by_parent_id():
 def test_list_versions_unfiltered_returns_all():
     data = _run([_LINKED, _OTHER])
     assert data["count"] == 2
+
+
+# ── integration: published-shot readers use canonical parent_id ─────────
+
+_PROJECT = "project-1"
+_SHOT_ENTITY = {"id": _SHOT, "entity_type": "shot", "name": "SHOT_010", "metadata": {}}
+_PUBLISHED_LINKED = {
+    "id": "v-linked",
+    "entity_type": "version",
+    "name": "SHOT_010_plate_v001",
+    "version_number": 1,
+    "parent_id": _SHOT,
+    "parent_type": "shot",
+    "metadata": {
+        "asset_name": "SHOT_010_plate",
+        "track": "L01",
+        "colour_space": "ACEScct",
+        "sequence_name": "seq_a",
+        "version_number": 1,
+    },
+    "locations": [{"storage_type": "local", "path": "/show/SHOT_010_plate_v001.exr"}],
+}
+_PUBLISHED_OTHER = {
+    "id": "v-other",
+    "entity_type": "version",
+    "name": "SHOT_020_plate_v001",
+    "version_number": 1,
+    "parent_id": "00000000-0000-0000-0000-000000000000",
+    "parent_type": "shot",
+    "metadata": {
+        "asset_name": "SHOT_020_plate",
+        "colour_space": "ACEScct",
+        "version_number": 1,
+    },
+}
+
+
+class _FakeRegistryClient:
+    async def request(self, msg, timeout=None):
+        if msg["type"] == MsgType.ENTITY_LIST and msg["entity_type"] == "shot":
+            return {"entities": [_SHOT_ENTITY]}
+        if msg["type"] == MsgType.ENTITY_LIST and msg["entity_type"] == "version":
+            return {"entities": [_PUBLISHED_LINKED, _PUBLISHED_OTHER]}
+        if msg["type"] == MsgType.ENTITY_LIST and msg["entity_type"] == "media":
+            return {"entities": []}
+        if msg["type"] == MsgType.QUERY_DEPENDENTS:
+            return {"dependents": []}
+        raise AssertionError(f"Unexpected request: {msg}")
+
+
+def _run_registry_tool(tool, params):
+    orig = fbt._client
+    fbt._client = lambda: _FakeRegistryClient()
+    try:
+        return json.loads(asyncio.run(tool(params)))
+    finally:
+        fbt._client = orig
+
+
+def test_get_shot_versions_filters_linked_versions_by_parent_id():
+    data = _run_registry_tool(
+        get_shot_versions,
+        GetShotVersionsInput(project_id=_PROJECT, shot_name="SHOT_010"),
+    )
+    assert data["count"] == 1
+    assert data["versions"][0]["version_id"] == "v-linked"
+
+
+def test_get_shot_lineage_filters_linked_versions_by_parent_id():
+    data = _run_registry_tool(
+        get_shot_lineage,
+        GetShotLineageInput(project_id=_PROJECT, shot_name="SHOT_010"),
+    )
+    assert data["version_count"] == 1
+    assert data["lineage"][0]["version_id"] == "v-linked"
+
+
+def test_list_published_plates_filters_linked_versions_by_parent_id():
+    data = _run_registry_tool(
+        list_published_plates,
+        ListPublishedPlatesInput(project_id=_PROJECT, shot_name="SHOT_010"),
+    )
+    assert data["count"] == 1
+    assert data["plates"][0]["version_id"] == "v-linked"
+    assert data["plates"][0]["shot_id"] == _SHOT
