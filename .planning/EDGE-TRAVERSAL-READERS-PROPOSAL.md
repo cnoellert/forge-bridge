@@ -1,8 +1,11 @@
 # Proposal — readers traverse the relationship edge, not duplicated attributes
 
 **Date:** 2026-06-06
-**Status:** PROPOSAL / follow-on. **No behavior change made.** Captured per room direction
-(verify → propose → capture).
+**Status:** ✅ IMPLEMENTED 2026-06-06 (reader migration + 2b). Sibling-check expanded the
+scope from the 5 named readers to **7 sites** (see §Implementation note). Test:
+`tests/test_edge_traversal_readers.py`; the prior `parent_id`-era integration tests in
+`tests/test_entity_field_accessors.py` were re-pointed to the edge contract.
+Originally captured per room direction (verify → propose → capture).
 **Cross-refs:** `RULING-DURABLE-OWNERSHIP-VS-CONTEXTUAL-PLACEMENT.md`,
 `VERSION-LINKAGE-CORRECTED.md`, `Q4-SEAM-ALLOCATION.md` (#4a freezes the relationship-edge
 vocab), reader migration commit `71e3643`.
@@ -113,3 +116,46 @@ other traversals. The primitive and the model are in place.
 0 `shot_id`), and that `query_dependents` returns the version ids for a shot (it powers
 `get_dependents` today). Use the two-probe method correctly — verify any zero against a
 known-present instance (the bad-join lesson).
+
+---
+
+## Implementation note (2026-06-06) — what shipped
+
+**Mechanism (no wire-contract change).** Two helpers in `forge_bridge/mcp/tools.py`, both
+built on the existing, exercised `query_dependents` primitive:
+- `_versions_of_shot(client, shot_id, all_versions)` — forward (shot → versions): traverse
+  the shot's incoming edges, intersect sources against the project's version set (type-safe:
+  render media / stacks that also point at the shot are excluded).
+- `_version_shot_map(client, shots, all_versions)` — reverse (version → shot): the inverse,
+  for readers that enumerate versions project-wide and need each version's owning shot.
+
+Critically, `query_dependents` returns **all** incoming-edge sources unfiltered by rel type
+(router `ok({"dependents": [...]})`), so the intersect-against-versions step is load-bearing,
+not cosmetic. This mirrors the idiom `get_shot_lineage` already used against `media_by_id`.
+
+**Scope: 5 named → 7 sites (sibling-check).** The brief named 5; scanning siblings surfaced
+two more members of the same equivalence class, both migrated:
+- `check_shots` (forward; grouped versions by `parent_id` to compute `next_version`/
+  `version_count`). **Decisive:** it computes `next_version` and so does `register_publish`.
+  Migrating one to edge-count and leaving the other on attr-count would make them disagree on
+  any edge-only version → split-brain version numbering (caller told "next=1", publish creates
+  "v2"). They had to move together.
+- `blast_radius` (reverse; resolved a version's shot via the `shot_id` attr → "unknown" for
+  edge-only versions).
+
+The seven: `list_versions`, `get_shot_versions`, `get_shot_lineage`, `check_shots`,
+`register_publish` (count) + 2b, `list_published_plates`, `blast_radius`.
+
+**2b applied.** `register_publish` no longer denormalizes a `shot_id`/`parent_id` attribute on
+the version it creates — the `version_of` edge is the sole link. This keeps register_publish
+output as the canonical edge-only specimen the producer-agnostic test relies on.
+
+**Verification.** `tests/test_edge_traversal_readers.py` — a fixture mirroring the live
+cross-tab (a `parent_id`+edge version, a `register_publish`-shape edge-only version, and a
+render media also pointing at the shot for type-exclusion). Each reader is asserted to surface
+BOTH versions; these tests fail under the old attribute filters. Full suite: 2853 passed.
+
+**Cost note / future seam item.** The reverse-map readers (`list_published_plates`,
+`blast_radius`) build the version→shot map with one `query_dependents` per shot (N_shots wire
+calls). Fine for typical projects; a bulk "list version_of edges" query would collapse it to
+one round-trip — a candidate seam-contract obligation, not needed now.
