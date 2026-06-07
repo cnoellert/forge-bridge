@@ -3,14 +3,15 @@
 `entity_list`/`entity_get` return to_dict shape — typed fields at the top level,
 open/pipeline attributes under `metadata`. Read sites historically used a
 top-level `attributes` key that to_dict never emits, so every projected field
-came back empty. These tests lock the shared accessors and prove a representative
-read tool (`list_versions`) behaves correctly when versions ARE linked — the
-filter that previously matched nothing now matches the linked version.
+came back empty. The first group of tests locks the shared accessors.
 
-NOTE: in live data versions currently carry NO shot linkage (no parent_id, no
-version_of edge) — see the separately-tracked version ownership/linkage gap.
-These tests use properly-linked fixtures: the read path is correct; the absent
-production linkage is a distinct producer/data-model concern.
+The integration group locks the shot-version readers' linkage contract. As of
+the edge-traversal migration (EDGE-TRAVERSAL-READERS-PROPOSAL.md) these readers
+resolve a version's shot by traversing the `version_of` graph edge, not by
+reading a `parent_id`/`shot_id` attribute — so they surface versions linked only
+by edge and exclude versions of other shots. Fixtures keep `parent_id` (canonical
+versions carry both attr and edge), but the *filter* runs through the edge; the
+producer-agnostic edge-only case lives in test_edge_traversal_readers.py.
 """
 
 import asyncio
@@ -72,16 +73,20 @@ def test_entity_fields_merges_typed_and_open():
 # ── integration: list_versions filters linked versions correctly ─────────
 
 class _FakeClient:
-    def __init__(self, entities):
+    def __init__(self, entities, dependents=None):
         self._entities = entities
+        self._dependents = dependents or []  # version_of edge sources for the shot
 
     async def request(self, msg, timeout=None):
+        if msg["type"] == MsgType.QUERY_DEPENDENTS:
+            return {"dependents": self._dependents}
         return {"entities": self._entities}
 
 
 _SHOT = "942a375d-bb4d-4584-8c98-d2d6f8805c55"
 
-# to_dict wire shape: parent_id is a typed top-level field
+# to_dict wire shape: parent_id is a typed top-level field (kept to mirror
+# canonical versions, which carry both the attr and the edge)
 _LINKED = {"id": "v1", "entity_type": "version", "version_number": 1,
            "parent_id": _SHOT, "parent_type": "shot", "metadata": {}}
 _OTHER = {"id": "v2", "entity_type": "version", "version_number": 1,
@@ -89,19 +94,19 @@ _OTHER = {"id": "v2", "entity_type": "version", "version_number": 1,
           "metadata": {}}
 
 
-def _run(entities, **params):
+def _run(entities, dependents=None, **params):
     orig = fbt._client
-    fbt._client = lambda: _FakeClient(entities)
+    fbt._client = lambda: _FakeClient(entities, dependents=dependents)
     try:
         return json.loads(asyncio.run(list_versions(ListVersionsInput(project_id="p", **params))))
     finally:
         fbt._client = orig
 
 
-def test_list_versions_filters_by_parent_id():
-    """The shot filter matches the linked version — would be 0 under the old
-    wrong-key read (v.get('attributes',{}).get('parent_id') was always None)."""
-    data = _run([_LINKED, _OTHER], shot_id=_SHOT)
+def test_list_versions_filters_by_version_of_edge():
+    """The shot filter matches the version linked by the version_of edge and
+    excludes the other shot's version — resolved via edge traversal, not attr."""
+    data = _run([_LINKED, _OTHER], dependents=["v1"], shot_id=_SHOT)
     assert data["count"] == 1
     assert data["versions"][0]["id"] == "v1"
 
@@ -111,7 +116,7 @@ def test_list_versions_unfiltered_returns_all():
     assert data["count"] == 2
 
 
-# ── integration: published-shot readers use canonical parent_id ─────────
+# ── integration: published-shot readers traverse the version_of edge ─────────
 
 _PROJECT = "project-1"
 _SHOT_ENTITY = {"id": _SHOT, "entity_type": "shot", "name": "SHOT_010", "metadata": {}}
@@ -155,6 +160,10 @@ class _FakeRegistryClient:
         if msg["type"] == MsgType.ENTITY_LIST and msg["entity_type"] == "media":
             return {"entities": []}
         if msg["type"] == MsgType.QUERY_DEPENDENTS:
+            # only v-linked is linked to _SHOT by the version_of edge;
+            # v-other belongs to a different shot and is not returned here
+            if msg["entity_id"] == _SHOT:
+                return {"dependents": ["v-linked"]}
             return {"dependents": []}
         raise AssertionError(f"Unexpected request: {msg}")
 
@@ -168,7 +177,7 @@ def _run_registry_tool(tool, params):
         fbt._client = orig
 
 
-def test_get_shot_versions_filters_linked_versions_by_parent_id():
+def test_get_shot_versions_filters_linked_versions_by_edge():
     data = _run_registry_tool(
         get_shot_versions,
         GetShotVersionsInput(project_id=_PROJECT, shot_name="SHOT_010"),
@@ -177,7 +186,7 @@ def test_get_shot_versions_filters_linked_versions_by_parent_id():
     assert data["versions"][0]["version_id"] == "v-linked"
 
 
-def test_get_shot_lineage_filters_linked_versions_by_parent_id():
+def test_get_shot_lineage_filters_linked_versions_by_edge():
     data = _run_registry_tool(
         get_shot_lineage,
         GetShotLineageInput(project_id=_PROJECT, shot_name="SHOT_010"),
@@ -186,7 +195,7 @@ def test_get_shot_lineage_filters_linked_versions_by_parent_id():
     assert data["lineage"][0]["version_id"] == "v-linked"
 
 
-def test_list_published_plates_filters_linked_versions_by_parent_id():
+def test_list_published_plates_filters_linked_versions_by_edge():
     data = _run_registry_tool(
         list_published_plates,
         ListPublishedPlatesInput(project_id=_PROJECT, shot_name="SHOT_010"),

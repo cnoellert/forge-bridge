@@ -317,6 +317,42 @@ def _entity_fields(entity: dict) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────
+# Version ↔ shot linkage — edge traversal
+#
+# A version belongs to a shot through the ``version_of`` graph edge, which is the
+# durable truth. Readers prefer the edge over duplicated ``parent_id``/``shot_id``
+# attributes (projections that drift): different producers denormalize different
+# attributes — or none, as ``register_publish`` does — so an attribute filter
+# silently misses edge-only versions. Both helpers traverse the existing
+# ``query_dependents`` primitive (incoming edges to the shot) and intersect the
+# sources against the project's version set, so non-version dependents (render
+# media, stacks) are excluded by type — the traverse-then-intersect idiom
+# ``get_shot_lineage`` already uses against media.
+# ─────────────────────────────────────────────────────────────
+
+async def _versions_of_shot(client, shot_id: str, all_versions: list) -> list:
+    """Versions linked to ``shot_id`` via the ``version_of`` edge (producer-agnostic)."""
+    from forge_bridge.server.protocol import query_dependents
+    deps = await client.request(query_dependents(shot_id))
+    dep_ids = set(deps.get("dependents", []))
+    return [v for v in all_versions if v["id"] in dep_ids]
+
+
+async def _version_shot_map(client, shots: list, all_versions: list) -> dict:
+    """Map version_id → owning shot_id via the ``version_of`` edge.
+
+    The inverse of :func:`_versions_of_shot` across every shot, for readers that
+    enumerate versions project-wide and need each version's shot for display or
+    filtering (``parent_id`` is absent on edge-only versions).
+    """
+    version_shot: dict = {}
+    for s in shots:
+        for v in await _versions_of_shot(client, s["id"], all_versions):
+            version_shot[v["id"]] = s["id"]
+    return version_shot
+
+
+# ─────────────────────────────────────────────────────────────
 # Health
 # ─────────────────────────────────────────────────────────────
 
@@ -965,13 +1001,11 @@ async def list_versions(params: Optional[ListVersionsInput] = None) -> str:
         )
     try:
         from forge_bridge.server.protocol import entity_list
-        result = await _client().request(entity_list("version", params.project_id))
+        client = _client()
+        result = await client.request(entity_list("version", params.project_id))
         versions = result.get("entities", [])
         if params.shot_id:
-            versions = [
-                v for v in versions
-                if _attr(v, "parent_id") == params.shot_id
-            ]
+            versions = await _versions_of_shot(client, params.shot_id, versions)
         return _ok({
             "project_id": params.project_id,
             "shot_id":    params.shot_id,
@@ -1171,11 +1205,17 @@ async def check_shots(params: CheckShotsInput) -> str:
 
         shots_by_name = {s["name"]: s for s in shots_result.get("entities", [])}
 
-        # Group versions by parent shot id
+        # Group versions by owning shot via the version_of edge (producer-agnostic;
+        # edge-only versions carry no parent_id). Counts here must agree with
+        # register_publish's own next-version count, which also traverses the edge.
+        all_versions = versions_result.get("entities", [])
+        versions_by_id = {v["id"]: v for v in all_versions}
+        version_shot = await _version_shot_map(
+            client, shots_result.get("entities", []), all_versions
+        )
         versions_by_shot: dict[str, list] = {}
-        for v in versions_result.get("entities", []):
-            parent = _attr(v, "parent_id", "")
-            versions_by_shot.setdefault(parent, []).append(v)
+        for vid, sid in version_shot.items():
+            versions_by_shot.setdefault(sid, []).append(versions_by_id[vid])
 
         results = []
         for name in params.shot_names:
@@ -1278,21 +1318,22 @@ async def register_publish(params: RegisterPublishInput) -> str:
             shot_id = shot_result["id"]
             shot_created = True
 
-        # Count existing versions for this shot to get next version number
+        # Count existing versions for this shot via the version_of edge to get the
+        # next version number (the edge is the link — there may be no shot_id attr).
         versions_result = await client.request(entity_list("version", project_id))
-        shot_versions = [
-            v for v in versions_result.get("entities", [])
-            if _attr(v, "shot_id") == shot_id
-        ]
+        shot_versions = await _versions_of_shot(
+            client, shot_id, versions_result.get("entities", [])
+        )
         next_version = len(shot_versions) + 1
 
-        # Create version entity
+        # Create version entity. The version→shot link is the version_of edge
+        # emitted below; we deliberately do NOT denormalize a shot_id/parent_id
+        # attribute (2b) — readers traverse the edge, the attribute only drifts.
         version_result = await client.request(entity_create(
             entity_type="version",
             project_id=project_id,
             name=f"{shot_name}_v{next_version:03d}",
             attributes={
-                "shot_id":        shot_id,
                 "role":           role,
                 "version_number": next_version,
                 "start_frame":    params.start_frame,
@@ -1462,12 +1503,9 @@ async def get_shot_lineage(params: GetShotLineageInput) -> str:
             return _err(f"Shot '{params.shot_name}' not found")
         shot_id = shot["id"]
 
-        # Get all versions for this shot
+        # Get all versions for this shot via the version_of edge (producer-agnostic)
         all_versions = (await client.request(entity_list("version", project_id))).get("entities", [])
-        shot_versions = [
-            v for v in all_versions
-            if _attr(v, "parent_id") == shot_id
-        ]
+        shot_versions = await _versions_of_shot(client, shot_id, all_versions)
 
         # Get all media for this project
         all_media = (await client.request(entity_list("media", project_id))).get("entities", [])
@@ -1585,13 +1623,16 @@ async def blast_radius(params: BlastRadiusInput) -> str:
         versions_by_id = {v["id"]: v for v in all_versions}
         all_shots = (await client.request(entity_list("shot", project_id))).get("entities", [])
         shots_lookup = {s["id"]: s for s in all_shots}
+        # version → owning shot via the version_of edge (producer-agnostic; the
+        # shot_id attribute is absent on edge-only versions)
+        version_shot = await _version_shot_map(client, all_shots, all_versions)
 
         for did in dependent_ids:
             v = versions_by_id.get(did)
             if not v:
                 continue
             v_attrs = _entity_fields(v)
-            shot_id = v_attrs.get("shot_id", "")
+            shot_id = version_shot.get(did, "")
             shot = shots_lookup.get(shot_id, {})
             shot_name = shot.get("name", "unknown")
             if shot_id:
@@ -1779,11 +1820,15 @@ async def list_published_plates(params: ListPublishedPlatesInput) -> str:
             project_id = proj_list[0]["id"]
 
         versions = (await client.request(entity_list("version", project_id))).get("entities", [])
+        shots = (await client.request(entity_list("shot", project_id))).get("entities", [])
+        # version → owning shot via the version_of edge (producer-agnostic; an
+        # edge-only version has no parent_id to read for display/filtering)
+        version_shot = await _version_shot_map(client, shots, versions)
 
         plates = []
         for v in versions:
             attrs = _entity_fields(v)
-            shot_id = attrs.get("parent_id", "")
+            shot_id = version_shot.get(v["id"], "")
 
             # Apply filters
             if params.shot_name and shot_id:
@@ -1824,9 +1869,8 @@ async def list_published_plates(params: ListPublishedPlatesInput) -> str:
                 "path":           path,
             })
 
-        # Apply shot_name filter — requires shot lookup
+        # Apply shot_name filter (shot_id resolved via the version_of edge above)
         if params.shot_name:
-            shots = (await client.request(entity_list("shot", project_id))).get("entities", [])
             shot_ids = {s["id"] for s in shots if s.get("name") == params.shot_name}
             plates = [p for p in plates if p["shot_id"] in shot_ids]
 
@@ -1882,12 +1926,11 @@ async def get_shot_versions(params: GetShotVersionsInput) -> str:
             return _err(f"Shot '{params.shot_name}' not found in project")
         shot_id = shot["id"]
 
-        # Get all versions for this shot
+        # Get all versions for this shot via the version_of edge (producer-agnostic)
         all_versions = (await client.request(entity_list("version", project_id))).get("entities", [])
         shot_versions = [
-            v for v in all_versions
-            if _attr(v, "parent_id") == shot_id
-            and (_attr(v, "asset_name") or _attr(v, "colour_space"))
+            v for v in await _versions_of_shot(client, shot_id, all_versions)
+            if _attr(v, "asset_name") or _attr(v, "colour_space")
         ]
 
         # Build output records
