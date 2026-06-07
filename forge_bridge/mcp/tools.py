@@ -1305,17 +1305,17 @@ async def register_publish(params: RegisterPublishInput) -> str:
 
         # Link version → shot
         await client.request(relationship_create(
-            from_id=version_id,
-            to_id=shot_id,
-            relationship_type="version_of",
+            source_id=version_id,
+            target_id=shot_id,
+            rel_type="version_of",
         ))
 
-        # Register output path as a location
+        # Register output path as a location (on-disk → storage_type defaults to "local";
+        # the render/role classification lives on the version, not the location).
         if params.output_path:
             await client.request(location_add(
                 entity_id=version_id,
                 path=params.output_path,
-                location_type="render",
             ))
 
         return _ok({

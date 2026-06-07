@@ -58,11 +58,17 @@ The exact failure mode the principle predicts, in a real producer path:
    filtering `parent_id`/`shot_id` attributes. `parent_id`/`shot_id` become optional
    convenience, never the read key. This is producer-agnostic and aligns with Q4 #4a (the
    `version_of` noun is the freeze-now contracted edge).
-2. **register_publish follow-ons** (capture; do not fix yet per room direction):
-   - **2a (trivial correctness bug):** `from_id/to_id/relationship_type` →
-     `source_id/target_id/rel_type`. One-line; restores its ability to create the edge.
-   - **2b (alignment):** rely on the `version_of` edge as the link; drop dependence on the
-     `shot_id` attribute (optionally set `parent_id`/`parent_type` as convenience only).
+2. **register_publish follow-ons:**
+   - **2a (correctness bugs) — ✅ FIXED 2026-06-06.** Was a *chain* of stale kwargs, not one
+     line (register_publish had drifted from the protocol signatures and was never exercised):
+     (i) `relationship_create(from_id/to_id/relationship_type)` → `source_id/target_id/rel_type`;
+     (ii) `location_add(location_type="render")` → dropped (signature is
+     `location_add(entity_id, path, storage_type="local")`; `"render"` was a media-class value
+     leaking onto a location). register_publish now completes end-to-end and emits a correct
+     `version_of` (version→shot) edge. Test: `tests/test_register_publish_edge.py`.
+   - **2b (alignment) — still open:** rely on the `version_of` edge as the link; drop
+     dependence on the `shot_id` attribute (optionally set `parent_id`/`parent_type` as
+     convenience only). Folds into the reader-traversal change (#1).
 3. **Orphan hygiene (separate):** the 21 edgeless versions are found by neither edge nor
    attribute — a data-cleanup item, not a reader concern.
 
