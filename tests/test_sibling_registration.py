@@ -474,7 +474,7 @@ async def test_register_all_siblings_dry_run_propagates_to_context() -> None:
 
     assert len(captured) == 1
     assert isinstance(captured[0], contract_registration.BridgeRegistrationContext)
-    assert captured[0].contract_version == "v0.1"
+    assert captured[0].contract_version == "v0.2"
     assert captured[0].requested_families == []
     assert captured[0].dry_run is True
     assert captured[0].config == {"api_key": "secret"}
