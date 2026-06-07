@@ -49,23 +49,35 @@ the federation surface: no `role_class` emitted on the wire, edges are all contr
 
 1. **`reference` is canonical.** forge_core emits `role="ref"`; normalize `ref → reference`
    **consumer-side**. Do NOT add a `ref` alias to the contract — that would enshrine the skew.
-2. **`workfile` — the eventual home is intentionally UNBOUND; do not pre-route it to the role
-   axis.** Carried as an open media-extension member for now. The room has *not* determined
-   whether "editable-source vs produced-output" is even a role distinction. Four candidate homes,
-   all open: (a) a known media-role member, (b) a third `role_class`, (c) a distinct **lifecycle**
-   dimension orthogonal to role, (d) an **edge/relationship property** (how media relates to its
-   Version — produced-output = target of `produces`; source = a different edge), which the
-   ecosystem's edge-over-attribute doctrine makes a live candidate (workfile already rides a
-   `version_of` edge, bridge_store_adapter.py:369).
-   - **Evidence ≠ proof.** A second source artifact (workfile) is *evidence* a second axis exists,
-     not proof it belongs on the role axis. Note the axis is **already half-collapsed today**: the
-     media `role_class` carries a latent source/produced signal via `generation_floor`
-     (`forge_bridge/core/vocabulary.py:167-181` — `raw=0` "never produced" vs everything-else=`1+`
-     "product of a process"). `raw` is a source already wearing a media-role hat.
-   - **Do NOT add a `source` (or `workfile`) `role_class` when the next source artifact appears.**
-     Add to the closed axis only once the room is confident editable-vs-produced belongs on the
-     role axis *at all*. `role_class` is the closed/highest-cost axis — freezing the wrong
-     correction there is the premature-axis-mutation the room has avoided all year.
+2. **`workfile` / lifecycle — eventual home intentionally UNBOUND** (Creative redline + Orch
+   synthesis 2026-06-07). "editable-source vs produced-output" is **NOT a role question** —
+   smell test: a single type (e.g. a USD assembly) can be editable-working in one place and
+   published-deliverable in another, so source/output cuts across artifact types and **can't be a
+   `role_class`.** Workfile pressure is evidence of a possible *second axis* — **lifecycle**,
+   orthogonal to role — not evidence for a `source` role_class. Workfile rides as an open
+   media-extension member for now. Corrected axis map: **Role** (Media, contracted) · **Task**
+   (Version, below) · **Lifecycle?** (undetermined — may not even be a formal axis yet).
+   - **Already half-collapsed today:** media `role_class` carries a latent source/produced signal
+     via `generation_floor` (`forge_bridge/core/vocabulary.py:167-181` — `raw=0` "never produced"
+     vs else=`1+` "product of a process"). `raw` is a source already wearing a media-role hat.
+   - **Falsifiable resolve trigger** (don't count source artifacts — watch whether artifact-type
+     and stage vary *independently*): does a single **role string** appear in both an editable and
+     a produced context → lifecycle is a real orthogonal axis, keep source OFF the role axis; or
+     does the vocabulary start **minting state-specific role strings** → that's the collapse
+     happening. Same-type-both-states = proof; never-overlapping types only weakly supports role.
+     **The trigger needs a watch-home** (something observing role-minting across repos/DCCs) or
+     "unbound pending pressure" silently becomes "unbound forever."
+   - **If lifecycle resolves real, prefer edge topology over a stored Media attribute**
+     (edge-over-attribute). ⚠️ But per Pipeline's reported Phase-39 shapes — workfile → `version_of`
+     → shot (`bridge_store_adapter.py:369`); render → `member_of`+`derived_from`
+     (`publish_op.py:146,157`) — existing edges do NOT cleanly carry it: `version_of` is
+     **overloaded** (workfiles AND produced versions use it). Edge-expressing lifecycle would need
+     a *new, cleaner* source edge (e.g. `edited_from`) — itself a contract decision, not free
+     derivation. (Pipeline to confirm; forge-pipeline under active 38/39 — don't probe/edit.)
+   - **Do NOT add a `source`/`workfile` `role_class` when the next source artifact appears** — only
+     once confident source/output belongs on the role axis *at all*. `role_class` is the closed,
+     highest-cost axis; freezing the wrong correction there is the premature-axis-mutation avoided
+     all year.
 3. **`render_of` swap is ALREADY DONE** (Pipeline-verified): `render_client.PublishOp` already
    emits `member_of` + `derived_from` (publish_op.py:4-8). Only remaining `render_of` is
    **legacy read-side lineage traversal** (handlers.py blast_radius/lineage) — retire with the
