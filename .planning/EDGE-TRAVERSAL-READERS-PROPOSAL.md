@@ -73,6 +73,43 @@ The exact failure mode the principle predicts, in a real producer path:
    attribute — a data-cleanup item, not a reader concern.
 
 ## Sequencing
-No behavior change now. Reader-change is the architectural follow-on; 2a is a trivial bug fix
-available on request; 2b rides whenever register_publish is next touched. None blocks the Q4
-freeze cycle.
+2a is FIXED (commit `89252dc`). The reader-change is the architectural follow-on and is the
+**immediate next task** (RESUME HERE). It does not block the Q4 freeze cycle; it's the
+read-side correlate of Cycle-1 #4a (contract the `version_of` edge).
+
+**Order is forced — #1 must lead, 2b rides on it for free.** 2b means "register_publish stops
+relying on the `shot_id` attribute." But readers were migrated to `parent_id` (`71e3643`), and
+register_publish writes neither a meaningful `parent_id` nor anything attribute-readers find —
+only the correct `version_of` edge (post-2a). So until readers traverse the edge, standalone-2b
+is one of two bad shapes: (a) attribute-chasing — make register_publish also write `parent_id`,
+throwaway work the migration moots; or (b) invisibility — drop `shot_id` with no edge-reader to
+surface the output. Both avoided by doing #1 first; 2b folds in.
+
+---
+
+## Execution brief — edge-traversal reader migration (Orch; ready to pick up)
+
+**Feasibility (bounded swap, not a build):** `query_dependents(entity_id)` already exists
+(`protocol.py:368`), is already used by `get_dependents` (`tools.py:1016-1027`, the reference
+shape), and is already imported inside `get_shot_lineage` and `list_published_plates` for their
+other traversals. The primitive and the model are in place.
+
+1. **Readers traverse the edge.** In `get_shot_versions`, `get_shot_lineage`,
+   `list_published_plates`, `list_versions`, and `register_publish`'s own next-version count,
+   replace the attribute filter (`_attr(v, "parent_id"|"shot_id") == shot_id`) with
+   `query_dependents(shot_id)` filtered to `version_of` edges. Model on `get_dependents`
+   (`tools.py:1016-1027`). `parent_id`/`shot_id` become optional convenience, never the read key.
+2. **2b folds in.** register_publish already emits the correct `version_of` edge (post-2a) —
+   drop the misleading `shot_id` attribute; optionally set `parent_id`/`parent_type` as
+   convenience only.
+3. **Test the producer-agnostic property (the point).** Each reader must find BOTH (a) the 20
+   canonical versions (`parent_id` + edge) AND (b) a `register_publish`-shape version (edge
+   only, no `parent_id`) — the cross-tab row that was 0 and that only edge-traversal can
+   surface. This test fails under the current `parent_id` readers and passes after #1.
+4. **Reference shapes, not rewrite mandates.** Keep each tool's surrounding projection intact;
+   change only the linkage step.
+
+**Grounding to re-verify on resume (cheap):** the cross-tab (20 `parent_id`+edge / 21 orphan /
+0 `shot_id`), and that `query_dependents` returns the version ids for a shot (it powers
+`get_dependents` today). Use the two-probe method correctly — verify any zero against a
+known-present instance (the bad-join lesson).
