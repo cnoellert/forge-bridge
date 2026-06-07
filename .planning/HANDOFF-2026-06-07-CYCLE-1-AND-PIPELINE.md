@@ -49,10 +49,23 @@ the federation surface: no `role_class` emitted on the wire, edges are all contr
 
 1. **`reference` is canonical.** forge_core emits `role="ref"`; normalize `ref → reference`
    **consumer-side**. Do NOT add a `ref` alias to the contract — that would enshrine the skew.
-2. **`workfile` classification is an OPEN deliberate decision** — known media member vs a *third*
-   `role_class`. It's a DCC scene file, not rendered output. Open-membership today, so no rush;
-   decide with the room and bump the contract then. NOT slipped into v0.2 (`role_class` is the
-   closed axis → a third class is the highest-stakes vocab change).
+2. **`workfile` — the eventual home is intentionally UNBOUND; do not pre-route it to the role
+   axis.** Carried as an open media-extension member for now. The room has *not* determined
+   whether "editable-source vs produced-output" is even a role distinction. Four candidate homes,
+   all open: (a) a known media-role member, (b) a third `role_class`, (c) a distinct **lifecycle**
+   dimension orthogonal to role, (d) an **edge/relationship property** (how media relates to its
+   Version — produced-output = target of `produces`; source = a different edge), which the
+   ecosystem's edge-over-attribute doctrine makes a live candidate (workfile already rides a
+   `version_of` edge, bridge_store_adapter.py:369).
+   - **Evidence ≠ proof.** A second source artifact (workfile) is *evidence* a second axis exists,
+     not proof it belongs on the role axis. Note the axis is **already half-collapsed today**: the
+     media `role_class` carries a latent source/produced signal via `generation_floor`
+     (`forge_bridge/core/vocabulary.py:167-181` — `raw=0` "never produced" vs everything-else=`1+`
+     "product of a process"). `raw` is a source already wearing a media-role hat.
+   - **Do NOT add a `source` (or `workfile`) `role_class` when the next source artifact appears.**
+     Add to the closed axis only once the room is confident editable-vs-produced belongs on the
+     role axis *at all*. `role_class` is the closed/highest-cost axis — freezing the wrong
+     correction there is the premature-axis-mutation the room has avoided all year.
 3. **`render_of` swap is ALREADY DONE** (Pipeline-verified): `render_client.PublishOp` already
    emits `member_of` + `derived_from` (publish_op.py:4-8). Only remaining `render_of` is
    **legacy read-side lineage traversal** (handlers.py blast_radius/lineage) — retire with the
@@ -72,6 +85,14 @@ the federation surface: no `role_class` emitted on the wire, edges are all contr
 6. **Pin-lag (benign):** forge-pipeline's `pyproject.toml` still declares forge-contracts `v0.1`
    while the env has `0.2.0` (cosmetic pip warning). Bump pipeline → v0.2 **and** forge-bridge →
    the new tag together in Phase 40.
+7. **`task` (workstream owning a lineage — comp/fx/lighting/editorial) lives on Version, not
+   Media.** Task describes the lineage; media are artifacts the lineage emits (task-on-media =
+   `sequence_name` on a render frame). Same edge-over-attribute discipline just shipped: **single
+   canonical home on Version; derive by traversal everywhere else; NEVER dual-source** (the
+   `parent_id`/`shot_id` episode — duplicate ownership is guilty until proven innocent). Task is
+   **orthogonal to role.** Task **vocabulary stays OPEN/local** for now — contract it only after
+   multiple repos + DCCs exercise the same taxonomy (owner-type lesson: freezes follow diversity,
+   not precede it; one production worldview shouldn't mint the taxonomy as canon today).
 
 ## Operational note (forge-core stdio MCP)
 
