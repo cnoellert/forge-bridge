@@ -1,7 +1,16 @@
 # Gap — Version ownership/linkage (producer / data-model concern)
 
+> ⚠️ **SUPERSEDED 2026-06-06 by corrected storage analysis** —
+> `.planning/VERSION-LINKAGE-CORRECTED.md`. **This document's central claim is
+> WRONG.** It asserted versions carry no `version_of` linkage (zero edges); that
+> rested on a bad SQL join (`relationships` → `registry_roles` instead of
+> `registry_relationship_types`), a false negative. Ground truth: **20 live
+> `version_of` edges (all → shots)**, linked versions carry `parent_id`, and the
+> read-layer fix demonstrably returns them. Preserved here unedited as historical
+> provenance of the error and its correction. Do not act on this document.
+
 **Date:** 2026-06-06
-**Status:** OPEN — tracked. Producer/data-model concern, **not** a read-projection concern.
+**Status:** SUPERSEDED (see banner) — was: OPEN, producer/data-model concern.
 **Origin:** Surfaced by the wire-shape read-layer sweep (2026-06-06). Distinct from, but
 adjacent to, the [durable ownership ruling](RULING-DURABLE-OWNERSHIP-VS-CONTEXTUAL-PLACEMENT.md).
 
