@@ -180,5 +180,8 @@ async def test_execute_matches_chat_chain_engine_two_projects_ambiguity():
             mcp=mcp,
         )
 
-    assert result["status"] == "error"
-    assert result["error"]["code"] == "CHAIN_STEP_FAILED"
+    assert result["status"] == "clarification_needed"
+    assert result["stop_reason"] == "clarification_needed"
+    assert result["clarification_needed"]["kind"] == "referent"
+    assert result["clarification_needed"]["resolve_hint"]["key"] == "project_id"
+    assert len(result["clarification_needed"]["candidates"]) == 2

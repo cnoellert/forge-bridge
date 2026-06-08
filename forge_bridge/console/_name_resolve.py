@@ -1,23 +1,23 @@
-"""PR29 — Deterministic name-based disambiguation (scoped, exact match).
+"""PR29/CR.2 — Deterministic name-based disambiguation (scoped).
 
-PR27 surfaces a ``MULTIPLE_PROJECTS`` envelope when the system holds
-2+ candidate projects. PR28 lets the caller resolve the ambiguity by
-supplying a UUID. PR29 adds a second resolution path: an exact name
-match against the SAME candidate list PR27 returned.
+PR27 established the project candidate set when the system holds 2+
+candidate projects. PR28 lets the caller resolve the ambiguity by
+supplying a UUID. PR29 adds a second resolution path against that SAME
+candidate list. CR.2 relaxes the matcher for natural follow-up replies:
+exact first, then unique prefix, then unique substring.
 
 Hard constraints (mirror ``_tool_chain`` + ``_param_extract``):
 
   1. **Scoped to PR27 candidates.** This module never queries upstream
      and never reads from ``_MEMORY``. The candidate list passed in is
-     the only source of truth — the same list the caller would see in
-     the ``MULTIPLE_PROJECTS`` envelope's ``error.details.candidates``.
-  2. **Exact match only.** Case-insensitive (``upper()`` / ``lower()``
-     equivalent) and whitespace-trimmed. NO partials, NO substrings,
-     NO scoring, NO Levenshtein, NO embeddings.
+     the only source of truth — the same list the caller sees in the
+     CR.2 ``clarification_needed`` envelope.
+  2. **Deterministic scoped match.** Case-insensitive and whitespace-
+     trimmed. Exact match first; if none, unique prefix; if none, unique
+     substring. NO scoring, NO Levenshtein, NO embeddings.
   3. **Single-match-or-fail.** Zero matches OR two-or-more matches both
-     return ``None``. The caller falls through to the existing
-     ``MULTIPLE_PROJECTS`` envelope. Ambiguity stays ambiguous — never
-     pick the first.
+     return ``None``. The caller keeps ambiguity as a continuation prompt
+     rather than guessing.
   4. **No LLM involvement.** Pure dict comparison.
   5. **No memory writes.** Same path as the explicit-UUID injection
      (PR28) — caller params don't write to memory by design.
@@ -41,7 +41,7 @@ def resolve_name_from_candidates(
     name: str,
     candidates: List[Dict[str, str]],
 ) -> Optional[str]:
-    """Resolve ``project_id`` from ``candidates`` using an exact name match.
+    """Resolve an id from ``candidates`` using deterministic scoped matching.
 
     Args:
         name: The user-supplied project name (typically extracted from the
@@ -62,20 +62,19 @@ def resolve_name_from_candidates(
     Rules:
       - Match is case-insensitive. ``"alpha"``, ``"Alpha"``, ``"ALPHA"``
         all match a candidate named ``"Alpha"``.
-      - Leading and trailing whitespace on the input ``name`` is
-        ignored. Inner whitespace IS significant — ``"foo bar"`` does
-        not match ``"foobar"``.
+      - Leading and trailing whitespace on the input ``name`` is ignored.
+        Exact match is attempted first. If that fails, a unique prefix or
+        unique substring against the held candidate set may resolve.
       - Candidate names are also trimmed before comparison, so a
         candidate stored as ``" Alpha "`` would match ``"alpha"``.
       - Multiple candidates with the same name → ``None``. We never
         guess. The caller's escape hatch is to switch to a UUID.
 
     Why ``None`` (not raise): the call site is the chat handler's
-    disambiguation branch, where the natural fall-through is the
-    existing ``MULTIPLE_PROJECTS`` envelope. Returning ``None`` keeps
-    the control flow flat at the call site (``if resolved_id: ...``)
-    and avoids exception handling for a perfectly normal "no match"
-    state.
+    disambiguation branch, where the natural fall-through is the CR.2
+    continuation prompt. Returning ``None`` keeps the control flow flat
+    at the call site (``if resolved_id: ...``) and avoids exception
+    handling for a perfectly normal "no match" state.
     """
     if not isinstance(name, str):
         return None
@@ -84,19 +83,30 @@ def resolve_name_from_candidates(
     if not target:
         return None
 
-    matches = [
+    valid = [
         c for c in candidates
         if isinstance(c.get("name"), str)
-        and c["name"].strip().lower() == target
+        and isinstance(c.get("id"), str)
+        and c["id"]
     ]
+
+    matches = [
+        c for c in valid
+        if c["name"].strip().lower() == target
+    ]
+    if not matches:
+        matches = [
+            c for c in valid
+            if c["name"].strip().lower().startswith(target)
+        ]
+    if not matches:
+        matches = [
+            c for c in valid
+            if target in c["name"].strip().lower()
+        ]
 
     if len(matches) == 1:
         # ``id`` is the canonical handle the downstream tool consumes.
-        # We rely on PR27's strict candidate validation
-        # (``_resolve_project_id``) having already enforced ``id`` as a
-        # non-empty string before the candidate ever reached us, so a
-        # bare dict access here is safe — a malformed entry would have
-        # collapsed the entire list to ``None`` upstream.
         return matches[0]["id"]
 
     return None

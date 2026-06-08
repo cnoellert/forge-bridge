@@ -306,9 +306,10 @@ async def test_pr25_sequence_tool_unresolved_returns_sentinel():
         UNRESOLVED_KEY: {
             "key": "sequence_name",
             "tool": "flame_get_sequence_segments",
+            "candidates": [],
         }
     }
-    mcp.call_tool.assert_not_called()
+    mcp.call_tool.assert_called_once_with("flame_context", {})
 
 
 @pytest.mark.asyncio
@@ -389,6 +390,7 @@ async def test_pr25_rename_tool_missing_prefix_returns_unresolved_sentinel():
         UNRESOLVED_KEY: {
             "key": "prefix",
             "tool": "flame_rename_shots",
+            "candidates": [],
         }
     }
     mcp.call_tool.assert_not_called()

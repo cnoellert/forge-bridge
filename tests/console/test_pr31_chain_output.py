@@ -305,17 +305,22 @@ def test_chain_step_stops_before_call_when_sequence_unresolved():
     ))
 
     assert result == {"error": {
-        "type": "UNRESOLVED_REQUIRED_PARAM",
-        "message": (
-            "Could not resolve sequence name from your query. "
-            "Please specify the exact sequence name."
-        ),
+        "type": "clarification_needed",
+        "kind": "referent",
+        "prompt": "Which sequence should I use?",
+        "candidates": [],
+        "resolve_hint": {
+            "key": "sequence_name",
+            "accepted_reply": "name, unique prefix, or unique substring",
+        },
+        "message": "Which sequence should I use?",
         "details": {
             "key": "sequence_name",
             "tool": "flame_get_sequence_segments",
+            "candidates": [],
         },
     }}
-    assert calls == []
+    assert calls == [("flame_context", {})]
 
 
 def test_chain_step_injects_previous_result_into_format_terminal():

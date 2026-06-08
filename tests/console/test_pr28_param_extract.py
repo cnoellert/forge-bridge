@@ -558,14 +558,14 @@ def test_pr28_tool_call_arguments_match_explicit_param():
     assert calls[0]["function"]["name"] == "forge_list_versions"
 
 
-# ── Sanity: existing PR27 path still fires with no explicit param ───────
+# ── Sanity: existing PR27 candidate path still fires with no explicit param ──
 
 
 def test_pr28_handler_no_explicit_param_falls_through_to_pr27():
     """Sanity check: when the user does NOT supply an explicit
-    ``project_id``, the handler still falls through to PR27's
-    MULTIPLE_PROJECTS envelope. PR28 is purely additive — it does not
-    change behavior for messages without an explicit selector."""
+    ``project_id``, the handler still falls through to PR27's candidate
+    enumeration. CR.2 normalizes that into a continuation prompt instead
+    of a terminal MULTIPLE_PROJECTS envelope."""
     list_p, back_p, call_p, app, _ = (
         _make_handler_app_for_param_injection(project_count=4)
     )
@@ -578,6 +578,9 @@ def test_pr28_handler_no_explicit_param_falls_through_to_pr27():
             ]},
         )
 
-    assert r.status_code == 400, r.text
+    assert r.status_code == 200, r.text
     body = r.json()
-    assert body["error"]["code"] == "MULTIPLE_PROJECTS"
+    assert body["stop_reason"] == "clarification_needed"
+    assert body["clarification_needed"]["kind"] == "referent"
+    assert body["clarification_needed"]["resolve_hint"]["key"] == "project_id"
+    assert len(body["clarification_needed"]["candidates"]) == 4

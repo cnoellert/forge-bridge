@@ -232,6 +232,9 @@ async def run_compile_branch(
         started=started,
     )
     regime = (
+        "clarification_needed"
+        if isinstance(chain_body, dict) and chain_body.get("status") == "clarification_needed"
+        else
         "chain_aborted"
         if isinstance(chain_body, dict) and chain_body.get("status") == "error"
         else "compiled_non_mutating"

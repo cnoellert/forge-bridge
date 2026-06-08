@@ -56,6 +56,11 @@ from forge_bridge.console._chat_compile import (
 )
 from forge_bridge.console._engine import run_chain_steps
 from forge_bridge.console._macros import delete_macro, expand_macro, list_macros
+from forge_bridge.console._recovery import (
+    recovery_params_from_messages,
+    referent_clarification,
+    response_body as recovery_response_body,
+)
 from forge_bridge.console._step import serialize_forced_tool_result
 from forge_bridge.console._rate_limit import (
     RateLimitDecision,
@@ -594,29 +599,27 @@ async def _execute_forced_tool(
         tool_name, resolver_input, _mcp_server.mcp, message=resolver_message,
     )
 
-    # PR27: ambiguity short-circuit. When the resolver finds multiple
+    # PR27/CR.2: ambiguity short-circuit. When the resolver finds multiple
     # valid candidates (today: 2+ projects), it returns a sentinel dict
-    # in place of a usable params payload. PR29 adds a deterministic
-    # second chance: if the user supplied ``project_name=<string>``
-    # in the message, attempt an exact match against the SAME candidate
-    # list before surfacing the structured 400 envelope. On a unique
-    # match, inject the resolved id, re-run the resolver (which short-
-    # circuits in memory hydration since project_id is now caller-
-    # supplied), and fall through to the tool-execution path below.
-    # Otherwise, surface ``MULTIPLE_PROJECTS`` exactly as PR27 does.
+    # in place of a usable params payload. PR29/CR.2 add a deterministic
+    # second chance: if the caller supplied a project name, match it
+    # against the SAME candidate list before surfacing a continuation
+    # prompt. On a unique match, inject the resolved id, re-run the
+    # resolver (which short-circuits in memory hydration since project_id
+    # is now caller-supplied), and fall through to tool execution.
     if DISAMBIGUATION_KEY in params:
         disambiguation = params[DISAMBIGUATION_KEY]
         candidates = disambiguation.get("candidates", []) or []
         candidate_count = len(candidates)
 
-        # PR29 — name-resolution fallback. ``requested_name`` is the
+        # PR29/CR.2 — name-resolution fallback. ``requested_name`` is the
         # value popped above from ``user_params["project_name"]`` (set
         # only when the caller wrote ``project_name=<value>`` in the
-        # message — PR28's extractor). Resolution is exact-match-only
+        # message — PR28's extractor). Resolution is scoped and deterministic
         # and operates entirely on the candidate list returned by the
         # resolver — no upstream probe, no LLM, no memory read.
         # Returns ``None`` on zero or 2+ matches; in either case we
-        # fall through to the existing MULTIPLE_PROJECTS envelope.
+        # fall through to the continuation prompt.
         resolved_id: Optional[str] = None
         if requested_name:
             resolved_id = resolve_name_from_candidates(
@@ -671,12 +674,26 @@ async def _execute_forced_tool(
                 tools_available_count, tools_filtered_count, elapsed_ms,
                 candidate_count,
             )
-            return _chat_error(
-                code="MULTIPLE_PROJECTS",
-                message="Multiple projects found. Please specify one.",
-                status=400,
-                request_id=request_id,
-                details=disambiguation,
+            clarification = referent_clarification(
+                key="project_id",
+                candidates=candidates,
+            )
+            return JSONResponse(
+                recovery_response_body(
+                    request_id=request_id,
+                    clarification=clarification,
+                    messages=messages,
+                    extra={
+                        "tool": tool_name,
+                        "tools_available": tools_available_count,
+                        "tools_filtered": tools_filtered_count,
+                        "tool_enforced": tool_enforced_flag,
+                        "tool_forced": False,
+                        "details": disambiguation,
+                    },
+                ),
+                status_code=200,
+                headers={"X-Request-ID": request_id},
             )
 
     if UNRESOLVED_KEY in params:
@@ -698,18 +715,25 @@ async def _execute_forced_tool(
             key, request_id, client_ip, tool_name,
             tools_available_count, tools_filtered_count, elapsed_ms,
         )
+        clarification = referent_clarification(
+            key=str(key or "referent"),
+            candidates=unresolved.get("candidates", []) or [],
+        )
         return JSONResponse(
-            {
-                "error": message,
-                "request_id": request_id,
-                "tool": tool_name,
-                "unresolved": unresolved,
-                "tools_available": tools_available_count,
-                "tools_filtered": tools_filtered_count,
-                "tool_enforced": tool_enforced_flag,
-                "tool_forced": False,
-                "stop_reason": "tool_unresolved",
-            },
+            recovery_response_body(
+                request_id=request_id,
+                clarification=clarification,
+                messages=messages,
+                extra={
+                    "error": message,
+                    "tool": tool_name,
+                    "unresolved": unresolved,
+                    "tools_available": tools_available_count,
+                    "tools_filtered": tools_filtered_count,
+                    "tool_enforced": tool_enforced_flag,
+                    "tool_forced": False,
+                },
+            ),
             status_code=200,
             headers={"X-Request-ID": request_id},
         )
@@ -1231,6 +1255,19 @@ async def _chat_sse_response(
                 await msg_queue.put(("chain_aborted", body))
                 return
 
+            if outcome.regime == "clarification_needed":
+                body = dict(outcome.chain_body or {})
+                body["stop_reason"] = "clarification_needed"
+                logger.info(
+                    "chat clarification_needed request_id=%s client_ip=%s "
+                    "steps=%d tools_offered_count=%d wall_clock_ms=%d "
+                    "transport=sse chat_regime=compiled_non_mutating",
+                    request_id, client_ip, len(outcome.steps), len(tools),
+                    elapsed_ms,
+                )
+                await msg_queue.put(("clarification_needed", body))
+                return
+
             if outcome.regime == "compiled_mutating_preview":
                 logger.info(
                     "chat preview_emitted request_id=%s client_ip=%s "
@@ -1660,6 +1697,7 @@ async def chat_handler(request: Request) -> Response:
     last_user_text = expand_macro(last_user_text)
     resolved_entities = resolve_query_entities(last_user_text)
     resolved_params = resolved_entity_params(resolved_entities)
+    recovery_params = recovery_params_from_messages(messages, last_user_text)
     messages_for_llm = [dict(message) for message in messages]
     for index in range(len(messages_for_llm) - 1, -1, -1):
         message = messages_for_llm[index]
@@ -1821,6 +1859,7 @@ async def chat_handler(request: Request) -> Response:
         from forge_bridge.console._param_extract import extract_explicit_params
 
         user_params = {
+            **recovery_params,
             **resolved_params,
             **extract_explicit_params(last_user_text),
         }
@@ -2058,6 +2097,25 @@ async def chat_handler(request: Request) -> Response:
         return JSONResponse(
             body,
             status_code=400,
+            headers={"X-Request-ID": request_id},
+        )
+
+    if outcome.regime == "clarification_needed":
+        body = dict(outcome.chain_body or {})
+        body["messages"] = list(messages) + [{
+            "role": "assistant",
+            "content": body["clarification_needed"]["prompt"],
+            "clarification_needed": body["clarification_needed"],
+        }]
+        logger.info(
+            "chat clarification_needed request_id=%s client_ip=%s "
+            "steps=%d tools_offered_count=%d wall_clock_ms=%d "
+            "chat_regime=compiled_non_mutating",
+            request_id, client_ip, len(outcome.steps), len(tools), elapsed_ms,
+        )
+        return JSONResponse(
+            body,
+            status_code=200,
             headers={"X-Request-ID": request_id},
         )
 

@@ -25,6 +25,11 @@ from forge_bridge.console._authority import (
     dispatch_authority,
     dispatch_block_message,
 )
+from forge_bridge.console._recovery import (
+    referent_clarification,
+    tool_action_label,
+    tool_clarification,
+)
 from forge_bridge.core.assent import AssentRecord
 from forge_bridge.console._tool_filter import deterministic_narrow, filter_tools_by_message
 from forge_bridge.mcp.arguments import normalize_tool_args
@@ -131,17 +136,7 @@ def _ambiguity_state_for_chain_step(n: int) -> str:
 def _ambiguity_outcomes(tools: list, *, limit: int = 5) -> list[str]:
     outcomes: list[str] = []
     for index, tool in enumerate(tools[:limit], start=1):
-        name = getattr(tool, "name", "")
-        description = getattr(tool, "description", "")
-        if not isinstance(description, str):
-            description = ""
-        lines = description.strip().splitlines()
-        label = lines[0].strip() if lines else ""
-        if isinstance(name, str) and name:
-            label = label.replace(name, "").strip(" :-")
-        if len(label) < 12 or not any(ch.isalpha() for ch in label):
-            label = "another available result"
-        outcomes.append(f"Outcome {index}: {label}")
+        outcomes.append(f"Outcome {index}: {tool_action_label(tool)}")
     return outcomes
 
 
@@ -345,12 +340,10 @@ async def execute_chain_step(
         )
 
     if len(filtered) != 1:
+        clarification = tool_clarification(filtered)
         return {"error": {
-            "type": "tool_selection_ambiguous",
-            "message": (
-                "This step could lead to multiple outcomes. Rephrase the "
-                "request with the specific result you want."
-            ),
+            **clarification,
+            "message": clarification["prompt"],
             "outcomes": _ambiguity_outcomes(filtered),
         }}
     tool_name = filtered[0].name
@@ -379,12 +372,13 @@ async def execute_chain_step(
             if requested_name else None
         )
         if not resolved_id:
+            clarification = referent_clarification(
+                key="project_id",
+                candidates=candidates,
+            )
             return {"error": {
-                "type": "MULTIPLE_PROJECTS",
-                "message": (
-                    "Multiple projects found; specify project_id=<uuid> "
-                    "or project_name=<name>."
-                ),
+                **clarification,
+                "message": clarification["prompt"],
                 "details": params[DISAMBIGUATION_KEY],
             }}
         params = await resolve_required_params(
@@ -407,18 +401,16 @@ async def execute_chain_step(
     if UNRESOLVED_KEY in params:
         unresolved = params[UNRESOLVED_KEY]
         key = unresolved.get("key")
-        message = (
-            "Could not resolve sequence name from your query. "
-            "Please specify the exact sequence name."
-        )
-        if key == "reel_name":
-            message = (
-                "Could not resolve reel name from your query. "
-                "Please specify the exact reel name."
+        if isinstance(key, str):
+            clarification = referent_clarification(
+                key=key,
+                candidates=unresolved.get("candidates", []) or [],
             )
+        else:
+            clarification = referent_clarification(key="referent", candidates=[])
         return {"error": {
-            "type": "UNRESOLVED_REQUIRED_PARAM",
-            "message": message,
+            **clarification,
+            "message": clarification["prompt"],
             "details": unresolved,
         }}
 

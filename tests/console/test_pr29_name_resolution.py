@@ -118,20 +118,26 @@ def test_no_match_returns_none():
     assert resolve_name_from_candidates("Gamma", candidates) is None
 
 
-def test_no_match_does_not_pick_substring():
-    """``"Alph"`` does not partial-match ``"Alpha"`` — exact-only.
-    Pin against a future regression that adds ``startswith`` /
-    ``in`` matching."""
+def test_unique_prefix_match_resolves():
+    """CR.2: a natural follow-up can resolve by unique prefix."""
     candidates = [{"id": "A", "name": "Alpha"}]
-    assert resolve_name_from_candidates("Alph", candidates) is None
+    assert resolve_name_from_candidates("Alph", candidates) == "A"
+    assert resolve_name_from_candidates("alp", candidates) == "A"
     assert resolve_name_from_candidates("Alphabet", candidates) is None
-    assert resolve_name_from_candidates("alp", candidates) is None
 
 
-def test_no_match_does_not_pick_substring_inside_candidate():
-    """Symmetric — a candidate whose name CONTAINS the input is not
-    a match. ``"Alpha"`` does not match ``"Project Alpha"``."""
+def test_unique_substring_match_resolves():
+    """CR.2: a natural follow-up can resolve by unique substring."""
     candidates = [{"id": "A", "name": "Project Alpha"}]
+    assert resolve_name_from_candidates("Alpha", candidates) == "A"
+
+
+def test_ambiguous_partial_match_returns_none():
+    """Two partial matches still fail closed; never pick the first."""
+    candidates = [
+        {"id": "A", "name": "Project Alpha"},
+        {"id": "B", "name": "Project Alpha Backup"},
+    ]
     assert resolve_name_from_candidates("Alpha", candidates) is None
 
 
@@ -416,9 +422,11 @@ def test_pr29_handler_unknown_name_falls_through_to_multiple_projects():
             ]},
         )
 
-    assert r.status_code == 400, r.text
+    assert r.status_code == 200, r.text
     body = r.json()
-    assert body["error"]["code"] == "MULTIPLE_PROJECTS"
+    assert body["stop_reason"] == "clarification_needed"
+    assert body["clarification_needed"]["kind"] == "referent"
+    assert body["clarification_needed"]["resolve_hint"]["key"] == "project_id"
     # The forced tool was NEVER called — the candidate fetch fired
     # exactly once, no second probe and no execution.
     forced_calls = [
@@ -450,13 +458,13 @@ def test_pr29_handler_ambiguous_name_falls_through_to_multiple_projects():
             ]},
         )
 
-    assert r.status_code == 400, r.text
+    assert r.status_code == 200, r.text
     body = r.json()
-    assert body["error"]["code"] == "MULTIPLE_PROJECTS"
-    # Belt-and-braces: the candidates list in the envelope still
-    # carries all three projects (PR27 contract intact).
-    details = body["error"]["details"]
-    assert details["type"] == "project"
+    assert body["stop_reason"] == "clarification_needed"
+    # Belt-and-braces: the candidates list still carries all three
+    # projects so the next turn can resolve against the same set.
+    details = body["clarification_needed"]
+    assert details["kind"] == "referent"
     assert len(details["candidates"]) == 3
     # No forced execution.
     forced_calls = [

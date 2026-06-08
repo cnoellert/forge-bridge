@@ -639,7 +639,11 @@ def test_pr20_forced_path_does_not_call_when_sequence_unresolved():
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["tool_forced"] is False
-    assert body["stop_reason"] == "tool_unresolved"
+    assert body["stop_reason"] == "clarification_needed"
+    clarification = body["clarification_needed"]
+    assert clarification["kind"] == "referent"
+    assert clarification["resolve_hint"]["key"] == "sequence_name"
+    assert clarification["prompt"] == "Which sequence should I use?"
     assert body["error"] == (
         "Could not resolve sequence name from your query. "
         "Please specify the exact sequence name."
@@ -647,9 +651,10 @@ def test_pr20_forced_path_does_not_call_when_sequence_unresolved():
     assert body["unresolved"] == {
         "key": "sequence_name",
         "tool": "flame_get_sequence_segments",
+        "candidates": [],
     }
     mock_router.compile_intent.assert_not_called()
-    call_mock.assert_not_awaited()
+    call_mock.assert_awaited_once_with("flame_context", {})
 
 
 def test_pr20_forced_path_uses_query_resolved_sequence_name():
@@ -1128,20 +1133,19 @@ def test_pr24_multiple_projects_returns_pr27_disambiguation_envelope():
     """Multi-project case — PR27 supersedes the original PR24 behavior.
 
     PR24's original contract here was 200 + tool message with
-    MISSING_PROJECT_ID (the same shape as zero projects). PR27 changes
-    that to a structured 400 + MULTIPLE_PROJECTS envelope so the
-    chat client can render a disambiguation prompt instead of treating
-    it as a generic missing-arg failure.
+    MISSING_PROJECT_ID (the same shape as zero projects). PR27 changed
+    that to a structured MULTIPLE_PROJECTS envelope. CR.2 keeps the
+    deterministic candidate source but normalizes it into a continuation
+    prompt instead of a terminal error.
 
     What's preserved from PR24:
       - The forced tool itself is NEVER called (no `forge_list_versions`).
       - The LLM is NEVER invoked.
       - `forge_list_projects` IS called once (the resolver probe).
-    What's new under PR27:
-      - HTTP 400 instead of 200.
-      - Error envelope shape (`error.code`, `error.message`,
-        `error.details`) instead of forced-tool message.
-      - No `tool_forced`/`stop_reason` keys (no tool was called).
+    What's new under CR.2:
+      - HTTP 200 continuation instead of terminal error.
+      - ``clarification_needed`` envelope with deterministic candidates.
+      - ``tool_forced=False`` and no downstream forced-tool execution.
     """
     tools = [_pr20_make_tool(n) for n in _PR20_VERSIONS_TOOLS]
     fake = _pr24_make_call_tool(project_count=3)
@@ -1157,18 +1161,19 @@ def test_pr24_multiple_projects_returns_pr27_disambiguation_envelope():
             ]},
         )
 
-    # PR27 — structured 400 envelope, NOT 200 + tool message.
-    assert r.status_code == 400, r.text
+    assert r.status_code == 200, r.text
     body = r.json()
-    assert body["error"]["code"] == "MULTIPLE_PROJECTS"
-    assert "Multiple projects" in body["error"]["message"]
-    details = body["error"]["details"]
-    assert details["type"] == "project"
+    assert body["stop_reason"] == "clarification_needed"
+    assert body["tool_forced"] is False
+    details = body["clarification_needed"]
+    assert details["kind"] == "referent"
+    assert details["resolve_hint"]["key"] == "project_id"
+    assert details["prompt"] == "Found 3 projects. Which one?"
     candidates = details["candidates"]
     assert len(candidates) == 3
     for c in candidates:
         assert "id" in c and "name" in c
-    # Request-id header still present even on the 400 path (D-21).
+    # Request-id header still present on the continuation path (D-21).
     assert "X-Request-ID" in r.headers
 
     # Hard contract: NO LLM, NO downstream tool call.

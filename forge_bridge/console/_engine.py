@@ -6,6 +6,7 @@ import time
 from typing import Any, Optional
 
 from forge_bridge.console._step import execute_chain_step
+from forge_bridge.console._recovery import response_body
 from forge_bridge.graph import infer_topology
 
 from forge_bridge.core.assent import AssentRecord
@@ -57,6 +58,19 @@ async def run_chain_steps(
         )
 
         if "error" in outcome:
+            if outcome["error"].get("type") == "clarification_needed":
+                clarification = {
+                    key: value for key, value in outcome["error"].items()
+                    if key not in {"message", "details", "outcomes"}
+                }
+                return response_body(
+                    request_id=request_id,
+                    clarification=clarification,
+                    extra={
+                        "chain": chain_trace,
+                        "step_index": step_idx,
+                    },
+                )
             elapsed_ms = int((time.monotonic() - started) * 1000)
             logger.info(
                 "chain_step_failed request_id=%s client_ip=%s "

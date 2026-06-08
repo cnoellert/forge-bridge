@@ -90,8 +90,9 @@ async def test_di2_ambiguous_surface_does_not_leak_tool_identifiers():
 
     error = result["error"]
     rendered = f"{error}"
-    assert error["type"] == "tool_selection_ambiguous"
-    assert "candidates" not in error
+    assert error["type"] == "clarification_needed"
+    assert error["kind"] == "tool"
+    assert "candidates" in error
     assert "outcomes" in error
     assert "forge_get_staged" not in rendered
     assert "forge_list_staged" not in rendered

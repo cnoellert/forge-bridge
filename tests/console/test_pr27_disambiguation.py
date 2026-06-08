@@ -341,16 +341,8 @@ def _make_handler_app_for_disambiguation(project_count: int):
     return list_p, back_p, call_p, app, mock_router
 
 
-def test_pr27_handler_returns_400_with_multiple_projects_envelope():
-    """End-to-end: a multi-project deployment + a forced
-    ``forge_list_versions`` request → handler returns 400 with the
-    full PR27 envelope shape:
-
-        {"error": {
-            "code": "MULTIPLE_PROJECTS",
-            "message": "Multiple projects found. Please specify one.",
-            "details": {"type": "project", "candidates": [...]}
-        }}
+def test_pr27_handler_returns_clarification_with_multiple_projects():
+    """CR.2: multi-project ambiguity becomes a continuation prompt.
 
     No tool call, no LLM call, X-Request-ID still set."""
     list_p, back_p, call_p, app, mock_router = (
@@ -365,18 +357,19 @@ def test_pr27_handler_returns_400_with_multiple_projects_envelope():
             ]},
         )
 
-    # Wire contract — 400, structured envelope, request-id header.
-    assert r.status_code == 400, r.text
+    assert r.status_code == 200, r.text
     assert "X-Request-ID" in r.headers
     body = r.json()
-    err = body["error"]
-    assert err["code"] == "MULTIPLE_PROJECTS"
-    assert err["message"] == "Multiple projects found. Please specify one."
-    details = err["details"]
-    assert details["type"] == "project"
-    assert len(details["candidates"]) == 3
-    for c in details["candidates"]:
+    assert body["stop_reason"] == "clarification_needed"
+    clarification = body["clarification_needed"]
+    assert clarification["kind"] == "referent"
+    assert clarification["resolve_hint"]["key"] == "project_id"
+    assert clarification["prompt"] == "Found 3 projects. Which one?"
+    candidates = clarification["candidates"]
+    assert len(candidates) == 3
+    for c in candidates:
         assert set(c.keys()) == {"id", "name"}
+    assert body["messages"][-1]["content"] == clarification["prompt"]
 
     # Hard contracts — neither tool nor LLM ran.
     mock_router.complete_with_tools.assert_not_called()
@@ -400,7 +393,8 @@ def test_pr27_handler_does_not_write_memory_on_disambiguation():
                 {"role": "user", "content": "forge fetch versions"},
             ]},
         )
-    assert r.status_code == 400
+    assert r.status_code == 200
+    assert r.json()["stop_reason"] == "clarification_needed"
     assert _MEMORY.get("project_id") is None
 
 

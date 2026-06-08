@@ -290,6 +290,7 @@ def test_propagation_uses_sequence_field_from_immediately_preceding_step():
 
     assert result["result"] == {"renamed": 0, "skipped": 0}
     assert calls == [
+        ("flame_context", {}),
         (
             "flame_rename_shots",
             {"params": {"sequence_name": "30sec_21", "prefix": "genesis"}},
@@ -323,8 +324,12 @@ def test_no_propagation_when_previous_result_has_no_sequence_field():
         },
     ))
 
-    assert result["error"]["type"] == "UNRESOLVED_REQUIRED_PARAM"
+    assert result["error"]["type"] == "clarification_needed"
+    assert result["error"]["kind"] == "referent"
+    assert result["error"]["resolve_hint"]["key"] == "sequence_name"
+    assert result["error"]["prompt"] == "Which sequence should I use?"
     assert result["error"]["details"] == {
         "key": "sequence_name",
         "tool": "flame_rename_shots",
+        "candidates": [],
     }

@@ -44,6 +44,7 @@ import logging
 from typing import Any, Awaitable, Callable, Optional, Union
 
 from forge_bridge.console._memory import _MEMORY
+from forge_bridge.console._recovery import normalize_referent_candidates
 from forge_bridge.mcp.arguments import normalize_tool_args
 
 logger = logging.getLogger(__name__)
@@ -223,6 +224,31 @@ async def _resolve_sequence_name(message: str, mcp: Any) -> Optional[str]:
         return None
     value = sequence.get("value")
     return value if isinstance(value, str) and value else None
+
+
+async def _known_names_for_key(key: str, mcp: Any) -> list[dict[str, str]]:
+    """Enumerate known referents for a recoverable unresolved key.
+
+    This is deterministic substrate plumbing. A Flame-down or malformed
+    desktop read degrades to an empty candidate list and still yields a
+    continuation prompt.
+    """
+    from forge_bridge.llm.resolver import _known_names_for
+
+    if key not in {"sequence_name", "reel_name", "library_name"}:
+        return []
+
+    try:
+        raw = await mcp.call_tool("flame_context", {})
+    except Exception:  # noqa: BLE001
+        return []
+    data = _extract_structured(raw)
+    if not isinstance(data, dict):
+        return []
+    desktop = data.get("desktop") if isinstance(data.get("desktop"), dict) else data
+    if not isinstance(desktop, dict):
+        return []
+    return normalize_referent_candidates(_known_names_for(key, desktop))
 
 
 async def _resolve_rename_params(message: str, mcp: Any) -> Optional[dict]:
@@ -457,8 +483,8 @@ async def resolve_required_params(
         # PR27 — multiple candidates. Return the disambiguation sentinel;
         # no memory write (ambiguous resolution must NOT poison cache),
         # caller-provided non-required params are NOT merged (the brief
-        # specifies a sentinel-only return; the handler short-circuits to
-        # MULTIPLE_PROJECTS before any tool would be called anyway).
+        # specifies a sentinel-only return; the handler normalizes the
+        # candidates into a clarification prompt before any tool call).
         if isinstance(result, list):
             return {
                 DISAMBIGUATION_KEY: {
@@ -494,6 +520,7 @@ async def resolve_required_params(
             UNRESOLVED_KEY: {
                 "key": missing_key,
                 "tool": tool_name,
+                "candidates": await _known_names_for_key(missing_key, mcp),
             }
         }
 
@@ -506,6 +533,7 @@ async def resolve_required_params(
             UNRESOLVED_KEY: {
                 "key": missing_key,
                 "tool": tool_name,
+                "candidates": await _known_names_for_key(missing_key, mcp),
             }
         }
 
@@ -514,6 +542,7 @@ async def resolve_required_params(
         UNRESOLVED_KEY: {
             "key": missing_key,
             "tool": tool_name,
+            "candidates": await _known_names_for_key(missing_key, mcp),
         }
     }
 

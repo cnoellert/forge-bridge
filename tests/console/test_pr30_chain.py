@@ -288,12 +288,14 @@ def test_chain_ignores_multi_value_results():
             json={"messages": [{"role": "user", "content": _MSG_MULTI_THEN_VERSIONS}]},
         )
 
-    assert r.status_code == 400, r.text
+    assert r.status_code == 200, r.text
     payload = r.json()
-    assert payload["status"] == "error"
-    assert payload["error"]["code"] == "CHAIN_STEP_FAILED"
-    assert payload["error"]["step_index"] == 1
-    assert payload["error"]["original_error"]["type"] == "MULTIPLE_PROJECTS"
+    assert payload["status"] == "clarification_needed"
+    assert payload["stop_reason"] == "clarification_needed"
+    assert payload["clarification_needed"]["kind"] == "referent"
+    assert payload["clarification_needed"]["resolve_hint"]["key"] == "project_id"
+    assert len(payload["clarification_needed"]["candidates"]) == 2
+    assert payload["step_index"] == 1
     assert len(payload["chain"]) == 1
 
 
