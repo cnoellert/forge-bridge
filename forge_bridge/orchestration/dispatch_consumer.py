@@ -169,7 +169,9 @@ class DispatchOnExecutionEntryConsumer:
             run_id=run_id,
         )
         action: DispatchConsumerAction = (
-            "dispatched" if dispatch.status == "submitted" else "refused"
+            "dispatched"
+            if dispatch.status in {"submitted", "completed"}
+            else "refused"
         )
         await self._emit(
             "dispatch_consumed",

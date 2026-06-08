@@ -1,4 +1,4 @@
-"""GraphEngine event consumer for generation_artifact_terminal (Phase 4B §6)."""
+"""GraphEngine event consumer for execution-step terminal evidence."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from forge_bridge.orchestration.engine import GraphEngine
 from forge_bridge.store.models import DBEntity, DBEvent
+from forge_bridge.store.orch_execution_result_repo import ExecutionResultRepo
 from forge_bridge.store.orch_generation_artifact_repo import GenerationArtifactRepo
 from forge_bridge.store.orchestration_lifecycle_state_repo import (
     OrchestrationLifecycleStateRepo,
@@ -38,9 +39,13 @@ class ConsumerProcessResult:
 
 
 class GraphEngineEventConsumer:
-    """Processes generation_artifact_terminal events and advances runs."""
+    """Processes terminal execution evidence and advances runs."""
 
-    TERMINAL_EVENT_TYPE = "generation_artifact_terminal"
+    TERMINAL_EVENT_TYPE = "execution_step_terminal"
+    GENERATION_TERMINAL_EVENT_TYPE = "generation_artifact_terminal"
+    TERMINAL_EVENT_TYPES = frozenset(
+        {TERMINAL_EVENT_TYPE, GENERATION_TERMINAL_EVENT_TYPE}
+    )
 
     def __init__(
         self,
@@ -53,15 +58,16 @@ class GraphEngineEventConsumer:
         self._events = EventRepo(session)
 
     async def process_terminal_event(self, event: DBEvent) -> ConsumerProcessResult:
-        if event.event_type != self.TERMINAL_EVENT_TYPE:
+        if event.event_type not in self.TERMINAL_EVENT_TYPES:
             raise ValueError(
-                f"Expected {self.TERMINAL_EVENT_TYPE!r}, got {event.event_type!r}"
+                f"Expected one of {sorted(self.TERMINAL_EVENT_TYPES)!r}, "
+                f"got {event.event_type!r}"
             )
 
         payload = event.payload if isinstance(event.payload, dict) else {}
         run_raw = payload.get("run_id")
         if run_raw is None:
-            raise ValueError("generation_artifact_terminal missing run_id")
+            raise ValueError(f"{event.event_type} missing run_id")
         run_id = uuid.UUID(str(run_raw))
 
         lifecycle = await OrchestrationLifecycleStateRepo(self.session).get_by_run_id(
@@ -171,7 +177,7 @@ class GraphEngineEventConsumer:
     ) -> list[ConsumerProcessResult]:
         stmt = (
             select(DBEvent)
-            .where(DBEvent.event_type == self.TERMINAL_EVENT_TYPE)
+            .where(DBEvent.event_type.in_(tuple(self.TERMINAL_EVENT_TYPES)))
             .order_by(DBEvent.occurred_at.asc(), DBEvent.id.asc())
         )
         if after_event_id is not None:
@@ -221,6 +227,16 @@ class GraphEngineEventConsumer:
             elif state in {"complete", "partial"}:
                 candidates += 1
             elif state in {"failed", "cancelled"}:
+                diagnostics += 1
+        for execution_result in await ExecutionResultRepo(self.session).list_for_run(
+            run_id
+        ):
+            disposition = str(execution_result.disposition or "")
+            if disposition == "in_flight":
+                in_flight += 1
+            elif disposition == "candidate":
+                candidates += 1
+            elif disposition == "diagnostic":
                 diagnostics += 1
         return {
             "in_flight": in_flight,

@@ -185,6 +185,16 @@ class GenerationPoller:
 
                 if poll_result.next_state in GenerationArtifactRepo.TERMINAL_STATES:
                     run_id = current.run_id
+                    content_provenance = (
+                        current.content_provenance
+                        if isinstance(current.content_provenance, dict)
+                        else {}
+                    )
+                    disposition = (
+                        "candidate"
+                        if poll_result.next_state in {"complete", "partial"}
+                        else "diagnostic"
+                    )
                     await events.append(
                         "generation_artifact_terminal",
                         {
@@ -193,6 +203,20 @@ class GenerationPoller:
                             "terminal_state": poll_result.next_state,
                             "terminal_provenance": poll_result.terminal_provenance,
                             "partial_fidelity_report": poll_result.partial_fidelity_report,
+                        },
+                        entity_id=current.id,
+                    )
+                    await events.append(
+                        "execution_step_terminal",
+                        {
+                            "artifact_id": str(current.id),
+                            "run_id": str(run_id) if run_id is not None else None,
+                            "step_id": str(
+                                content_provenance.get("operator_id") or current.id
+                            ),
+                            "family": "generation",
+                            "disposition": disposition,
+                            "terminal_state": poll_result.next_state,
                         },
                         entity_id=current.id,
                     )

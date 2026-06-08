@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from forge_bridge.orchestration.drivers import GenerationDriverRegistry
 from forge_bridge.store.orch_entity_views import DBOrchExecutionPlan
+from forge_bridge.store.orch_execution_result_repo import ExecutionResultRepo
 from forge_bridge.store.orch_generation_artifact_repo import GenerationArtifactRepo
 
 
@@ -35,15 +36,46 @@ class DispatchResult:
     status: str
     artifact_id: uuid.UUID | None = None
     refusal_code: str | None = None
+    execution_result_ids: tuple[uuid.UUID, ...] = ()
 
 
 def _generation_step(plan: DBOrchExecutionPlan) -> dict[str, Any] | None:
     for step in plan.operator_sequence or []:
         if not isinstance(step, dict):
             continue
+        if _is_sync_perception_step(step):
+            continue
         if step.get("backend_id") and step.get("operator_id"):
             return step
     return None
+
+
+def _is_sync_perception_step(step: dict[str, Any]) -> bool:
+    return (
+        step.get("family") == "perception"
+        or step.get("capability_family") == "perception"
+        or step.get("payload_family") == "perception"
+        or step.get("payload_family") == "perception_v1"
+    )
+
+
+def _sync_perception_steps(
+    plan: DBOrchExecutionPlan,
+) -> list[tuple[int, dict[str, Any]]]:
+    steps: list[tuple[int, dict[str, Any]]] = []
+    for index, step in enumerate(plan.operator_sequence or []):
+        if isinstance(step, dict) and _is_sync_perception_step(step):
+            steps.append((index, step))
+    return steps
+
+
+def _step_id(index: int, step: dict[str, Any]) -> str:
+    return str(
+        step.get("step_id")
+        or step.get("operator_id")
+        or step.get("operator")
+        or f"step-{index}"
+    )
 
 
 def _artifact_ref(value: Any) -> ArtifactRef:
@@ -84,10 +116,59 @@ async def dispatch_plan(
     event_appender: Callable[[str, dict], Awaitable[None]],
     run_id: uuid.UUID | None = None,
 ) -> DispatchResult:
-    """Dispatch the selected generation step and create a submitted artifact."""
+    """Dispatch plan execution through family-specific evidence lanes."""
+
+    execution_result_ids: list[uuid.UUID] = []
+    sync_steps = _sync_perception_steps(plan)
+    if sync_steps and run_id is None:
+        await event_appender(
+            "dispatch_missing_run_id",
+            {"plan_id": str(plan.id), "family": "perception"},
+        )
+        return DispatchResult(status="refused", refusal_code="dispatch_missing_run_id")
+    assert run_id is not None or not sync_steps
+
+    for index, sync_step in sync_steps:
+        step_id = _step_id(index, sync_step)
+        disposition = str(sync_step.get("disposition") or "candidate")
+        result_payload = sync_step.get("result_payload")
+        if not isinstance(result_payload, dict):
+            result_payload = {
+                "operator_id": sync_step.get("operator_id"),
+                "step_id": step_id,
+            }
+        async with session_factory() as session:
+            result = await ExecutionResultRepo(session).insert_result(
+                run_id=run_id,
+                step_id=step_id,
+                family="perception",
+                disposition=disposition,
+                result_payload=result_payload,
+                result_ref=sync_step.get("result_ref")
+                if isinstance(sync_step.get("result_ref"), dict)
+                else None,
+            )
+            await session.commit()
+        execution_result_ids.append(result.id)
+        await event_appender(
+            "execution_step_terminal",
+            {
+                "plan_id": str(plan.id),
+                "run_id": str(run_id) if run_id is not None else None,
+                "step_id": step_id,
+                "family": "perception",
+                "disposition": disposition,
+                "execution_result_id": str(result.id),
+            },
+        )
 
     step = _generation_step(plan)
     if step is None:
+        if execution_result_ids:
+            return DispatchResult(
+                status="completed",
+                execution_result_ids=tuple(execution_result_ids),
+            )
         await event_appender(
             "dispatch_no_generation_step",
             {"plan_id": str(plan.id)},
@@ -105,7 +186,11 @@ async def dispatch_plan(
                 "backend_id": backend_id,
             },
         )
-        return DispatchResult(status="refused", refusal_code="dispatch_no_driver")
+        return DispatchResult(
+            status="refused",
+            refusal_code="dispatch_no_driver",
+            execution_result_ids=tuple(execution_result_ids),
+        )
 
     backend_identity_triple = dict(driver.backend_identity_triple)
     inputs = [_artifact_ref(item) for item in (step.get("inputs") or [])]
@@ -164,4 +249,8 @@ async def dispatch_plan(
             "input_artifact_ids": [ref.artifact_id for ref in inputs],
         },
     )
-    return DispatchResult(status="submitted", artifact_id=artifact.id)
+    return DispatchResult(
+        status="submitted",
+        artifact_id=artifact.id,
+        execution_result_ids=tuple(execution_result_ids),
+    )

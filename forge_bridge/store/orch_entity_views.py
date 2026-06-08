@@ -376,3 +376,33 @@ class DBOrchGenerationArtifact(_OrchEntityViewBase):
     @property
     def run_id(self) -> Any:
         return self._attr("run_id")
+
+
+class DBOrchExecutionResult(_OrchEntityViewBase):
+    """Lightweight terminal record for synchronous execution-family steps."""
+
+    ENTITY_TYPE = "orch_execution_result"
+
+    @property
+    def run_id(self) -> Any:
+        return self._attr("run_id")
+
+    @property
+    def step_id(self) -> Any:
+        return self._attr("step_id")
+
+    @property
+    def family(self) -> Any:
+        return self._attr("family")
+
+    @property
+    def disposition(self) -> Any:
+        return self._attr("disposition")
+
+    @property
+    def result_payload(self) -> Any:
+        return self._attr("result_payload")
+
+    @property
+    def result_ref(self) -> Any:
+        return self._attr("result_ref")
