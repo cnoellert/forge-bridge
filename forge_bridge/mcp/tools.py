@@ -631,6 +631,11 @@ async def create_shot(params: CreateShotInput) -> str:
             attributes={"shot_id": shot_id},
         ))
         stack_id = stack_result["entity_id"]
+        await client.request(relationship_create(
+            source_id=stack_id,
+            target_id=shot_id,
+            rel_type="member_of",
+        ))
 
         # Layers
         layer_ids = {}
