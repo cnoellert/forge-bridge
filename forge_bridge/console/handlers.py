@@ -875,10 +875,9 @@ async def _execute_forced_tool(
     return JSONResponse(
         {
             # Phase A: short-circuit emits the same canonical top-level keys
-            # as the LLM-loop path. The model never spoke on this path, so
-            # final_text is empty by Phase A decision (the assistant turn
-            # in messages is the synthetic tool_call entry, not a reply).
-            "final_text": "",
+            # as the LLM-loop path. CR.1b lets successful forced reads carry
+            # the same synthesized answer text as compiled-chain reads.
+            "final_text": answer,
             "messages": (
                 [{"role": "assistant", "content": answer}]
                 if answer else out_messages

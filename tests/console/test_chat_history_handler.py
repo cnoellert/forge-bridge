@@ -107,9 +107,9 @@ def test_short_circuit_response_includes_final_text_and_tool_trace():
     )
     assert "final_text" in body, "short-circuit response missing final_text"
     assert "tool_trace" in body, "short-circuit response missing tool_trace"
-    # Short-circuit does not run the LLM, so final_text is empty by Phase A
-    # decision (the model never spoke).
-    assert body["final_text"] == ""
+    # CR.1b wires the answer-pass result back into final_text on
+    # successful forced reads.
+    assert body["final_text"] == "The daemon is ok."
     assert body["messages"] == [{
         "role": "assistant",
         "content": "The daemon is ok.",
