@@ -20,6 +20,7 @@ from typing import Any
 import asyncio
 
 from forge_bridge.console._step import serialize_forced_tool_result
+from forge_bridge.console._vocab_digest import planner_vocabulary_digest
 from forge_bridge.mcp.arguments import normalize_tool_args
 
 logger = logging.getLogger(__name__)
@@ -202,8 +203,9 @@ async def run_planner_front(messages: list[dict], *, router: Any, mcp: Any,
 
     grounding = (
         "CONVERSATION:\n" + convo + "\n\n"
-        "PROJECTS:\n" + json.dumps(projects, ensure_ascii=False) + "\n\n"
-        "TOOLS:\n" + "\n".join(_tool_line(t) for t in read_tools) + "\n\n"
+        + planner_vocabulary_digest() + "\n\n"
+        + "PROJECTS:\n" + json.dumps(projects, ensure_ascii=False) + "\n\n"
+        + "TOOLS:\n" + "\n".join(_tool_line(t) for t in read_tools) + "\n\n"
         "Respond to the LAST user message."
     )
     try:
