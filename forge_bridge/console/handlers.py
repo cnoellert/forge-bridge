@@ -1510,6 +1510,43 @@ async def chat_handler(request: Request) -> Response:
             422,
             request_id,
         )
+
+    # ---- Planner-front (V1) opt-in — ?planner_front=true | X-Forge-Planner: v1
+    # Routes the whole turn to the LLM-planner path (ground -> plan -> execute
+    # -> narrate), bypassing the deterministic front entirely. Reads-only by
+    # construction (only read tools are exposed to the planner). Isolated
+    # short-circuit: the deterministic handler below is untouched when the flag
+    # is absent.
+    if (request.query_params.get("planner_front") == "true"
+            or request.headers.get("X-Forge-Planner") == "v1"):
+        user_message = ""
+        for _m in reversed(messages):
+            if (isinstance(_m, dict) and _m.get("role") == "user"
+                    and isinstance(_m.get("content"), str)):
+                user_message = _m["content"]
+                break
+        try:
+            from forge_bridge.console._planner_front import run_planner_front
+            from forge_bridge.mcp import server as _mcp_server
+            _router = getattr(request.app.state.console_read_api, "_llm_router", None)
+            if _router is None:
+                from forge_bridge.llm.router import LLMRouter
+                _router = LLMRouter()
+            _ptools = await _mcp_server.mcp.list_tools()
+            result = await run_planner_front(
+                user_message, router=_router, mcp=_mcp_server.mcp, tools=_ptools)
+            result["request_id"] = request_id
+            logger.info(
+                "chat planner_front request_id=%s client_ip=%s plan_steps=%d",
+                request_id, client_ip, len(result.get("plan") or []),
+            )
+            return JSONResponse(result, status_code=200,
+                                headers={"X-Request-ID": request_id})
+        except Exception as exc:  # noqa: BLE001 - surface, never crash the endpoint
+            logger.info("chat planner_front_error request_id=%s exc=%s",
+                        request_id, exc)
+            return _chat_error("planner_front_error", str(exc), 500, request_id)
+
     for i, msg in enumerate(messages):
         if not isinstance(msg, dict):
             return _chat_error(

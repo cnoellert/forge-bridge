@@ -205,6 +205,13 @@
     </section>
   </div>
 
+  <!-- planner-front (V1) toggle — flip between the LLM-planner path and the
+       deterministic path to compare live -->
+  <label class="chat-planner-toggle" style="display:flex;align-items:center;gap:.5rem;margin:.5rem 0;font-size:.85rem;opacity:.8;">
+    <input type="checkbox" x-model="plannerMode">
+    <span x-text="plannerMode ? 'Planner (V1) — LLM authors the plan' : 'Deterministic path'"></span>
+  </label>
+
   <!-- input (D-10: single textarea, Enter sends, Shift+Enter newline) -->
   <form class="chat-form" @submit.prevent="send()">
     <textarea id="chat-input"

@@ -77,6 +77,10 @@
       preview: null,
       ratifyInflight: false,
       ratifyOutcome: null,
+      // Planner-front (V1) opt-in. When true, the turn routes to the LLM
+      // planner path (ground -> plan -> execute -> narrate) via the
+      // ?planner_front=true flag; when false, the deterministic path.
+      plannerMode: true,
 
       init() {
         // D-06 per-tab: nothing to restore. Cleared on tab close.
@@ -145,7 +149,8 @@
         });
 
         try {
-          const r = await fetch("/api/v1/chat", {
+          const chatUrl = "/api/v1/chat" + (this.plannerMode ? "?planner_front=true" : "");
+          const r = await fetch(chatUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ messages: wireMessages }),
