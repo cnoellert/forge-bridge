@@ -333,7 +333,9 @@ class EntityRepo:
         db_entity = await self.session.get(DBEntity, entity_id)
         if db_entity is None:
             return None
-        return self._to_core(db_entity)
+        core = self._to_core(db_entity)
+        await self._hydrate([core])
+        return core
 
     async def list_by_type(
         self,
@@ -345,7 +347,50 @@ class EntityRepo:
             stmt = stmt.where(DBEntity.project_id == project_id)
         stmt = stmt.order_by(DBEntity.name)
         result = await self.session.execute(stmt)
-        return [self._to_core(e) for e in result.scalars().all()]
+        cores = [self._to_core(e) for e in result.scalars().all()]
+        await self._hydrate(cores)
+        return cores
+
+    async def _hydrate(self, entities: list[BridgeEntity]) -> None:
+        """Attach locations + outgoing relationships to freshly-loaded entities.
+
+        `_to_core` reconstructs only the `DBEntity` row; locations and
+        relationships live in sibling tables, so without this the read surface
+        (`entity.get` / `entity.list`) serializes them empty — which silently
+        broke `resolve_locations()` for the render-client import path (issue #22).
+
+        Batched (`IN (...)`) so `list_by_type` doesn't fan out into N+1. NB:
+        `find_by_attribute` shares `_to_core` and is the same-shaped sibling — it
+        is intentionally NOT hydrated here (no reported consumer); wire it in if
+        one needs hydrated locations.
+        """
+        ids = [e.id for e in entities if getattr(e, "id", None) is not None]
+        if not ids:
+            return
+        by_id = {e.id: e for e in entities}
+
+        loc_rows = (await self.session.execute(
+            select(DBLocation)
+            .where(DBLocation.entity_id.in_(ids))
+            .order_by(DBLocation.priority.desc())
+        )).scalars().all()
+        for r in loc_rows:
+            e = by_id.get(r.entity_id)
+            if e is None or not hasattr(e, "add_location"):
+                continue
+            loc = e.add_location(r.path, r.storage_type, r.priority)
+            loc.exists = r.exists  # preserve NULL/checked state; do not filter
+            if r.attributes:
+                loc.metadata = dict(r.attributes)
+
+        rel_rows = (await self.session.execute(
+            select(DBRelationship).where(DBRelationship.source_id.in_(ids))
+        )).scalars().all()
+        for r in rel_rows:
+            e = by_id.get(r.source_id)
+            if e is None or not hasattr(e, "add_relationship"):
+                continue
+            e.add_relationship(r.target_id, r.rel_type_key)
 
     async def find_by_attribute(
         self,
