@@ -33,15 +33,20 @@ _NARRATE_SYSTEM = (
 _NARRATE_TIMEOUT_S = 25.0
 
 _PLANNER_SYSTEM = (
-    "You are a planning agent for a post-production pipeline assistant. The "
-    "user asks in natural language. You are given the available PROJECTS "
-    "(id, name) and the available read-only TOOLS (name, purpose, args). "
-    "Author the MINIMAL plan of tool calls that answers the request. Resolve "
-    "any project the user names to its id using the PROJECTS list — never ask "
-    "the user for an id you can resolve yourself. Pass tool arguments FLAT "
-    "(e.g. {\"project_id\": \"<id>\"}). Output ONLY JSON, no prose:\n"
+    "You are a planning agent for a post-production pipeline assistant. Given "
+    "the CONVERSATION, the available PROJECTS (id, name), and the read-only "
+    "TOOLS (name, purpose, args), respond to the LAST user message. Resolve "
+    "pronouns and back-references (\"it\", \"that project\", \"those shots\") "
+    "from earlier turns. Pass tool arguments FLAT (e.g. {\"project_id\": "
+    "\"<id>\"}); resolve any project the user names to its id from PROJECTS.\n"
+    "If you can proceed, output the MINIMAL plan:\n"
     '{"plan": [{"tool": "<tool_name>", "args": {<flat args>}}]}\n'
-    "Use an empty plan [] only if no tool can help."
+    "If you CANNOT be sure which entity the user means — no project is named "
+    "and the conversation doesn't make it clear, OR the name they gave matches "
+    "MORE THAN ONE entry in PROJECTS — do NOT guess. Ask, naming the "
+    "candidates:\n"
+    '{"clarify": "<a short question that lists the candidate project names>"}\n'
+    "Output ONLY one JSON object (either a plan or a clarify), no prose."
 )
 
 
@@ -90,7 +95,8 @@ async def _ground_projects(mcp: Any, tools: list) -> list[dict]:
         return []
 
 
-def _parse_plan(raw: str) -> list[dict]:
+def _parse_planner_output(raw: str) -> dict:
+    """Parse the planner's JSON — either {"plan": [...]} or {"clarify": "..."}."""
     text = (raw or "").strip()
     if "```" in text:
         text = text.split("```")[1] if text.count("```") >= 2 else text
@@ -101,13 +107,44 @@ def _parse_plan(raw: str) -> list[dict]:
     except Exception:
         a, b = text.find("{"), text.rfind("}")
         if a == -1 or b == -1:
-            return []
+            return {}
         try:
             obj = json.loads(text[a:b + 1])
         except Exception:
-            return []
-    plan = obj.get("plan") if isinstance(obj, dict) else obj
-    return [s for s in (plan or []) if isinstance(s, dict) and s.get("tool")]
+            return {}
+    return obj if isinstance(obj, dict) else {}
+
+
+def _conversation(messages: list[dict]) -> str:
+    lines = []
+    for m in messages:
+        if not isinstance(m, dict):
+            continue
+        role, content = m.get("role"), m.get("content")
+        if role in ("user", "assistant") and isinstance(content, str) and content.strip():
+            lines.append(f"{role}: {content.strip()}")
+    return "\n".join(lines)
+
+
+def _last_user(messages: list[dict]) -> str:
+    for m in reversed(messages):
+        if (isinstance(m, dict) and m.get("role") == "user"
+                and isinstance(m.get("content"), str)):
+            return m["content"]
+    return ""
+
+
+def _response(text: str, messages: list[dict], *, plan: list | None = None,
+              chain: list | None = None, stop: str = "planner_front",
+              grounded: int = 0) -> dict:
+    return {
+        "final_text": text,
+        "stop_reason": stop,
+        "plan": plan or [],
+        "chain": chain or [],
+        "grounded_projects": grounded,
+        "messages": list(messages) + [{"role": "assistant", "content": text}],
+    }
 
 
 def _slim_entity(x: Any) -> Any:
@@ -131,11 +168,12 @@ def _compact_result(result: Any, max_items: int = 25) -> Any:
     return result
 
 
-async def _narrate(router: Any, question: str, chain: list[dict]) -> str:
+async def _narrate(router: Any, convo: str, chain: list[dict]) -> str:
     lines = [f"- {c['step']}\n  {json.dumps(_compact_result(c['result']), ensure_ascii=False)}"
              for c in chain]
     evidence = "\n".join(lines) if lines else "(no tool results)"
-    prompt = f"Question:\n{question}\n\nTool results:\n{evidence}\n\nAnswer:"
+    prompt = (f"Conversation:\n{convo}\n\nTool results:\n{evidence}\n\n"
+              "Answer the user's latest request using the tool results:")
     try:
         ans = await asyncio.wait_for(
             router.acomplete(prompt, sensitive=True, system=_NARRATE_SYSTEM,
@@ -147,21 +185,43 @@ async def _narrate(router: Any, question: str, chain: list[dict]) -> str:
         return ""
 
 
-async def run_planner_front(user_message: str, *, router: Any, mcp: Any,
+async def run_planner_front(messages: list[dict], *, router: Any, mcp: Any,
                             tools: list) -> dict:
-    """Ground → plan → execute → narrate. Returns a chat-shaped dict."""
+    """Ground → plan (or clarify) → execute → narrate. Chat-shaped dict.
+
+    Takes the full conversation so the planner can resolve cross-turn
+    references ("it"). When certainty is insufficient — no referent, multi-
+    match, or an unresolvable back-reference — the planner asks instead of
+    guessing (one unified mechanism).
+    """
     read_tools = _read_only_tools(tools)
     read_names = {t.name for t in read_tools}
     projects = await _ground_projects(mcp, tools)
+    user_message = _last_user(messages)
+    convo = _conversation(messages) or f"user: {user_message}"
 
     grounding = (
+        "CONVERSATION:\n" + convo + "\n\n"
         "PROJECTS:\n" + json.dumps(projects, ensure_ascii=False) + "\n\n"
         "TOOLS:\n" + "\n".join(_tool_line(t) for t in read_tools) + "\n\n"
-        "USER REQUEST: " + user_message
+        "Respond to the LAST user message."
     )
-    plan_raw = await router.acomplete(grounding, sensitive=True,
-                                      system=_PLANNER_SYSTEM, temperature=0.1)
-    plan = _parse_plan(plan_raw)
+    try:
+        plan_raw = await router.acomplete(grounding, sensitive=True,
+                                          system=_PLANNER_SYSTEM, temperature=0.1)
+    except Exception as exc:  # noqa: BLE001 - planning must never 500 the endpoint
+        logger.info("planner_front: planning failed: %s", exc)
+        return _response("Sorry — I hit a problem working that out. Try rephrasing?",
+                         messages, stop="planner_error")
+
+    parsed = _parse_planner_output(plan_raw)
+    clarify = parsed.get("clarify")
+    if isinstance(clarify, str) and clarify.strip():
+        return _response(clarify.strip(), messages, stop="clarification_needed",
+                         grounded=len(projects))
+
+    plan = [s for s in (parsed.get("plan") or [])
+            if isinstance(s, dict) and s.get("tool")]
 
     chain: list[dict] = []
     for step in plan:
@@ -179,14 +239,6 @@ async def run_planner_front(user_message: str, *, router: Any, mcp: Any,
         chain.append({"step": f"{name}({json.dumps(args, ensure_ascii=False)})",
                       "result": result})
 
-    answer = await _narrate(router, user_message, chain)
-    messages = [{"role": "user", "content": user_message}]
-
-    return {
-        "final_text": answer,
-        "stop_reason": "planner_front",
-        "plan": plan,
-        "chain": chain,
-        "grounded_projects": len(projects),
-        "messages": messages + [{"role": "assistant", "content": answer}],
-    }
+    answer = await _narrate(router, convo, chain)
+    return _response(answer, messages, plan=plan, chain=chain,
+                     grounded=len(projects))

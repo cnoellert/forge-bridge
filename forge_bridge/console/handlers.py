@@ -1519,12 +1519,6 @@ async def chat_handler(request: Request) -> Response:
     # is absent.
     if (request.query_params.get("planner_front") == "true"
             or request.headers.get("X-Forge-Planner") == "v1"):
-        user_message = ""
-        for _m in reversed(messages):
-            if (isinstance(_m, dict) and _m.get("role") == "user"
-                    and isinstance(_m.get("content"), str)):
-                user_message = _m["content"]
-                break
         try:
             from forge_bridge.console._planner_front import run_planner_front
             from forge_bridge.mcp import server as _mcp_server
@@ -1534,7 +1528,7 @@ async def chat_handler(request: Request) -> Response:
                 _router = LLMRouter()
             _ptools = await _mcp_server.mcp.list_tools()
             result = await run_planner_front(
-                user_message, router=_router, mcp=_mcp_server.mcp, tools=_ptools)
+                messages, router=_router, mcp=_mcp_server.mcp, tools=_ptools)
             result["request_id"] = request_id
             logger.info(
                 "chat planner_front request_id=%s client_ip=%s plan_steps=%d",
