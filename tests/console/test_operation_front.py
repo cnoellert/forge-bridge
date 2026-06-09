@@ -9,7 +9,11 @@ import pytest
 from mcp.types import TextContent, Tool, ToolAnnotations
 
 from forge_bridge.console import _rate_limit
-from forge_bridge.console._operation_front import run_operation_front
+from forge_bridge.console._operation_front import (
+    _OPERATION_SYSTEM,
+    run_operation_front,
+    validate_required_operation_args,
+)
 from forge_bridge.console.app import build_console_app
 from forge_bridge.console.manifest_service import ManifestService
 from forge_bridge.console.read_api import ConsoleReadAPI
@@ -37,6 +41,17 @@ def _create_reel_tool() -> Tool:
 
 def _text(payload: dict) -> list[TextContent]:
     return [TextContent(type="text", text=json.dumps(payload))]
+
+
+async def _assent_count(session_factory) -> int:
+    from sqlalchemy import select
+    from forge_bridge.store.models import DBEntity
+
+    async with session_factory() as session:
+        result = await session.execute(
+            select(DBEntity).where(DBEntity.entity_type == "assent_record")
+        )
+        return len(result.scalars().all())
 
 
 def _manifest(args: dict) -> dict:
@@ -125,6 +140,24 @@ async def test_operation_front_create_reel_preview_persists_intent(session_facto
     assert record.chain_steps[1] == "commit"
     assert "flame_create_reel" in record.chain_steps[0]
     assert "dailies" in record.chain_steps[0]
+    assert await _assent_count(session_factory) == 1
+
+
+async def test_operation_front_prompt_uses_concrete_example_not_name_placeholder():
+    assert '"reel_name": "dailies"' in _OPERATION_SYSTEM
+    assert '"reel_name": "<name>"' not in _OPERATION_SYSTEM
+    assert "Never output a literal placeholder" in _OPERATION_SYSTEM
+
+
+async def test_required_operation_arg_validator_rejects_empty_and_placeholder():
+    required = ("reel_name",)
+
+    assert validate_required_operation_args({"reel_name": "dailies"}, required) is None
+    assert validate_required_operation_args({"reel_name": ""}, required) == "reel_name"
+    assert validate_required_operation_args({"reel_name": "   "}, required) == "reel_name"
+    assert validate_required_operation_args({"reel_name": "<name>"}, required) == "reel_name"
+    assert validate_required_operation_args({"reel_name": "<reel_name>"}, required) == "reel_name"
+    assert validate_required_operation_args({"reel_name": "<anything>"}, required) == "reel_name"
 
 
 async def test_operation_front_missing_name_uses_clarify_channel(session_factory):
@@ -143,6 +176,33 @@ async def test_operation_front_missing_name_uses_clarify_channel(session_factory
     assert body["stop_reason"] == "clarification_needed"
     assert "preview" not in body
     assert "graph_intent_id" not in body
+    assert await _assent_count(session_factory) == 0
+
+
+@pytest.mark.parametrize("bad_value", ["", "   ", "<name>", "<reel_name>"])
+async def test_operation_front_placeholder_required_arg_clarifies_before_persist(
+    session_factory,
+    bad_value,
+):
+    router = SimpleNamespace(
+        acomplete=AsyncMock(return_value=json.dumps({
+            "operation": "create_reel",
+            "args": {"reel_name": bad_value},
+        })),
+    )
+
+    body = await run_operation_front(
+        [{"role": "user", "content": "create a reel"}],
+        router=router,
+        session_factory=session_factory,
+    )
+
+    assert body["stop_reason"] == "clarification_needed"
+    assert "What should the new reel be called?" == body["final_text"]
+    assert "preview" not in body
+    assert "graph_intent_id" not in body
+    assert "<name>" not in json.dumps(body)
+    assert await _assent_count(session_factory) == 0
 
 
 async def test_unratified_operation_preview_does_not_call_flame(session_factory):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Optional
 
 from forge_bridge.console._chat_compile import build_preview_from_steps
@@ -20,13 +21,17 @@ _OPERATION_SYSTEM = (
     "This slice supports exactly one mutating operation: create_reel. "
     "If the user asks to create/name a Flame reel and gives a reel name, "
     "return only JSON in this shape:\n"
-    '{"operation": "create_reel", "args": {"reel_name": "<name>", '
-    '"target_type": "library|reel_group", "target_name": "<optional name>"}}\n'
+    '{"operation": "create_reel", "args": {"reel_name": "dailies", '
+    '"target_type": "library", "target_name": "finishing"}}\n'
     "If target container is omitted, use target_type=library and omit "
     "target_name. If the reel name is missing or intent is not create_reel, "
-    'return {"clarify": "<short question>"}. Do not invent other operations. '
+    "return {\"clarify\": \"<short question>\"}. Never output a literal "
+    "placeholder or angle-bracketed token as a value; if a required value is "
+    "not supplied, clarify. Do not invent other operations. "
     "Never execute; only author operation intent for preview and ratification."
 )
+
+_PLACEHOLDER_RE = re.compile(r"^<.*>$")
 
 
 def _conversation(messages: list[dict]) -> str:
@@ -88,6 +93,24 @@ def _operation_step(args: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         preview_args["target_name"] = "default workspace library"
     step = "flame_create_reel " + json.dumps({"params": tool_args}, sort_keys=True)
     return step, preview_args
+
+
+def _invalid_required_value(value: Any) -> bool:
+    if not isinstance(value, str):
+        return True
+    text = value.strip()
+    return not text or text == "<name>" or bool(_PLACEHOLDER_RE.fullmatch(text))
+
+
+def validate_required_operation_args(
+    args: dict[str, Any],
+    required: tuple[str, ...],
+) -> str | None:
+    """Return the first missing/placeholder required arg, else ``None``."""
+    for key in required:
+        if _invalid_required_value(args.get(key)):
+            return key
+    return None
 
 
 def _response(
@@ -152,13 +175,13 @@ async def run_operation_front(
         )
 
     args = parsed["args"]
-    reel_name = args.get("reel_name")
-    if not isinstance(reel_name, str) or not reel_name.strip():
+    if validate_required_operation_args(args, ("reel_name",)) is not None:
         return _response(
             "What should the new reel be called?",
             messages,
             stop="clarification_needed",
         )
+    reel_name = str(args["reel_name"]).strip()
 
     step, preview_args = _operation_step(args)
     steps = [step, "commit"]
