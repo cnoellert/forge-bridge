@@ -57,7 +57,7 @@ from forge_bridge.console._chat_compile import (
 from forge_bridge.console._engine import run_chain_steps
 from forge_bridge.console._macros import delete_macro, expand_macro, list_macros
 from forge_bridge.console._recovery import (
-    recovery_params_from_messages,
+    recovery_context_from_messages,
     referent_clarification,
     response_body as recovery_response_body,
 )
@@ -1696,7 +1696,12 @@ async def chat_handler(request: Request) -> Response:
     last_user_text = expand_macro(last_user_text)
     resolved_entities = resolve_query_entities(last_user_text)
     resolved_params = resolved_entity_params(resolved_entities)
-    recovery_params = recovery_params_from_messages(messages, last_user_text)
+    recovery_context = recovery_context_from_messages(messages, last_user_text)
+    recovery_params = (
+        dict(recovery_context.get("params") or {})
+        if recovery_context is not None
+        else {}
+    )
     messages_for_llm = [dict(message) for message in messages]
     for index in range(len(messages_for_llm) - 1, -1, -1):
         message = messages_for_llm[index]
@@ -1706,6 +1711,83 @@ async def chat_handler(request: Request) -> Response:
     messages_for_llm = enrich_messages_with_resolved_entities(
         messages_for_llm, resolved_entities,
     )
+
+    if recovery_context is not None:
+        clarification = recovery_context.get("clarification")
+        from forge_bridge.console._param_extract import extract_explicit_params
+
+        current_explicit_params = extract_explicit_params(last_user_text)
+        effective_recovery_params = {
+            **recovery_params,
+            **current_explicit_params,
+        }
+        if not effective_recovery_params:
+            return JSONResponse(
+                recovery_response_body(
+                    request_id=request_id,
+                    clarification=clarification,
+                    messages=messages,
+                ),
+                status_code=200,
+                headers={"X-Request-ID": request_id},
+            )
+
+        prior_intent_text = expand_macro(
+            str(recovery_context.get("intent_text") or "")
+        )
+        if prior_intent_text:
+            recovery_tools = filter_tools_by_message(tools, prior_intent_text)
+            recovery_tools_filtered_count = len(recovery_tools)
+            if recovery_tools_filtered_count > 1:
+                narrowed = deterministic_narrow(recovery_tools, prior_intent_text)
+                if len(narrowed) < len(recovery_tools):
+                    recovery_tools = narrowed
+                    recovery_tools_filtered_count = len(narrowed)
+
+            if (
+                recovery_tools_filtered_count == 1
+                and recovery_tools_filtered_count < tools_available_count
+                and not _APPLY_GRAMMAR.match(prior_intent_text.strip())
+                and not dispatch_authority(recovery_tools[0])
+            ):
+                prior_entities = resolve_query_entities(prior_intent_text)
+                user_params = {
+                    **recovery_params,
+                    **resolved_entity_params(prior_entities),
+                    **extract_explicit_params(prior_intent_text),
+                    **resolved_params,
+                    **current_explicit_params,
+                }
+                logger.info(
+                    "chat recovery_reentry request_id=%s client_ip=%s "
+                    "tools_available=%d tools_filtered=%d",
+                    request_id, client_ip, tools_available_count,
+                    recovery_tools_filtered_count,
+                )
+                return await _execute_forced_tool(
+                    router=router,
+                    tool=recovery_tools[0],
+                    messages=messages,
+                    request_id=request_id,
+                    started=started,
+                    client_ip=client_ip,
+                    tools_available_count=tools_available_count,
+                    tools_filtered_count=recovery_tools_filtered_count,
+                    tool_enforced_flag=is_tool_enforced(
+                        recovery_tools_filtered_count
+                    ),
+                    user_params=user_params,
+                )
+
+        return JSONResponse(
+            recovery_response_body(
+                request_id=request_id,
+                clarification=clarification,
+                messages=messages,
+            ),
+            status_code=200,
+            headers={"X-Request-ID": request_id},
+        )
 
     # ---- PR30: deterministic multi-step tool chaining -----------------------
     # If the user message contains the ``->`` separator, parse it into a

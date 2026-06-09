@@ -140,6 +140,7 @@
         const wireMessages = this.messages.map((m) => {
           const out = { role: m.role, content: m.content };
           if (m.tool_call_id) out.tool_call_id = m.tool_call_id;
+          if (m.clarification_needed) out.clarification_needed = m.clarification_needed;
           return out;
         });
 
@@ -180,6 +181,7 @@
                 role: m.role,
                 content: m.content,
                 tool_call_id: m.tool_call_id,
+                clarification_needed: m.clarification_needed,
               }));
             }
             this.preview = null;

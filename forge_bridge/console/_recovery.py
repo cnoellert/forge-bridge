@@ -144,11 +144,20 @@ def response_body(
     return body
 
 
-def recovery_params_from_messages(messages: list[dict], reply: str) -> dict[str, Any]:
-    """Resolve a natural reply against the previous held candidate set."""
+def recovery_context_from_messages(
+    messages: list[dict],
+    reply: str,
+) -> dict[str, Any] | None:
+    """Return the held recovery context for a natural follow-up reply.
+
+    The assistant clarification is the marker. The user turn immediately
+    before that assistant message is the intent to replay; the current reply
+    is only a candidate selector.
+    """
     from forge_bridge.console._name_resolve import resolve_name_from_candidates
 
-    for message in reversed(messages[:-1]):
+    for index in range(len(messages) - 2, -1, -1):
+        message = messages[index]
         if not isinstance(message, dict) or message.get("role") != "assistant":
             continue
         clarification = message.get("clarification_needed")
@@ -164,7 +173,28 @@ def recovery_params_from_messages(messages: list[dict], reply: str) -> dict[str,
         if not isinstance(key, str) or not key:
             continue
         resolved = resolve_name_from_candidates(reply, candidates)
-        if resolved is None:
-            return {}
-        return {key: resolved}
-    return {}
+        intent_text = ""
+        for prior in range(index - 1, -1, -1):
+            prior_message = messages[prior]
+            if (
+                isinstance(prior_message, dict)
+                and prior_message.get("role") == "user"
+                and isinstance(prior_message.get("content"), str)
+            ):
+                intent_text = prior_message["content"]
+                break
+        return {
+            "params": ({key: resolved} if resolved is not None else {}),
+            "clarification": clarification,
+            "intent_text": intent_text,
+        }
+    return None
+
+
+def recovery_params_from_messages(messages: list[dict], reply: str) -> dict[str, Any]:
+    """Resolve a natural reply against the previous held candidate set."""
+    context = recovery_context_from_messages(messages, reply)
+    if context is None:
+        return {}
+    params = context.get("params")
+    return dict(params) if isinstance(params, dict) else {}
