@@ -179,6 +179,36 @@ def _tool(name: str, required: list[str] | None = None):
     from mcp.types import Tool, ToolAnnotations
 
     required = required or []
+    if required:
+        return Tool(
+            name=name,
+            description=f"{name} description",
+            annotations=ToolAnnotations(
+                readOnlyHint=True,
+                title=name.replace("_", " ").title(),
+            ),
+            inputSchema={
+                "$defs": {
+                    "WrappedInput": {
+                        "type": "object",
+                        "properties": {
+                            key: {"type": "string"} for key in required
+                        },
+                        "required": required,
+                    },
+                },
+                "type": "object",
+                "properties": {
+                    "params": {
+                        "anyOf": [
+                            {"$ref": "#/$defs/WrappedInput"},
+                            {"type": "null"},
+                        ],
+                        "default": None,
+                    },
+                },
+            },
+        )
     properties = {key: {"type": "string"} for key in required}
     return Tool(
         name=name,
@@ -299,7 +329,9 @@ def test_cr2_reentry_replays_prior_intent_with_resolved_referent(reply):
     assert body["tool_forced"] is True
     assert body["final_text"] == "Shot A001 is available."
     assert body["tool_trace"][0]["tool_name"] == "forge_list_shots"
-    assert body["tool_trace"][0]["arguments"] == {"project_id": "proj-0"}
+    assert body["tool_trace"][0]["arguments"] == {
+        "params": {"project_id": "proj-0"}
+    }
     assert "clarification_needed" not in body
     router.compile_intent.assert_not_called()
     assert _MEMORY.get("project_id") is None
@@ -360,7 +392,7 @@ def test_cr2_reentry_current_explicit_param_wins_over_recovered_candidate():
 
     assert second.status_code == 200, second.text
     assert second.json()["tool_trace"][0]["arguments"] == {
-        "project_id": "11111111-1111-1111-1111-111111111111"
+        "params": {"project_id": "11111111-1111-1111-1111-111111111111"}
     }
 
 

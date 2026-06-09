@@ -626,6 +626,79 @@ class TestInvokeTool:
         )
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_wraps_non_empty_flat_args_for_optional_model_params(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from forge_bridge.mcp.registry import invoke_tool
+
+        fake_mcp = MagicMock()
+        t = MagicMock()
+        t.name = "forge_list_shots"
+        t.inputSchema = {
+            "$defs": {
+                "ListShotsInput": {
+                    "properties": {"project_id": {"type": "string"}},
+                    "required": ["project_id"],
+                    "type": "object",
+                },
+            },
+            "properties": {
+                "params": {
+                    "anyOf": [
+                        {"$ref": "#/$defs/ListShotsInput"},
+                        {"type": "null"},
+                    ],
+                    "default": None,
+                },
+            },
+            "type": "object",
+        }
+        fake_mcp.list_tools = AsyncMock(return_value=[t])
+        fake_mcp.call_tool = AsyncMock(return_value="ok")
+
+        with patch("forge_bridge.mcp.server.mcp", fake_mcp):
+            await invoke_tool("forge_list_shots", {"project_id": "proj-0"})
+
+        fake_mcp.call_tool.assert_awaited_once_with(
+            "forge_list_shots",
+            arguments={"params": {"project_id": "proj-0"}},
+        )
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_preserves_empty_args_for_optional_model_params(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from forge_bridge.mcp.registry import invoke_tool
+
+        fake_mcp = MagicMock()
+        t = MagicMock()
+        t.name = "forge_list_shots"
+        t.inputSchema = {
+            "$defs": {
+                "ListShotsInput": {
+                    "properties": {"project_id": {"type": "string"}},
+                    "required": ["project_id"],
+                    "type": "object",
+                },
+            },
+            "properties": {
+                "params": {
+                    "anyOf": [
+                        {"$ref": "#/$defs/ListShotsInput"},
+                        {"type": "null"},
+                    ],
+                    "default": None,
+                },
+            },
+            "type": "object",
+        }
+        fake_mcp.list_tools = AsyncMock(return_value=[t])
+        fake_mcp.call_tool = AsyncMock(return_value="ok")
+
+        with patch("forge_bridge.mcp.server.mcp", fake_mcp):
+            await invoke_tool("forge_list_shots", {})
+
+        fake_mcp.call_tool.assert_awaited_once_with("forge_list_shots", arguments={})
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_logs_params_normalization(self, caplog):
         import logging
         from unittest.mock import AsyncMock, MagicMock, patch
@@ -663,9 +736,20 @@ class TestInvokeTool:
             assert name in tools
             assert requires_params_wrapper(tools[name].inputSchema) is False
 
-        for name in ("flame_find_media", "flame_rename_shots", "forge_get_project"):
+        for name in (
+            "flame_find_media",
+            "flame_rename_shots",
+            "forge_get_project",
+            "forge_list_shots",
+            "forge_list_versions",
+        ):
             assert name in tools
             assert requires_params_wrapper(tools[name].inputSchema) is True
+
+        assert tools["forge_list_shots"].inputSchema.get("required") is None
+        params_schema = tools["forge_list_shots"].inputSchema["properties"]["params"]
+        assert params_schema["anyOf"][0]["$ref"] == "#/$defs/ListShotsInput"
+        assert params_schema["anyOf"][1]["type"] == "null"
 
         assert "format_result" in tools
         assert requires_params_wrapper(tools["format_result"].inputSchema) is True
