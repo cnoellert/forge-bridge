@@ -34,6 +34,8 @@ def test_timeline_exports():
         "get_sequence_segments",
         "set_segment_attribute",
         "create_reel",
+        "create_reel_group",
+        "create_library",
         "rename_shots",
         "get_sequence_editing_guide",
         "disconnect_segments",

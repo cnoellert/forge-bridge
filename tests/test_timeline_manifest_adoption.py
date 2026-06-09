@@ -140,6 +140,86 @@ def test_create_reel_apply_uses_bridge_create_reel_api(monkeypatch):
     assert "'tool': 'flame_create_reel'" in captured["code"]
 
 
+def test_create_reel_group_apply_uses_desktop_create_reel_group_api(monkeypatch):
+    captured = {}
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        captured["code"] = code
+        captured["main_thread"] = main_thread
+        return {
+            "created": True,
+            "reel_group_name": "client_review",
+            "target_type": "desktop",
+            "target_name": "current desktop",
+        }
+
+    monkeypatch.setattr(timeline.bridge, "execute_json", _fake_execute_json)
+
+    output = asyncio.run(timeline.create_reel_group(timeline.CreateReelGroupInput(
+        reel_group_name="client_review",
+        target_type="desktop",
+        target_name="current desktop",
+        mode="apply",
+        resolved_plan=[{
+            "identity": {
+                "target_type": "desktop",
+                "target_name": "current desktop",
+                "reel_group_name": "client_review",
+            },
+            "payload": {
+                "operation": "create_reel_group",
+                "reel_group_name": "client_review",
+            },
+        }],
+    )))
+
+    assert json.loads(output)["created"] is True
+    assert captured["main_thread"] is True
+    assert "desk.create_reel_group(reel_group_name)" in captured["code"]
+    assert "'originating_capability': 'flame_create_reel_group'" in captured["code"]
+    assert "'tool': 'flame_create_reel_group'" in captured["code"]
+
+
+def test_create_library_apply_uses_workspace_create_library_api(monkeypatch):
+    captured = {}
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        captured["code"] = code
+        captured["main_thread"] = main_thread
+        return {
+            "created": True,
+            "library_name": "plates",
+            "target_type": "workspace",
+            "target_name": "current workspace",
+        }
+
+    monkeypatch.setattr(timeline.bridge, "execute_json", _fake_execute_json)
+
+    output = asyncio.run(timeline.create_library(timeline.CreateLibraryInput(
+        library_name="plates",
+        target_type="workspace",
+        target_name="current workspace",
+        mode="apply",
+        resolved_plan=[{
+            "identity": {
+                "target_type": "workspace",
+                "target_name": "current workspace",
+                "library_name": "plates",
+            },
+            "payload": {
+                "operation": "create_library",
+                "library_name": "plates",
+            },
+        }],
+    )))
+
+    assert json.loads(output)["created"] is True
+    assert captured["main_thread"] is True
+    assert "ws.create_library(library_name)" in captured["code"]
+    assert "'originating_capability': 'flame_create_library'" in captured["code"]
+    assert "'tool': 'flame_create_library'" in captured["code"]
+
+
 def test_discover_mode_intent_parameters_round_trips_role_overrides(monkeypatch):
     captured = asyncio.run(_capture_rename(
         monkeypatch,

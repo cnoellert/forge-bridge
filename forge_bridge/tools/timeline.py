@@ -775,6 +775,223 @@ except Exception as e:
     return json.dumps(data, indent=2)
 
 
+# ── Tool: flame_create_reel_group ─────────────────────────────────────
+
+
+class CreateReelGroupInput(BaseModel):
+    reel_group_name: str = Field(..., description="Name for the new Flame reel group")
+    target_type: Literal["desktop"] = Field(
+        "desktop",
+        description="Target container type. Reel groups are created on the desktop.",
+    )
+    target_name: Optional[str] = Field(
+        default="current desktop",
+        description="Display label for the current desktop target.",
+    )
+    mode: Literal["discover", "verify", "apply"] = Field(
+        "discover",
+        description=(
+            "Invocation mode: 'discover' (operator params -> manifest), "
+            "'verify' (resolved_plan -> manifest, no mutation), "
+            "'apply' (resolved_plan -> verified mutation)."
+        ),
+    )
+    resolved_plan: Optional[list[dict]] = Field(
+        default=None,
+        description="For verify/apply modes: ChangeRecord list from the manifest.",
+    )
+
+
+async def create_reel_group(params: CreateReelGroupInput) -> str:
+    """Flame: create a reel group on the current desktop after ratification."""
+    data = await bridge.execute_json(f"""
+import flame, json
+
+reel_group_name = {params.reel_group_name!r}
+target_type = {params.target_type!r}
+target_name = {params.target_name!r}
+mode = {params.mode!r}
+resolved_plan_input = {params.resolved_plan!r}
+
+def _name(obj, fallback):
+    try:
+        value = obj.name.get_value() if hasattr(obj.name, 'get_value') else obj.name
+        return str(value).strip("'")
+    except Exception:
+        return fallback
+
+def _workspace():
+    return flame.projects.current_project.current_workspace
+
+def _desktop():
+    return _workspace().desktop
+
+def _record_for(desk):
+    return {{
+        'identity': {{
+            'target_type': target_type,
+            'target_name': target_name or _name(desk, 'current desktop'),
+            'reel_group_name': reel_group_name,
+        }},
+        'payload': {{
+            'operation': 'create_reel_group',
+            'reel_group_name': reel_group_name,
+        }},
+    }}
+
+def _same_plan(left, right):
+    return left == right
+
+try:
+    desk = _desktop()
+    fresh_plan = [_record_for(desk)]
+
+    if mode == 'apply':
+        input_plan = resolved_plan_input if isinstance(resolved_plan_input, list) else None
+        if input_plan is not None and not _same_plan(input_plan, fresh_plan):
+            print(json.dumps({{
+                'drift': True,
+                'drift_count': 1,
+                'first_drift_index': 0,
+                'message': 'Plan/state drift detected during apply.',
+            }}))
+        else:
+            created = desk.create_reel_group(reel_group_name)
+            print(json.dumps({{
+                'created': True,
+                'reel_group_name': _name(created, reel_group_name)
+                if created is not None else reel_group_name,
+                'target_type': target_type,
+                'target_name': target_name or _name(desk, 'current desktop'),
+            }}))
+    else:
+        print(json.dumps({{
+            'type': 'mutation_plan',
+            'intent_parameters': {{
+                'reel_group_name': reel_group_name,
+                'target_type': target_type,
+                'target_name': target_name,
+            }},
+            'resolved_plan': fresh_plan,
+            'originating_capability': 'flame_create_reel_group',
+            'apply_counterpart': {{
+                'tool': 'flame_create_reel_group',
+                'parameter_overrides': {{'mode': 'apply'}},
+            }},
+        }}))
+except Exception as e:
+    print(json.dumps({{'error': str(e)}}))
+""", main_thread=True)
+    return json.dumps(data, indent=2)
+
+
+# ── Tool: flame_create_library ────────────────────────────────────────
+
+
+class CreateLibraryInput(BaseModel):
+    library_name: str = Field(..., description="Name for the new Flame library")
+    target_type: Literal["workspace"] = Field(
+        "workspace",
+        description="Target container type. Libraries are created in the workspace.",
+    )
+    target_name: Optional[str] = Field(
+        default="current workspace",
+        description="Display label for the current workspace target.",
+    )
+    mode: Literal["discover", "verify", "apply"] = Field(
+        "discover",
+        description=(
+            "Invocation mode: 'discover' (operator params -> manifest), "
+            "'verify' (resolved_plan -> manifest, no mutation), "
+            "'apply' (resolved_plan -> verified mutation)."
+        ),
+    )
+    resolved_plan: Optional[list[dict]] = Field(
+        default=None,
+        description="For verify/apply modes: ChangeRecord list from the manifest.",
+    )
+
+
+async def create_library(params: CreateLibraryInput) -> str:
+    """Flame: create a library in the current workspace after ratification."""
+    data = await bridge.execute_json(f"""
+import flame, json
+
+library_name = {params.library_name!r}
+target_type = {params.target_type!r}
+target_name = {params.target_name!r}
+mode = {params.mode!r}
+resolved_plan_input = {params.resolved_plan!r}
+
+def _name(obj, fallback):
+    try:
+        value = obj.name.get_value() if hasattr(obj.name, 'get_value') else obj.name
+        return str(value).strip("'")
+    except Exception:
+        return fallback
+
+def _workspace():
+    return flame.projects.current_project.current_workspace
+
+def _record_for(ws):
+    return {{
+        'identity': {{
+            'target_type': target_type,
+            'target_name': target_name or _name(ws, 'current workspace'),
+            'library_name': library_name,
+        }},
+        'payload': {{
+            'operation': 'create_library',
+            'library_name': library_name,
+        }},
+    }}
+
+def _same_plan(left, right):
+    return left == right
+
+try:
+    ws = _workspace()
+    fresh_plan = [_record_for(ws)]
+
+    if mode == 'apply':
+        input_plan = resolved_plan_input if isinstance(resolved_plan_input, list) else None
+        if input_plan is not None and not _same_plan(input_plan, fresh_plan):
+            print(json.dumps({{
+                'drift': True,
+                'drift_count': 1,
+                'first_drift_index': 0,
+                'message': 'Plan/state drift detected during apply.',
+            }}))
+        else:
+            created = ws.create_library(library_name)
+            print(json.dumps({{
+                'created': True,
+                'library_name': _name(created, library_name)
+                if created is not None else library_name,
+                'target_type': target_type,
+                'target_name': target_name or _name(ws, 'current workspace'),
+            }}))
+    else:
+        print(json.dumps({{
+            'type': 'mutation_plan',
+            'intent_parameters': {{
+                'library_name': library_name,
+                'target_type': target_type,
+                'target_name': target_name,
+            }},
+            'resolved_plan': fresh_plan,
+            'originating_capability': 'flame_create_library',
+            'apply_counterpart': {{
+                'tool': 'flame_create_library',
+                'parameter_overrides': {{'mode': 'apply'}},
+            }},
+        }}))
+except Exception as e:
+    print(json.dumps({{'error': str(e)}}))
+""", main_thread=True)
+    return json.dumps(data, indent=2)
+
+
 # ── Tool: flame_preview_start_frames ──────────────────────────────────
 
 
