@@ -703,6 +703,13 @@ def register_builtins(mcp: FastMCP) -> None:
         )
 
         register_tool(
+            mcp, flame_timeline.create_reel,
+            name="flame_create_reel",
+            source="builtin",
+            annotations={"title": "Create a Flame reel in a library or reel group", "readOnlyHint": False},
+        )
+
+        register_tool(
             mcp, flame_timeline.preview_start_frames,
             name="flame_preview_start_frames",
             source="builtin",

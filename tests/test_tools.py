@@ -33,6 +33,7 @@ def test_timeline_exports():
     expected = [
         "get_sequence_segments",
         "set_segment_attribute",
+        "create_reel",
         "rename_shots",
         "get_sequence_editing_guide",
         "disconnect_segments",

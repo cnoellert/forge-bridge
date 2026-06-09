@@ -100,6 +100,46 @@ def test_discover_mode_emits_mutation_plan_shape(monkeypatch):
     assert "'parameter_overrides': {'mode': 'apply'}" in code
 
 
+def test_create_reel_apply_uses_bridge_create_reel_api(monkeypatch):
+    captured = {}
+
+    async def _fake_execute_json(code: str, *, main_thread: bool = False):
+        captured["code"] = code
+        captured["main_thread"] = main_thread
+        return {
+            "created": True,
+            "reel_name": "dailies",
+            "target_type": "library",
+            "target_name": "Default Library",
+        }
+
+    monkeypatch.setattr(timeline.bridge, "execute_json", _fake_execute_json)
+
+    output = asyncio.run(timeline.create_reel(timeline.CreateReelInput(
+        reel_name="dailies",
+        target_type="library",
+        target_name="__default_workspace_library__",
+        mode="apply",
+        resolved_plan=[{
+            "identity": {
+                "target_type": "library",
+                "target_name": "Default Library",
+                "reel_name": "dailies",
+            },
+            "payload": {
+                "operation": "create_reel",
+                "reel_name": "dailies",
+            },
+        }],
+    )))
+
+    assert json.loads(output)["created"] is True
+    assert captured["main_thread"] is True
+    assert "target.create_reel(reel_name)" in captured["code"]
+    assert "'originating_capability': 'flame_create_reel'" in captured["code"]
+    assert "'tool': 'flame_create_reel'" in captured["code"]
+
+
 def test_discover_mode_intent_parameters_round_trips_role_overrides(monkeypatch):
     captured = asyncio.run(_capture_rename(
         monkeypatch,

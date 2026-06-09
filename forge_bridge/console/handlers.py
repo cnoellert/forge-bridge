@@ -1511,6 +1511,38 @@ async def chat_handler(request: Request) -> Response:
             request_id,
         )
 
+    # ---- Operation-front (V1) opt-in — ?operation_front=true | X-Forge-Operation: v1
+    # Sibling seam to planner-front. This path authors mutating operation intent
+    # only, persists it as graph intent, and exits at preview. Apply still goes
+    # through /api/v1/ratify and the existing AssentRecord replay substrate.
+    if (request.query_params.get("operation_front") == "true"
+            or request.headers.get("X-Forge-Operation") == "v1"):
+        try:
+            from forge_bridge.console._operation_front import run_operation_front
+            _router = getattr(request.app.state.console_read_api, "_llm_router", None)
+            if _router is None:
+                from forge_bridge.llm.router import LLMRouter
+                _router = LLMRouter()
+            result = await run_operation_front(
+                messages,
+                router=_router,
+                session_factory=request.app.state.session_factory,
+            )
+            result["request_id"] = request_id
+            logger.info(
+                "chat operation_front request_id=%s client_ip=%s stop_reason=%s",
+                request_id, client_ip, result.get("stop_reason"),
+            )
+            return JSONResponse(
+                result,
+                status_code=200,
+                headers={"X-Request-ID": request_id},
+            )
+        except Exception as exc:  # noqa: BLE001 - surface, never crash endpoint
+            logger.info("chat operation_front_error request_id=%s exc=%s",
+                        request_id, exc)
+            return _chat_error("operation_front_error", str(exc), 500, request_id)
+
     # ---- Planner-front (V1) opt-in — ?planner_front=true | X-Forge-Planner: v1
     # Routes the whole turn to the LLM-planner path (ground -> plan -> execute
     # -> narrate), bypassing the deterministic front entirely. Reads-only by

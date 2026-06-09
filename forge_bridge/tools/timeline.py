@@ -643,6 +643,138 @@ print(json.dumps(manifest_result))
     return json.dumps(data, indent=2)
 
 
+# ── Tool: flame_create_reel ────────────────────────────────────────────
+
+
+class CreateReelInput(BaseModel):
+    reel_name: str = Field(..., description="Name for the new Flame reel")
+    target_type: Literal["library", "reel_group"] = Field(
+        "library",
+        description="Target container type. Defaults to the workspace library.",
+    )
+    target_name: Optional[str] = Field(
+        default=None,
+        description=(
+            "Target library or reel group name. Empty/default resolves to the "
+            "first available container of target_type."
+        ),
+    )
+    mode: Literal["discover", "verify", "apply"] = Field(
+        "discover",
+        description=(
+            "Invocation mode: 'discover' (operator params -> manifest), "
+            "'verify' (resolved_plan -> manifest, no mutation), "
+            "'apply' (resolved_plan -> verified mutation)."
+        ),
+    )
+    resolved_plan: Optional[list[dict]] = Field(
+        default=None,
+        description="For verify/apply modes: ChangeRecord list from the manifest.",
+    )
+
+
+async def create_reel(params: CreateReelInput) -> str:
+    """Flame: create a reel in a library or reel group after ratification.
+
+    This is a host-mutating operation. In discover/verify modes it returns a
+    mutation manifest only; in apply mode it creates the reel through Flame's
+    ``create_reel(name)`` API on the ratified target container.
+    """
+    data = await bridge.execute_json(f"""
+import flame, json
+
+reel_name = {params.reel_name!r}
+target_type = {params.target_type!r}
+target_name = {params.target_name!r}
+mode = {params.mode!r}
+resolved_plan_input = {params.resolved_plan!r}
+
+def _name(obj):
+    try:
+        value = obj.name.get_value() if hasattr(obj.name, 'get_value') else obj.name
+        return str(value).strip("'")
+    except Exception:
+        return str(obj).strip("'")
+
+def _workspace():
+    return flame.projects.current_project.current_workspace
+
+def _containers():
+    ws = _workspace()
+    if target_type == 'reel_group':
+        desk = ws.desktop
+        return list(getattr(desk, 'reel_groups', []) or [])
+    return list(getattr(ws, 'libraries', []) or [])
+
+def _resolve_target():
+    containers = _containers()
+    if not containers:
+        raise Exception('No Flame ' + target_type + ' containers available.')
+    if target_name and target_name != '__default_workspace_library__':
+        for container in containers:
+            if _name(container) == target_name:
+                return container
+        raise Exception('Flame ' + target_type + ' not found: ' + target_name)
+    return containers[0]
+
+def _record_for(target):
+    return {{
+        'identity': {{
+            'target_type': target_type,
+            'target_name': _name(target),
+            'reel_name': reel_name,
+        }},
+        'payload': {{
+            'operation': 'create_reel',
+            'reel_name': reel_name,
+        }},
+    }}
+
+def _same_plan(left, right):
+    return left == right
+
+try:
+    target = _resolve_target()
+    fresh_plan = [_record_for(target)]
+
+    if mode == 'apply':
+        input_plan = resolved_plan_input if isinstance(resolved_plan_input, list) else None
+        if input_plan is not None and not _same_plan(input_plan, fresh_plan):
+            print(json.dumps({{
+                'drift': True,
+                'drift_count': 1,
+                'first_drift_index': 0,
+                'message': 'Plan/state drift detected during apply.',
+            }}))
+        else:
+            created = target.create_reel(reel_name)
+            print(json.dumps({{
+                'created': True,
+                'reel_name': _name(created) if created is not None else reel_name,
+                'target_type': target_type,
+                'target_name': _name(target),
+            }}))
+    else:
+        print(json.dumps({{
+            'type': 'mutation_plan',
+            'intent_parameters': {{
+                'reel_name': reel_name,
+                'target_type': target_type,
+                'target_name': target_name,
+            }},
+            'resolved_plan': fresh_plan,
+            'originating_capability': 'flame_create_reel',
+            'apply_counterpart': {{
+                'tool': 'flame_create_reel',
+                'parameter_overrides': {{'mode': 'apply'}},
+            }},
+        }}))
+except Exception as e:
+    print(json.dumps({{'error': str(e)}}))
+""", main_thread=True)
+    return json.dumps(data, indent=2)
+
+
 # ── Tool: flame_preview_start_frames ──────────────────────────────────
 
 

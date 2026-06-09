@@ -247,13 +247,14 @@ async def execute_chain_step(
 
     user_params = extract_explicit_params(step_text)
     semantic_params = _extract_semantic_step_params(step_text)
+    json_params = _extract_json_step_params(step_text)
 
     inherited = inherited_context or {}
     public_inherited = {
         key: value for key, value in inherited.items()
         if not str(key).startswith("__")
     }
-    merged: dict = {**public_inherited, **semantic_params, **user_params}
+    merged: dict = {**public_inherited, **semantic_params, **json_params, **user_params}
     requested_name = merged.get("project_name")
     resolver_input = {k: v for k, v in merged.items() if k != "project_name"}
 
@@ -565,6 +566,24 @@ def _extract_semantic_step_params(step_text: str) -> dict[str, Any]:
     params.pop("select_identity", None)
     params.pop("select_error", None)
     return params
+
+
+def _extract_json_step_params(step_text: str) -> dict[str, Any]:
+    """Extract inline JSON args from ``tool_name {"params": {...}}`` steps."""
+    if not isinstance(step_text, str):
+        return {}
+    text = step_text.strip()
+    if "{" not in text:
+        return {}
+    raw = text[text.find("{"):]
+    try:
+        decoded = json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    if not isinstance(decoded, dict):
+        return {}
+    params = decoded.get("params", decoded)
+    return dict(params) if isinstance(params, dict) else {}
 
 
 async def _maybe_execute_foreach_step(

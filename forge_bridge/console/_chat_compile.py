@@ -6,6 +6,7 @@ by the JSON and SSE chat transports. It does not own HTTP response shaping.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import uuid
 from typing import Any, Optional
 
@@ -63,6 +64,23 @@ def _tool_description(tool: Any) -> str:
     else:
         value = getattr(tool, "description", "")
     return str(value or "").strip()
+
+
+def _step_args_preview(step_text: str) -> dict[str, Any]:
+    """Preview explicit args from legacy keyed forms and inline JSON steps."""
+    args = extract_explicit_params(step_text)
+    if "{" not in step_text:
+        return args
+    try:
+        decoded = json.loads(step_text[step_text.find("{"):])
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return args
+    if not isinstance(decoded, dict):
+        return args
+    params = decoded.get("params", decoded)
+    if isinstance(params, dict):
+        args = {**params, **args}
+    return args
 
 
 def _strip_commit_for_exact_read_graph(steps: list[str], tools: list) -> list[str] | None:
@@ -127,7 +145,7 @@ def build_preview_from_steps(
         preview_steps.append({
             "step_text": step_text,
             "tool_name": "__commit__" if commit_step else first_token,
-            "args_preview": extract_explicit_params(step_text),
+            "args_preview": _step_args_preview(step_text),
             "would_mutate": commit_step,
         })
 
