@@ -27,7 +27,6 @@ STATUS_ALIASES: dict[str, str] = {
     "final": "delivered",
     "done": "delivered",
     "complete": "delivered",
-    "published": "delivered",
     "omit": "archived",
     "invalidated": "archived",
 }
@@ -68,6 +67,9 @@ def planner_vocabulary_digest() -> str:
         "- entities: Project -> Sequence -> Shot/Asset -> Version -> Media",
         "- relationships: member_of, version_of, references, peer_of; "
         "Version.parent_type selects Shot or Asset for version_of",
+        "- predicate rule: status and role terms below are defined filters; "
+        "tool-purpose terms may select tools; unknown or ambiguous filter terms "
+        "must clarify, not widen",
         _status_line(),
         _role_line(),
     ])
