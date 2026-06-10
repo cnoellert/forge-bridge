@@ -462,6 +462,15 @@ mcp = FastMCP(
 # All tool registrations go through the registry
 register_builtins(mcp)
 
+# Federation tool-attach hook (issue #23): attach sibling operator callables as
+# forge_* MCP tools. MUST run here at module-load — before _lifespan trips the
+# register_tools() D-14 guard (_server_started). Per-sibling errors are isolated.
+from forge_bridge.orchestration.discovery import register_sibling_mcp_tools  # noqa: E402
+
+_sibling_tool_status = register_sibling_mcp_tools(mcp)
+if _sibling_tool_status:
+    logger.info("sibling MCP tool-attach: %s", _sibling_tool_status)
+
 
 # ─────────────────────────────────────────────────────────────
 # Startup / shutdown

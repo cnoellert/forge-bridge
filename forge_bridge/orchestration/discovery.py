@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from importlib.metadata import entry_points
@@ -25,6 +26,8 @@ from forge_bridge.orchestration.registration import (
 from forge_bridge.store.repo import EventRepo
 
 DEFAULT_ENTRY_POINT_GROUP = "forge_bridge.siblings"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -53,6 +56,66 @@ class RegistrationOutcome:
 
 def _enumerate_entry_points(group: str) -> dict[str, str]:
     return {ep.name: ep.value for ep in entry_points(group=group)}
+
+
+def register_sibling_mcp_tools(
+    mcp: Any,
+    *,
+    entry_points_loader: Callable[[str], Mapping[str, str]] | None = None,
+    module_loader: Callable[[str], Any] | None = None,
+) -> dict[str, str]:
+    """Attach sibling operator callables onto the live FastMCP instance.
+
+    The federation **tool-attach** hook — distinct from declaration discovery
+    (``register_all_siblings``, which feeds the planner's capability registry).
+    For each sibling in the ``forge_bridge.siblings`` group, invoke its
+    ``<pkg>.bridge.registry:register_with(mcp)`` so its operators attach as
+    ``forge_*`` MCP tools (visible in ``forge_tools_read`` and invocable). See
+    issue #23.
+
+    This is the pathfinder convention; the durable protocol is an explicit
+    ``forge_bridge.sibling_tools`` entry-point group (PHASE-6A). Per-sibling
+    failures are isolated and never break bootstrap — a sibling with no
+    ``register_with`` module is simply skipped.
+
+    MUST run before the MCP server starts (the ``register_tools`` D-14 guard),
+    i.e. at module-load right after ``register_builtins``. Returns a per-sibling
+    status map (``attached`` / ``no_register_with`` / ``error``) for observability.
+    """
+    loader = entry_points_loader or _enumerate_entry_points
+    import_module = module_loader or importlib.import_module
+    results: dict[str, str] = {}
+
+    for name, target in loader(DEFAULT_ENTRY_POINT_GROUP).items():
+        pkg = target.split(":", 1)[0].split(".", 1)[0]
+        module_name = f"{pkg}.bridge.registry"
+        try:
+            module = import_module(module_name)
+        except Exception as exc:  # noqa: BLE001 - sibling has no attach module
+            results[name] = "no_register_with"
+            logger.info(
+                "sibling tool-attach skipped name=%s module=%s reason=%s",
+                name, module_name, type(exc).__name__,
+            )
+            continue
+
+        register_with = getattr(module, "register_with", None)
+        if not callable(register_with):
+            results[name] = "no_register_with"
+            continue
+
+        try:
+            register_with(mcp)
+            results[name] = "attached"
+            logger.info("sibling tool-attach ok name=%s module=%s", name, module_name)
+        except Exception as exc:  # noqa: BLE001 - one bad sibling never breaks boot
+            results[name] = "error"
+            logger.warning(
+                "sibling tool-attach failed name=%s module=%s exc=%s: %s",
+                name, module_name, type(exc).__name__, exc,
+            )
+
+    return results
 
 
 def resolve_siblings(
