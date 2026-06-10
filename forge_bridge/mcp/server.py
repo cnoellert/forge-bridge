@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from forge_bridge.console.manifest_service import ManifestService
     from forge_bridge.learning.execution_log import ExecutionLog
     from forge_bridge.orchestration.drivers import GenerationDriverRegistry
+    from forge_bridge.orchestration.registration import ToolRegistry  # Issue #26
     from forge_bridge.console.read_api import ConsoleReadAPI  # Phase 16.1 D-07 #1
 
 logger = logging.getLogger(__name__)
@@ -71,6 +72,12 @@ _canonical_watcher_task: "asyncio.Task | None" = None
 # Set in _lifespan Step 4; cleared on teardown. Read by
 # tests/console/test_lifespan_wiring.py to assert _llm_router stayed wired.
 _canonical_console_read_api: "ConsoleReadAPI | None" = None
+# Issue #26 — canonical ToolRegistry populated from sibling declarations at
+# bootstrap Step 5 (the "later adapter rung" the Step-5 comment promised). Feeds
+# the live generation_driver_registry the dispatch consumer reads, and holds the
+# declaration registry a future live planner (rung C) will consume. Set in Step 5;
+# cleared on teardown.
+_canonical_tool_registry: "ToolRegistry | None" = None
 
 
 def get_client() -> AsyncClient:
@@ -132,6 +139,7 @@ class _BootstrapResult:
     console_read_api: Any
     watcher_task: asyncio.Task
     generation_driver_registry: GenerationDriverRegistry
+    tool_registry: Any
     execution_runtime_shutdown: asyncio.Event
     dispatch_consumer_task: asyncio.Task
     generation_poller_task: asyncio.Task
@@ -270,7 +278,7 @@ async def bootstrap_daemon(mcp_server: FastMCP) -> _BootstrapResult:
     (``_canonical_execution_log`` etc.) are also set so existing
     consumers that read them directly continue to work.
     """
-    global _server_started, _canonical_execution_log, _canonical_manifest_service, _canonical_watcher_task, _canonical_console_read_api
+    global _server_started, _canonical_execution_log, _canonical_manifest_service, _canonical_watcher_task, _canonical_console_read_api, _canonical_tool_registry
 
     # Step 0 — bus-readiness gate (Phase A.4 unification).
     bus_url = os.environ.get("FORGE_BRIDGE_URL", "ws://127.0.0.1:9998")
@@ -330,6 +338,46 @@ async def bootstrap_daemon(mcp_server: FastMCP) -> _BootstrapResult:
     from forge_bridge.orchestration.worker import GenerationPoller
 
     generation_driver_registry = GenerationDriverRegistry()
+
+    # Issue #26 — the adapter rung Step 5's comment promised. Register sibling
+    # declarations into a ToolRegistry wired to THIS driver registry, BEFORE the
+    # dispatch consumer starts, so generation siblings' drivers are reachable
+    # (dispatch stops degrading to dispatch_no_driver). register_all_siblings
+    # isolates per-sibling failures internally; we additionally guard the whole
+    # call so a misconfigured sibling can never break daemon bootstrap (same
+    # doctrine as the #23 MCP tool-attach hook). On a stock install with no
+    # generation sibling installed, the driver registry stays empty by design —
+    # this rung wires the path; rung B (install generators) lights the drivers.
+    from forge_bridge import __version__ as _bridge_version
+    from forge_bridge.orchestration.discovery import (
+        make_db_event_appender,
+        register_all_siblings,
+        resolve_siblings,
+    )
+    from forge_bridge.orchestration.registration import ToolRegistry
+
+    tool_registry = ToolRegistry(
+        generation_driver_registry=generation_driver_registry
+    )
+    try:
+        sibling_outcome = await register_all_siblings(
+            resolve_siblings(),
+            tool_registry=tool_registry,
+            event_appender=make_db_event_appender(session_factory),
+            bridge_version=_bridge_version,
+        )
+        logger.info(
+            "sibling capability registration: %d registered, %d failed, "
+            "%d empty (%d tools)",
+            sibling_outcome.siblings_registered,
+            sibling_outcome.siblings_failed,
+            sibling_outcome.siblings_empty,
+            len(tool_registry.all()),
+        )
+    except Exception:  # bootstrap must never die on sibling registration
+        logger.exception("sibling capability registration failed; continuing")
+    _canonical_tool_registry = tool_registry
+
     execution_runtime_shutdown = asyncio.Event()
     runtime_interval_seconds = _execution_runtime_interval_seconds()
     dispatch_consumer_task = asyncio.create_task(
@@ -380,6 +428,7 @@ async def bootstrap_daemon(mcp_server: FastMCP) -> _BootstrapResult:
         console_read_api=console_read_api,
         watcher_task=watcher_task,
         generation_driver_registry=generation_driver_registry,
+        tool_registry=tool_registry,
         execution_runtime_shutdown=execution_runtime_shutdown,
         dispatch_consumer_task=dispatch_consumer_task,
         generation_poller_task=generation_poller_task,
@@ -396,7 +445,7 @@ async def teardown_daemon(result: _BootstrapResult) -> None:
     Order: console uvicorn → execution runtime → watcher task → bridge
     client. Mirrors construction order in reverse.
     """
-    global _server_started, _canonical_execution_log, _canonical_manifest_service, _canonical_watcher_task, _canonical_console_read_api
+    global _server_started, _canonical_execution_log, _canonical_manifest_service, _canonical_watcher_task, _canonical_console_read_api, _canonical_tool_registry
 
     if result.console_task is not None and result.console_server is not None:
         result.console_server.should_exit = True
@@ -423,6 +472,7 @@ async def teardown_daemon(result: _BootstrapResult) -> None:
     _canonical_manifest_service = None
     _canonical_watcher_task = None
     _canonical_console_read_api = None
+    _canonical_tool_registry = None
 
 
 # ─────────────────────────────────────────────────────────────
