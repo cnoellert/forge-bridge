@@ -7,7 +7,11 @@ import types
 from typing import Any
 
 import pytest
-from forge_contracts import CapabilityDeclaration, CapabilityRegistration
+from forge_contracts import (
+    CONTRACT_VERSION,
+    CapabilityDeclaration,
+    CapabilityRegistration,
+)
 import forge_contracts.registration as contract_registration
 
 import forge_bridge
@@ -474,7 +478,8 @@ async def test_register_all_siblings_dry_run_propagates_to_context() -> None:
 
     assert len(captured) == 1
     assert isinstance(captured[0], contract_registration.BridgeRegistrationContext)
-    assert captured[0].contract_version == "v0.2"
+    # Assert against the contract's own constant so this never drifts on a bump.
+    assert captured[0].contract_version == CONTRACT_VERSION
     assert captured[0].requested_families == []
     assert captured[0].dry_run is True
     assert captured[0].config == {"api_key": "secret"}
