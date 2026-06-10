@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
+
+from forge_contracts.generation import GenerationCapabilityFacts
+from pydantic import ValidationError
 
 from forge_bridge.orchestration.errors import PlannerRefusalError
 from forge_bridge.store.orch_capability_snapshot_repo import CapabilitySnapshotRepo
@@ -18,6 +22,24 @@ from forge_bridge.store.orch_rule_snapshot_repo import RuleSnapshotRepo
 
 if TYPE_CHECKING:
     from forge_bridge.orchestration.planner import Planner, PlanningContext
+
+logger = logging.getLogger(__name__)
+
+
+def _safe_generation_facts(caps: dict[str, Any]) -> GenerationCapabilityFacts | None:
+    """Typed v0.3 generation facts from a declaration's opaque metadata, or None.
+
+    Single typed-parse seam for #24. ``from_metadata`` returns ``None`` when the
+    ``generation_facts`` namespace is absent (off-namespace siblings, un-republished
+    generators) and RAISES ``ValidationError`` on a present-but-malformed payload.
+    Guard the raise: pass_1 loops over every generation tool, so one bad declaration
+    must not abort planning for all siblings. Malformed -> degrade to the untyped
+    path (FACTS-only consumption; we never fabricate, per ADR-005)."""
+    try:
+        return GenerationCapabilityFacts.from_metadata(caps)
+    except ValidationError as exc:
+        logger.warning("invalid generation_facts payload; degrading to untyped: %s", exc)
+        return None
 
 
 def backend_id_from_snapshot_entry(entry: dict[str, Any]) -> str:
@@ -82,10 +104,20 @@ async def pass_1_validate_completeness(planner: Planner, ctx: PlanningContext) -
         snapshots = []
         for tool in planner.tool_registry.by_family("generation"):
             caps = tool.capabilities if isinstance(tool.capabilities, dict) else {}
-            triple = caps.get("backend_identity_triple") or {
-                "surface": tool.tool_id.split(".")[0] if "." in tool.tool_id else tool.tool_id,
-                "path": "default",
-            }
+            # #24: prefer the typed v0.3 BackendIdentityTriple as the join key — it
+            # is the validated, durable source. Fall back to the flat metadata key,
+            # then to a synthesized {surface, path}, so off-namespace / pre-v0.3
+            # siblings keep working (no planner regression). Generators stamp both
+            # the flat key and the typed facts from one source today; the flat key
+            # is the one that can drift (cf. dropped first_frame_guarantee, Gate 0).
+            facts = _safe_generation_facts(caps)
+            if facts is not None:
+                triple = facts.backend_identity.model_dump(mode="json")
+            else:
+                triple = caps.get("backend_identity_triple") or {
+                    "surface": tool.tool_id.split(".")[0] if "." in tool.tool_id else tool.tool_id,
+                    "path": "default",
+                }
             snapshots.append(
                 {
                     "backend_identity_triple": triple,
