@@ -5,7 +5,6 @@ file roundtrip, stale-PID cleanup, idempotent up, and missing-file safety.
 """
 from __future__ import annotations
 
-import json
 from unittest.mock import patch
 
 import pytest
@@ -311,3 +310,110 @@ def test_stop_one_external_record_marks_external(runtime_home):
     assert result["managed"] is False
     assert result["source"] == "external"
     assert "external" in result["note"]
+
+
+# ── restart (launchd-aware) ─────────────────────────────────────────────────
+
+
+def _svc_row(name, *, running, managed, host="127.0.0.1", port=9997, pid=None):
+    return {
+        "name": name, "running": running, "managed": managed,
+        "source": "forge" if managed else "external", "pid": pid,
+        "tracked": managed, "host": host, "port": port,
+    }
+
+
+def test_restart_unknown_target_raises(runtime_home):
+    with pytest.raises(ValueError):
+        manager.restart("bogus")
+
+
+def test_restart_launchd_supervised_kickstarts(runtime_home):
+    rows = {"services": [_svc_row("mcp_http", running=True, managed=False)]}
+    with patch.object(manager, "status", return_value=rows), patch.object(
+        manager, "_launchd_label", return_value="com.cnoellert.forge-bridge"
+    ), patch.object(
+        manager, "_kickstart_launchd", return_value={"ok": True, "returncode": 0}
+    ) as kick:
+        out = manager.restart("console")
+    assert len(out) == 1
+    assert out[0]["supervisor"] == "launchd"
+    assert out[0]["label"] == "com.cnoellert.forge-bridge"
+    assert out[0]["ok"] is True
+    kick.assert_called_once_with("com.cnoellert.forge-bridge")
+
+
+def test_restart_managed_stops_then_starts(runtime_home):
+    rows = {"services": [_svc_row("mcp_http", running=True, managed=True, pid=4242)]}
+    with patch.object(manager, "status", return_value=rows), patch.object(
+        manager, "_launchd_label", return_value=None
+    ), patch.object(
+        manager, "_stop_one", return_value={"stopped": True}
+    ) as stop, patch.object(
+        manager, "_start",
+        return_value={"started": True, "ready": True, "pid": 5151,
+                      "host": "127.0.0.1", "port": 9997},
+    ) as start:
+        out = manager.restart("console")
+    assert out[0]["supervisor"] == "managed"
+    assert out[0]["ok"] is True
+    stop.assert_called_once()
+    start.assert_called_once_with("mcp_http")
+
+
+def test_restart_not_running_starts(runtime_home):
+    rows = {"services": [_svc_row("mcp_http", running=False, managed=False)]}
+    with patch.object(manager, "status", return_value=rows), patch.object(
+        manager, "_launchd_label", return_value=None
+    ), patch.object(
+        manager, "_start",
+        return_value={"started": True, "ready": True, "pid": 9,
+                      "host": "127.0.0.1", "port": 9997},
+    ) as start:
+        out = manager.restart("console")
+    assert out[0]["action"] == "start"
+    assert out[0]["ok"] is True
+    start.assert_called_once_with("mcp_http")
+
+
+def test_restart_external_unknown_skips(runtime_home):
+    rows = {"services": [_svc_row("mcp_http", running=True, managed=False)]}
+    with patch.object(manager, "status", return_value=rows), patch.object(
+        manager, "_launchd_label", return_value=None
+    ):
+        out = manager.restart("console")
+    assert out[0]["action"] == "skip"
+    assert out[0]["supervisor"] == "external"
+
+
+def test_restart_all_targets_both_services(runtime_home):
+    rows = {"services": [
+        _svc_row("mcp_http", running=True, managed=False, port=9997),
+        _svc_row("state_ws", running=True, managed=False, port=9998),
+    ]}
+    labels = {"mcp_http": "com.cnoellert.forge-bridge",
+              "state_ws": "com.cnoellert.forge-bridge-server"}
+    with patch.object(manager, "status", return_value=rows), patch.object(
+        manager, "_launchd_label", side_effect=lambda n: labels[n]
+    ), patch.object(
+        manager, "_kickstart_launchd", return_value={"ok": True, "returncode": 0}
+    ):
+        out = manager.restart("all")
+    assert [r["name"] for r in out] == ["mcp_http", "state_ws"]
+    assert all(r["supervisor"] == "launchd" for r in out)
+
+
+def test_launchd_supervised_running_detects(runtime_home, tmp_path):
+    rows = {"services": [
+        _svc_row("mcp_http", running=True, managed=False),
+        _svc_row("state_ws", running=False, managed=False),
+        _svc_row("console", running=True, managed=False),
+    ]}
+    label_dir = tmp_path / "LaunchDaemons"
+    label_dir.mkdir()
+    (label_dir / "com.cnoellert.forge-bridge.plist").write_text("x")
+    with patch.object(manager, "status", return_value=rows), patch.object(
+        manager, "_LAUNCHD_DIR", label_dir
+    ):
+        out = manager.launchd_supervised_running()
+    assert out == ["mcp_http"]

@@ -511,6 +511,20 @@ def up_cmd(
             sys.stdout.write(
                 f"{name:<10} {'already up':<10} external  {addr}\n"
             )
+    _warn_launchd_supervised(manager)
+
+
+def _warn_launchd_supervised(manager) -> None:
+    """Hint when launchd-supervised daemons are running: `up`/`down` can't
+    manage them — `fbridge restart` is the right tool."""
+    supervised = manager.launchd_supervised_running()
+    if supervised:
+        sys.stdout.write(
+            "note: "
+            + ", ".join(supervised)
+            + " are launchd-supervised — `fbridge up`/`down` can't manage them; "
+            "use `fbridge restart`.\n"
+        )
 
 
 @app.command(
@@ -535,6 +549,7 @@ def down_cmd(
         return
     if not results:
         sys.stdout.write("no managed services to stop\n")
+        _warn_launchd_supervised(manager)
         return
     for r in results:
         name = r["name"]
@@ -546,6 +561,7 @@ def down_cmd(
         else:
             note = r.get("note", "not stopped")
             sys.stdout.write(f"{name:<10} {note}\n")
+    _warn_launchd_supervised(manager)
 
 
 @app.command(
@@ -585,6 +601,55 @@ def status_cmd(
             f"{name:<14} {running:<12} {ownership:<28} "
             f"{row['host']}:{row['port']}\n"
         )
+
+
+@app.command(
+    "restart",
+    help=(
+        "Restart bridge services, routing by how each is supervised — "
+        "launchd-supervised daemons via `launchctl kickstart` (needs sudo), "
+        "forge-managed ones via stop+start. The friendly wrapper for a daemon "
+        "redeploy: no need to know the launchd incantation."
+    ),
+)
+def restart_cmd(
+    target: Annotated[
+        str,
+        typer.Argument(
+            help="What to restart: all | console (:9996/:9997) | server (:9998).",
+        ),
+    ] = "all",
+    as_json: Annotated[
+        bool,
+        typer.Option("--json", help="Emit JSON envelope to stdout."),
+    ] = False,
+) -> None:
+    from forge_bridge.runtime import manager
+
+    try:
+        results = manager.restart(target)
+    except ValueError as exc:
+        sys.stderr.write(f"{exc}\n")
+        raise typer.Exit(2)
+    if as_json:
+        sys.stdout.write(json.dumps({"data": results}) + "\n")
+        return
+    for r in results:
+        name = r["name"]
+        addr = f"{r.get('host', '')}:{r.get('port', '')}"
+        if r["action"] == "skip":
+            sys.stdout.write(f"{name:<10} {'skipped':<12} {r.get('note', '')}\n")
+        elif r.get("supervisor") == "launchd":
+            label = "restarted" if r.get("ok") else "FAILED"
+            sys.stdout.write(
+                f"{name:<10} {label:<12} launchd ({r.get('label')})  {addr}\n"
+            )
+        else:
+            verb = "started" if r["action"] == "start" else "restarted"
+            label = verb if r.get("ok") else "FAILED"
+            sys.stdout.write(
+                f"{name:<10} {label:<12} managed (pid {r.get('pid')})  {addr}\n"
+            )
 
 
 # ── mcp group: explicit start ─────────────────────────────────────────────
