@@ -1,42 +1,70 @@
-# Lighting the live cross-peer generation join — three rungs
+# Lighting the live cross-peer generation join — the rungs (corrected by B verification)
 
-DT grounding 2026-06-09. "Live cross-peer generation join" (#24(c)) is **not** one wiring call. The daemon runs an execution-runtime *skeleton* (dispatch consumer + poller + event consumer, bootstrap Step 5) but the *planning* half is test-only, and the driver registry is empty by design. Decomposed into three independent rungs so "wired" can't launder into "works".
+DT grounding 2026-06-09, **corrected after rung-B verification**. "Live cross-peer generation join" (#24(c)) is **not** one wiring call. It splits into THREE distinct surfaces, and a rung-B sandbox probe (register_all_siblings against the real entry-point group, generators installed) falsified the original framing: **generators is a schema-only sibling** — it registers capability *declarations*, never driver *handlers*.
 
-| Rung | What | Status |
+## The three surfaces
+
+| Surface | What it is | Status |
 |---|---|---|
-| **A** | `register_all_siblings` at bootstrap → populates the live driver + tool registry | ✅ **DONE** — PR for #26 |
-| **B** | `forge-generators` installed in the bridge `forge` env (declares the entry point; not pip-installed here) | ⬜ env/deploy |
-| **C** | A live path that constructs `Planner` + runs `.plan()` + persists the ExecutionPlan for dispatch | ⬜ **needs framing** (mutating surface) |
+| **Declaration / capability** | 17 generator capabilities + typed `generation_facts`, discoverable in the live tool registry — what a planner reads | ✅ **lit by A+B (verified)** |
+| **Driver / dispatch** | live, credentialed handlers so dispatch executes to real backends | ❌ dark — generators schema-only; handlers come from nowhere yet |
+| **Planner invocation** | a live path that builds an `ExecutionPlan` from declarations | ❌ not live (rung C) |
 
-Evidence: `Planner(...)` / `ToolRegistry()` are constructed **nowhere outside tests**; the Step-5 comment says the driver registry "starts empty and degrades to `dispatch_no_driver` until a later adapter rung registers real generation drivers" — rung A is that rung.
-
----
-
-## Rung A — DONE (#26)
-
-Wired `register_all_siblings` into bootstrap Step 5, feeding the live `generation_driver_registry` the dispatch consumer reads, published as `_canonical_tool_registry`. Honest effect today: with only vision/pipeline/flow installed, the tool registry gets vision's perception declarations and the driver registry stays empty (no generation sibling) — the path is wired; **B lights the drivers.**
+Evidence: `Planner(...)` / `ToolRegistry()` are constructed **nowhere outside tests**. Generators' `register_bridge_adapters` calls `register_capability(CapabilityRegistration(declaration=declaration))` — **no handler** (confirmed in source). Probe result: 4 siblings registered, 36 tools, **17 generation declarations**, **0 of 16 drivers reachable**.
 
 ---
 
-## Rung B — install generators in the bridge env (deploy note, not code)
+## Rung A — DONE (#26 / PR #30, merged)
 
-`forge-generators` declares `[project.entry-points."forge_bridge.siblings"] forge_generators = "...contract_registry:register_bridge_adapters"` but is **not pip-installed** in the bridge `forge` env (only `forge_vision`/`forge_pipeline`/`forge_flow` resolve). Until it's installed, rung A discovers no generation siblings and the driver registry stays empty. This is an environment/deploy action on the operator workstation, gated behind the daemon two-job restart ([[project_daemon_two_job_split_ws_server]]).
+Wired `register_all_siblings` into bootstrap Step 5; publishes `_canonical_tool_registry`, bound to the live `generation_driver_registry`, before the dispatch consumer starts.
 
-**Done when:** `forge-generators` is installed in the bridge env and a daemon restart shows its drivers reachable in `_canonical_tool_registry._generation_driver_registry`.
+**Corrected effect:** A populates the **declaration registry**. It feeds the driver registry *only for siblings that register a handler*. The boot-wiring test proves that routing with a stub driver — but **real generators register no handler**, so A's concrete live effect is the declaration surface, not dispatch. (The PR/issue line "dispatch stops returning `dispatch_no_driver`" over-claimed; corrected on issue #26.)
+
+---
+
+## Rung B — DONE + VERIFIED (generators installed in the bridge env)
+
+`forge-generators` (local clone @ `82698f9`) installed editable into the bridge `forge` env — clean, zero dep churn. Sandbox probe confirms **17 generation declarations now live-discoverable** with their `generation_facts`. This is the substrate #24's facts-consumption targets, and what rung C's planner reads.
+
+**What B does NOT do:** populate the driver registry. Generators is schema-only by design (`pyproject` comment: "schema-only sibling"). Dispatch stays dark.
+
+**Done when (corrected):** a daemon restart shows the 17 generator declarations in `_canonical_tool_registry` (NOT drivers reachable — that's the driver-wiring rung below).
+
+---
+
+## Rung D (NEW) — live driver/handler wiring (parallel to C, NEEDS FRAMING)
+
+The gap B revealed. For dispatch to execute against real backends, live **driver handlers** (the `comfyui` / `fal` / `runway` / `higgsfield` / `magnific` clients) must be registered into the `GenerationDriverRegistry`, keyed by `backend_identity_triple`. Generators ships these drivers in its package but **does not register them as bridge sibling handlers** — it publishes declarations only.
+
+This is the `registration.py` "backend_id reconciliation" seam, named-and-deferred: *"Materialize the reconciler only when a plan step first needs to EXECUTE a selected capability."* Open product/credentials questions:
+
+1. **Where do live drivers live at runtime** — does generators register handlers in `register_bridge_adapters` (couples bridge bootstrap to generators' driver stack + credentials), or does bridge construct drivers from declarations on demand?
+2. **Credentials** — the drivers call paid APIs; their keys/config must be present in the bridge env at registration or invocation time. Bootstrap-time construction means bootstrap needs the secrets.
+3. **Lazy vs eager** — construct all 16 drivers at bootstrap, or only the selected backend at dispatch time (the reconciler-on-demand the comment suggests)?
+
+**Recommendation:** own framing pass. Couples to C (a plan must select a backend before its driver matters) but is a distinct decision (credentials + driver lifecycle vs. authority placement).
 
 ---
 
 ## Rung C — live planner-invocation path (NEEDS FRAMING — do not bolt on)
 
-**The actual missing consumer.** Today nothing constructs a `Planner` against the live `_canonical_tool_registry` and calls `.plan()`; even with rungs A+B, no live request builds an `ExecutionPlan` for the dispatch consumer to pick up.
+**The missing consumer.** Nothing constructs a `Planner` against the live `_canonical_tool_registry` and calls `.plan()`. This puts the phase-4b planner on a live surface for the **first time**.
 
-**Why this is framing-grade, not execution:** a planner that selects backends and would dispatch generations is a **mutating** path. Per the #24/operation-front authority doctrine it cannot be silently attached to an endpoint — it must either ride **preview → ratify → apply** (assent stays the operator's) or be deliberately scoped out of it. The open questions are product/architecture, not mechanical:
+A planner that selects backends and would dispatch generations is a **mutating** path. Per the #24 / operation-front authority doctrine it must either ride **preview → ratify → apply** (assent stays the operator's) or be deliberately scoped out. Open questions:
 
-1. **Entry surface** — where does planning enter live? A new MCP tool (`forge_plan_*`)? An HTTP route? The chat compile path? Each has different authority implications.
-2. **Authority placement** — planning + dispatch is a mutation. Does it emit a `preview_emitted` + `graph_intent_id` and require ratify before any backend is invoked, mirroring create-reel? (Strong prior: yes — generations cost money/compute; assent must gate them.)
-3. **Plan persistence seam** — `.plan()` produces an `ExecutionPlan`; who persists it to the store the dispatch consumer polls, and at which authority step (post-ratify)?
-4. **Failure/atomicity** — the operation-front carry-forward (mid-mutation atomicity, unanswered before destructive ops) applies doubly to a multi-step generation dispatch.
+1. **Entry surface** — new MCP tool (`forge_plan_*`)? HTTP route? The chat compile path?
+2. **Authority placement** — does it emit `preview_emitted` + `graph_intent_id` and require ratify before any backend is invoked, mirroring create-reel? (Strong prior: yes — generations cost money/compute; assent must gate them.)
+3. **Plan persistence seam** — who persists the `ExecutionPlan` to the store the dispatch consumer polls, at which authority step (post-ratify)?
+4. **Failure/atomicity** — mid-mutation atomicity (operation-front carry-forward) applies doubly to a multi-step generation dispatch.
 
-**Recommendation:** treat C as its own framing → discuss → plan cycle, not a same-push add. It is milestone-shaped (it puts the phase-4b planner on a live, assent-gated surface for the first time). File as a framing stub; do not spec the endpoint until the authority placement (Q2) is decided.
+**Recommendation:** own framing → discuss → plan cycle. Milestone-shaped. Don't spec the endpoint until authority placement (Q2) is decided.
 
-**Dependencies:** A (registry) + B (drivers) must be live for C to do anything observable end-to-end.
+---
+
+## Where it stands
+
+- **Declarations: LIT** (A done, B done+verified). A planner would now see 17 real generator capabilities with typed facts. This is the genuine win.
+- **Drivers: dark** → rung D (driver/credentials framing).
+- **Planner: not live** → rung C (authority framing).
+
+C + D are both required for end-to-end execution, and both are framing-grade, not same-push adds. The declaration surface — which is what #24 was about — is real and live.
