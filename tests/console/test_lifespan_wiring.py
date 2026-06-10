@@ -20,7 +20,7 @@ filesystem side effects during the smoke test.
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -127,4 +127,104 @@ async def test_lifespan_teardown_clears_canonical_console_read_api():
         "_canonical_console_read_api leaked after _lifespan exit — "
         "teardown reset missing. Check forge_bridge/mcp/server.py "
         "_lifespan finally block."
+    )
+
+
+# ── Issue #26 — sibling capability registration at bootstrap (rung A) ──────────
+
+_STUB_TRIPLE = {
+    "surface": "genstub",
+    "path": "backend",
+    "auth_mechanism": "x",
+    "revision": "v1",
+}
+_STUB_BACKEND_ID = "genstub.backend"  # composite the driver registry keys on
+
+
+class _StubGenDriver:
+    # backend_id deliberately != the triple-derived id, to prove the driver
+    # registry keys off backend_identity_triple, not this attribute.
+    backend_id = "irrelevant.handler_key"
+    backend_identity_triple = _STUB_TRIPLE
+
+    async def poll(self, artifact):  # required by _validate_generation_handler
+        return None
+
+
+def _install_stub_sibling() -> str:
+    import sys
+    import types
+
+    from forge_contracts import CapabilityDeclaration, CapabilityRegistration
+
+    def register_bridge_adapters(ctx, register_capability):
+        register_capability(
+            CapabilityRegistration(
+                declaration=CapabilityDeclaration(
+                    capability_id="forge_generators.genstub.backend",
+                    family="generation",
+                    owner="test-sibling",
+                    payload_family="generation_v1",
+                    input_schema={"type": "object"},
+                    metadata={"backend_identity_triple": _STUB_TRIPLE},
+                ),
+                handler=_StubGenDriver(),
+            )
+        )
+
+    name = "tests.issue26_stub_sibling"
+    module = types.ModuleType(name)
+    module.register_bridge_adapters = register_bridge_adapters
+    sys.modules[name] = module
+    return f"{name}:register_bridge_adapters"
+
+
+@pytest.mark.asyncio
+async def test_lifespan_registers_sibling_drivers_into_live_registry():
+    """Issue #26 rung A: bootstrap Step 5 runs register_all_siblings so a
+    generation sibling's driver is reachable in the live driver registry the
+    dispatch consumer reads — i.e. dispatch stops degrading to dispatch_no_driver.
+    Proves the wiring; on a stock install with no generation sibling the registry
+    stays empty by design (rung B installs the drivers)."""
+    from forge_bridge.mcp import server as _mcp_server
+    from forge_bridge.orchestration import discovery as _discovery
+
+    target = _install_stub_sibling()
+    injected = _discovery.resolve_siblings(
+        entry_points_loader=lambda _group: {"genstub": target}
+    )
+
+    with patch.object(
+        _mcp_server, "startup_bridge", new=AsyncMock(return_value=None)
+    ), patch.object(
+        _mcp_server, "shutdown_bridge", new=AsyncMock(return_value=None)
+    ), patch.object(
+        _mcp_server, "_wait_for_bus", new=AsyncMock(return_value=False)
+    ), patch(
+        "forge_bridge.learning.watcher.watch_synthesized_tools",
+        new=AsyncMock(return_value=None),
+    ), patch.object(
+        _mcp_server, "_start_console_task", new=AsyncMock(return_value=(None, None))
+    ), patch.object(
+        _discovery, "resolve_siblings", return_value=injected
+    ):
+        async with _mcp_server._lifespan(_mcp_server.mcp):
+            registry = _mcp_server._canonical_tool_registry
+            assert registry is not None, (
+                "Issue #26 regression: bootstrap Step 5 did not publish "
+                "_canonical_tool_registry."
+            )
+            # The declaration is registered...
+            assert registry.get("forge_generators.genstub.backend") is not None
+            # ...and the driver is reachable in the live driver registry the
+            # dispatch consumer was handed (keyed by the triple, not handler.backend_id).
+            driver_registry = registry._generation_driver_registry
+            assert driver_registry is not None
+            assert driver_registry.get_driver(_STUB_BACKEND_ID) is not None
+            assert driver_registry.get_driver("irrelevant.handler_key") is None
+
+    # Teardown resets the global (no leakage).
+    assert _mcp_server._canonical_tool_registry is None, (
+        "_canonical_tool_registry leaked after _lifespan exit — teardown reset "
+        "missing."
     )
