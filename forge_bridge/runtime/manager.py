@@ -328,3 +328,105 @@ def status() -> dict[str, Any]:
     if dirty:
         _write_runtime(state)
     return {"services": [console_row, *service_rows]}
+
+
+# ── Restart (launchd-aware) ───────────────────────────────────────────────
+# Daemons installed by scripts/install-bootstrap.sh run under launchd (macOS),
+# which `fbridge up`/`down` deliberately do NOT manage — they surface as
+# `external` in status(). `restart` bridges that gap: it detects how each
+# service is supervised and routes to the right mechanism.
+_LAUNCHD_DIR = Path("/Library/LaunchDaemons")
+_LAUNCHD_LABELS = {
+    "mcp_http": "com.cnoellert.forge-bridge",       # console (:9996) + mcp_http (:9997)
+    "state_ws": "com.cnoellert.forge-bridge-server",  # state_ws (:9998)
+}
+# User-facing restart targets → the real service process(es) they map to.
+_RESTART_TARGETS = {
+    "all": ["mcp_http", "state_ws"],
+    "console": ["mcp_http"],   # restarting mcp_http also restarts the co-hosted console
+    "server": ["state_ws"],
+}
+
+
+def _launchd_label(name: str) -> str | None:
+    """The launchd label supervising ``name`` on this host, or None if no plist
+    is installed for it."""
+    label = _LAUNCHD_LABELS.get(name)
+    if label and (_LAUNCHD_DIR / f"{label}.plist").exists():
+        return label
+    return None
+
+
+def launchd_supervised_running() -> list[str]:
+    """Service names that are running under a launchd plist (not forge-managed).
+    `up`/`down` use this to warn that those commands won't touch them."""
+    out: list[str] = []
+    for row in status()["services"]:
+        name = row["name"]
+        if name in _LAUNCHD_LABELS and row["running"] and not row["managed"]:
+            if _launchd_label(name):
+                out.append(name)
+    return out
+
+
+def _kickstart_launchd(label: str) -> dict[str, Any]:
+    """Restart a launchd job. Needs root, so shell out to ``sudo launchctl
+    kickstart -k`` inheriting stdio — a password prompt (if any) stays visible;
+    passwordless sudo just works."""
+    cmd = ["sudo", "launchctl", "kickstart", "-k", f"system/{label}"]
+    try:
+        proc = subprocess.run(cmd)  # inherit stdio for the sudo prompt
+        return {"ok": proc.returncode == 0, "returncode": proc.returncode}
+    except Exception as exc:  # defensive — sudo/launchctl missing
+        return {"ok": False, "error": str(exc)}
+
+
+def restart(target: str = "all") -> list[dict[str, Any]]:
+    """Restart bridge services, routing by how each is supervised:
+    launchd-supervised → ``launchctl kickstart``; forge-managed → stop+start;
+    not running → start. ``target`` is one of ``all`` / ``console`` / ``server``."""
+    names = _RESTART_TARGETS.get(target)
+    if names is None:
+        raise ValueError(
+            f"unknown restart target {target!r} (expected all|console|server)"
+        )
+    rows = {r["name"]: r for r in status()["services"]}
+    results: list[dict[str, Any]] = []
+    for name in names:
+        row = rows.get(name, {})
+        host, port = row.get("host", ""), row.get("port", "")
+        label = _launchd_label(name)
+        if row.get("managed"):
+            # forge-started: stop the tracked PID, then start fresh.
+            state = _read_runtime()
+            rec = state.get("services", {}).get(name) or {}
+            _stop_one(name, rec)
+            state.get("services", {}).pop(name, None)
+            _write_runtime(state)
+            started = _start(name)
+            results.append({
+                "name": name, "action": "restart", "supervisor": "managed",
+                "ok": bool(started.get("started")), "ready": started.get("ready"),
+                "pid": started.get("pid"), "host": host, "port": port,
+            })
+        elif row.get("running") and label:
+            kick = _kickstart_launchd(label)
+            results.append({
+                "name": name, "action": "restart", "supervisor": "launchd",
+                "label": label, "host": host, "port": port, **kick,
+            })
+        elif row.get("running"):
+            results.append({
+                "name": name, "action": "skip", "supervisor": "external",
+                "ok": False, "host": host, "port": port,
+                "note": "running under an unknown supervisor — restart it manually",
+            })
+        else:
+            started = _start(name)
+            results.append({
+                "name": name, "action": "start", "supervisor": "managed",
+                "ok": bool(started.get("started")), "ready": started.get("ready"),
+                "pid": started.get("pid"),
+                "host": started.get("host", host), "port": started.get("port", port),
+            })
+    return results
