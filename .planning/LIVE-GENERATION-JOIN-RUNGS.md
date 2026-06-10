@@ -1,70 +1,95 @@
-# Lighting the live cross-peer generation join — the rungs (corrected by B verification)
+# Lighting the live cross-peer generation join — converged framing (C + D)
 
-DT grounding 2026-06-09, **corrected after rung-B verification**. "Live cross-peer generation join" (#24(c)) is **not** one wiring call. It splits into THREE distinct surfaces, and a rung-B sandbox probe (register_all_siblings against the real entry-point group, generators installed) falsified the original framing: **generators is a schema-only sibling** — it registers capability *declarations*, never driver *handlers*.
+DT grounding 2026-06-09, **converged via two cross-team convergences + a 3-agent redline round** (bridge / generators / contracts views, then adversarial redline). The "live cross-peer generation join" splits into THREE surfaces, and the two execution rungs are **not peers**: rung D is **substrate**, rung C is **producer**. That doctrine line resolves the whole question.
 
 ## The three surfaces
 
 | Surface | What it is | Status |
 |---|---|---|
-| **Declaration / capability** | 17 generator capabilities + typed `generation_facts`, discoverable in the live tool registry — what a planner reads | ✅ **lit by A+B (verified)** |
-| **Driver / dispatch** | live, credentialed handlers so dispatch executes to real backends | ❌ dark — generators schema-only; handlers come from nowhere yet |
-| **Planner invocation** | a live path that builds an `ExecutionPlan` from declarations | ❌ not live (rung C) |
-
-Evidence: `Planner(...)` / `ToolRegistry()` are constructed **nowhere outside tests**. Generators' `register_bridge_adapters` calls `register_capability(CapabilityRegistration(declaration=declaration))` — **no handler** (confirmed in source). Probe result: 4 siblings registered, 36 tools, **17 generation declarations**, **0 of 16 drivers reachable**.
+| **Declaration / capability** | 17 generator capabilities + typed `generation_facts`, discoverable in the live tool registry — the real #24 win | ✅ **lit by A+B (verified)** |
+| **Driver / dispatch** | a protocol-conforming driver so the (already-running) dispatch consumer reaches a backend | ⛏ **HOW settled (rung D) — thin in-process adapter** |
+| **Planner invocation** | bridge constructs a `Planner`, runs `.plan()`, originates a generation intent | ⛔ **producer-side — DEFER (rung C)** |
 
 ---
 
-## Rung A — DONE (#26 / PR #30, merged)
+## Rung A — DONE (#26 / PR #30) · Rung B — DONE + VERIFIED (generators installed)
 
-Wired `register_all_siblings` into bootstrap Step 5; publishes `_canonical_tool_registry`, bound to the live `generation_driver_registry`, before the dispatch consumer starts.
-
-**Corrected effect:** A populates the **declaration registry**. It feeds the driver registry *only for siblings that register a handler*. The boot-wiring test proves that routing with a stub driver — but **real generators register no handler**, so A's concrete live effect is the declaration surface, not dispatch. (The PR/issue line "dispatch stops returning `dispatch_no_driver`" over-claimed; corrected on issue #26.)
+A wired `register_all_siblings` at bootstrap (publishes `_canonical_tool_registry`, bound to the live `generation_driver_registry`). B installed generators. Verified: **17 generation declarations + `generation_facts` are live-discoverable; 0 drivers** (generators is schema-only — `register_capability(CapabilityRegistration(declaration=...))`, no handler). A+B light the **declaration surface**, not dispatch.
 
 ---
 
-## Rung B — DONE + VERIFIED (generators installed in the bridge env)
+## Rung D — driver wiring: **HOW SETTLED — thin in-process adapter, NOT a process boundary**
 
-`forge-generators` (local clone @ `82698f9`) installed editable into the bridge `forge` env — clean, zero dep churn. Sandbox probe confirms **17 generation declarations now live-discoverable** with their `generation_facts`. This is the substrate #24's facts-consumption targets, and what rung C's planner reads.
+**Converged shape (both convergences + redline 1 agree):** generators ship a stateless `BridgeGenerationDriver` protocol-conformance adapter, registered via the existing `handler=` slot. **Bridge owns lifecycle/dispatch/poller/persistence; generators ship the adapter code; bridge injects credentials. Eager registration, lazy credentials.**
 
-**What B does NOT do:** populate the driver registry. Generators is schema-only by design (`pyproject` comment: "schema-only sibling"). Dispatch stays dark.
+```python
+# forge_generators/bridge/driver_adapter.py  (behavioral; lazy-imports drivers; NOT in contract_registry)
+class BridgeGenerationDriver:                # satisfies bridge GenerationDriverProtocol
+    backend_id: str
+    backend_identity_triple: dict            # == the capability's declared triple (stamped by construction)
+    async def submit(self, envelope) -> DriverSubmitResult   # ArtifactRef→PlatformLocator,
+        ...                                                   # InvocationEnvelope→OperatorInvocation;
+                                                              # builds credentialed client lazily; NO persist
+    async def poll(self, artifact) -> DriverPollResult        # request_id from execution_provenance;
+        ...                                                   # NO internal loop — bridge owns the poller
+```
 
-**Done when (corrected):** a daemon restart shows the 17 generator declarations in `_canonical_tool_registry` (NOT drivers reachable — that's the driver-wiring rung below).
+**Why an adapter, not a factory/service:** generators' `BackendDriver` does NOT satisfy bridge's `GenerationDriverProtocol` — signature mismatch (`submit(operator_id, OperatorInvocation)→(str,datetime)` vs `submit(InvocationEnvelope)→DriverSubmitResult`) + pydantic-triple-vs-dict. So the unit of work is protocol conformance, one adapter per `(surface, path)`. One generators surface (comfyui) fans out to N adapters.
+
+**Lifecycle ownership (redline-confirmed double-drive hazard):** the adapter must NEVER invoke generators' `LifecycleController` / `LifecyclePoller` / `persist_artifact` / `*_and_wait` operators. Bridge already persists its own `GenerationArtifactRepo` row and runs its own `GenerationPoller`; a second poller would drive one `request_id` across two stores and stall bridge's DB artifact. The adapter is a pure translator.
+
+**`backend_id` reconciliation = by construction.** The adapter stamps `backend_identity_triple == the declared triple`; bridge keys via `backend_id_from_identity_triple → "surface.path"`. The `registration.py` "named-not-filled" reconciler seam is **deleted, not built**.
+
+**Process boundary — REJECTED for now (redline 1).** In-process is the already-wired `registration.py → GenerationDriverRegistry → dispatcher.py:203` path: owes no new contract type, adds no deployable, reversible behind the single `submit` site. A process service is a new deployable + activates a deferred contract type to ship the *first* generation. Re-open trigger: **multi-tenant secret isolation / independent deploy cadence / a generation workload that must outlive the bridge process.**
+
+**Credential blast-radius — genuine unbound item (redline 2).** The adapter's credentialed `submit()` runs on bridge's event loop → the secret IS in bridge's heap at call time. Bridge's "credentials stay out of bridge's process" framing was false. **Accepted for v1** as a marginal widening on a single-operator workstation (bridge already holds `ANTHROPIC_API_KEY` + the Postgres DSN — one trust domain). The delivery *mechanism* (env vs config object vs `BridgeRegistrationContext`) is an implementation detail to settle at build time. Re-open trigger: **multi-tenant** flips the acceptance.
+
+**Build disposition:** D is **substrate** — doctrinally clean to build. BUT build it **paired with its first exerciser** (a consumer inserting `ExecutionPlan`s, or a minimal dogfood harness). A lit driver registry with no plan-producer is "wired ≠ works" one level up — don't build it in a vacuum.
 
 ---
 
-## Rung D (NEW) — live driver/handler wiring (parallel to C, NEEDS FRAMING)
+## Rung C — live planner invocation: **authority SETTLED-if-built; whether-to-build → DEFER**
 
-The gap B revealed. For dispatch to execute against real backends, live **driver handlers** (the `comfyui` / `fal` / `runway` / `higgsfield` / `magnific` clients) must be registered into the `GenerationDriverRegistry`, keyed by `backend_identity_triple`. Generators ships these drivers in its package but **does not register them as bridge sibling handlers** — it publishes declarations only.
+**Authority placement (if/when built) — settled:** assent gate at the engine's `routing→execution` transition (the single irreversible edge; `dispatcher.py:203` is the only `submit()`); rides the **chat compile path's mutating-preview**; ratify before any backend invoke; authorizes a **spend envelope, not per-call**. A `forge_plan_*` MCP tool is **rejected** (the model could reach it on a read turn → violates assent-stays-with-operator). `.plan()` persists pre-ratify (inert); the lifecycle advance to `execution` is ratify's only side-effect; the `AssentRecord` must bind the `run_id`/`plan_id` it authorizes (today `graph_intent_id ≠ plan_id` — that fusion is the seam).
 
-This is the `registration.py` "backend_id reconciliation" seam, named-and-deferred: *"Materialize the reconciler only when a plan step first needs to EXECUTE a selected capability."* Open product/credentials questions:
+**Whether to build now — DEFER (redline 3, load-bearing):**
+- **projekt-forge (the named production consumer) does not import `forge_bridge`'s orchestration at all.** `Planner(...)` is constructed only in `tests/smoke_helpers.py:439`.
+- Bridge's own docs call this path the **"federation E2E demonstrator / capstone of the federation proof,"** with stub-driver acceptance. It's a proof, not a runtime.
+- Building it live makes bridge **originate** generation intents → inverts substrate-not-producer (the propose-side, like the staged-ops propose tools that live downstream).
+- Mid-mutation atomicity is **unsolved** (operation-front carry-forward) and bites a paid multi-step dispatch hardest. Active milestone is **v1.9 Conversational Reads** — dogfood reads before paid mutations.
 
-1. **Where do live drivers live at runtime** — does generators register handlers in `register_bridge_adapters` (couples bridge bootstrap to generators' driver stack + credentials), or does bridge construct drivers from declarations on demand?
-2. **Credentials** — the drivers call paid APIs; their keys/config must be present in the bridge env at registration or invocation time. Bootstrap-time construction means bootstrap needs the secrets.
-3. **Lazy vs eager** — construct all 16 drivers at bootstrap, or only the selected backend at dispatch time (the reconciler-on-demand the comment suggests)?
-
-**Recommendation:** own framing pass. Couples to C (a plan must select a backend before its driver matters) but is a distinct decision (credentials + driver lifecycle vs. authority placement).
+**Re-open trigger:** a named consumer calls bridge's planner/dispatch path (grep flips non-empty), OR a scheduled artist workflow needs bridge-as-producer **AND** mid-mutation atomicity is resolved.
 
 ---
 
-## Rung C — live planner-invocation path (NEEDS FRAMING — do not bolt on)
+## Contract ruling — **no new generation-boundary fact**
 
-**The missing consumer.** Nothing constructs a `Planner` against the live `_canonical_tool_registry` and calls `.plan()`. This puts the phase-4b planner on a live surface for the **first time**.
+`BackendIdentityTriple` (`surface`/`path`/`auth_mechanism`/`revision`) is the complete boundary identity; `handler` is constitutionally opaque (`Any`). Drivers, credentials, backend selection, and assent are all consumer-internal by standing doctrine (ADR-005 / ADR-000 §1). `auth_mechanism` is the *name* of the mechanism (a fact); the secret is not. The only deferred contract seam — the execution-family **invocation envelope + receipt** — is activated *only* by the process boundary, which we reject, so it stays unbound.
 
-A planner that selects backends and would dispatch generations is a **mutating** path. Per the #24 / operation-front authority doctrine it must either ride **preview → ratify → apply** (assent stays the operator's) or be deliberately scoped out. Open questions:
+---
 
-1. **Entry surface** — new MCP tool (`forge_plan_*`)? HTTP route? The chat compile path?
-2. **Authority placement** — does it emit `preview_emitted` + `graph_intent_id` and require ratify before any backend is invoked, mirroring create-reel? (Strong prior: yes — generations cost money/compute; assent must gate them.)
-3. **Plan persistence seam** — who persists the `ExecutionPlan` to the store the dispatch consumer polls, at which authority step (post-ratify)?
-4. **Failure/atomicity** — mid-mutation atomicity (operation-front carry-forward) applies doubly to a multi-step generation dispatch.
+## Dispositions
 
-**Recommendation:** own framing → discuss → plan cycle. Milestone-shaped. Don't spec the endpoint until authority placement (Q2) is decided.
+### Intentionally unbound (with re-open triggers)
+- **Credential-delivery mechanism** (D) — settle at D build time; multi-tenant flips the marginal-blast-radius acceptance.
+- **Process boundary** (D) — multi-tenant / independent deploy cadence / detached workload.
+- **Execution-family invocation envelope** (contract) — a second peer exchanges a dispatch envelope (Pipeline's driver surface lights up).
+- **Rung C build** — a named consumer calls the planner/dispatch path, or a scheduled artist workflow needs bridge-as-producer + atomicity resolved.
+
+### Rejected (closed)
+- Process boundary as the *first* move (YAGNI; in-process is already wired + reversible).
+- Position B: bridge constructs generators' drivers (breaks thinness + can't satisfy the protocol without importing internals).
+- New `forge_bridge.sibling_drivers` entry-point group (the opaque `handler=` slot already does it).
+- Eager all-driver construction at boot (strawman — `handler=None` today = zero drivers built).
+- Planner-as-MCP-tool (model-reachable on a read turn).
+- Any driver / credential / assent / selection field in the contract.
 
 ---
 
 ## Where it stands
 
-- **Declarations: LIT** (A done, B done+verified). A planner would now see 17 real generator capabilities with typed facts. This is the genuine win.
-- **Drivers: dark** → rung D (driver/credentials framing).
-- **Planner: not live** → rung C (authority framing).
+- **Declarations: LIT** (A+B) — the real #24 win; a planner *would* now see 17 real generator capabilities with typed facts.
+- **Drivers (D): substrate, HOW settled** (thin adapter) — buildable when paired with a plan-producer.
+- **Planner (C): producer, deferred** — until a consumer demands bridge-as-producer + atomicity is solved.
 
-C + D are both required for end-to-end execution, and both are framing-grade, not same-push adds. The declaration surface — which is what #24 was about — is real and live.
+The doctrine line — **D is substrate, C is producer** — is what keeps "wired" from reading as "works."
