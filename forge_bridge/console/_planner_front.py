@@ -19,6 +19,7 @@ from typing import Any
 
 import asyncio
 
+from forge_bridge.console._reads_fence import ground_read_filters
 from forge_bridge.console._step import serialize_forced_tool_result
 from forge_bridge.console._vocab_digest import planner_vocabulary_digest
 from forge_bridge.mcp.arguments import normalize_tool_args
@@ -41,7 +42,18 @@ _PLANNER_SYSTEM = (
     "from earlier turns. Pass tool arguments FLAT (e.g. {\"project_id\": "
     "\"<id>\"}); resolve any project the user names to its id from PROJECTS.\n"
     "If you can proceed, output the MINIMAL plan:\n"
-    '{"plan": [{"tool": "<tool_name>", "args": {<flat args>}}]}\n'
+    '{"plan": [{"tool": "<tool_name>", "args": {<flat args>}}], "filters": []}\n'
+    "Alongside the plan, ALWAYS include a \"filters\" array — one entry per "
+    "selection/qualifier phrase in the LAST user message (ANY word that narrows "
+    "WHICH entities): a status or role term, a possessive/ownership word (\"my\", "
+    "\"mine\", \"assigned to me\"), an urgency/priority word (\"urgent\", "
+    "\"important\"), or any other narrowing adjective. Shape: "
+    '{"term": "<verbatim phrase from the message>", "arg": '
+    '"status"|"role"|null, "value": "<canonical status/role>"|null}. List '
+    "EVERY narrowing word, even one with no defined meaning. If a qualifier "
+    "maps to a known status or role, set arg and value; otherwise set arg AND "
+    "value to null — NEVER invent a mapping or silently drop the word. If there "
+    "is no qualifier, use [].\n"
     "Filtering/selecting terms must be grounded before you plan. If a term "
     "maps to one defined status, role, alias, or tool purpose in the grounding, "
     "use that meaning. If it maps to more than one concept or layer, ask which "
@@ -232,6 +244,15 @@ async def run_planner_front(messages: list[dict], *, router: Any, mcp: Any,
 
     plan = [s for s in (parsed.get("plan") or [])
             if isinstance(s, dict) and s.get("tool")]
+
+    # Reads grounding fence (deterministic twin of the op-front gate): the
+    # model declared its filter grounding; code re-derives it against the real
+    # vocabulary. A fabricated/ungrounded filter clarifies here — before any
+    # tool executes and before the answer-pass can assert it as fact.
+    fence = ground_read_filters(plan, parsed.get("filters"))
+    if fence is not None:
+        return _response(fence, messages, stop="clarification_needed",
+                         grounded=len(projects))
 
     chain: list[dict] = []
     for step in plan:
