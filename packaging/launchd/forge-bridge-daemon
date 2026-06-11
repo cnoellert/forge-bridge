@@ -15,5 +15,13 @@ if [ -f /etc/forge-bridge/forge-bridge.env ]; then
     set +a
 fi
 
-exec "${FORGE_PYTHON:-/Users/__SUDO_USER__/miniconda3/envs/forge/bin/python}" \
-     -m forge_bridge mcp http --port 9997
+FORGE_PYTHON="${FORGE_PYTHON:-/Users/__SUDO_USER__/miniconda3/envs/forge/bin/python}"
+
+# launchd starts daemons with a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin)
+# that excludes the conda env's bin/. Operators that shell out to env binaries
+# — e.g. sibling perception tools decoding plate video via ffmpeg — then fail
+# with "ffmpeg is required". Prepend the interpreter's own bin dir so those
+# binaries resolve. Same interpreter, now with its toolchain on PATH.
+export PATH="$(dirname "$FORGE_PYTHON"):${PATH}"
+
+exec "$FORGE_PYTHON" -m forge_bridge mcp http --port 9997
