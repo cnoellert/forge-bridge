@@ -81,6 +81,7 @@ def _inner_param_schema(tool: Any) -> dict:
     schema = getattr(tool, "inputSchema", None) or {}
     props = schema.get("properties") or {}
     params = props.get("params")
+    ref: Any = None
     if isinstance(params, dict):
         ref = params.get("$ref")
         if not ref:
