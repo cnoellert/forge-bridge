@@ -166,6 +166,13 @@ def test_planner_system_clarifies_unknown_or_ambiguous_predicates():
     )
 
 
+def test_planner_system_declares_aggregation_requests():
+    assert '"aggregation": null' in _PLANNER_SYSTEM
+    assert "which X has most/fewest Y" in _PLANNER_SYSTEM
+    assert '"group_by": "<verbatim group phrase>"' in _PLANNER_SYSTEM
+    assert '"over": "shot"' in _PLANNER_SYSTEM
+
+
 def test_planner_grounding_includes_first_party_vocabulary_block():
     router = SimpleNamespace(
         acomplete=AsyncMock(return_value=json.dumps({"clarify": "Which project?"})),

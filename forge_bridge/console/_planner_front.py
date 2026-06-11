@@ -19,7 +19,11 @@ from typing import Any
 
 import asyncio
 
-from forge_bridge.console._reads_fence import ground_read_filters
+from forge_bridge.console._reads_fence import (
+    ground_read_aggregation_absence,
+    ground_read_aggregation,
+    ground_read_filters,
+)
 from forge_bridge.console._step import serialize_forced_tool_result
 from forge_bridge.console._vocab_digest import planner_vocabulary_digest
 from forge_bridge.mcp.arguments import normalize_tool_args
@@ -42,7 +46,8 @@ _PLANNER_SYSTEM = (
     "from earlier turns. Pass tool arguments FLAT (e.g. {\"project_id\": "
     "\"<id>\"}); resolve any project the user names to its id from PROJECTS.\n"
     "If you can proceed, output the MINIMAL plan:\n"
-    '{"plan": [{"tool": "<tool_name>", "args": {<flat args>}}], "filters": []}\n'
+    '{"plan": [{"tool": "<tool_name>", "args": {<flat args>}}], '
+    '"filters": [], "aggregation": null}\n'
     "Alongside the plan, ALWAYS include a \"filters\" array — one entry per "
     "selection/qualifier phrase in the LAST user message (ANY word that narrows "
     "WHICH entities): a status or role term, a possessive/ownership word (\"my\", "
@@ -54,6 +59,14 @@ _PLANNER_SYSTEM = (
     "maps to a known status or role, set arg and value; otherwise set arg AND "
     "value to null — NEVER invent a mapping or silently drop the word. If there "
     "is no qualifier, use [].\n"
+    "When the LAST user message asks for aggregation — which X has most/fewest "
+    "Y, how many Y per X, or count Y by X — include an \"aggregation\" object "
+    "alongside plan/filters: {\"intent\": \"max_by_count|min_by_count|count|"
+    "count_by\", \"group_by\": \"<verbatim group phrase>\", \"group_field\": "
+    "\"<claimed field>\", \"over\": \"shot\"}. If no aggregation is asked, "
+    "use null. The group phrase must be grounded in the vocabulary; if you "
+    "cannot tell whether the user means status, sequence, role, or another "
+    "field, ask for clarification instead of guessing.\n"
     "Filtering/selecting terms must be grounded before you plan. If a term "
     "maps to one defined status, role, alias, or tool purpose in the grounding, "
     "use that meaning. If it maps to more than one concept or layer, ask which "
@@ -203,6 +216,21 @@ def _compact_result(result: Any, max_items: int = 25) -> Any:
     return result
 
 
+def _project_name(projects: list[dict], plan: list) -> str:
+    project_id = None
+    for step in plan:
+        if not isinstance(step, dict):
+            continue
+        args = step.get("args")
+        if isinstance(args, dict) and isinstance(args.get("project_id"), str):
+            project_id = args["project_id"]
+            break
+    for project in projects:
+        if project.get("id") == project_id and project.get("name"):
+            return str(project["name"])
+    return "the project"
+
+
 async def _narrate(router: Any, convo: str, chain: list[dict]) -> str:
     lines = [f"- {c['step']}\n  {json.dumps(_compact_result(c['result']), ensure_ascii=False)}"
              for c in chain]
@@ -275,6 +303,12 @@ async def run_planner_front(messages: list[dict], *, router: Any, mcp: Any,
     if fence is not None:
         return _response(fence, messages, stop="clarification_needed",
                          grounded=len(projects))
+    aggregation, aggregation_fence = ground_read_aggregation(
+        parsed.get("aggregation"),
+    )
+    if aggregation_fence is not None:
+        return _response(aggregation_fence, messages,
+                         stop="clarification_needed", grounded=len(projects))
 
     chain: list[dict] = []
     for step in plan:
@@ -291,6 +325,15 @@ async def run_planner_front(messages: list[dict], *, router: Any, mcp: Any,
             result = {"error": str(exc)}
         chain.append({"step": f"{name}({json.dumps(args, ensure_ascii=False)})",
                       "result": result})
+
+    absence = ground_read_aggregation_absence(
+        aggregation=aggregation,
+        chain=chain,
+        project_name=_project_name(projects, plan),
+    )
+    if absence is not None:
+        return _response(absence, messages, plan=plan, chain=chain,
+                         grounded=len(projects))
 
     answer = await _narrate(router, convo, chain)
     return _response(answer, messages, plan=plan, chain=chain,

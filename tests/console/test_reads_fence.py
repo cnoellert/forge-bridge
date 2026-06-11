@@ -17,8 +17,10 @@ from mcp.types import TextContent
 
 from forge_bridge.console._planner_front import run_planner_front
 from forge_bridge.console._reads_fence import (
+    GROUPABLE_FIELDS,
     _resolve_role,
     _resolve_status,
+    ground_read_aggregation,
     ground_read_filters,
 )
 
@@ -100,6 +102,49 @@ def test_fence_clarifies_when_value_does_not_rederive_to_term():
     assert ground_read_filters(plan, filters) is not None
 
 
+# ── ground_read_aggregation: vocabulary groundedness ──────────────────────────
+
+def test_aggregation_fence_grounds_sequence_to_top_level_sequence_id():
+    assert "sequence_id" in GROUPABLE_FIELDS
+    aggregation, msg = ground_read_aggregation({
+        "intent": "max_by_count",
+        "group_by": "sequence",
+        "group_field": "sequence_id",
+        "over": "shot",
+    })
+
+    assert msg is None
+    assert aggregation is not None
+    assert aggregation.group_field == "sequence_id"
+    assert aggregation.intent == "max_by_count"
+
+
+def test_aggregation_fence_clarifies_unknown_grouping_vocab():
+    aggregation, msg = ground_read_aggregation({
+        "intent": "max_by_count",
+        "group_by": "artist",
+        "group_field": "artist_id",
+        "over": "shot",
+    })
+
+    assert aggregation is None
+    assert msg is not None
+    assert "artist" in msg
+    assert "status, sequence, or role" in msg
+
+
+def test_aggregation_fence_cross_checks_claimed_field():
+    aggregation, msg = ground_read_aggregation({
+        "intent": "count_by",
+        "group_by": "sequence",
+        "group_field": "status",
+        "over": "shot",
+    })
+
+    assert aggregation is None
+    assert msg is not None
+
+
 # ── integration: the fence runs inside run_planner_front, before execute ───────
 
 def _projects_text() -> list[TextContent]:
@@ -172,4 +217,100 @@ def test_planner_front_fence_proceeds_on_grounded_status():
     assert body["stop_reason"] == "planner_front"
     assert body["plan"][0]["tool"] == "forge_list_shots"
     assert body["chain"][0]["step"].startswith("forge_list_shots(")
+    assert router.acomplete.await_count == 2  # planned + narrated
+
+
+def test_planner_front_clarifies_unknown_aggregation_before_execute():
+    router = SimpleNamespace(acomplete=AsyncMock(return_value=json.dumps({
+        "plan": [{"tool": "forge_list_shots",
+                  "args": {"project_id": "proj-port"}}],
+        "filters": [],
+        "aggregation": {
+            "intent": "max_by_count",
+            "group_by": "artist",
+            "group_field": "artist_id",
+            "over": "shot",
+        },
+    })))
+    mcp = SimpleNamespace(call_tool=AsyncMock(return_value=_projects_text()))
+
+    body = asyncio.run(run_planner_front(
+        [{"role": "user", "content": "which artist has the most shots"}],
+        router=router, mcp=mcp, tools=[_list_shots_tool()]))
+
+    assert body["stop_reason"] == "clarification_needed"
+    assert "status, sequence, or role" in body["final_text"]
+    assert mcp.call_tool.await_count == 1
+    assert router.acomplete.await_count == 1
+
+
+def test_planner_front_all_null_sequence_grouping_answers_before_narrate():
+    router = SimpleNamespace(acomplete=AsyncMock(return_value=json.dumps({
+        "plan": [{"tool": "forge_list_shots",
+                  "args": {"project_id": "proj-port"}}],
+        "filters": [],
+        "aggregation": {
+            "intent": "max_by_count",
+            "group_by": "sequence",
+            "group_field": "sequence_id",
+            "over": "shot",
+        },
+    })))
+    shots = [
+        {"id": f"shot-{idx}", "name": f"SHOT_{idx:03d}"}
+        for idx in range(20)
+    ]
+    mcp = SimpleNamespace(call_tool=AsyncMock(side_effect=[
+        _projects_text(),
+        [TextContent(type="text", text=json.dumps(
+            {"project_id": "proj-port", "count": 20, "shots": shots}))],
+    ]))
+
+    body = asyncio.run(run_planner_front(
+        [{"role": "user", "content": (
+            "which sequence has the most shots in portofino"
+        )}],
+        router=router, mcp=mcp, tools=[_list_shots_tool()]))
+
+    assert body["stop_reason"] == "planner_front"
+    assert body["final_text"] == (
+        "None of portofino's 20 shots are assigned to a sequence."
+    )
+    assert body["chain"][0]["result"]["shots"] == shots
+    assert router.acomplete.await_count == 1  # planned, but did not narrate
+
+
+def test_planner_front_populated_grouping_still_narrates():
+    router = SimpleNamespace(acomplete=AsyncMock(side_effect=[
+        json.dumps({
+            "plan": [{"tool": "forge_list_shots",
+                      "args": {"project_id": "proj-port"}}],
+            "filters": [],
+            "aggregation": {
+                "intent": "max_by_count",
+                "group_by": "sequence",
+                "group_field": "sequence_id",
+                "over": "shot",
+            },
+        }),
+        "Sequence seq-1 has the most shots.",
+    ]))
+    mcp = SimpleNamespace(call_tool=AsyncMock(side_effect=[
+        _projects_text(),
+        [TextContent(type="text", text=json.dumps({
+            "project_id": "proj-port",
+            "shots": [
+                {"id": "shot-1", "name": "SHOT_001", "sequence_id": "seq-1"},
+                {"id": "shot-2", "name": "SHOT_002", "sequence_id": None},
+            ],
+        }))],
+    ]))
+
+    body = asyncio.run(run_planner_front(
+        [{"role": "user", "content": (
+            "which sequence has the most shots in portofino"
+        )}],
+        router=router, mcp=mcp, tools=[_list_shots_tool()]))
+
+    assert body["final_text"] == "Sequence seq-1 has the most shots."
     assert router.acomplete.await_count == 2  # planned + narrated
