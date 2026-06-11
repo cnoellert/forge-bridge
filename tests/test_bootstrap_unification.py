@@ -202,6 +202,43 @@ class TestBootstrapDaemonSingletons:
         assert _mcp_server._canonical_watcher_task is None
         assert _mcp_server._server_started is False
 
+    @pytest.mark.asyncio
+    async def test_reentrant_bootstrap_reuses_canonical_runtime_singletons(self):
+        """Repeated bootstrap must not replace objects while an old console app
+        may still be serving them. That replacement is the #38 identity drift."""
+        from forge_bridge.mcp import server as _mcp_server
+
+        with patch.object(
+            _mcp_server, "_wait_for_bus", new=AsyncMock(return_value=False),
+        ), patch.object(
+            _mcp_server, "startup_bridge", new=AsyncMock(return_value=None),
+        ), patch.object(
+            _mcp_server, "shutdown_bridge", new=AsyncMock(return_value=None),
+        ), patch(
+            "forge_bridge.learning.watcher.watch_synthesized_tools",
+            new=AsyncMock(return_value=None),
+        ), patch.object(
+            _mcp_server, "_start_console_task", new=AsyncMock(return_value=(None, None)),
+        ):
+            first = await _mcp_server.bootstrap_daemon(_mcp_server.mcp)
+            second = await _mcp_server.bootstrap_daemon(_mcp_server.mcp)
+            try:
+                assert second.execution_log is first.execution_log
+                assert second.manifest_service is first.manifest_service
+                assert (
+                    _mcp_server._canonical_console_read_api._execution_log
+                    is first.execution_log
+                )
+                health = await first.console_read_api.get_health()
+                assert health["instance_identity"]["execution_log"]["id_match"] is True
+                assert (
+                    health["instance_identity"]["manifest_service"]["id_match"]
+                    is True
+                )
+            finally:
+                await _mcp_server.teardown_daemon(second)
+                await _mcp_server.teardown_daemon(first)
+
 
 # ---------------------------------------------------------------------------
 # Health endpoint exposes the bridge-client state — visibility invariant
