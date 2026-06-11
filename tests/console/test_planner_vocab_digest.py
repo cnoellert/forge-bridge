@@ -105,12 +105,44 @@ def _flat_schema_tool() -> SimpleNamespace:
     )
 
 
+def _format_result_tool() -> SimpleNamespace:
+    return SimpleNamespace(
+        name="format_result",
+        description="Format a read result.",
+        annotations=SimpleNamespace(readOnlyHint=True, title="Format result"),
+        inputSchema={
+            "$defs": {
+                "FormatResultInput": {
+                    "type": "object",
+                    "properties": {
+                        "format": {"type": "string",
+                                   "enum": ["email", "table", "bullets"]},
+                        "detail": {"type": "string"},
+                    },
+                    "required": ["format"],
+                },
+            },
+            "type": "object",
+            "properties": {
+                "params": {"$ref": "#/$defs/FormatResultInput"},
+            },
+            "required": ["params"],
+        },
+    )
+
+
 def test_inner_param_schema_handles_flat_schema_without_params_wrapper():
     # Must NOT raise UnboundLocalError when `params` is absent (flat schema).
     tool = _flat_schema_tool()
     schema = _inner_param_schema(tool)
     assert schema == tool.inputSchema
     assert _tool_line(tool) == "- forge_ping(detail?) — Ping"
+
+
+def test_tool_line_renders_enum_value_space_for_planner_contract():
+    assert _tool_line(_format_result_tool()) == (
+        "- format_result(format=email|table|bullets, detail?) — Format result"
+    )
 
 
 def test_planner_front_grounding_survives_flat_schema_read_tool():

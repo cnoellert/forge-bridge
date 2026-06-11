@@ -112,8 +112,10 @@ def _tool_line(tool: Any) -> str:
     inner = _inner_param_schema(tool)
     req = set(inner.get("required") or [])
     args = []
-    for name in (inner.get("properties") or {}):
-        args.append(f"{name}{'' if name in req else '?'}")
+    for name, spec in (inner.get("properties") or {}).items():
+        enum = spec.get("enum") if isinstance(spec, dict) else None
+        suffix = f"={'|'.join(map(str, enum))}" if enum else ""
+        args.append(f"{name}{'' if name in req else '?'}{suffix}")
     arg_str = ", ".join(args) if args else "(none)"
     return f"- {tool.name}({arg_str}) — {title or (tool.description or '').splitlines()[0]}"
 
