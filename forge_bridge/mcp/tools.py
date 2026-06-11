@@ -77,12 +77,15 @@ existing tools whose input shape has drifted out of compliance.
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
 from forge_bridge.console.handlers import _envelope_json
+
+logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -405,14 +408,21 @@ async def list_projects() -> str:
     """
     try:
         from forge_bridge.server.protocol import project_list
-        result = await _client().request(project_list())
+        client = _client()
+        result = await client.request(project_list())
         projects = result.get("projects", [])
+        logger.info(
+            "forge_list_projects: received %d projects via session=%s",
+            len(projects),
+            client.session_id,
+        )
         return _ok({
             "count":    len(projects),
             "projects": projects,
         })
     except Exception as e:
-        return _err(str(e))
+        logger.error("forge_list_projects: project store unavailable", exc_info=True)
+        return _err(str(e), "STORE_UNAVAILABLE")
 
 
 class GetProjectInput(BaseModel):
@@ -1489,7 +1499,7 @@ async def get_shot_lineage(params: GetShotLineageInput) -> str:
     and whether they've been verified on disk.
     """
     try:
-        from forge_bridge.server.protocol import project_list, entity_list, entity_get, query_dependents
+        from forge_bridge.server.protocol import project_list, entity_list, query_dependents
         client = _client()
 
         # Resolve project
@@ -1531,7 +1541,10 @@ async def get_shot_lineage(params: GetShotLineageInput) -> str:
                 m_attrs = m.get("metadata") or m.get("attributes", {})
                 role = m_attrs.get("role") or m_attrs.get("kind", "")
                 locs = m.get("locations", [])
-                path = next((l["path"] for l in locs if l.get("storage_type") == "local"), "")
+                path = next(
+                    (loc["path"] for loc in locs if loc.get("storage_type") == "local"),
+                    "",
+                )
                 if not path and locs:
                     path = locs[0].get("path", "")
                 produced_media.append({
@@ -1615,7 +1628,10 @@ async def blast_radius(params: BlastRadiusInput) -> str:
         media = await client.request(entity_get(media_id))
         m_attrs = media.get("metadata") or media.get("attributes", {})
         locs = media.get("locations", [])
-        path = next((l["path"] for l in locs if l.get("storage_type") == "local"), "")
+        path = next(
+            (loc["path"] for loc in locs if loc.get("storage_type") == "local"),
+            "",
+        )
 
         # What depends on this media? (what versions produced/consume it)
         deps = await client.request(query_dependents(media_id))
@@ -1743,7 +1759,10 @@ async def list_media(params: ListMediaInput) -> str:
                     continue
 
             locs = m.get("locations", [])
-            path = next((l["path"] for l in locs if l.get("storage_type") == "local"), "")
+            path = next(
+                (loc["path"] for loc in locs if loc.get("storage_type") == "local"),
+                "",
+            )
             if not path and locs:
                 path = locs[0].get("path", "")
 

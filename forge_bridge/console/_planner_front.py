@@ -88,8 +88,8 @@ def _inner_param_schema(tool: Any) -> dict:
                 for v in params.get(key, []) or []:
                     if isinstance(v, dict) and isinstance(v.get("$ref"), str):
                         ref = v["$ref"]
-        if isinstance(ref, str) and ref.startswith("#/$defs/"):
-            return (schema.get("$defs") or {}).get(ref[len("#/$defs/"):], {}) or {}
+    if isinstance(ref, str) and ref.startswith("#/$defs/"):
+        return (schema.get("$defs") or {}).get(ref[len("#/$defs/"):], {}) or {}
     return schema  # already flat
 
 
@@ -104,16 +104,29 @@ def _tool_line(tool: Any) -> str:
     return f"- {tool.name}({arg_str}) — {title or (tool.description or '').splitlines()[0]}"
 
 
+class ProjectGroundingUnavailable(RuntimeError):
+    """Project grounding failed for infrastructure reasons."""
+
+
 async def _ground_projects(mcp: Any, tools: list) -> list[dict]:
     try:
         raw = await mcp.call_tool("forge_list_projects", normalize_tool_args(
             "forge_list_projects", {}, tools))
         parsed = json.loads(serialize_forced_tool_result(raw))
+        if isinstance(parsed, dict) and parsed.get("error"):
+            raise ProjectGroundingUnavailable(str(parsed.get("error")))
+        if not isinstance(parsed, dict):
+            raise ProjectGroundingUnavailable(
+                f"forge_list_projects returned {type(parsed).__name__}"
+            )
         return [{"id": p.get("id"), "name": p.get("name")}
                 for p in (parsed.get("projects") or [])]
     except Exception as exc:  # noqa: BLE001 - grounding is best-effort
-        logger.info("planner_front: project grounding failed: %s", exc)
-        return []
+        if isinstance(exc, ProjectGroundingUnavailable):
+            logger.error("planner_front: project grounding unavailable: %s", exc)
+            raise
+        logger.error("planner_front: project grounding failed", exc_info=True)
+        raise ProjectGroundingUnavailable(str(exc)) from exc
 
 
 def _parse_planner_output(raw: str) -> dict:
@@ -217,7 +230,15 @@ async def run_planner_front(messages: list[dict], *, router: Any, mcp: Any,
     """
     read_tools = _read_only_tools(tools)
     read_names = {t.name for t in read_tools}
-    projects = await _ground_projects(mcp, tools)
+    try:
+        projects = await _ground_projects(mcp, tools)
+    except ProjectGroundingUnavailable:
+        return _response(
+            "I can't reach the project store right now. Please try again once "
+            "forge-bridge is reconnected.",
+            messages,
+            stop="store_unavailable",
+        )
     user_message = _last_user(messages)
     convo = _conversation(messages) or f"user: {user_message}"
 

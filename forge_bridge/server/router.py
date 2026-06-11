@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any, Callable, Coroutine
+from typing import Callable
 
 from forge_bridge.core.entities import (
     Asset, Layer, Media, Project as CoreProject,
@@ -155,7 +155,7 @@ class Router:
         async with get_session() as session:
             # Write session record
             session_repo = ClientSessionRepo(session)
-            db_session = await session_repo.open(
+            await session_repo.open(
                 client_name=client.client_name,
                 endpoint_type=client.endpoint_type,
                 host=client.remote_address,
@@ -163,13 +163,12 @@ class Router:
             await session.flush()
 
             # If reconnecting, queue missed events (sent separately after welcome)
-            catchup_events = []
             if msg.get("last_event_id"):
                 event_repo = EventRepo(session)
                 missed = await event_repo.get_since_sequence(
                     uuid.UUID(msg["last_event_id"])
                 )
-                catchup_events = [e.payload for e in missed]
+                _catchup_events = [event.payload for event in missed]
 
         return welcome(
             session_id=str(client.session_id),
@@ -577,6 +576,12 @@ class Router:
     ) -> Message:
         async with get_session() as session:
             projects = await ProjectRepo(session).list_all()
+        logger.info(
+            "project.list returned %d projects for client=%s session=%s",
+            len(projects),
+            client.client_name,
+            client.session_id,
+        )
         return ok(msg.msg_id, {"projects": [p.to_dict() for p in projects]})
 
     # ─────────────────────────────────────────────────────────
@@ -891,12 +896,12 @@ class Router:
             layers   = await entity_repo.find_by_attribute(
                 "layer", {"stack_id": str(stack.id)}
             )
-            layers.sort(key=lambda l: getattr(l, "order", 0))
+            layers.sort(key=lambda layer: getattr(layer, "order", 0))
 
         return ok(msg.msg_id, {
             "shot_id": shot_id,
             "stack_id": str(stack.id),
-            "layers": [l.to_dict(self.registry) for l in layers],
+            "layers": [layer.to_dict(self.registry) for layer in layers],
         })
 
     async def _handle_query_events(

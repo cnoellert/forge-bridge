@@ -26,6 +26,7 @@ _TCP_PROBE_TIMEOUT = 0.5
 _STOP_GRACE_SECONDS = 5.0
 _STOP_POLL_INTERVAL = 0.25
 _START_READY_TIMEOUT = 8.0
+_PORT_RELEASE_TIMEOUT = 5.0
 
 
 def _runtime_dir() -> Path:
@@ -106,6 +107,21 @@ def _tcp_in_use(host: str, port: int) -> bool:
             return True
     except OSError:
         return False
+
+
+def _wait_for_port_release(
+    host: str,
+    port: int,
+    *,
+    timeout: float = _PORT_RELEASE_TIMEOUT,
+) -> bool:
+    """Wait until a stopped service actually releases its listening port."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not _tcp_in_use(host, port):
+            return True
+        time.sleep(_STOP_POLL_INTERVAL)
+    return not _tcp_in_use(host, port)
 
 
 # ── Internal start/stop helpers ───────────────────────────────────────────
@@ -403,6 +419,15 @@ def restart(target: str = "all") -> list[dict[str, Any]]:
             _stop_one(name, rec)
             state.get("services", {}).pop(name, None)
             _write_runtime(state)
+            released = _wait_for_port_release(host, port)
+            if not released:
+                results.append({
+                    "name": name, "action": "restart",
+                    "supervisor": "managed", "ok": False,
+                    "ready": False, "pid": None, "host": host, "port": port,
+                    "note": "port did not release before restart",
+                })
+                continue
             started = _start(name)
             results.append({
                 "name": name, "action": "restart", "supervisor": "managed",

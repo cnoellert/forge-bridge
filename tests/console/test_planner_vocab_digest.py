@@ -5,9 +5,15 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
 from mcp.types import TextContent
 
-from forge_bridge.console._planner_front import _PLANNER_SYSTEM, run_planner_front
+from forge_bridge.console._planner_front import (
+    ProjectGroundingUnavailable,
+    _PLANNER_SYSTEM,
+    _ground_projects,
+    run_planner_front,
+)
 from forge_bridge.console._vocab_digest import (
     READ_PLANNER_ROLE_NAMES,
     STATUS_ALIASES,
@@ -24,6 +30,30 @@ def _projects_text() -> list[TextContent]:
                 "projects": [
                     {"id": "proj-port", "name": "portofino"},
                 ],
+            }),
+        )
+    ]
+
+
+def _project_error_text() -> list[TextContent]:
+    return [
+        TextContent(
+            type="text",
+            text=json.dumps({
+                "error": "server unavailable",
+                "code": "STORE_UNAVAILABLE",
+            }),
+        )
+    ]
+
+
+def _empty_projects_text() -> list[TextContent]:
+    return [
+        TextContent(
+            type="text",
+            text=json.dumps({
+                "count": 0,
+                "projects": [],
             }),
         )
     ]
@@ -115,6 +145,51 @@ def test_planner_grounding_includes_first_party_vocabulary_block():
     assert "published->delivered" not in grounding
     assert "primary(track" in grounding
     assert "forge_list_shots(project_id, status?)" in grounding
+
+
+def test_planner_project_grounding_error_is_not_empty_project_list():
+    mcp = SimpleNamespace(call_tool=AsyncMock(return_value=_project_error_text()))
+
+    with pytest.raises(ProjectGroundingUnavailable):
+        asyncio.run(_ground_projects(mcp, [_list_shots_tool()]))
+
+
+def test_planner_store_unavailable_short_circuits_before_model_call():
+    router = SimpleNamespace(acomplete=AsyncMock())
+    mcp = SimpleNamespace(call_tool=AsyncMock(return_value=_project_error_text()))
+
+    body = asyncio.run(run_planner_front(
+        [{"role": "user", "content": "show me the shots in portofino"}],
+        router=router,
+        mcp=mcp,
+        tools=[_list_shots_tool()],
+    ))
+
+    assert body["stop_reason"] == "store_unavailable"
+    assert "can't reach the project store" in body["final_text"]
+    assert body["grounded_projects"] == 0
+    router.acomplete.assert_not_called()
+
+
+def test_planner_genuine_zero_projects_still_reaches_planner():
+    router = SimpleNamespace(
+        acomplete=AsyncMock(return_value=json.dumps({
+            "clarify": "I don't see any projects yet. Which project should I use?",
+        })),
+    )
+    mcp = SimpleNamespace(call_tool=AsyncMock(return_value=_empty_projects_text()))
+
+    body = asyncio.run(run_planner_front(
+        [{"role": "user", "content": "show me the shots"}],
+        router=router,
+        mcp=mcp,
+        tools=[_list_shots_tool()],
+    ))
+
+    assert body["stop_reason"] == "clarification_needed"
+    assert "don't see any projects" in body["final_text"]
+    assert body["grounded_projects"] == 0
+    router.acomplete.assert_called_once()
 
 
 def test_planner_unknown_predicate_uses_clarify_channel_without_broad_read():
