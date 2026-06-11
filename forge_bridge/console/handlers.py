@@ -505,6 +505,7 @@ async def api_v1_exec_handler(request: Request) -> JSONResponse:
 
 # D-02 valid roles per native provider shape (Anthropic + Ollama both accept these).
 _CHAT_VALID_ROLES = frozenset({"user", "assistant", "tool"})
+_PLANNER_FRONT_TIMEOUT_S = 45.0
 
 
 # PR20 — deterministic tool execution when filter narrows to a single tool.
@@ -1559,8 +1560,12 @@ async def chat_handler(request: Request) -> Response:
                 from forge_bridge.llm.router import LLMRouter
                 _router = LLMRouter()
             _ptools = await _mcp_server.mcp.list_tools()
-            result = await run_planner_front(
-                messages, router=_router, mcp=_mcp_server.mcp, tools=_ptools)
+            result = await asyncio.wait_for(
+                run_planner_front(
+                    messages, router=_router, mcp=_mcp_server.mcp, tools=_ptools,
+                ),
+                timeout=_PLANNER_FRONT_TIMEOUT_S,
+            )
             result["request_id"] = request_id
             logger.info(
                 "chat planner_front request_id=%s client_ip=%s plan_steps=%d",
@@ -1568,6 +1573,30 @@ async def chat_handler(request: Request) -> Response:
             )
             return JSONResponse(result, status_code=200,
                                 headers={"X-Request-ID": request_id})
+        except asyncio.TimeoutError:
+            logger.error(
+                "chat planner_front_timeout request_id=%s client_ip=%s",
+                request_id,
+                client_ip,
+            )
+            return JSONResponse({
+                "final_text": (
+                    "I can't reach the project store right now. Please try "
+                    "again once forge-bridge is reconnected."
+                ),
+                "stop_reason": "store_unavailable",
+                "plan": [],
+                "chain": [],
+                "grounded_projects": 0,
+                "messages": list(messages) + [{
+                    "role": "assistant",
+                    "content": (
+                        "I can't reach the project store right now. Please try "
+                        "again once forge-bridge is reconnected."
+                    ),
+                }],
+                "request_id": request_id,
+            }, status_code=200, headers={"X-Request-ID": request_id})
         except Exception as exc:  # noqa: BLE001 - surface, never crash the endpoint
             logger.info("chat planner_front_error request_id=%s exc=%s",
                         request_id, exc)

@@ -90,6 +90,27 @@ def get_client() -> AsyncClient:
     return _client
 
 
+def _canonical_runtime_singletons() -> tuple["ExecutionLog", "ManifestService"]:
+    """Return the process-canonical ExecutionLog and ManifestService.
+
+    Bootstrap may be entered more than once in a long-lived process (for
+    example when a serving console task already owns :9996 and the MCP
+    lifespan starts again). Replacing these objects while an existing
+    ConsoleReadAPI still serves the old pair is the runtime-identity drift
+    that `/api/v1/health.instance_identity` detects. Reuse is the contract.
+    """
+    global _canonical_execution_log, _canonical_manifest_service
+    if _canonical_execution_log is None:
+        from forge_bridge.learning.execution_log import ExecutionLog
+
+        _canonical_execution_log = ExecutionLog()
+    if _canonical_manifest_service is None:
+        from forge_bridge.console.manifest_service import ManifestService
+
+        _canonical_manifest_service = ManifestService()
+    return _canonical_execution_log, _canonical_manifest_service
+
+
 # ─────────────────────────────────────────────────────────────
 # Phase A.4 — startup-path unification (2026-05-05)
 #
@@ -292,17 +313,12 @@ async def bootstrap_daemon(mcp_server: FastMCP) -> _BootstrapResult:
     _server_started = True  # D-14: trips the register_tools() guard
 
     # Step 2 — canonical singletons (API-04 + D-16 gate).
-    from forge_bridge.console.manifest_service import ManifestService
     from forge_bridge.console.read_api import (
         ConsoleReadAPI,
         register_canonical_singletons,
     )
-    from forge_bridge.learning.execution_log import ExecutionLog
 
-    execution_log = ExecutionLog()
-    manifest_service = ManifestService()
-    _canonical_execution_log = execution_log
-    _canonical_manifest_service = manifest_service
+    execution_log, manifest_service = _canonical_runtime_singletons()
     register_canonical_singletons(execution_log, manifest_service)
 
     # Step 3 — watcher with manifest_service injected (I-02 task handle).
@@ -542,6 +558,16 @@ async def startup_bridge(
 
     server_url = server_url or os.environ.get("FORGE_BRIDGE_URL", "ws://127.0.0.1:9998")
     client_name = client_name or os.environ.get("FORGE_MCP_CLIENT_NAME", "mcp_claude")
+
+    if _client is not None and getattr(_client, "is_connected", False):
+        logger.info("Reusing existing forge-bridge client at %s", _client.server_url)
+        return
+    if _client is not None:
+        try:
+            await _client.stop()
+        except Exception:
+            pass
+        _client = None
 
     _client = AsyncClient(
         client_name=client_name,

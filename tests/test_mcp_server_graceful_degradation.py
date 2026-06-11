@@ -92,3 +92,41 @@ async def test_shutdown_bridge_after_failed_startup(monkeypatch):
     # MUST NOT raise — the `if _client:` guard in shutdown_bridge must skip
     await mcp_server.shutdown_bridge()
     assert mcp_server._client is None
+
+
+async def test_startup_bridge_reuses_connected_client():
+    """A re-entered bootstrap must not replace a healthy bus client."""
+    class ConnectedClient:
+        is_connected = True
+        server_url = "ws://already-connected:9998"
+
+        async def stop(self):
+            pass
+
+    existing = ConnectedClient()
+    mcp_server._client = existing
+
+    await mcp_server.startup_bridge(server_url="ws://new-client:9998")
+
+    assert mcp_server._client is existing
+
+
+async def test_startup_bridge_replaces_stale_client():
+    """A disconnected client is stopped before the replacement is installed."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    stale = MagicMock()
+    stale.is_connected = False
+    stale.stop = AsyncMock()
+    mcp_server._client = stale
+
+    replacement = MagicMock()
+    replacement.start = AsyncMock()
+    replacement.wait_until_connected = AsyncMock()
+    replacement.stop = AsyncMock()
+
+    with patch("forge_bridge.mcp.server.AsyncClient", return_value=replacement):
+        await mcp_server.startup_bridge(server_url="ws://fresh:9998")
+
+    stale.stop.assert_awaited_once()
+    assert mcp_server._client is replacement

@@ -126,6 +126,32 @@ def test_chat_unsupported_role_returns_422(chat_client):
     assert r.json()["error"]["code"] == "unsupported_role"
 
 
+def test_chat_planner_front_timeout_returns_store_unavailable(chat_client):
+    client, _ = chat_client
+
+    async def _hang(*args, **kwargs):
+        await asyncio.sleep(10)
+
+    with patch(
+        "forge_bridge.console._planner_front.run_planner_front",
+        new=AsyncMock(side_effect=_hang),
+    ), patch(
+        "forge_bridge.console.handlers._PLANNER_FRONT_TIMEOUT_S",
+        0.01,
+    ):
+        r = client.post(
+            "/api/v1/chat?planner_front=true",
+            json={"messages": [{"role": "user", "content": "show me shots"}]},
+        )
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["stop_reason"] == "store_unavailable"
+    assert "can't reach the project store" in body["final_text"]
+    assert body["plan"] == []
+    assert body["chain"] == []
+
+
 # ── 429 rate limit ─────────────────────────────────────────────────────────────
 
 def test_chat_rate_limit_returns_429_with_retry_after(chat_client):

@@ -153,6 +153,28 @@ def test_pr22_list_projects_takes_no_params_so_call_with_empty_succeeds():
     assert "validation error" not in result.lower()
 
 
+def test_list_projects_store_failure_returns_store_unavailable(monkeypatch):
+    """A degraded store/bus path must not look like an empty project list."""
+    from forge_bridge.mcp import tools as mcp_tools
+    from forge_bridge.mcp.tools import list_projects
+
+    class BrokenClient:
+        async def request(self, msg):
+            raise RuntimeError("state bus unavailable")
+
+    monkeypatch.setattr(mcp_tools, "_client", lambda: BrokenClient())
+
+    loop = asyncio.new_event_loop()
+    try:
+        result = loop.run_until_complete(list_projects())
+    finally:
+        loop.close()
+    payload = json.loads(result)
+    assert payload["code"] == "STORE_UNAVAILABLE"
+    assert "state bus unavailable" in payload["error"]
+    assert "projects" not in payload
+
+
 # ── Pydantic schema check: Arguments model must accept {} ──────────────────
 
 

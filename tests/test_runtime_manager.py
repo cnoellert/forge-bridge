@@ -350,6 +350,8 @@ def test_restart_managed_stops_then_starts(runtime_home):
     ), patch.object(
         manager, "_stop_one", return_value={"stopped": True}
     ) as stop, patch.object(
+        manager, "_wait_for_port_release", return_value=True
+    ) as wait_release, patch.object(
         manager, "_start",
         return_value={"started": True, "ready": True, "pid": 5151,
                       "host": "127.0.0.1", "port": 9997},
@@ -358,7 +360,26 @@ def test_restart_managed_stops_then_starts(runtime_home):
     assert out[0]["supervisor"] == "managed"
     assert out[0]["ok"] is True
     stop.assert_called_once()
+    wait_release.assert_called_once_with("127.0.0.1", 9997)
     start.assert_called_once_with("mcp_http")
+
+
+def test_restart_managed_waits_for_port_release_before_start(runtime_home):
+    rows = {"services": [_svc_row("mcp_http", running=True, managed=True, pid=4242)]}
+    with patch.object(manager, "status", return_value=rows), patch.object(
+        manager, "_launchd_label", return_value=None
+    ), patch.object(
+        manager, "_stop_one", return_value={"stopped": True}
+    ), patch.object(
+        manager, "_wait_for_port_release", return_value=False
+    ) as wait_release, patch.object(manager, "_start") as start:
+        out = manager.restart("console")
+
+    assert out[0]["supervisor"] == "managed"
+    assert out[0]["ok"] is False
+    assert out[0]["note"] == "port did not release before restart"
+    wait_release.assert_called_once_with("127.0.0.1", 9997)
+    start.assert_not_called()
 
 
 def test_restart_not_running_starts(runtime_home):
