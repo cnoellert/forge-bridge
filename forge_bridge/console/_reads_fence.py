@@ -22,6 +22,7 @@ case; that is the v1 boundary.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from forge_bridge.console._vocab_digest import READ_PLANNER_ROLE_NAMES
@@ -29,6 +30,30 @@ from forge_bridge.core.vocabulary import STANDARD_ROLES, Status
 
 # Semantic filter args this fence governs. Entity referents are out of scope.
 SEMANTIC_FILTER_ARGS: tuple[str, ...] = ("status", "role")
+
+# Read aggregations this fence can ground deterministically. The canonical
+# value is the result key the reducer will inspect; aliases are operator
+# vocabulary the planner may quote in its declaration.
+GROUPABLE_FIELDS: dict[str, tuple[str, ...]] = {
+    "sequence_id": ("sequence", "sequence id", "sequence_id", "sequence name"),
+    "status": ("status", "state"),
+    "role": ("role", "track"),
+}
+AGGREGATION_INTENTS: frozenset[str] = frozenset({
+    "max_by_count",
+    "min_by_count",
+    "count",
+    "count_by",
+})
+
+
+@dataclass(frozen=True)
+class GroundedAggregation:
+    """A model-declared read aggregation re-derived against bridge vocabulary."""
+
+    intent: str
+    group_field: str
+    over: str
 
 
 def _resolve_status(term: Any) -> str | None:
@@ -82,6 +107,131 @@ def _clarify_question(term: str | None) -> str:
     return (
         f"I don't have a way to filter{phrase} — I can filter by status "
         f"({statuses}) or role ({roles}). Which did you mean?"
+    )
+
+
+def _resolve_group_field(term: Any) -> str | None:
+    """Re-derive a group-by field from operator vocabulary."""
+    if not isinstance(term, str):
+        return None
+    base = term.lower().strip()
+    if not base:
+        return None
+    candidates = (base, base.replace("_", " "), base.replace("-", " "))
+    for candidate in candidates:
+        for canonical, aliases in GROUPABLE_FIELDS.items():
+            if candidate == canonical or candidate in aliases:
+                return canonical
+    return None
+
+
+def _aggregation_clarify_question(term: str | None) -> str:
+    phrase = f" by {term!r}" if term else ""
+    return (
+        f"I don't have a way to group shots{phrase} — I can group shots by "
+        "status, sequence, or role. Which did you mean?"
+    )
+
+
+def ground_read_aggregation(
+    aggregation: Any,
+) -> tuple[GroundedAggregation | None, str | None]:
+    """Gate a model-declared read aggregation against groupable vocabulary.
+
+    Returns ``(grounded, None)`` when no clarification is needed. ``grounded``
+    is ``None`` when the request did not declare an aggregation. Returns
+    ``(None, question)`` when the declaration cannot be re-derived.
+
+    The model's claimed ``group_field`` is advisory only: code derives the
+    canonical result key from ``group_by`` and cross-checks any claimed field
+    against that derivation.
+    """
+    if aggregation is None:
+        return None, None
+    if not isinstance(aggregation, dict):
+        return None, _aggregation_clarify_question(None)
+    if not aggregation:
+        return None, None
+
+    intent = aggregation.get("intent")
+    over = aggregation.get("over") or "shot"
+    group_by = aggregation.get("group_by")
+    claimed = aggregation.get("group_field")
+    term_label = group_by if isinstance(group_by, str) and group_by.strip() else None
+
+    if intent not in AGGREGATION_INTENTS:
+        return None, _aggregation_clarify_question(term_label)
+    if over not in ("shot", "shots"):
+        return None, _aggregation_clarify_question(term_label)
+
+    derived = _resolve_group_field(group_by)
+    claimed_derived = _resolve_group_field(claimed)
+    if derived is None:
+        return None, _aggregation_clarify_question(term_label)
+    if claimed is not None and claimed_derived != derived:
+        return None, _aggregation_clarify_question(term_label)
+
+    return GroundedAggregation(
+        intent=intent,
+        group_field=derived,
+        over="shot",
+    ), None
+
+
+def _aggregation_population(chain: list[dict],
+                            aggregation: GroundedAggregation) -> list | None:
+    if aggregation.over != "shot":
+        return None
+    for entry in chain:
+        result = entry.get("result")
+        if isinstance(result, dict) and isinstance(result.get("shots"), list):
+            return result["shots"]
+    return None
+
+
+def _field_article(group_field: str) -> str:
+    return {
+        "sequence_id": "a sequence",
+        "status": "a status",
+        "role": "a role",
+    }.get(group_field, group_field)
+
+
+def ground_read_aggregation_absence(
+    aggregation: GroundedAggregation | None,
+    chain: list[dict],
+    *,
+    project_name: str,
+) -> str | None:
+    """Return a deterministic all-null grouping answer, or ``None``.
+
+    v1 only owns the uniformly-null/absent grouping guard. If any item has a
+    non-null group value, including a partial-null population, narration still
+    computes the answer. Populated grouping remains v1.1 territory.
+    """
+    if aggregation is None:
+        return None
+    items = _aggregation_population(chain, aggregation)
+    if items is None:
+        return None
+
+    field_article = _field_article(aggregation.group_field)
+    count = len(items)
+    if count == 0:
+        return f"There are no shots in {project_name} to group by {field_article}."
+
+    values = [
+        item.get(aggregation.group_field)
+        for item in items
+        if isinstance(item, dict) and item.get(aggregation.group_field) is not None
+    ]
+    values = [value for value in values if str(value).strip()]
+    if values:
+        return None
+
+    return (
+        f"None of {project_name}'s {count} shots are assigned to "
+        f"{field_article}."
     )
 
 
