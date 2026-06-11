@@ -233,9 +233,27 @@ def _project_name(projects: list[dict], plan: list) -> str:
     return "the project"
 
 
+def _is_failed_chain_step(entry: dict) -> bool:
+    """True when a chain row is failure evidence, not factual evidence."""
+    step = entry.get("step")
+    if isinstance(step, str) and "rejected:" in step:
+        return True
+    result = entry.get("result")
+    return isinstance(result, dict) and "error" in result
+
+
 async def _narrate(router: Any, convo: str, chain: list[dict]) -> str:
+    evidence_chain = [
+        entry for entry in chain
+        if isinstance(entry, dict) and not _is_failed_chain_step(entry)
+    ]
+    if chain and not evidence_chain:
+        return (
+            "I couldn't answer from the read results because every planner "
+            "step failed."
+        )
     lines = [f"- {c['step']}\n  {json.dumps(_compact_result(c['result']), ensure_ascii=False)}"
-             for c in chain]
+             for c in evidence_chain]
     evidence = "\n".join(lines) if lines else "(no tool results)"
     prompt = (f"Conversation:\n{convo}\n\nTool results:\n{evidence}\n\n"
               "Answer the user's latest request using the tool results:")

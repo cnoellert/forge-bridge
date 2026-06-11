@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock
 
 from mcp.types import TextContent
 
-from forge_bridge.console._planner_front import run_planner_front
+from forge_bridge.console._planner_front import _narrate, run_planner_front
 from forge_bridge.console._reads_fence import (
     GROUPABLE_FIELDS,
     _resolve_role,
@@ -314,3 +314,41 @@ def test_planner_front_populated_grouping_still_narrates():
 
     assert body["final_text"] == "Sequence seq-1 has the most shots."
     assert router.acomplete.await_count == 2  # planned + narrated
+
+
+def test_narrate_excludes_errored_steps_from_evidence():
+    router = SimpleNamespace(acomplete=AsyncMock(return_value="I found 20 shots."))
+    chain = [
+        {"step": "forge_list_shots({})", "result": {
+            "count": 20,
+            "shots": [{"id": "shot-1", "name": "SHOT_001"}],
+        }},
+        {"step": "format_result({})", "result": {
+            "error": "literal_error: invalid enum value",
+        }},
+    ]
+
+    answer = asyncio.run(_narrate(router, "user: list shots as a table", chain))
+
+    assert answer == "I found 20 shots."
+    prompt = router.acomplete.await_args.args[0]
+    assert "forge_list_shots" in prompt
+    assert "SHOT_001" in prompt
+    assert "format_result" not in prompt
+    assert "literal_error" not in prompt
+
+
+def test_narrate_all_failed_steps_returns_honest_failure_without_model_call():
+    router = SimpleNamespace(acomplete=AsyncMock())
+    chain = [
+        {"step": "format_result({})", "result": {"error": "invalid format"}},
+        {"step": "forge_delete_shot(rejected: not a read tool)", "result": None},
+    ]
+
+    answer = asyncio.run(_narrate(router, "user: list shots", chain))
+
+    assert answer == (
+        "I couldn't answer from the read results because every planner step "
+        "failed."
+    )
+    router.acomplete.assert_not_called()
