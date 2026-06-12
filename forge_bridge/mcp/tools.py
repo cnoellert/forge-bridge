@@ -1330,7 +1330,7 @@ async def register_publish(params: RegisterPublishInput) -> str:
                     "status": "in_progress",
                 },
             ))
-            shot_id = shot_result["id"]
+            shot_id = shot_result["entity_id"]
             shot_created = True
 
         # Count existing versions for this shot via the version_of edge to get the
@@ -1357,7 +1357,7 @@ async def register_publish(params: RegisterPublishInput) -> str:
                 "segment_name":   params.segment_name,
             },
         ))
-        version_id = version_result["id"]
+        version_id = version_result["entity_id"]
 
         # Link version → shot
         await client.request(relationship_create(

@@ -29,7 +29,7 @@ class _CapturingClient:
             return {"entities": []}  # no existing shots/versions → shot is created
         if t == MsgType.ENTITY_CREATE:
             # distinct ids per entity type so edge endpoints are unambiguous
-            return {"id": "shot-new" if msg["entity_type"] == "shot" else "ver-1"}
+            return {"entity_id": "shot-new" if msg["entity_type"] == "shot" else "ver-1"}
         if t == MsgType.REL_CREATE:
             return {"ok": True}
         if t == MsgType.LOC_ADD:
@@ -67,3 +67,19 @@ def test_register_publish_emits_version_of_edge():
     assert edge["rel_type"] == "version_of"
     assert edge["source_id"] == "ver-1"           # version → ...
     assert edge["target_id"] == "shot-new"        # ... → shot (not version→version)
+
+
+def test_register_publish_create_branch_reads_entity_ids_and_links_version():
+    client, data = _run()
+
+    assert "error" not in data, data
+    assert data["version_id"] == "ver-1"
+    assert data["shot_id"] == "shot-new"
+    assert data["shot_created"] is True
+
+    rels = [m for m in client.sent if m["type"] == MsgType.REL_CREATE]
+    assert len(rels) == 1
+    edge = rels[0]
+    assert edge["rel_type"] == "version_of"
+    assert edge["source_id"] == data["version_id"]
+    assert edge["target_id"] == data["shot_id"]
