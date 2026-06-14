@@ -53,6 +53,15 @@ class RegistrationOutcome:
     # ``KNOWN_CAPABILITY_FAMILIES`` as a soft set). This surfaces vocabulary drift
     # (e.g. a sibling declaring ``editorial``) without gating discovery.
     off_contract_families: frozenset[str] = frozenset()
+    # Siblings that registered ``generation``-family DECLARATIONS but contributed
+    # zero invocation handlers — discoverable-but-not-invocable. The classic stale
+    # dist-info entry-point symptom (issue #61): a sibling moved its
+    # ``forge_bridge.siblings`` target to a handler-bearing function but was not
+    # reinstalled, so the daemon still binds the old declaration-only target.
+    # Distinct from a healthy empty sibling; without it this degrades silently to
+    # ``dispatch_no_driver``. Additive field (default 0) — does not move the count
+    # accounting; a declaration-only sibling still counts in ``siblings_registered``.
+    siblings_declaration_only: int = 0
 
 
 def _enumerate_entry_points(group: str) -> dict[str, str]:
@@ -176,6 +185,7 @@ async def register_all_siblings(
     siblings_registered = 0
     siblings_failed = 0
     siblings_empty = 0
+    siblings_declaration_only = 0
     tools_registered_total = 0
 
     for sibling_name, target in resolution.siblings.items():
@@ -197,6 +207,20 @@ async def register_all_siblings(
             )
             continue
 
+        # Boot-time observability (#61): log the resolved entry-point value next
+        # to the function actually loaded. ``ep.value`` is read from the installed
+        # ``*.dist-info/entry_points.txt`` — NOT the source tree — so a sibling
+        # whose source moved its target without a reinstall binds the stale
+        # function silently. Surfacing ``ep_value`` and ``loaded`` (the real
+        # ``module:qualname``) side by side makes that divergence self-diagnosing.
+        logger.info(
+            "sibling entry-point resolved name=%s ep_value=%s loaded=%s:%s",
+            sibling_name,
+            target,
+            getattr(sibling_func, "__module__", "?"),
+            getattr(sibling_func, "__qualname__", "?"),
+        )
+
         # Empty ``requested_families`` = request-all: siblings register every
         # declared capability and bridge classifies against the contract
         # vocabulary. Do NOT pass bridge's local family vocabulary here — that
@@ -211,14 +235,24 @@ async def register_all_siblings(
 
         families_registered: set[str] = set()
         tool_ids_registered: set[str] = set()
+        # Track generation declarations vs. the subset that carried an invocation
+        # handler, so we can distinguish a declaration-only sibling (the stale
+        # entry-point symptom, #61) from one that landed real drivers.
+        gen_declaration_count = 0
+        gen_handler_count = 0
 
         def register_capability(registration: CapabilityRegistration):
+            nonlocal gen_declaration_count, gen_handler_count
             tool = tool_registration_from_capability(registration)
             tool_registry.register(
                 tool, sibling_name=sibling_name, handler=registration.handler
             )
             families_registered.add(tool.family)
             tool_ids_registered.add(tool.tool_id)
+            if tool.family == "generation":
+                gen_declaration_count += 1
+                if registration.handler is not None:
+                    gen_handler_count += 1
 
         try:
             await _invoke_sibling(sibling_func, ctx, register_capability)
@@ -278,6 +312,35 @@ async def register_all_siblings(
                 },
             )
 
+        # Sharpened degraded signal (#61): a generation sibling that registered
+        # declarations but contributed zero invocation handlers is
+        # discoverable-but-not-invocable — the stale dist-info entry-point
+        # symptom (a declaration-only function bound because the sibling's source
+        # moved without a reinstall). Distinct from a healthy empty sibling;
+        # without this it degrades silently to ``dispatch_no_driver`` at dispatch
+        # time. Additive to ``sibling_registered`` — the declarations did land, so
+        # discovery is healthy; only invocation is dead.
+        if gen_declaration_count > 0 and gen_handler_count == 0:
+            siblings_declaration_only += 1
+            logger.warning(
+                "sibling registered %d generation declaration(s) with 0 drivers "
+                "name=%s — likely a stale dist-info entry-point (reinstall the "
+                "sibling, do not just source-update); dispatch will degrade to "
+                "dispatch_no_driver",
+                gen_declaration_count,
+                sibling_name,
+            )
+            await event_appender(
+                "sibling_registered_declaration_only",
+                {
+                    "sibling_name": sibling_name,
+                    "family": "generation",
+                    "declaration_count": gen_declaration_count,
+                    "driver_count": 0,
+                    "resolved_entry_point": target,
+                },
+            )
+
     capability_kinds_present = tool_registry.registered_capability_kinds()
     # Classify against the contract vocabulary (observe, never gate): families
     # outside KNOWN_CAPABILITY_FAMILIES are still registered, just surfaced.
@@ -315,6 +378,7 @@ async def register_all_siblings(
         missing_required_capability_kinds=missing_required,
         degraded=degraded,
         off_contract_families=off_contract_families,
+        siblings_declaration_only=siblings_declaration_only,
     )
 
 

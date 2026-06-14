@@ -384,12 +384,23 @@ async def bootstrap_daemon(mcp_server: FastMCP) -> _BootstrapResult:
         )
         logger.info(
             "sibling capability registration: %d registered, %d failed, "
-            "%d empty (%d tools)",
+            "%d empty, %d declaration-only (%d tools)",
             sibling_outcome.siblings_registered,
             sibling_outcome.siblings_failed,
             sibling_outcome.siblings_empty,
+            sibling_outcome.siblings_declaration_only,
             len(tool_registry.all()),
         )
+        if sibling_outcome.siblings_declaration_only:
+            # #61: a generation sibling registered declarations but landed zero
+            # drivers — discoverable but not invocable. Almost always a stale
+            # dist-info entry-point (sibling source moved without a reinstall).
+            logger.warning(
+                "%d generation sibling(s) registered declaration-only (0 drivers) "
+                "— dispatch will degrade to dispatch_no_driver; reinstall the "
+                "sibling and verify dist-info/entry_points.txt (see #61)",
+                sibling_outcome.siblings_declaration_only,
+            )
     except Exception:  # bootstrap must never die on sibling registration
         logger.exception("sibling capability registration failed; continuing")
     _canonical_tool_registry = tool_registry

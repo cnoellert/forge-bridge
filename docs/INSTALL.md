@@ -430,6 +430,22 @@ Both must return non-empty before Step 6 (server start) on the operator host.
 
 ---
 
+## Reference: Federation siblings (entry-point moves require a reinstall)
+
+forge-bridge discovers federation peers (e.g. `forge-generators`, `forge-vision`) through the `forge_bridge.siblings` entry-point group, which `importlib.metadata` reads from each sibling's **installed** `*.dist-info/entry_points.txt` — not its source tree.
+
+**Deploy rule:** when a sibling **moves** its entry-point target (a new or renamed `register_bridge_adapters` function), reinstall the sibling — a bare `git pull` on an editable install does **not** regenerate `dist-info`, so the daemon keeps binding the old target. The symptom is silent: declarations still register (discovery looks healthy) but zero invocable drivers land → generation dispatch degrades to `dispatch_no_driver`.
+
+```bash
+# in the sibling checkout, after an entry-point move
+pip install -e . --no-deps        # regenerates dist-info/entry_points.txt
+# then recycle the bridge daemon (Step 6 supervisor)
+```
+
+Pin-bump deploys (`pip install` from a git ref) regenerate dist-info and are safe. The bridge boot log is self-diagnosing — it prints the resolved `ep_value` next to the loaded function per sibling, and warns when a generation sibling registers declarations with zero drivers. Full diagnosis + recovery: [TROUBLESHOOTING.md](TROUBLESHOOTING.md) → "generation sibling is discoverable but not invocable" (issue #61).
+
+---
+
 ## Reference: Cross-links
 
 - [API.md](API.md) — Flame bridge HTTP API (`POST /exec` semantics, namespace persistence)

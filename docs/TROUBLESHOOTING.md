@@ -871,3 +871,63 @@ The `install_provenance` doctor row is engineered (per Phase 24.2) to catch snap
 - The Ollama-restart and Postgres-restart failure modes above both already document the `launchctl kickstart` / `systemctl restart` invocations as part of their recovery steps; this section names them as the canonical answer for the standalone "daemon serving stale commit" symptom.
 
 ---
+
+## Failure mode: generation sibling is discoverable but not invocable (`dispatch_no_driver` after a sibling source update)
+
+**Surfaces from:** a `forge_bridge.siblings` peer (e.g. `forge-generators`) whose entry-point target **moved** to a different function, source-updated (bare `git pull` on an editable install) but **not reinstalled**, while the bridge daemon binds the stale target. Issue #61.
+
+### Symptom
+
+Discovery looks completely healthy — the sibling shows up, its capability declarations register, `forge_tools_read` lists its generation tools. But every generation dispatch degrades to `dispatch_no_driver`: zero invocable drivers ever landed in `GenerationDriverRegistry`. It reads like "discoverable but not invocable."
+
+### Why this happens
+
+`importlib.metadata.entry_points()` reads the **installed** `*.dist-info/entry_points.txt`, not the source tree. When a sibling moves its `forge_bridge.siblings` target — for instance from a declaration-only `…contract_registry:register_bridge_adapters` to a handler-bearing `…registry:register_bridge_adapters` — the installed metadata still points at the **old** function until the package is reinstalled. The daemon loads the declaration-only function, so declarations attach but no handlers do. The code being correct is not enough; the installed metadata must be regenerated. This is the same snapshot-vs-live asymmetry as the `install_provenance` failure mode above, one layer down (sibling dist-info instead of bridge's own served commit).
+
+### Diagnosis
+
+The boot log is now self-diagnosing (#61). At sibling registration the daemon logs the resolved entry point next to the function actually loaded:
+
+```
+sibling entry-point resolved name=forge_generators ep_value=forge_generators.bridge.contract_registry:register_bridge_adapters loaded=forge_generators.bridge.contract_registry:register_bridge_adapters
+```
+
+If `ep_value` names the *declaration-only* function (not the handler-bearing one you expect), the dist-info is stale. A `WARNING` immediately follows when a generation sibling lands declarations with zero drivers:
+
+```
+sibling registered 29 generation declaration(s) with 0 drivers name=forge_generators — likely a stale dist-info entry-point …
+```
+
+and the registration emits a distinct `sibling_registered_declaration_only` event (not a healthy `sibling_registered_empty`). You can also probe the installed metadata directly:
+
+```python
+from importlib.metadata import entry_points
+for ep in entry_points(group="forge_bridge.siblings"):
+    print(ep.name, "->", ep.value)        # ep.value is read from dist-info, not source
+    print("   loaded:", ep.load().__module__)
+```
+
+### Recovery
+
+Reinstall the sibling so its dist-info regenerates, then recycle the daemon:
+
+```bash
+# in the SIBLING checkout (e.g. forge-generators)
+pip install -e . --no-deps        # regenerates *.dist-info/entry_points.txt
+# then recycle the bridge daemon (use the supervisor that owns it)
+sudo launchctl kickstart -k system/com.cnoellert.forge-bridge   # macOS
+sudo systemctl restart forge-bridge                              # Linux
+```
+
+After the recycle, the boot log's `ep_value`/`loaded` pair should name the handler-bearing function and the declaration-only warning should be gone.
+
+### Why this happens at deploy time
+
+**Pin-bump deploys are safe** — `pip install` from a git ref regenerates dist-info. The exposed cases are editable/dev installs and partial-update deploys where source moves but the package is not reinstalled. **Deploy rule: a sibling entry-point move requires a reinstall of the sibling, not just a source update; verify `dist-info/entry_points.txt` post-deploy.**
+
+### Cross-references
+
+- `docs/INSTALL.md` — the sibling reinstall note in the upgrade path.
+- The `install_provenance` failure mode above — same snapshot-vs-live asymmetry for bridge's own served commit.
+
+---
