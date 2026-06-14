@@ -319,11 +319,17 @@ def _check_flame_bridge() -> dict[str, Any]:
     """Daemon-routed Flame bridge dispatch probe (Phase 24.2).
 
     Probes the running daemon (Console on :9996) via
-    ``POST /api/v1/exec text="flame_ping"``. The chain engine dispatches
-    ``flame_ping`` via ``bridge.execute_json()`` from the daemon's process
-    env; ``flame_ping`` echoes the daemon's effective ``bridge.BRIDGE_URL``
-    in its response body (see ``forge_bridge/tools/utility.py:ping``). Doctor
-    compares the daemon-effective URL against its own re-derived
+    ``POST /api/v1/exec {"tool": "flame_ping"}`` — the DETERMINISTIC exact-name
+    dispatch, NOT the NL ``text`` path. The text path runs through
+    ``filter_tools_by_reachable_backends``, which strips ``flame_ping`` from the
+    resolvable set precisely when Flame is unreachable (the condition this probe
+    exists to detect), so the resolver returns ``clarification_needed`` and a
+    benign Flame-down misreports as a chain-engine error ("check daemon logs").
+    The ``{"tool": ...}`` path dispatches ``flame_ping`` directly in the daemon's
+    process — preserving the daemon-routed truth invariant — and bypasses the
+    filter, so ``flame_ping`` always runs and echoes the daemon's effective
+    ``bridge.BRIDGE_URL`` plus ``connected`` (see ``tools/utility.py:ping``).
+    Doctor compares the daemon-effective URL against its own re-derived
     ``config.flame_bridge_url()`` to detect config-context divergence (e.g.
     shell env vs launchd env disagreeing on ``FORGE_BRIDGE_PORT``).
 
@@ -346,7 +352,7 @@ def _check_flame_bridge() -> dict[str, Any]:
 
     try:
         with httpx.Client(timeout=_EXEC_PROBE_TIMEOUT) as client:
-            r = client.post(exec_url, json={"text": "flame_ping"})
+            r = client.post(exec_url, json={"tool": "flame_ping"})
     except (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError) as exc:
         return {
             "name": "flame_bridge",
@@ -376,9 +382,42 @@ def _check_flame_bridge() -> dict[str, Any]:
             "fix": "daemon /api/v1/exec returned invalid JSON — restart the daemon",
         }
 
-    if envelope.get("status") != "success":
+    envelope_status = envelope.get("status")
+
+    # Guard: clarification means flame_ping was not deterministically
+    # dispatchable (e.g. an older daemon still on the NL ``text`` probe path
+    # where the reachability filter removed the tool). This is NOT a chain-engine
+    # error to chase in the logs — it almost always means Flame is simply down.
+    if envelope_status == "clarification_needed":
+        return {
+            "name": "flame_bridge",
+            "ok": False,
+            "status": "unknown (flame_ping not deterministically dispatchable)",
+            "url": shell_url,
+            "fix": (
+                "flame_ping could not be dispatched as a tool — Flame is likely "
+                "down (its tool is filtered out of the resolver when the backend "
+                "is unreachable). Start Flame with the forge-bridge hook loaded, "
+                "or update the daemon if it predates the {\"tool\": ...} exec path."
+            ),
+        }
+
+    if envelope_status != "success":
         err = envelope.get("error") or {}
         code = err.get("code") or "unknown"
+        # unknown_action: the daemon has no flame_ping tool registered at all —
+        # a registration/install problem, distinct from a chain-engine error.
+        if code == "unknown_action":
+            return {
+                "name": "flame_bridge",
+                "ok": False,
+                "status": "unknown (flame_ping tool not registered)",
+                "url": shell_url,
+                "fix": (
+                    "daemon has no flame_ping tool registered — restart the "
+                    "daemon, or verify the forge-bridge install (see mcp_http row)"
+                ),
+            }
         return {
             "name": "flame_bridge",
             "ok": False,
