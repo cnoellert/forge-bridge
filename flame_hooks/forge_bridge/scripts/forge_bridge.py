@@ -29,13 +29,18 @@ Based on LOGIK-PROJEKT (GPL-3.0) hook patterns.
 # ========================================================================== #
 
 import ast
+import getpass
 import http.server
 import io
 import json
 import os
+import socket
 import sys
 import threading
+import time
 import traceback
+import urllib.error
+import urllib.request
 
 # ========================================================================== #
 # Configuration
@@ -44,7 +49,16 @@ import traceback
 BRIDGE_HOST = os.environ.get("FORGE_BRIDGE_HOST", "127.0.0.1")
 BRIDGE_PORT = int(os.environ.get("FORGE_BRIDGE_PORT", "9999"))
 BRIDGE_ENABLED = os.environ.get("FORGE_BRIDGE_ENABLED", "1") != "0"
+BRIDGE_ANNOUNCE = os.environ.get("FORGE_BRIDGE_ANNOUNCE", "1") != "0"
 EXEC_TIMEOUT = 60  # seconds to wait for result
+
+_REGISTRY_HTTP_URL = os.environ.get(
+    "FORGE_SESSION_REGISTRY_HTTP_URL",
+    "http://127.0.0.1:9991",
+).rstrip("/")
+
+_NONCE = os.urandom(4).hex()
+_STARTED_AT = time.time()
 
 # ========================================================================== #
 # Shared state
@@ -53,10 +67,91 @@ EXEC_TIMEOUT = 60  # seconds to wait for result
 _namespace = {}         # persistent execution namespace
 _server = None          # HTTPServer instance
 _bridge_active = False
+_announce_started = False
 
 
 def _log(msg):
     print(f"[FORGE BRIDGE] {msg}")
+
+
+# ========================================================================== #
+# Session registry announcer
+#
+# D-03: fail-soft — _http_post never raises; start_announce never blocks.
+# D-04 (by omission): no deregister-on-shutdown; TTL reap is authoritative.
+# ========================================================================== #
+
+def _http_post(path, payload, timeout=2.0):
+    """POST JSON to the session registry. Returns HTTP status or None on error."""
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        _REGISTRY_HTTP_URL + path,
+        data=data,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status
+    except (urllib.error.URLError, OSError):
+        return None
+
+
+def start_announce(descriptor):
+    """Start background register+heartbeat daemon thread. Never raises."""
+    global _announce_started
+    if not BRIDGE_ANNOUNCE:
+        return
+    if _announce_started:
+        return
+    _announce_started = True
+    instance_id = descriptor.get("instance_id", "")
+
+    def _run():
+        registered = False
+        while True:
+            if not registered:
+                code = _http_post("/register", descriptor)
+                registered = (code == 200)
+            else:
+                code = _http_post("/heartbeat", {"instance_id": instance_id})
+                if code != 200:
+                    registered = False  # re-register on next iteration (D-03)
+            time.sleep(1.0)
+
+    threading.Thread(
+        target=_run,
+        name="forge-announce-" + instance_id,
+        daemon=True,
+    ).start()
+
+
+def _make_descriptor():
+    """Return the 10-field SessionDescriptor dict for this Flame process.
+
+    Rebuilds lazily on each call so `project` reflects the currently-open
+    project (flame.project.current_project changes on project switch).
+    No forge_core import — standalone file; see three-layer kill-switch / D-02.
+    """
+    project = None
+    try:
+        import flame as _fl
+        project = str(_fl.project.current_project.name)
+    except Exception:
+        # Pitfall 6: project may not be loaded at app_initialized time, or
+        # flame module may not be available in test/offline contexts.
+        pass
+    return {
+        "instance_id": f"flame-{os.getpid()}-{_NONCE}",
+        "dcc": "flame",
+        "user": getpass.getuser(),
+        "project": project,
+        "shot": None,
+        "host": socket.gethostname(),
+        "pid": os.getpid(),
+        "port": BRIDGE_PORT,
+        "started_at": _STARTED_AT,
+        "version": "",
+    }
 
 
 # ========================================================================== #
@@ -204,7 +299,9 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
     """Handles GET / for web UI and POST /exec for code execution."""
 
     def do_GET(self):
-        if self.path in ("/", "/index.html"):
+        if self.path == "/whoami":
+            self._send_json(200, _make_descriptor())
+        elif self.path in ("/", "/index.html"):
             self._send_html(200, _WEB_UI)
         elif self.path == "/status":
             self._send_json(200, {
@@ -342,6 +439,7 @@ def app_initialized(project_name, *args, **kwargs):
     try:
         _init_namespace()
         _start_server()
+        start_announce(_make_descriptor())
         _log(f"Ready — project: {project_name}")
     except Exception as e:
         _log(f"Startup error (non-fatal): {e}")
