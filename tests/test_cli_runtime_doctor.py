@@ -386,6 +386,68 @@ def test_flame_bridge_fail_daemon_says_disconnected():
     assert "install-flame-hook.sh" in flame["fix"]
 
 
+def test_flame_bridge_clarification_is_benign_not_logs(monkeypatch):
+    """Guard (#61): a ``clarification_needed`` envelope (e.g. an older daemon
+    still on the NL ``text`` probe path, where the reachability filter removed
+    flame_ping with Flame down) must NOT be reported as a chain-engine error.
+    It maps to a benign 'flame likely down' row, not 'check daemon logs'.
+    """
+    handlers = {
+        config.console_url() + "/api/v1/health": _Resp(200, _health_body_ok()),
+    }
+    tcp_open = {
+        (config.MCP_HTTP_HOST, config.MCP_HTTP_PORT),
+        (config.STATE_WS_HOST, config.STATE_WS_PORT),
+    }
+    post_handlers = {
+        config.console_url() + "/api/v1/exec": _Resp(200, {
+            "status": "clarification_needed",
+            "request_id": "test-rid",
+            "chain": [],
+            "clarification_needed": {"candidates": [{"label": "something else"}]},
+        }),
+    }
+    p1, p2 = _patch_world(handlers, tcp_open=tcp_open, post_handlers=post_handlers)
+    with p1, p2:
+        result = runner.invoke(app, ["doctor", "--json"])
+    payload = json.loads(result.output.strip())
+    flame = next(c for c in payload["checks"] if c["name"] == "flame_bridge")
+    assert flame["ok"] is False
+    assert "not deterministically dispatchable" in flame["status"]
+    assert "Flame is likely down" in flame["fix"]
+    assert "check daemon logs" not in flame["fix"]
+
+
+def test_flame_bridge_unknown_action_is_registration_row(monkeypatch):
+    """Guard (#61): an ``unknown_action`` error (daemon has no flame_ping tool)
+    is an install/registration problem — distinct from a chain-engine error.
+    """
+    handlers = {
+        config.console_url() + "/api/v1/health": _Resp(200, _health_body_ok()),
+    }
+    tcp_open = {
+        (config.MCP_HTTP_HOST, config.MCP_HTTP_PORT),
+        (config.STATE_WS_HOST, config.STATE_WS_PORT),
+    }
+    post_handlers = {
+        config.console_url() + "/api/v1/exec": _Resp(200, {
+            "status": "error",
+            "request_id": "test-rid",
+            "chain": [],
+            "error": {"code": "unknown_action", "message": "Unknown tool: flame_ping"},
+        }),
+    }
+    p1, p2 = _patch_world(handlers, tcp_open=tcp_open, post_handlers=post_handlers)
+    with p1, p2:
+        result = runner.invoke(app, ["doctor", "--json"])
+    payload = json.loads(result.output.strip())
+    flame = next(c for c in payload["checks"] if c["name"] == "flame_bridge")
+    assert flame["ok"] is False
+    assert "not registered" in flame["status"]
+    assert "restart the daemon" in flame["fix"]
+    assert "check daemon logs" not in flame["fix"]
+
+
 def test_flame_bridge_unknown_daemon_unreachable():
     """UNKNOWN state: daemon unreachable; defers to mcp_http row."""
     handlers = {

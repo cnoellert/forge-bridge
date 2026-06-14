@@ -444,6 +444,92 @@ _exec_sem = asyncio.Semaphore(1)
 _exec_log = logging.getLogger("forge.exec")
 
 
+def _extract_structured(raw: Any) -> Any:
+    """Pull the structured value out of a FastMCP ``call_tool`` return.
+
+    Mirrors ``forge_bridge.cli.run._extract``: a tool with an output schema
+    returns ``(content_blocks, structured_dict)`` (prefer ``structured["result"]``,
+    JSON-decoded when a string); a schema-less tool returns ``list[ContentBlock]``
+    (concatenate text, JSON-decode when possible).
+    """
+    if isinstance(raw, tuple) and len(raw) == 2:
+        _, structured = raw
+        if isinstance(structured, dict):
+            inner = structured.get("result", structured)
+            if isinstance(inner, str):
+                try:
+                    return json.loads(inner)
+                except (ValueError, TypeError):
+                    return inner
+            return inner
+    if isinstance(raw, list):
+        text = "".join(getattr(b, "text", "") or "" for b in raw)
+        if text:
+            try:
+                return json.loads(text)
+            except (ValueError, TypeError):
+                return text
+        return None
+    return raw
+
+
+async def _dispatch_tool_by_name(name: str) -> dict:
+    """Deterministic exact-name tool dispatch — no resolver, no reachability filter.
+
+    Backs ``POST /api/v1/exec {"tool": "<name>"}``. The NL/``text`` path runs
+    through ``filter_tools_by_reachable_backends``, which removes a tool from the
+    resolvable set when its backend is unreachable — fine for chat, but fatal for
+    a health probe like ``flame_ping``, whose whole job is to detect that exact
+    condition (Flame down). Routed as text, ``flame_ping`` then resolves to
+    ``clarification_needed`` and a Flame-down misreports as a chain-engine error.
+    This path dispatches the tool directly in the daemon's process (preserving the
+    Phase 24.2 daemon-routed truth invariant) and bypasses the filter. Returns a
+    PR31-shaped envelope.
+    """
+    from forge_bridge.mcp import server as _mcp_server
+    from forge_bridge.mcp.arguments import normalize_tool_args
+
+    rid = str(uuid.uuid4())
+    try:
+        available = await _mcp_server.mcp.list_tools()
+    except Exception as exc:  # noqa: BLE001 - registry unavailable is a real failure
+        return {
+            "status": "error", "request_id": rid, "chain": [],
+            "error": {
+                "code": "TOOL_REGISTRY_UNAVAILABLE", "message": str(exc),
+                "step_index": None, "original_error": None,
+            },
+        }
+
+    if name not in {t.name for t in available}:
+        return {
+            "status": "error", "request_id": rid, "chain": [],
+            "error": {
+                "code": "unknown_action", "message": f"Unknown tool: {name}",
+                "step_index": None, "original_error": None,
+            },
+        }
+
+    try:
+        args = normalize_tool_args(name, {}, available)
+        raw = await _mcp_server.mcp.call_tool(name, arguments=args)
+    except Exception as exc:  # noqa: BLE001 - tool raised; report as dispatch error
+        return {
+            "status": "error", "request_id": rid, "chain": [],
+            "error": {
+                "code": "execution_failed",
+                "message": str(exc) or type(exc).__name__,
+                "step_index": None, "original_error": None,
+            },
+        }
+
+    return {
+        "status": "success", "request_id": rid,
+        "chain": [{"tool": name, "result": _extract_structured(raw)}],
+        "error": None,
+    }
+
+
 async def api_v1_exec_handler(request: Request) -> JSONResponse:
     """Run ``execute_command`` with server-side serialization and a time limit.
 
@@ -456,10 +542,39 @@ async def api_v1_exec_handler(request: Request) -> JSONResponse:
     if not isinstance(payload, dict):
         payload = {}
 
+    http_rid = str(uuid.uuid4())
+
+    # Deterministic exact-name dispatch: POST {"tool": "<name>"} bypasses the
+    # resolver + reachability filter (see _dispatch_tool_by_name). Used by the
+    # doctor flame_bridge probe so flame_ping dispatches even with Flame down.
+    raw_tool = payload.get("tool")
+    if isinstance(raw_tool, str) and raw_tool.strip():
+        tool_name = raw_tool.strip()
+        _exec_log.info("exec start rid=%s tool=%r", http_rid, tool_name)
+        try:
+            async with _exec_sem:
+                result = await asyncio.wait_for(
+                    _dispatch_tool_by_name(tool_name),
+                    timeout=_EXEC_HTTP_TIMEOUT,
+                )
+        except asyncio.TimeoutError:
+            result = {
+                "status": "error", "request_id": str(uuid.uuid4()), "chain": [],
+                "error": {
+                    "code": "TIMEOUT",
+                    "message": "Tool dispatch exceeded time limit.",
+                    "step_index": None, "original_error": None,
+                },
+            }
+        _exec_log.info(
+            "exec end rid=%s status=%s tool=%s", http_rid,
+            result.get("status"), tool_name,
+        )
+        return JSONResponse(result)
+
     raw = payload.get("text")
     text = raw.strip() if isinstance(raw, str) else ""
 
-    http_rid = str(uuid.uuid4())
     _exec_log.info("exec start rid=%s text=%r", http_rid, text)
 
     from forge_bridge.console import app as appmod
