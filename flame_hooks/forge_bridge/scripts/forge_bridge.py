@@ -306,11 +306,14 @@ def _server_loop():
 def _start_server():
     """Start the HTTP server in a daemon thread."""
     global _server, _bridge_active
+    if _bridge_active and _server is not None:
+        _log("Bridge already running — skipping duplicate start")
+        return
+
     try:
-        _server = _ReusableHTTPServer(
-            (BRIDGE_HOST, BRIDGE_PORT), BridgeHandler
-        )
-        _server.timeout = 1
+        srv = _ReusableHTTPServer((BRIDGE_HOST, BRIDGE_PORT), BridgeHandler)
+        srv.timeout = 1
+        _server = srv
         _bridge_active = True
         _log(f"Listening on http://{BRIDGE_HOST}:{BRIDGE_PORT}/")
 
@@ -322,7 +325,8 @@ def _start_server():
         thread.start()
     except OSError as e:
         _log(f"Could not start server: {e}")
-        _bridge_active = False
+        if _server is None:
+            _bridge_active = False
 
 
 # ========================================================================== #
@@ -414,9 +418,9 @@ def _toggle_bridge(selection):
         if reply != "Stop":
             return
         try:
-            if _server:
-                _server.shutdown()
             _bridge_active = False
+            if _server:
+                _server.server_close()
             _log("Bridge stopped via toggle")
             flame.messages.show_in_dialog(
                 title="FORGE Bridge",
