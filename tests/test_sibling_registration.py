@@ -508,6 +508,71 @@ async def test_register_all_siblings_empty_sibling() -> None:
     assert any(e[0] == "sibling_registered_empty" for e in events)
 
 
+async def test_register_all_siblings_generation_declaration_only_signal() -> None:
+    """#61: a generation sibling that registers DECLARATIONS but lands zero
+    drivers (handler=None — the stale dist-info entry-point symptom) gets a
+    distinct ``sibling_registered_declaration_only`` signal, not a silent
+    ``sibling_registered`` that later degrades to ``dispatch_no_driver``."""
+    events: list[tuple[str, dict]] = []
+
+    async def declaration_only(ctx, register_capability):
+        register_capability(_cap("gen.decl.only", family="generation", handler=None))
+
+    target = _install_module("tests.mock_sibling_decl_only", declaration_only)
+    resolution = resolve_siblings(
+        entry_points_loader=lambda _group: {"declonly": target},
+    )
+    append = await _memory_event_appender(events)
+    outcome = await register_all_siblings(
+        resolution,
+        tool_registry=ToolRegistry(GenerationDriverRegistry()),
+        event_appender=append,
+        bridge_version="1.4.1",
+    )
+
+    # The declaration DID land — discovery is healthy, the sibling counts as
+    # registered — but the distinct invocation-dead signal fires alongside it.
+    assert outcome.siblings_registered == 1
+    assert outcome.siblings_declaration_only == 1
+    decl_only = [e for e in events if e[0] == "sibling_registered_declaration_only"]
+    assert len(decl_only) == 1
+    payload = decl_only[0][1]
+    assert payload["sibling_name"] == "declonly"
+    assert payload["family"] == "generation"
+    assert payload["declaration_count"] == 1
+    assert payload["driver_count"] == 0
+    assert payload["resolved_entry_point"] == target
+
+
+async def test_register_all_siblings_generation_with_driver_no_signal() -> None:
+    """Positive control: a generation sibling whose declaration carries a real
+    handler lands a driver and must NOT raise the declaration-only signal."""
+    events: list[tuple[str, dict]] = []
+
+    async def with_driver(ctx, register_capability):
+        register_capability(
+            _cap("gen.real", family="generation", handler=_ValidGenerationDriver())
+        )
+
+    target = _install_module("tests.mock_sibling_gen_driver", with_driver)
+    resolution = resolve_siblings(
+        entry_points_loader=lambda _group: {"gendriver": target},
+    )
+    append = await _memory_event_appender(events)
+    outcome = await register_all_siblings(
+        resolution,
+        tool_registry=ToolRegistry(GenerationDriverRegistry()),
+        event_appender=append,
+        bridge_version="1.4.1",
+    )
+
+    assert outcome.siblings_registered == 1
+    assert outcome.siblings_declaration_only == 0
+    assert not any(
+        e[0] == "sibling_registered_declaration_only" for e in events
+    )
+
+
 async def test_register_all_siblings_missing_entry_point() -> None:
     events: list[tuple[str, dict]] = []
     resolution = resolve_siblings(
