@@ -49,7 +49,7 @@ _BACKEND_ID = "test.faithful_backend"
 
 
 class FaithfulLifecycleDriver:
-    backend_id = "legacy.wrong_key"
+    backend_id = _BACKEND_ID
     backend_identity_triple = _TRIPLE
 
     def __init__(self) -> None:
@@ -209,7 +209,7 @@ async def test_generation_lifecycle_round_trip_discover_plan_dispatch_poll_termi
     )
 
     assert driver_registry.get_driver(_BACKEND_ID) is driver
-    assert driver_registry.get_driver(driver.backend_id) is None
+    assert driver_registry.get_driver("legacy.wrong_key") is None
 
     async with session_factory() as session:
         ids = await _seed_base(session)
@@ -327,4 +327,4 @@ def test_driver_registry_uses_backend_identity_triple_key() -> None:
     assert backend_id_from_identity_triple(_TRIPLE) == _BACKEND_ID
     assert registry.registered_backends() == frozenset({_BACKEND_ID})
     assert registry.get_driver(_BACKEND_ID) is driver
-    assert registry.get_driver(driver.backend_id) is None
+    assert registry.get_driver("legacy.wrong_key") is None

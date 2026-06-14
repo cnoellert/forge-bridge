@@ -91,11 +91,9 @@ class ToolRegistry:
         # A declaration-only capability (handler=None) is discoverable but not yet
         # invocable; validate + wire the driver only when a handler is present.
         #
-        # SEAM (named, not filled): backend_id reconciliation. The driver's own
-        # handler.backend_id is independent of the planner's declaration-derived
-        # backend_identity_triple (planner_passes.pass_1); nothing reconciles them.
-        # Materialize the reconciler only when a plan step first needs to EXECUTE a
-        # selected capability (Phase 7). See PHASE-6A-DISCOVERY-ALIGNMENT.md.
+        # Backend identity reconciles at driver registration time:
+        # backend_identity_triple is the canonical source, while collision or
+        # divergence with handler.backend_id is rejected loudly in register_driver.
         if tool.family == "generation" and handler is not None:
             _validate_generation_handler(tool.tool_id, handler)
             if self._generation_driver_registry is not None:
@@ -117,6 +115,10 @@ class ToolRegistry:
         events = self._pending_events
         self._pending_events = []
         return events
+
+    def _discard_registered_tools(self, tool_ids: set[str]) -> None:
+        for tool_id in tool_ids:
+            self._tools.pop(tool_id, None)
 
     def get(self, tool_id: str) -> ToolRegistration | None:
         return self._tools.get(tool_id)

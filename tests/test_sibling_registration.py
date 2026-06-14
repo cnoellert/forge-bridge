@@ -362,6 +362,130 @@ async def test_register_all_siblings_adapter_raises_other_sibling_continues() ->
     assert failed[1]["exception_type"] == "RuntimeError"
 
 
+async def test_register_all_siblings_invalid_generation_driver_is_skipped() -> None:
+    events: list[tuple[str, dict]] = []
+
+    async def bad_generation(ctx, register_capability):
+        register_capability(
+            _cap("gen.bad", family="generation", handler=_MissingBackendIdDriver())
+        )
+
+    async def ok(ctx, register_capability):
+        register_capability(_cap("ok.after.invalid"))
+
+    bad = _install_module("tests.mock_sibling_bad_generation", bad_generation)
+    good = _install_module("tests.mock_sibling_after_bad_generation", ok)
+    resolution = resolve_siblings(
+        entry_points_loader=lambda _group: {
+            "bad": bad,
+            "good": good,
+        },
+    )
+    append = await _memory_event_appender(events)
+
+    outcome = await register_all_siblings(
+        resolution,
+        tool_registry=ToolRegistry(),
+        event_appender=append,
+        bridge_version="1.5.1",
+    )
+
+    assert outcome.siblings_failed == 1
+    assert outcome.siblings_registered == 1
+    failed = next(e for e in events if e[0] == "sibling_registration_failed")
+    assert failed[1]["reason"] == "driver_registration_rejected"
+    assert failed[1]["exception_type"] == "InvalidGenerationDriverError"
+    assert any(
+        payload.get("tool_id") == "ok.after.invalid"
+        for event_type, payload in events
+        if event_type == "tool_registered"
+    )
+
+
+async def test_register_all_siblings_duplicate_tool_id_is_skipped() -> None:
+    events: list[tuple[str, dict]] = []
+
+    async def first(ctx, register_capability):
+        register_capability(_cap("dup.tool"))
+
+    async def duplicate(ctx, register_capability):
+        register_capability(_cap("dup.tool"))
+
+    async def ok(ctx, register_capability):
+        register_capability(_cap("ok.after.dup"))
+
+    target_first = _install_module("tests.mock_sibling_first_dup", first)
+    target_duplicate = _install_module("tests.mock_sibling_duplicate_dup", duplicate)
+    target_ok = _install_module("tests.mock_sibling_after_dup", ok)
+    resolution = resolve_siblings(
+        entry_points_loader=lambda _group: {
+            "first": target_first,
+            "duplicate": target_duplicate,
+            "ok": target_ok,
+        },
+    )
+    append = await _memory_event_appender(events)
+
+    outcome = await register_all_siblings(
+        resolution,
+        tool_registry=ToolRegistry(),
+        event_appender=append,
+        bridge_version="1.5.1",
+    )
+
+    assert outcome.siblings_failed == 1
+    assert outcome.siblings_registered == 2
+    failed = next(e for e in events if e[0] == "sibling_registration_failed")
+    assert failed[1]["reason"] == "driver_registration_rejected"
+    assert failed[1]["exception_type"] == "DuplicateToolIdError"
+    registered_ids = [
+        payload["tool_id"]
+        for event_type, payload in events
+        if event_type == "tool_registered"
+    ]
+    assert registered_ids == ["dup.tool", "ok.after.dup"]
+
+
+async def test_register_all_siblings_failure_discards_partial_pending_events() -> None:
+    events: list[tuple[str, dict]] = []
+    tool_registry = ToolRegistry()
+
+    async def partial_then_fail(ctx, register_capability):
+        register_capability(_cap("partial.tool"))
+        raise RuntimeError("boom after partial")
+
+    async def ok(ctx, register_capability):
+        register_capability(_cap("ok.after.partial"))
+
+    bad = _install_module("tests.mock_sibling_partial_failure", partial_then_fail)
+    good = _install_module("tests.mock_sibling_after_partial", ok)
+    resolution = resolve_siblings(
+        entry_points_loader=lambda _group: {
+            "bad": bad,
+            "good": good,
+        },
+    )
+    append = await _memory_event_appender(events)
+
+    outcome = await register_all_siblings(
+        resolution,
+        tool_registry=tool_registry,
+        event_appender=append,
+        bridge_version="1.5.1",
+    )
+
+    assert outcome.siblings_failed == 1
+    assert outcome.siblings_registered == 1
+    assert tool_registry.get("partial.tool") is None
+    assert tool_registry.get("ok.after.partial") is not None
+    registered_ids = [
+        payload["tool_id"]
+        for event_type, payload in events
+        if event_type == "tool_registered"
+    ]
+    assert registered_ids == ["ok.after.partial"]
+
+
 async def test_register_all_siblings_empty_sibling() -> None:
     events: list[tuple[str, dict]] = []
 

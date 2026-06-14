@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from forge_bridge.orchestration.errors import (
+    DuplicateGenerationDriverError,
+    GenerationDriverBackendIdMismatchError,
+    GenerationDriverRegistrationError,
+    MissingGenerationDriverBackendIdError,
+)
 from forge_bridge.store.orch_entity_views import DBOrchGenerationArtifact
 
 if TYPE_CHECKING:
@@ -14,7 +19,7 @@ if TYPE_CHECKING:
 
 
 class DriverReregisteredWarning(UserWarning):
-    """Emitted when register_driver overwrites an existing backend_id."""
+    """Legacy warning class retained for import compatibility."""
 
 
 @runtime_checkable
@@ -89,21 +94,35 @@ class GenerationDriverRegistry:
     def register_driver(self, driver: GenerationDriverProtocol) -> None:
         # Bridge keys generation drivers by the same composite id the planner
         # emits and the poller reverse-resolves from artifact provenance:
-        # backend_identity_triple -> "surface.path". Generators' native runtime
-        # keys by surface/request_id; the real-driver adapter reconciles that
-        # later while this registry keeps bridge-side resolution consistent.
+        # backend_identity_triple -> "surface.path". A legacy backend_id-only
+        # driver can still register, but a present identity triple is canonical
+        # and any divergence is rejected loudly at registration time.
         triple = getattr(driver, "backend_identity_triple", None)
-        backend_id = (
+        triple_present = isinstance(triple, dict) and bool(triple)
+        triple_backend_id = (
             backend_id_from_identity_triple(triple)
             if isinstance(triple, dict)
             else None
-        ) or driver.backend_id
-        if backend_id in self._drivers:
-            warnings.warn(
-                f"Overwriting existing driver for backend_id={backend_id!r}",
-                DriverReregisteredWarning,
-                stacklevel=2,
+        )
+        driver_backend_id = getattr(driver, "backend_id", None)
+
+        if triple_present and triple_backend_id is None:
+            raise GenerationDriverRegistrationError(
+                "backend_identity_triple must include surface and path"
             )
+        if triple_backend_id is not None:
+            if driver_backend_id and driver_backend_id != triple_backend_id:
+                raise GenerationDriverBackendIdMismatchError(
+                    triple_backend_id, str(driver_backend_id)
+                )
+            backend_id = triple_backend_id
+        elif driver_backend_id:
+            backend_id = str(driver_backend_id)
+        else:
+            raise MissingGenerationDriverBackendIdError()
+
+        if backend_id in self._drivers:
+            raise DuplicateGenerationDriverError(backend_id)
         self._drivers[backend_id] = driver
 
     def get_driver(self, backend_id: str) -> GenerationDriverProtocol | None:

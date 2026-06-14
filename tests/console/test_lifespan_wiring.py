@@ -142,9 +142,9 @@ _STUB_BACKEND_ID = "genstub.backend"  # composite the driver registry keys on
 
 
 class _StubGenDriver:
-    # backend_id deliberately != the triple-derived id, to prove the driver
-    # registry keys off backend_identity_triple, not this attribute.
-    backend_id = "irrelevant.handler_key"
+    # backend_id agrees with the triple-derived id; the registry rejects
+    # divergence at registration time.
+    backend_id = _STUB_BACKEND_ID
     backend_identity_triple = _STUB_TRIPLE
 
     async def poll(self, artifact):  # required by _validate_generation_handler
@@ -217,11 +217,11 @@ async def test_lifespan_registers_sibling_drivers_into_live_registry():
             # The declaration is registered...
             assert registry.get("forge_generators.genstub.backend") is not None
             # ...and the driver is reachable in the live driver registry the
-            # dispatch consumer was handed (keyed by the triple, not handler.backend_id).
+            # dispatch consumer was handed.
             driver_registry = registry._generation_driver_registry
             assert driver_registry is not None
             assert driver_registry.get_driver(_STUB_BACKEND_ID) is not None
-            assert driver_registry.get_driver("irrelevant.handler_key") is None
+            assert driver_registry.get_driver("missing.backend") is None
 
     # Teardown resets the global (no leakage).
     assert _mcp_server._canonical_tool_registry is None, (

@@ -16,6 +16,7 @@ from forge_contracts import KNOWN_CAPABILITY_FAMILIES, CapabilityRegistration
 
 from forge_bridge.orchestration.errors import (
     DuplicateToolIdError,
+    GenerationDriverRegistrationError,
     InvalidGenerationDriverError,
 )
 from forge_bridge.orchestration.registration import (
@@ -209,6 +210,7 @@ async def register_all_siblings(
         )
 
         families_registered: set[str] = set()
+        tool_ids_registered: set[str] = set()
 
         def register_capability(registration: CapabilityRegistration):
             tool = tool_registration_from_capability(registration)
@@ -216,18 +218,31 @@ async def register_all_siblings(
                 tool, sibling_name=sibling_name, handler=registration.handler
             )
             families_registered.add(tool.family)
+            tool_ids_registered.add(tool.tool_id)
 
         try:
             await _invoke_sibling(sibling_func, ctx, register_capability)
-        except (DuplicateToolIdError, InvalidGenerationDriverError):
-            raise
         except Exception as exc:
             siblings_failed += 1
+            tool_registry.drain_pending_events()
+            tool_registry._discard_registered_tools(tool_ids_registered)
+            reason = (
+                "driver_registration_rejected"
+                if isinstance(
+                    exc,
+                    (
+                        DuplicateToolIdError,
+                        GenerationDriverRegistrationError,
+                        InvalidGenerationDriverError,
+                    ),
+                )
+                else "adapter_registration_raised"
+            )
             await event_appender(
                 "sibling_registration_failed",
                 {
                     "sibling_name": sibling_name,
-                    "reason": "adapter_registration_raised",
+                    "reason": reason,
                     "exception_type": type(exc).__name__,
                     "exception_message": str(exc),
                 },

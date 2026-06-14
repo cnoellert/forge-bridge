@@ -11,9 +11,13 @@ from sqlalchemy import select
 
 from forge_bridge.orchestration.drivers import (
     DriverPollResult,
-    DriverReregisteredWarning,
     GenerationDriverRegistry,
     resolve_backend_id,
+)
+from forge_bridge.orchestration.errors import (
+    DuplicateGenerationDriverError,
+    GenerationDriverBackendIdMismatchError,
+    MissingGenerationDriverBackendIdError,
 )
 from forge_bridge.orchestration.worker import GenerationPoller, PollPassResult
 from forge_bridge.store.models import DBEvent
@@ -122,14 +126,53 @@ def test_registry_register_and_lookup() -> None:
     assert registry.get_driver("missing") is None
 
 
-def test_registry_reregister_warns_and_overwrites() -> None:
+def test_registry_duplicate_backend_id_raises() -> None:
     registry = GenerationDriverRegistry()
     first = MockGenerationDriver(results=DriverPollResult("polling", {"tick": 1}))
     second = MockGenerationDriver(results=DriverPollResult("complete", {"tick": 2}))
     registry.register_driver(first)
-    with pytest.warns(DriverReregisteredWarning):
+    with pytest.raises(DuplicateGenerationDriverError):
         registry.register_driver(second)
-    assert registry.get_driver(MOCK_BACKEND_ID) is second
+    assert registry.get_driver(MOCK_BACKEND_ID) is first
+
+
+def test_registry_rejects_triple_backend_id_disagreement() -> None:
+    class MismatchedDriver(MockGenerationDriver):
+        backend_id = "legacy.wrong"
+        backend_identity_triple = {
+            "surface": "test",
+            "path": "mock_backend",
+        }
+
+    registry = GenerationDriverRegistry()
+    with pytest.raises(GenerationDriverBackendIdMismatchError):
+        registry.register_driver(MismatchedDriver())
+
+
+def test_registry_accepts_backend_identity_triple_only_driver() -> None:
+    class TripleOnlyDriver:
+        backend_identity_triple = {
+            "surface": "test",
+            "path": "mock_backend",
+        }
+
+        async def poll(self, artifact):
+            return None
+
+    driver = TripleOnlyDriver()
+    registry = GenerationDriverRegistry()
+    registry.register_driver(driver)
+    assert registry.get_driver(MOCK_BACKEND_ID) is driver
+
+
+def test_registry_rejects_driver_without_key() -> None:
+    class NoBackendDriver:
+        async def poll(self, artifact):
+            return None
+
+    registry = GenerationDriverRegistry()
+    with pytest.raises(MissingGenerationDriverBackendIdError):
+        registry.register_driver(NoBackendDriver())
 
 
 def test_resolve_backend_id_from_triple() -> None:

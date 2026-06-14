@@ -103,3 +103,32 @@ class InvalidGenerationDriverError(Exception):
         super().__init__(
             f"Invalid generation driver for tool_id={tool_id!r}: {reason}"
         )
+
+
+class GenerationDriverRegistrationError(Exception):
+    """Base class for generation driver registry rejection."""
+
+
+class DuplicateGenerationDriverError(GenerationDriverRegistrationError):
+    def __init__(self, backend_id: str) -> None:
+        self.backend_id = backend_id
+        super().__init__(f"Duplicate generation driver backend_id: {backend_id!r}")
+
+
+class GenerationDriverBackendIdMismatchError(GenerationDriverRegistrationError):
+    def __init__(self, triple_backend_id: str, driver_backend_id: str) -> None:
+        self.triple_backend_id = triple_backend_id
+        self.driver_backend_id = driver_backend_id
+        super().__init__(
+            "Generation driver backend_id mismatch: "
+            f"backend_identity_triple resolves to {triple_backend_id!r}, "
+            f"driver.backend_id is {driver_backend_id!r}"
+        )
+
+
+class MissingGenerationDriverBackendIdError(GenerationDriverRegistrationError):
+    def __init__(self) -> None:
+        super().__init__(
+            "Generation driver must provide a resolvable backend_identity_triple "
+            "or a backend_id"
+        )
