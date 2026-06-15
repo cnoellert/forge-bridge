@@ -542,11 +542,24 @@ register_builtins(mcp)
 # Federation tool-attach hook (issue #23): attach sibling operator callables as
 # forge_* MCP tools. MUST run here at module-load — before _lifespan trips the
 # register_tools() D-14 guard (_server_started). Per-sibling errors are isolated.
-from forge_bridge.orchestration.discovery import register_sibling_mcp_tools  # noqa: E402
+from forge_bridge.orchestration.discovery import (  # noqa: E402
+    attached_sibling_tool_names,
+    register_sibling_mcp_tools,
+)
 
 _sibling_tool_status = register_sibling_mcp_tools(mcp)
 if _sibling_tool_status:
     logger.info("sibling MCP tool-attach: %s", _sibling_tool_status)
+
+# Issue #67: tell the chat/exec reachability filter which sibling-attached ops
+# run in-process, so they survive narrowing when Flame (:9999) is down (they
+# need no Flame backend). Self-maintaining — names captured at the attach
+# boundary above, not a hand-kept allowlist.
+from forge_bridge.console._tool_filter import (  # noqa: E402
+    register_sibling_in_process_tools,
+)
+
+register_sibling_in_process_tools(attached_sibling_tool_names())
 
 
 # ─────────────────────────────────────────────────────────────

@@ -85,6 +85,26 @@ _IN_PROCESS_FORGE_TOOLS: frozenset[str] = frozenset({
     "forge_staged_pending_read",
 })
 
+# In-process ops attached by sibling `register_with(mcp)` (forge-vision etc.):
+# `forge_assess_drift`, `forge_classify_shot`, … . They run in the bridge
+# process and need no Flame backend, but they're `forge_*`-prefixed and NOT in
+# the hardcoded set above — so a `forge_`-prefix reachability rule drops them
+# when Flame (:9999) is down, breaking deterministic exec/chat chains over them
+# (issue #67; same defect family as the #63 doctor probe). Populated at boot by
+# `server.py` from `discovery.attached_sibling_tool_names()` — captured by NAME
+# at the sibling-attach boundary, so it's self-maintaining (no allowlist churn
+# as new sibling ops land). Distinct from `_IN_PROCESS_FORGE_TOOLS` (bridge's
+# own console resources) so the test-1 sync guard stays exact.
+_SIBLING_IN_PROCESS_TOOLS: set[str] = set()
+
+
+def register_sibling_in_process_tools(names: Any) -> None:
+    """Mark sibling-attached MCP ops as in-process (Flame-independent).
+
+    Additive + idempotent. Called once at daemon bootstrap; safe to call again
+    on in-process re-bootstrap (set union)."""
+    _SIBLING_IN_PROCESS_TOOLS.update(names)
+
 # Backends whose reachability is probed each chat request (cached 5s).
 # (backend_label, host, port)
 _BACKENDS: tuple[tuple[str, str, int], ...] = (
@@ -169,6 +189,8 @@ def _is_in_process_tool(name: str) -> bool:
     if name.startswith("format_"):
         return True
     if name in _IN_PROCESS_FORGE_TOOLS:
+        return True
+    if name in _SIBLING_IN_PROCESS_TOOLS:
         return True
     return False
 
