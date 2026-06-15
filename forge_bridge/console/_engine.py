@@ -23,6 +23,7 @@ async def run_chain_steps(
     client_ip: str,
     started: float,
     assent_record: Optional[AssentRecord] = None,
+    session_factory: Optional[Any] = None,
 ) -> dict:
     """Sequentially execute chain steps. Abort on first error.
 
@@ -48,14 +49,17 @@ async def run_chain_steps(
             }
             continue
 
-        outcome = await execute_chain_step(
-            step_text=step_text,
-            tools=tools,
-            mcp=mcp,
-            inherited_context=context,
-            step_index=step_idx,
-            assent_record=assent_record,
-        )
+        step_kwargs = {
+            "step_text": step_text,
+            "tools": tools,
+            "mcp": mcp,
+            "inherited_context": context,
+            "step_index": step_idx,
+            "assent_record": assent_record,
+        }
+        if session_factory is not None:
+            step_kwargs["session_factory"] = session_factory
+        outcome = await execute_chain_step(**step_kwargs)
 
         if "error" in outcome:
             if outcome["error"].get("type") == "clarification_needed":

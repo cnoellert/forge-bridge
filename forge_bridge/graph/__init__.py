@@ -62,6 +62,12 @@ from forge_bridge.graph.select import (
     is_select_step,
     parse_select_step,
 )
+from forge_bridge.graph.stage import (
+    StageError,
+    StageNode,
+    is_stage_step,
+    parse_stage_step,
+)
 
 __all__ = [
     "FilterNode",
@@ -83,6 +89,8 @@ __all__ = [
     "SelectError",
     "SelectIdentity",
     "SelectNode",
+    "StageError",
+    "StageNode",
     "evaluate_predicate",
     "infer_topology",
     "infer_iteration_item_topology",
@@ -92,11 +100,13 @@ __all__ = [
     "is_foreach_step",
     "is_if_step",
     "is_select_step",
+    "is_stage_step",
     "parse_collect_step",
     "parse_commit_step",
     "parse_filter_step",
     "parse_foreach_step",
     "parse_if_step",
     "parse_select_step",
+    "parse_stage_step",
     "validate_chain_wire",
 ]
