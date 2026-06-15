@@ -248,6 +248,7 @@ async def run_compile_branch(
         request_id=request_id,
         client_ip=client_ip,
         started=started,
+        session_factory=session_factory,
     )
     regime = (
         "clarification_needed"
@@ -350,6 +351,7 @@ async def run_apply_branch(
             client_ip=client_ip,
             started=started,
             assent_record=record,
+            session_factory=session_factory,
         )
         if isinstance(chain_body, dict) and chain_body.get("status") == "error":
             original = (chain_body.get("error") or {}).get("original_error") or {}

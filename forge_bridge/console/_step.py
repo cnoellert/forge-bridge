@@ -148,6 +148,7 @@ async def execute_chain_step(
     inherited_context: dict,
     step_index: int | str = 0,
     assent_record: Optional[AssentRecord] = None,
+    session_factory: Optional[Any] = None,
 ) -> dict:
     """Run a single chain step end-to-end.
 
@@ -185,6 +186,7 @@ async def execute_chain_step(
         inherited_context=inherited_context,
         step_index=step_index,
         assent_record=assent_record,
+        session_factory=session_factory,
     )
     if graph_outcome is not None:
         return graph_outcome
@@ -211,6 +213,15 @@ async def execute_chain_step(
     graph_outcome = _maybe_execute_if_step(
         step_text=step_text,
         inherited_context=inherited_context,
+    )
+    if graph_outcome is not None:
+        return graph_outcome
+
+    graph_outcome = await _maybe_execute_stage_step(
+        step_text=step_text,
+        inherited_context=inherited_context,
+        step_index=step_index,
+        session_factory=session_factory,
     )
     if graph_outcome is not None:
         return graph_outcome
@@ -508,12 +519,14 @@ def _port_contract_for_step(step_text: str):
         ForEachNode,
         IfGateNode,
         SelectNode,
+        StageNode,
         is_collect_step,
         is_commit_step,
         is_filter_step,
         is_foreach_step,
         is_if_step,
         is_select_step,
+        is_stage_step,
     )
 
     if is_foreach_step(step_text):
@@ -524,6 +537,8 @@ def _port_contract_for_step(step_text: str):
         return CommitNode.port_contract
     if is_if_step(step_text):
         return IfGateNode.port_contract
+    if is_stage_step(step_text):
+        return StageNode.port_contract
     if is_select_step(step_text):
         return SelectNode.port_contract
     if is_filter_step(step_text):
@@ -594,6 +609,7 @@ async def _maybe_execute_foreach_step(
     inherited_context: dict,
     step_index: int | str,
     assent_record: Optional[AssentRecord] = None,
+    session_factory: Optional[Any] = None,
 ) -> dict | None:
     from forge_bridge.graph import (
         ForeachInputError,
@@ -662,6 +678,7 @@ async def _maybe_execute_foreach_step(
             inherited_context=iteration_context,
             step_index=f"{step_index}.{iteration_index}",
             assent_record=assent_record,
+            session_factory=session_factory,
         )
         if "error" in outcome:
             error = dict(outcome["error"])
@@ -1052,6 +1069,65 @@ def _maybe_execute_if_step(
         "emitted_topology": _topology_dict_for_value(result),
         "tool": "graph_if_gate",
         "params": {"predicate": predicate.to_dict()},
+    }
+
+
+async def _maybe_execute_stage_step(
+    *,
+    step_text: str,
+    inherited_context: dict,
+    step_index: int | str,
+    session_factory: Optional[Any],
+) -> dict | None:
+    from forge_bridge.graph import (
+        GraphInputError,
+        StageError,
+        StageNode,
+        is_stage_step,
+        parse_stage_step,
+    )
+
+    if not is_stage_step(step_text):
+        return None
+
+    inherited_context = inherited_context or {}
+    if "__previous_result__" not in inherited_context:
+        return {"error": {
+            "type": "GRAPH_INPUT_REQUIRED",
+            "message": "StageNode requires a previous assessment manifest.",
+        }}
+    if session_factory is None:
+        return {"error": {
+            "type": "GRAPH_SESSION_UNAVAILABLE",
+            "message": "StageNode requires a session factory.",
+            "step_index": step_index,
+            "step": step_text,
+        }}
+
+    try:
+        review_kind = parse_stage_step(step_text)
+        node = StageNode(review_kind)
+        params = node.parameters(inherited_context["__previous_result__"])
+        async with session_factory() as session:
+            result = await node.run(
+                inherited_context["__previous_result__"],
+                session=session,
+            )
+            await session.commit()
+    except (GraphInputError, StageError) as exc:
+        return {"error": {
+            "type": getattr(exc, "code", type(exc).__name__),
+            "message": getattr(exc, "message", str(exc)),
+            "step_index": step_index,
+            "step": step_text,
+        }}
+
+    return {
+        "result": result,
+        "extracted_context": {},
+        "emitted_topology": _topology_dict_for_value(result),
+        "tool": "graph_stage",
+        "params": params,
     }
 
 
