@@ -119,7 +119,7 @@ def test_exec_timeout(monkeypatch, client):
         0.05,
     )
 
-    async def slow_exec(_):
+    async def slow_exec(_, **__):
         await asyncio.sleep(1.0)
 
     monkeypatch.setattr(
@@ -162,7 +162,7 @@ async def test_exec_serialized_concurrency_serialization_test_verifies_max_concu
     """Concurrency serialization test (verifies max_concurrent == 1)."""
     state = {"entered": 0, "max_concurrent": 0}
 
-    async def tracked_exec(_):
+    async def tracked_exec(_, **__):
         state["entered"] += 1
         state["max_concurrent"] = max(
             state["max_concurrent"],
@@ -229,7 +229,7 @@ def test_forge_exec_logs_info(caplog, client, monkeypatch):
         "forge_bridge.console.handlers._EXEC_HTTP_TIMEOUT",
         30.0,
     )
-    async def fast_ok(text: str):
+    async def fast_ok(text, **_):
         return {
             "status": "success",
             "request_id": "rid",

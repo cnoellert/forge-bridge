@@ -14,7 +14,12 @@ from forge_bridge.console._constants import CHAIN_MAX_STEPS
 from forge_bridge.console._engine import run_chain_steps
 
 
-async def execute_command(text: str, *, mcp: Any | None = None) -> dict:
+async def execute_command(
+    text: str,
+    *,
+    mcp: Any | None = None,
+    session_factory: Any | None = None,
+) -> dict:
     """Run expanded/parsed text through the shared chain engine.
 
     Mirrors chat tool snapshot: ``list_tools`` then
@@ -27,6 +32,13 @@ async def execute_command(text: str, *, mcp: Any | None = None) -> dict:
     mcp:
         MCP client with ``list_tools`` / ``call_tool``. Defaults to the
         in-process FastMCP singleton.
+    session_factory:
+        Async session factory threaded to persistence-touching graph nodes
+        (e.g. the ``stage`` node, which calls ``StagedOpRepo.propose``). When
+        ``None``, such nodes return ``GRAPH_SESSION_UNAVAILABLE`` rather than
+        crash — but the deterministic ``/api/v1/exec`` entry point supplies the
+        daemon's factory so deterministic chains can stage (see
+        ``api_v1_exec_handler``). Non-persisting chains are unaffected.
     """
     from forge_bridge.console._chain_parse import parse_chain
     from forge_bridge.console._macros import expand_macro
@@ -127,4 +139,5 @@ async def execute_command(text: str, *, mcp: Any | None = None) -> dict:
         request_id=request_id,
         client_ip="direct-exec",
         started=started,
+        session_factory=session_factory,
     )

@@ -579,10 +579,15 @@ async def api_v1_exec_handler(request: Request) -> JSONResponse:
 
     from forge_bridge.console import app as appmod
 
+    # Thread the daemon's session factory so deterministic chains can reach
+    # persistence-touching graph nodes (e.g. `stage`). Without it the stage node
+    # returns GRAPH_SESSION_UNAVAILABLE; non-persisting chains are unaffected.
+    session_factory = getattr(request.app.state, "session_factory", None)
+
     try:
         async with _exec_sem:
             result = await asyncio.wait_for(
-                appmod.execute_command(text),
+                appmod.execute_command(text, session_factory=session_factory),
                 timeout=_EXEC_HTTP_TIMEOUT,
             )
     except asyncio.TimeoutError:
