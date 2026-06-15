@@ -68,6 +68,47 @@ def _enumerate_entry_points(group: str) -> dict[str, str]:
     return {ep.name: ep.value for ep in entry_points(group=group)}
 
 
+# Tool names attached by ``register_sibling_mcp_tools`` (the sibling MCP
+# tool-attach boundary). These ops run IN-PROCESS in the bridge daemon — a
+# sibling's ``register_with(mcp)`` registers them as ``forge_*`` MCP tools that
+# need no Flame backend. Captured here by name (not by prefix or a hand-kept
+# allowlist) so the chat/exec reachability filter can keep them when Flame
+# (:9999) is down — see issue #67 (and the #63 sibling defect: classifying
+# in-process-ness by ``forge_`` prefix drops sibling ops on a non-Flame host).
+# Federation contract: sibling-attached MCP ops declare ``execution_surface:
+# forge-bridge`` (vision/flow are perception/validation, no Flame).
+_attached_sibling_tool_names: set[str] = set()
+
+
+def _mcp_tool_names(mcp: Any) -> frozenset[str]:
+    """Best-effort SYNC snapshot of registered MCP tool names.
+
+    ``register_sibling_mcp_tools`` is sync (runs at module load, before the
+    server starts), so it cannot ``await mcp.list_tools()``. FastMCP's tool
+    manager exposes a sync ``list_tools()``; fall back to its ``_tools`` dict,
+    then to empty (a snapshot failure must never break bootstrap).
+    """
+    tm = getattr(mcp, "_tool_manager", None)
+    if tm is None:
+        return frozenset()
+    try:
+        return frozenset(t.name for t in tm.list_tools())
+    except Exception:  # noqa: BLE001
+        try:
+            return frozenset(tm._tools)
+        except Exception:  # noqa: BLE001
+            return frozenset()
+
+
+def attached_sibling_tool_names() -> frozenset[str]:
+    """Names of the in-process ops attached by ``register_sibling_mcp_tools``.
+
+    Consumed by ``forge_bridge.console._tool_filter`` (wired at bootstrap in
+    ``server.py``) so sibling ops survive the Flame-reachability filter.
+    """
+    return frozenset(_attached_sibling_tool_names)
+
+
 def register_sibling_mcp_tools(
     mcp: Any,
     *,
@@ -95,6 +136,7 @@ def register_sibling_mcp_tools(
     loader = entry_points_loader or _enumerate_entry_points
     import_module = module_loader or importlib.import_module
     results: dict[str, str] = {}
+    _attached_sibling_tool_names.clear()  # idempotent across re-bootstrap
 
     for name, target in loader(DEFAULT_ENTRY_POINT_GROUP).items():
         pkg = target.split(":", 1)[0].split(".", 1)[0]
@@ -115,9 +157,15 @@ def register_sibling_mcp_tools(
             continue
 
         try:
+            before = _mcp_tool_names(mcp)
             register_with(mcp)
+            attached = _mcp_tool_names(mcp) - before
+            _attached_sibling_tool_names.update(attached)
             results[name] = "attached"
-            logger.info("sibling tool-attach ok name=%s module=%s", name, module_name)
+            logger.info(
+                "sibling tool-attach ok name=%s module=%s tools=%s",
+                name, module_name, sorted(attached),
+            )
         except Exception as exc:  # noqa: BLE001 - one bad sibling never breaks boot
             results[name] = "error"
             logger.warning(
