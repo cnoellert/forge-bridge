@@ -612,6 +612,13 @@ def register_builtins(mcp: FastMCP) -> None:
             "title": "Format a preceding chain result for human consumption",
             "readOnlyHint": True,
             "idempotentHint": False,
+            # Positive egress annotation (#56): format_result ships a condensed
+            # payload to the Anthropic cloud model (sensitive=False). It is a
+            # read by authority but a cloud hop by data flow. The reads planner
+            # gates on egress != "cloud" so a local sensitive read cannot have a
+            # cloud terminal authored into it; the deterministic compile path
+            # (explicit "-> format as email" chains) is unaffected.
+            "egress": "cloud",
         },
     )
 
