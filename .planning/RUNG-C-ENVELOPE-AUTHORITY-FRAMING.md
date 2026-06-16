@@ -58,8 +58,41 @@ Atomicity is confirmed **unsolved on main** (no rollback/compensation in the app
 
 **D5 — DECIDED: canonical QC-correction key is `qc_correction`.** (Posted to generators on #66; their consumer side already frames it. Independent of D1–D4.)
 
-### Design-time seam to pin before code (the one remaining open)
-**grant ↔ run cardinality.** Coherent iff **one storyboard loop == one GraphEngine run** (run = loop lifecycle, makes = submits within it); `dispatch_plan` taking a multi-step plan under one `run_id` suggests this holds → grant:run **1:1**, ceilings per-run, each `submit()` decrements (`grant.run_id` column). If a loop spans multiple `dispatch_plan` calls (multiple runs), it becomes **1:many** → "the run carries a `grant_id`; `submit()` checks the grant the run points at" (`run.grant_id` lookup). Pin this at design start — it's the difference between a column and a lookup.
+### Design-time seam — RESOLVED: grant ↔ run = **1:many**, `run.grant_id` (DT + Creative converged, 2026-06-16)
+
+The framing above *leaned 1:1* on the reading "one storyboard loop == one GraphEngine run, makes = submits within it." Grounding overturns the lean: **cardinality is forced by the substrate, not chosen.** DT verified all five citations; Creative ratified the synthesis. The ruling and the `run.grant_id` direction are adopted; the enforcement model is amended (three items below).
+
+**Forced to 1:many — the substrate cannot host a loop inside one run:**
+
+| Grounded fact | Source |
+|---|---|
+| `dispatch_plan` submits **one** generation step per call (one make = one dispatch) | `dispatcher.py:165` (single step), `:203` (single submit) |
+| Run lifecycle is a **forward-only DAG, no back-edge**; only legal edge from `audit` is `→promotion` | `engine.py:28-37` |
+| `approve_remediation` is validated (requires `paused`) against the transition guard → **cannot re-enter `execution`** | `engine.py:333`, `:358-360` |
+| Pipeline-run entity is **content-addressed immutable** | `orch_pipeline_run_repo.py:11` (`ContentAddressedRepo` subclass) |
+| `source_run_id` + `run_kind` exist to **mint a derived run** | `orch_entity_views.py:103,111` |
+
+Immutable runs + forward-only DAG ⇒ a QC/remediation loop cannot live inside one run; it is necessarily a **chain of derived runs** (`source_run_id` → parent). The grant — the **sole mutable** authorization/accounting entity (D1: CAR-immutability forces spend-counters/halt-state off the immutable artifacts) — spans the chain. So grant is the "one," runs are the "many" → **1:many**, and the link rides the immutable run's content as **`run.grant_id`** (set once at creation; no CAR conflict). `grant.run_id` is rejected — it would pin the grant to a single run, contradicting the chain.
+
+**Point-3 mechanism correction (confirmed by DT + Creative):** Point 3 above says QC-reauthor is "the `awaiting_decision` block flipped from human-decided to bridge-decided *within one run*." The engine cannot re-enter `execution` and runs are immutable, so the bridge-decided flip **mints a derived remediation run** (`source_run_id` → original, same `grant_id`) — it does not resume the original run. The grant is what makes the derived run *authorized*.
+
+**Enforcement amendments — the story was conceptually ahead of the code; these align it:**
+
+1. **The gate is a committed CAS txn placed *immediately before* `submit`, not "at `:203`."** `:203` is `await driver.submit(envelope)` — the irreversible external spend itself; a check at/after it has already spent. The shape:
+   ```
+   resolve run_id → run.grant_id → grant
+   CAS:  UPDATE generation_grant SET spent = spent + :cost
+          WHERE id = :grant_id AND spent + :cost <= ceiling   -- own committed txn
+   commit
+   submit to backend                                          -- only if CAS succeeded
+   ```
+   *Positive surprise (stronger than the original framing):* the dispatcher already owns a `session_factory` and opens short-lived **committed per-op transactions** (`:140-151`, `:229-231`), not the engine's "caller owns the transaction" convention — so the atomic CAS is genuinely available as its own committed guard txn. The standing worry (a long-lived caller txn defeating the row guard) does not apply here. This is the over-spend protection across **concurrent beat submits**.
+
+2. **Generation dispatch MUST require a valid `run_id`, or fail closed — this is design, not implementation detail.** Today `run_id: uuid.UUID | None = None` (`dispatcher.py:117`); a generation step can dispatch with `run_id=None`, which has **no run→grant resolution path and escapes the chokepoint entirely**. "Every make crosses the grant gate" is true only once generation dispatch without a `run_id` fails closed. This is the one live structural bypass the 1:many design must close.
+
+3. **Derived-run creation must propagate `grant_id` from its source, validated at creation.** `run.grant_id` is set-once, so the remediation-run minter must inherit it: **`source_run_id` present ⇒ `grant_id` present**, and `child.grant_id == parent.grant_id`. Otherwise a remediation run minted grant-less slips the chokepoint via the same run-present-but-grant-absent hole as (2).
+
+**Converged build contract (DT + Creative):** (1) adopt grant↔run **1:many**; (2) store as **`run.grant_id`**; (3) grant = sole mutable authorization/accounting entity spanning a chain of immutable runs; (4) atomic spend **CAS in a dedicated committed txn immediately before backend submit**; (5) **generation dispatch requires a valid `run_id` or fails closed**; (6) **derived runs inherit their source's `grant_id`, validated at creation.** The cardinality ruling survives the review unchanged; the enforcement model becomes precise and structurally bypass-free.
 
 ---
 
@@ -86,9 +119,7 @@ Runs live with zero vision dependency, under **existing per-make human-driven au
 - **D3** general-by-shape / specific-by-policy; pinned shape, no speculative `originator_type` enum.
 - **D4** atomicity gate downgraded (irreversible spend → accounting, not rollback); substrate sign-off = single hard 3-condition gate, all-or-nothing, enforced at `:203`.
 - **D5** canonical key `qc_correction` (posted to generators on #66).
-
-### Design-time open (pin before code)
-- **grant ↔ run cardinality** — 1:1 (`grant.run_id` column) vs 1:many (`run.grant_id` lookup). See section above.
+- **D6 — RATIFIED (DT + Creative converged, 2026-06-16): grant ↔ run = 1:many, `run.grant_id`.** Forced by the substrate (immutable content-addressed runs + forward-only no-back-edge DAG → a QC loop is a chain of derived runs). Enforcement amended: CAS in a committed guard txn *immediately before* `submit` (not at/after `:203`); generation dispatch must require a valid `run_id` or fail closed (closes a live bypass — `dispatcher.py:117` currently nullable); derived runs inherit their source's `grant_id`, validated at creation. See the resolved-seam section above for the full build contract.
 
 ### Cross-repo status (storyboard loop)
 - **Generators — Q3 consumer side DONE** (`18ea217` + `486115f`); no remaining dependency. Key named (`qc_correction`).
