@@ -19,6 +19,7 @@ not become a contract violation). Validate role_class, never membership.
 """
 
 from forge_contracts.vocabulary import (
+    KNOWN_DELIVERABLE_TYPES,
     KNOWN_MEDIA_ROLES,
     KNOWN_RELATIONSHIP_TYPES,
     KNOWN_ROLE_CLASSES,
@@ -29,6 +30,7 @@ from forge_contracts.vocabulary import (
 
 from forge_bridge.core.registry import Registry
 from forge_bridge.core.vocabulary import STANDARD_ROLES, Role
+from forge_bridge.store.models import ENTITY_TYPES
 
 
 def _builtin_role_names(role_class: str) -> set:
@@ -77,3 +79,28 @@ def test_offlist_role_still_registerable():
     reg.roles.register("plate", role=Role("plate", aliases={"role_class": ROLE_CLASS_MEDIA}))
     assert reg.roles.get_by_name("plate").role.name == "plate"
     assert "plate" not in KNOWN_MEDIA_ROLES  # off-list, yet not a violation
+
+
+# ── Deliverable types: contract owns the axis; bridge's ENTITY_TYPES is a superset ────────────
+# (ADR-008 / FND-009 — the D-HOME convergence.) The deliverable-CLASSIFICATION axis {shot, asset}
+# is PROMOTED into the contract; bridge keeps the full entity table (sequence/version/media/layer/
+# stack + operational orch_* types) and its DB CHECK constraint. "Entity-identity is bridge-sacred;
+# entity-classification is federation-shared." These guards fail if the shared subset and bridge's
+# superset ever silently drift — the whole point of the promotion.
+
+def test_deliverable_types_seed_is_shot_and_asset():
+    """The promoted axis is exactly the version-owner deliverable subset (ADR-008 seed)."""
+    assert set(KNOWN_DELIVERABLE_TYPES) == {"shot", "asset"}
+
+
+def test_deliverable_types_are_a_subset_of_bridge_entity_types():
+    """contract ⊆ bridge: every shared deliverable type is a valid bridge entity_type, so the
+    shared subset stays a PROJECTION of bridge's private superset — never a fork."""
+    assert set(KNOWN_DELIVERABLE_TYPES) <= set(ENTITY_TYPES)
+
+
+def test_bridge_entity_types_remains_a_proper_superset():
+    """Open-world preserved: bridge legitimately ships entity kinds beyond the deliverable axis
+    (sequence/version/media/layer/stack + operational types) — they are NOT contract vocabulary,
+    and the contract must never swallow bridge's full table."""
+    assert set(ENTITY_TYPES) - set(KNOWN_DELIVERABLE_TYPES), "bridge superset collapsed to the axis"
