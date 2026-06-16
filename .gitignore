@@ -20,3 +20,4 @@ forge_bridge.zip
 *.zip
 .cursor/
 /PASSOFF.md
+.forgeflow_jobs/
