@@ -88,9 +88,26 @@ _PLANNER_SYSTEM = (
 )
 
 
+def _planner_eligible(tool: Any) -> bool:
+    """Whether the reads planner may author this tool into a chain.
+
+    Eligible = read authority (``readOnlyHint is True``) AND no cloud egress
+    (``egress != "cloud"``). The egress gate (#56) keeps cloud-backed terminals
+    — e.g. ``format_result``, which ships a condensed payload to the Anthropic
+    cloud model via ``sensitive=False`` — out of the planner palette, so a local
+    sensitive read cannot have a cloud hop authored into it. Egress is a positive
+    data annotation, not a name denylist; ``_narrate`` already presents reads, so
+    the planner needs no second presentation layer. The deterministic compile
+    path (explicit ``-> format as email`` chains) reaches ``format_result``
+    independently of this gate.
+    """
+    annotations = getattr(tool, "annotations", None)
+    return (getattr(annotations, "readOnlyHint", None) is True
+            and getattr(annotations, "egress", None) != "cloud")
+
+
 def _read_only_tools(tools: list) -> list:
-    return [t for t in tools
-            if getattr(getattr(t, "annotations", None), "readOnlyHint", None) is True]
+    return [t for t in tools if _planner_eligible(t)]
 
 
 def _inner_param_schema(tool: Any) -> dict:
