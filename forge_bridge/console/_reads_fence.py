@@ -56,6 +56,68 @@ class GroundedAggregation:
     over: str
 
 
+@dataclass(frozen=True)
+class AggregationResult:
+    """Substrate-computed read aggregation evidence.
+
+    The narrator may phrase this evidence, but must never receive the raw
+    population and recompute grouping itself.
+    """
+
+    intent: str
+    group_field: str
+    over: str
+    total_count: int
+    groups: dict[str, int]
+    unassigned_count: int
+    source_step_index: int
+
+    @property
+    def group_label(self) -> str:
+        return {
+            "sequence_id": "sequence",
+            "status": "status",
+            "role": "role",
+        }.get(self.group_field, self.group_field)
+
+    @property
+    def winner(self) -> dict[str, Any] | None:
+        if self.intent not in {"max_by_count", "min_by_count"} or not self.groups:
+            return None
+        reverse = self.intent == "max_by_count"
+        value, count = sorted(
+            self.groups.items(),
+            key=lambda item: (item[1], item[0]),
+            reverse=reverse,
+        )[0]
+        return {"value": value, "count": count}
+
+    def to_evidence(self) -> dict[str, Any]:
+        evidence: dict[str, Any] = {
+            "type": "computed_read_aggregation",
+            "intent": self.intent,
+            "over": self.over,
+            "group_field": self.group_field,
+            "group_label": self.group_label,
+            "total_count": self.total_count,
+            "groups": dict(self.groups),
+            "unassigned_count": self.unassigned_count,
+            "instruction": (
+                "Phrase this computed aggregation; do not recompute from raw rows."
+            ),
+        }
+        if self.winner is not None:
+            evidence["winner"] = self.winner
+        if not self.groups:
+            evidence["grounded_absence"] = (
+                f"No {self.over}s are assigned to {self._field_article()}."
+            )
+        return evidence
+
+    def _field_article(self) -> str:
+        return _field_article(self.group_field)
+
+
 def _resolve_status(term: Any) -> str | None:
     """Re-derive the canonical status a term maps to, or ``None``.
 
@@ -179,13 +241,13 @@ def ground_read_aggregation(
 
 
 def _aggregation_population(chain: list[dict],
-                            aggregation: GroundedAggregation) -> list | None:
+                            aggregation: GroundedAggregation) -> tuple[int, list] | None:
     if aggregation.over != "shot":
         return None
-    for entry in chain:
+    for index, entry in enumerate(chain):
         result = entry.get("result")
         if isinstance(result, dict) and isinstance(result.get("shots"), list):
-            return result["shots"]
+            return index, result["shots"]
     return None
 
 
@@ -197,41 +259,41 @@ def _field_article(group_field: str) -> str:
     }.get(group_field, group_field)
 
 
-def ground_read_aggregation_absence(
+def compute_read_aggregation(
     aggregation: GroundedAggregation | None,
     chain: list[dict],
-    *,
-    project_name: str,
-) -> str | None:
-    """Return a deterministic all-null grouping answer, or ``None``.
+) -> AggregationResult | None:
+    """Return substrate-computed aggregation evidence, or ``None``.
 
-    v1 only owns the uniformly-null/absent grouping guard. If any item has a
-    non-null group value, including a partial-null population, narration still
-    computes the answer. Populated grouping remains v1.1 territory.
+    v1.1 owns single group-by over a single shot population. It computes the
+    group distribution, explicit unassigned bucket, and max/min winner before
+    narration. The narrator receives this computed block instead of raw rows.
     """
     if aggregation is None:
         return None
-    items = _aggregation_population(chain, aggregation)
-    if items is None:
+    population = _aggregation_population(chain, aggregation)
+    if population is None:
         return None
+    source_step_index, items = population
 
-    field_article = _field_article(aggregation.group_field)
-    count = len(items)
-    if count == 0:
-        return f"There are no shots in {project_name} to group by {field_article}."
+    groups: dict[str, int] = {}
+    unassigned_count = 0
+    for item in items:
+        value = item.get(aggregation.group_field) if isinstance(item, dict) else None
+        if value is None or not str(value).strip():
+            unassigned_count += 1
+            continue
+        key = str(value)
+        groups[key] = groups.get(key, 0) + 1
 
-    values = [
-        item.get(aggregation.group_field)
-        for item in items
-        if isinstance(item, dict) and item.get(aggregation.group_field) is not None
-    ]
-    values = [value for value in values if str(value).strip()]
-    if values:
-        return None
-
-    return (
-        f"None of {project_name}'s {count} shots are assigned to "
-        f"{field_article}."
+    return AggregationResult(
+        intent=aggregation.intent,
+        group_field=aggregation.group_field,
+        over=aggregation.over,
+        total_count=len(items),
+        groups=dict(sorted(groups.items())),
+        unassigned_count=unassigned_count,
+        source_step_index=source_step_index,
     )
 
 

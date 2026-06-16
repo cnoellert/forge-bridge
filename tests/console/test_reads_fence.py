@@ -20,6 +20,7 @@ from forge_bridge.console._reads_fence import (
     GROUPABLE_FIELDS,
     _resolve_role,
     _resolve_status,
+    compute_read_aggregation,
     ground_read_aggregation,
     ground_read_filters,
 )
@@ -145,6 +146,89 @@ def test_aggregation_fence_cross_checks_claimed_field():
     assert msg is not None
 
 
+def test_compute_read_aggregation_counts_groups_and_unassigned_bucket():
+    aggregation, msg = ground_read_aggregation({
+        "intent": "max_by_count",
+        "group_by": "sequence",
+        "group_field": "sequence_id",
+        "over": "shot",
+    })
+    chain = [{"step": "forge_list_shots({})", "result": {"shots": [
+        {"id": "shot-1", "sequence_id": "seq-a"},
+        {"id": "shot-2", "sequence_id": "seq-a"},
+        {"id": "shot-3", "sequence_id": "seq-b"},
+        {"id": "shot-4", "sequence_id": None},
+        {"id": "shot-5"},
+    ]}}]
+
+    result = compute_read_aggregation(aggregation, chain)
+
+    assert msg is None
+    assert result is not None
+    assert result.groups == {"seq-a": 2, "seq-b": 1}
+    assert result.unassigned_count == 2
+    assert result.winner == {"value": "seq-a", "count": 2}
+    assert result.to_evidence()["instruction"] == (
+        "Phrase this computed aggregation; do not recompute from raw rows."
+    )
+
+
+def test_compute_read_aggregation_all_null_is_degenerate_computed_evidence():
+    aggregation, _msg = ground_read_aggregation({
+        "intent": "max_by_count",
+        "group_by": "sequence",
+        "group_field": "sequence_id",
+        "over": "shot",
+    })
+    chain = [{"step": "forge_list_shots({})", "result": {"shots": [
+        {"id": "shot-1", "sequence_id": None},
+        {"id": "shot-2"},
+    ]}}]
+
+    result = compute_read_aggregation(aggregation, chain)
+
+    assert result is not None
+    evidence = result.to_evidence()
+    assert evidence["groups"] == {}
+    assert evidence["unassigned_count"] == 2
+    assert evidence["grounded_absence"] == (
+        "No shots are assigned to a sequence."
+    )
+
+
+def test_compute_read_aggregation_supports_min_count_and_count_by_shapes():
+    chain = [{"step": "forge_list_shots({})", "result": {"shots": [
+        {"id": "shot-1", "status": "review"},
+        {"id": "shot-2", "status": "review"},
+        {"id": "shot-3", "status": "approved"},
+        {"id": "shot-4", "status": None},
+    ]}}]
+    min_aggregation, _ = ground_read_aggregation({
+        "intent": "min_by_count",
+        "group_by": "status",
+        "group_field": "status",
+        "over": "shot",
+    })
+    count_by_aggregation, _ = ground_read_aggregation({
+        "intent": "count_by",
+        "group_by": "status",
+        "group_field": "status",
+        "over": "shot",
+    })
+
+    min_result = compute_read_aggregation(min_aggregation, chain)
+    count_by_result = compute_read_aggregation(count_by_aggregation, chain)
+
+    assert min_result is not None
+    assert min_result.winner == {"value": "approved", "count": 1}
+    assert count_by_result is not None
+    assert count_by_result.to_evidence()["groups"] == {
+        "approved": 1,
+        "review": 2,
+    }
+    assert count_by_result.to_evidence()["unassigned_count"] == 1
+
+
 # ── integration: the fence runs inside run_planner_front, before execute ───────
 
 def _projects_text() -> list[TextContent]:
@@ -244,18 +328,21 @@ def test_planner_front_clarifies_unknown_aggregation_before_execute():
     assert router.acomplete.await_count == 1
 
 
-def test_planner_front_all_null_sequence_grouping_answers_before_narrate():
-    router = SimpleNamespace(acomplete=AsyncMock(return_value=json.dumps({
-        "plan": [{"tool": "forge_list_shots",
-                  "args": {"project_id": "proj-port"}}],
-        "filters": [],
-        "aggregation": {
-            "intent": "max_by_count",
-            "group_by": "sequence",
-            "group_field": "sequence_id",
-            "over": "shot",
-        },
-    })))
+def test_planner_front_all_null_sequence_grouping_narrates_computed_absence():
+    router = SimpleNamespace(acomplete=AsyncMock(side_effect=[
+        json.dumps({
+            "plan": [{"tool": "forge_list_shots",
+                      "args": {"project_id": "proj-port"}}],
+            "filters": [],
+            "aggregation": {
+                "intent": "max_by_count",
+                "group_by": "sequence",
+                "group_field": "sequence_id",
+                "over": "shot",
+            },
+        }),
+        "None of portofino's 20 shots are assigned to a sequence.",
+    ]))
     shots = [
         {"id": f"shot-{idx}", "name": f"SHOT_{idx:03d}"}
         for idx in range(20)
@@ -276,11 +363,16 @@ def test_planner_front_all_null_sequence_grouping_answers_before_narrate():
     assert body["final_text"] == (
         "None of portofino's 20 shots are assigned to a sequence."
     )
-    assert body["chain"][0]["result"]["shots"] == shots
-    assert router.acomplete.await_count == 1  # planned, but did not narrate
+    assert body["chain"][0]["result"]["type"] == "computed_read_aggregation"
+    assert body["chain"][0]["result"]["groups"] == {}
+    assert body["chain"][0]["result"]["unassigned_count"] == 20
+    prompt = router.acomplete.await_args_list[1].args[0]
+    assert "computed_read_aggregation" in prompt
+    assert "SHOT_000" not in prompt
+    assert router.acomplete.await_count == 2  # planned + narrated
 
 
-def test_planner_front_populated_grouping_still_narrates():
+def test_planner_front_populated_grouping_narrates_computed_winner():
     router = SimpleNamespace(acomplete=AsyncMock(side_effect=[
         json.dumps({
             "plan": [{"tool": "forge_list_shots",
@@ -293,7 +385,7 @@ def test_planner_front_populated_grouping_still_narrates():
                 "over": "shot",
             },
         }),
-        "Sequence seq-1 has the most shots.",
+        "Sequence seq-1 has the most shots with 2 assigned shots.",
     ]))
     mcp = SimpleNamespace(call_tool=AsyncMock(side_effect=[
         _projects_text(),
@@ -301,6 +393,8 @@ def test_planner_front_populated_grouping_still_narrates():
             "project_id": "proj-port",
             "shots": [
                 {"id": "shot-1", "name": "SHOT_001", "sequence_id": "seq-1"},
+                {"id": "shot-2", "name": "SHOT_002", "sequence_id": "seq-1"},
+                {"id": "shot-3", "name": "SHOT_003", "sequence_id": "seq-2"},
                 {"id": "shot-2", "name": "SHOT_002", "sequence_id": None},
             ],
         }))],
@@ -312,7 +406,28 @@ def test_planner_front_populated_grouping_still_narrates():
         )}],
         router=router, mcp=mcp, tools=[_list_shots_tool()]))
 
-    assert body["final_text"] == "Sequence seq-1 has the most shots."
+    assert body["final_text"] == (
+        "Sequence seq-1 has the most shots with 2 assigned shots."
+    )
+    assert body["chain"][0]["result"] == {
+        "type": "computed_read_aggregation",
+        "intent": "max_by_count",
+        "over": "shot",
+        "group_field": "sequence_id",
+        "group_label": "sequence",
+        "total_count": 4,
+        "groups": {"seq-1": 2, "seq-2": 1},
+        "unassigned_count": 1,
+        "instruction": (
+            "Phrase this computed aggregation; do not recompute from raw rows."
+        ),
+        "winner": {"value": "seq-1", "count": 2},
+    }
+    prompt = router.acomplete.await_args_list[1].args[0]
+    assert "computed_read_aggregation" in prompt
+    assert "seq-1" in prompt
+    assert "SHOT_001" not in prompt
+    assert "SHOT_002" not in prompt
     assert router.acomplete.await_count == 2  # planned + narrated
 
 
