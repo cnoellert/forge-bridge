@@ -20,7 +20,8 @@ from typing import Any
 import asyncio
 
 from forge_bridge.console._reads_fence import (
-    ground_read_aggregation_absence,
+    AggregationResult,
+    compute_read_aggregation,
     ground_read_aggregation,
     ground_read_filters,
 )
@@ -33,8 +34,11 @@ logger = logging.getLogger(__name__)
 _NARRATE_SYSTEM = (
     "Answer the user's question using ONLY the tool results provided. If the "
     "results do not contain the answer, say so plainly. Do not invent values "
-    "or overstate certainty. Be concise and plain-language — an artist, not a "
-    "developer, is reading."
+    "or overstate certainty. Never group by a field the user did not name. "
+    "Never report an entity type absent from the evidence. If a tool result "
+    "contains a computed_read_aggregation block, phrase that computed "
+    "aggregation; do not recompute from raw rows. Be concise and "
+    "plain-language — an artist, not a developer, is reading."
 )
 _NARRATE_TIMEOUT_S = 25.0
 
@@ -218,21 +222,6 @@ def _compact_result(result: Any, max_items: int = 25) -> Any:
     return result
 
 
-def _project_name(projects: list[dict], plan: list) -> str:
-    project_id = None
-    for step in plan:
-        if not isinstance(step, dict):
-            continue
-        args = step.get("args")
-        if isinstance(args, dict) and isinstance(args.get("project_id"), str):
-            project_id = args["project_id"]
-            break
-    for project in projects:
-        if project.get("id") == project_id and project.get("name"):
-            return str(project["name"])
-    return "the project"
-
-
 def _is_failed_chain_step(entry: dict) -> bool:
     """True when a chain row is failure evidence, not factual evidence."""
     step = entry.get("step")
@@ -240,6 +229,19 @@ def _is_failed_chain_step(entry: dict) -> bool:
         return True
     result = entry.get("result")
     return isinstance(result, dict) and "error" in result
+
+
+def _chain_with_computed_aggregation(
+    chain: list[dict],
+    result: AggregationResult,
+) -> list[dict]:
+    """Replace the aggregation population with substrate-computed evidence."""
+    next_chain = [dict(entry) for entry in chain]
+    if 0 <= result.source_step_index < len(next_chain):
+        entry = dict(next_chain[result.source_step_index])
+        entry["result"] = result.to_evidence()
+        next_chain[result.source_step_index] = entry
+    return next_chain
 
 
 async def _narrate(router: Any, convo: str, chain: list[dict]) -> str:
@@ -346,14 +348,9 @@ async def run_planner_front(messages: list[dict], *, router: Any, mcp: Any,
         chain.append({"step": f"{name}({json.dumps(args, ensure_ascii=False)})",
                       "result": result})
 
-    absence = ground_read_aggregation_absence(
-        aggregation=aggregation,
-        chain=chain,
-        project_name=_project_name(projects, plan),
-    )
-    if absence is not None:
-        return _response(absence, messages, plan=plan, chain=chain,
-                         grounded=len(projects))
+    aggregation_result = compute_read_aggregation(aggregation, chain)
+    if aggregation_result is not None:
+        chain = _chain_with_computed_aggregation(chain, aggregation_result)
 
     answer = await _narrate(router, convo, chain)
     return _response(answer, messages, plan=plan, chain=chain,
