@@ -81,16 +81,38 @@ class AggregationResult:
         }.get(self.group_field, self.group_field)
 
     @property
-    def winner(self) -> dict[str, Any] | None:
+    def _extreme_groups(self) -> list[tuple[str, int]]:
+        """Groups sharing the extreme (max/min) count, sorted by value."""
         if self.intent not in {"max_by_count", "min_by_count"} or not self.groups:
+            return []
+        pick = max if self.intent == "max_by_count" else min
+        extreme = pick(self.groups.values())
+        return sorted(
+            (item for item in self.groups.items() if item[1] == extreme),
+            key=lambda item: item[0],
+        )
+
+    @property
+    def winner(self) -> dict[str, Any] | None:
+        """The single extreme group, or ``None`` when absent or tied.
+
+        A shared extreme is NOT a unique winner — asserting one would fabricate
+        certainty (the exact plausible-lie the reads-trust fence prevents). Ties
+        surface via ``tied`` instead.
+        """
+        extreme = self._extreme_groups
+        if len(extreme) != 1:
             return None
-        reverse = self.intent == "max_by_count"
-        value, count = sorted(
-            self.groups.items(),
-            key=lambda item: (item[1], item[0]),
-            reverse=reverse,
-        )[0]
+        value, count = extreme[0]
         return {"value": value, "count": count}
+
+    @property
+    def tied(self) -> list[dict[str, Any]] | None:
+        """The co-extreme groups when more than one share the max/min, else ``None``."""
+        extreme = self._extreme_groups
+        if len(extreme) < 2:
+            return None
+        return [{"value": value, "count": count} for value, count in extreme]
 
     def to_evidence(self) -> dict[str, Any]:
         evidence: dict[str, Any] = {
@@ -108,6 +130,8 @@ class AggregationResult:
         }
         if self.winner is not None:
             evidence["winner"] = self.winner
+        if self.tied is not None:
+            evidence["tied"] = self.tied
         if not self.groups:
             evidence["grounded_absence"] = (
                 f"No {self.over}s are assigned to {self._field_article()}."

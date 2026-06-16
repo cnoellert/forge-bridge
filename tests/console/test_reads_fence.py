@@ -229,6 +229,75 @@ def test_compute_read_aggregation_supports_min_count_and_count_by_shapes():
     assert count_by_result.to_evidence()["unassigned_count"] == 1
 
 
+def test_compute_read_aggregation_co_max_reports_tie_not_false_winner():
+    aggregation, _ = ground_read_aggregation({
+        "intent": "max_by_count",
+        "group_by": "sequence",
+        "group_field": "sequence_id",
+        "over": "shot",
+    })
+    chain = [{"step": "forge_list_shots({})", "result": {"shots": [
+        {"id": "shot-1", "sequence_id": "seq-a"},
+        {"id": "shot-2", "sequence_id": "seq-a"},
+        {"id": "shot-3", "sequence_id": "seq-b"},
+        {"id": "shot-4", "sequence_id": "seq-b"},
+    ]}}]
+
+    result = compute_read_aggregation(aggregation, chain)
+
+    assert result is not None
+    # A shared max is NOT a unique winner — never fabricate one.
+    assert result.winner is None
+    assert result.tied == [
+        {"value": "seq-a", "count": 2},
+        {"value": "seq-b", "count": 2},
+    ]
+    evidence = result.to_evidence()
+    assert "winner" not in evidence
+    assert evidence["tied"] == [
+        {"value": "seq-a", "count": 2},
+        {"value": "seq-b", "count": 2},
+    ]
+
+
+def test_compute_read_aggregation_co_min_reports_tie_and_unique_max_stays_winner():
+    chain = [{"step": "forge_list_shots({})", "result": {"shots": [
+        {"id": "shot-1", "status": "review"},
+        {"id": "shot-2", "status": "review"},
+        {"id": "shot-3", "status": "review"},
+        {"id": "shot-4", "status": "approved"},
+        {"id": "shot-5", "status": "delivered"},
+    ]}}]
+    min_aggregation, _ = ground_read_aggregation({
+        "intent": "min_by_count",
+        "group_by": "status",
+        "group_field": "status",
+        "over": "shot",
+    })
+    max_aggregation, _ = ground_read_aggregation({
+        "intent": "max_by_count",
+        "group_by": "status",
+        "group_field": "status",
+        "over": "shot",
+    })
+
+    # approved and delivered both sit at 1 → tie, no false min winner.
+    min_result = compute_read_aggregation(min_aggregation, chain)
+    assert min_result is not None
+    assert min_result.winner is None
+    assert min_result.tied == [
+        {"value": "approved", "count": 1},
+        {"value": "delivered", "count": 1},
+    ]
+
+    # review is a clean unique max → winner still resolves.
+    max_result = compute_read_aggregation(max_aggregation, chain)
+    assert max_result is not None
+    assert max_result.winner == {"value": "review", "count": 3}
+    assert max_result.tied is None
+    assert "tied" not in max_result.to_evidence()
+
+
 # ── integration: the fence runs inside run_planner_front, before execute ───────
 
 def _projects_text() -> list[TextContent]:
