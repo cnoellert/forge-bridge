@@ -43,7 +43,7 @@ def test_top_level_help_lists_expected_commands():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     out = result.output
-    for token in ("doctor", "actions", "mcp", "flame", "console"):
+    for token in ("doctor", "actions", "author", "qc", "mcp", "flame", "console"):
         assert token in out, f"top-level help missing {token!r}"
 
 

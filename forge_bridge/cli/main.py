@@ -18,6 +18,7 @@ from typing import Annotated
 import typer
 
 from forge_bridge import config
+from forge_bridge.cli import author as _author
 from forge_bridge.cli import chat as _chat
 from forge_bridge.cli import discover as _discover
 from forge_bridge.cli import doctor as _doctor
@@ -379,6 +380,21 @@ app.command(
     ),
     epilog=_ACTIONS_EPILOG,
 )(_tools.tools_cmd)
+
+app.command(
+    "author",
+    help=(
+        "Author a text prompt through the generation runtime and pause for "
+        "manual QC."
+    ),
+)(_author.author_cmd)
+
+app.command(
+    "qc",
+    help=(
+        "Apply a manual QC note as a derived authoring run, or approve a run."
+    ),
+)(_author.qc_cmd)
 
 app.command(
     "chat",
