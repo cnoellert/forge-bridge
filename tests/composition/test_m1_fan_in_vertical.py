@@ -27,6 +27,7 @@ from forge_bridge.composition import (
     GraphEdgeCompatibilityError,
     GraphExecutor,
     GraphSpec,
+    GraphSpecError,
     NodeResult,
     NodeSpec,
 )
@@ -185,3 +186,86 @@ def test_consumer_lineage_names_three_upstreams():
     results = GraphExecutor(_stub_dispatch(canned, captured)).run(graph)
     expected = {canned[n].artifact_id for n in ("camera", "depth", "planes")}
     assert set(results["consumer"].source_artifact_ids) == expected
+
+
+# ── 7. type validation is a PRE-PASS — fail before spending any dispatch ──────
+def test_mistyped_edge_rejected_before_any_dispatch():
+    # The mistyped edge terminates at the consumer (indegree 3); the three
+    # sources have indegree 0. If validation were interleaved with dispatch,
+    # the sources would dispatch BEFORE the consumer edge raised. A pre-pass
+    # rejects the graph before any node dispatches — `captured` stays empty.
+    graph = _fan_in_graph({"camera": _CAM, "depth": _DEPTH, "planes": _PLANES})
+    bad = GraphSpec(
+        nodes=graph.nodes,
+        edges=(
+            Edge(from_node="depth", to_node="consumer", to_port="camera"),
+            Edge(from_node="camera", to_node="consumer", to_port="depth"),
+            Edge(from_node="planes", to_node="consumer", to_port="planes"),
+        ),
+    )
+    captured: dict[str, tuple[str, ...]] = {}
+    with pytest.raises(GraphEdgeCompatibilityError):
+        GraphExecutor(_stub_dispatch(_canned_for(bad), captured)).run(bad)
+    assert captured == {}, "no node may dispatch when the graph is type-invalid"
+
+
+# ── 8. structural well-formedness — dangling edge endpoint ───────────────────
+def test_dangling_edge_endpoint_rejected():
+    graph = _fan_in_graph({"camera": _CAM, "depth": _DEPTH, "planes": _PLANES})
+    bad = GraphSpec(
+        nodes=graph.nodes,
+        edges=graph.edges + (
+            Edge(from_node="ghost", to_node="consumer", to_port="camera"),
+        ),
+    )
+    captured: dict[str, tuple[str, ...]] = {}
+    with pytest.raises(GraphSpecError):
+        GraphExecutor(_stub_dispatch(_canned_for(graph), captured)).run(bad)
+    assert captured == {}
+
+
+# ── 9. structural well-formedness — edge to an UNDECLARED port (not permissive) ─
+def test_edge_to_undeclared_port_rejected():
+    # An edge to a port the node never declared is a wiring mistake — it must
+    # error, NOT be silently accepted. (Permissiveness is PortContract.any(),
+    # not an unknown port name.)
+    graph = _fan_in_graph({"camera": _CAM, "depth": _DEPTH, "planes": _PLANES})
+    bad = GraphSpec(
+        nodes=graph.nodes,
+        edges=(
+            Edge(from_node="camera", to_node="consumer", to_port="camera"),
+            Edge(from_node="depth", to_node="consumer", to_port="depth"),
+            Edge(from_node="planes", to_node="consumer", to_port="typo_port"),
+        ),
+    )
+    captured: dict[str, tuple[str, ...]] = {}
+    with pytest.raises(GraphSpecError):
+        GraphExecutor(_stub_dispatch(_canned_for(graph), captured)).run(bad)
+    assert captured == {}
+
+
+# ── 10. mechanism not policy — a non-ok upstream propagates, no short-circuit ─
+def test_non_ok_upstream_propagates_without_short_circuit():
+    # camera ABSTAINS. The executor must still hand that NodeResult to the
+    # consumer and dispatch it — branching on status is the node's job, never
+    # the executor's. (Static edge validation uses the DECLARED output_port, so
+    # the edge still validates even though the runtime result has no output.)
+    graph = _fan_in_graph({"camera": _CAM, "depth": _DEPTH, "planes": _PLANES})
+    canned = _canned_for(graph)
+    canned["camera"] = NodeResult(
+        status="abstained",
+        run_id=uuid.uuid4(),
+        artifact_id=uuid.uuid4(),
+        reason_code="no_camera_motion",
+        message="no camera motion detected",
+    )
+    seen_status: dict[str, str] = {}
+
+    def dispatch(node: NodeSpec, resolved_inputs: dict[str, NodeResult]) -> NodeResult:
+        for port, result in resolved_inputs.items():
+            seen_status[port] = result.status
+        return canned[node.node_id]
+
+    results = GraphExecutor(dispatch).run(graph)
+    assert "consumer" in results  # dispatched despite an abstained upstream
+    assert seen_status["camera"] == "abstained"  # propagated unchanged

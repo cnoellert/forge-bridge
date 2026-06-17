@@ -103,3 +103,13 @@ class GraphCycleError(ValueError):
     """A GraphSpec contains a cycle — rejected before execution in M1."""
 
     code = "GRAPH_CYCLE_ERROR"
+
+
+class GraphSpecError(ValueError):
+    """A structurally malformed GraphSpec — an edge endpoint that is not a
+    declared node, or an edge targeting an input port the node does not
+    declare. Well-formedness precedes content: rejected before scheduling,
+    before the cycle check (a dangling endpoint would otherwise masquerade as
+    a cycle), and before any dispatch."""
+
+    code = "GRAPH_SPEC_ERROR"

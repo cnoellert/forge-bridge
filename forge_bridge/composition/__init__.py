@@ -15,6 +15,7 @@ from forge_bridge.composition.graph_spec import (
     GraphCycleError,
     GraphEdgeCompatibilityError,
     GraphSpec,
+    GraphSpecError,
     NodeSpec,
 )
 from forge_bridge.composition.node_result import NODE_STATUSES, NodeResult
@@ -26,6 +27,7 @@ __all__ = [
     "GraphEdgeCompatibilityError",
     "GraphExecutor",
     "GraphSpec",
+    "GraphSpecError",
     "NODE_STATUSES",
     "NodeResult",
     "NodeSpec",
