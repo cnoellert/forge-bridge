@@ -8,6 +8,7 @@ from forge_bridge.orchestration.drivers import (
     DriverSubmitResult,
     GenerationDriverRegistry,
 )
+from forge_bridge.orchestration.engine import GraphEngine
 from forge_bridge.orchestration.manual_qc import approve, revise, start_author
 from forge_bridge.orchestration.dispatcher import InvocationEnvelope
 from forge_bridge.orchestration.replay import RUN_LINEAGE_REL_KEYS
@@ -19,10 +20,10 @@ from forge_bridge.store.repo import RelationshipRepo
 
 _TRIPLE = {
     "surface": "ollama-api",
-    "path": "author_prompt",
+    "path": "llama3.2",
     "revision": "llama3.2",
 }
-_BACKEND_ID = "ollama-api.author_prompt"
+_BACKEND_ID = "ollama-api.llama3.2"
 
 
 class _AuthorDriver:
@@ -102,6 +103,11 @@ async def test_manual_qc_author_revise_and_approve_round_trip(session_factory, t
         )
         assert lifecycle is not None
         assert lifecycle.block["decision_type"] == "approve_remediation"
+        # The live daemon's terminal consumer advances completed generation runs
+        # to audit while preserving the manual-QC pause block. ReplayEngine must
+        # still treat that as a valid remediation source.
+        await GraphEngine(session).transition(first.run_id, to_stage="audit")
+        await session.commit()
 
     second = await revise(
         first.run_id,
@@ -149,6 +155,6 @@ async def test_manual_qc_start_requires_author_driver(session_factory):
             event_appender=append,
         )
     except RuntimeError as exc:
-        assert "no author_prompt generation driver registered" in str(exc)
+        assert "no local (ollama-api) author_prompt driver registered" in str(exc)
     else:  # pragma: no cover - assertion helper
         raise AssertionError("expected missing author driver failure")

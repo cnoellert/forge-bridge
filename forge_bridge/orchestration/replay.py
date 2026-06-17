@@ -70,7 +70,10 @@ def _source_run_is_eligible(
         return True
     if kind != "remediation":
         return False
-    if lifecycle.current_stage != "execution" or lifecycle.status != "paused":
+    if (
+        lifecycle.current_stage not in {"execution", "audit"}
+        or lifecycle.status != "paused"
+    ):
         return False
     block = lifecycle.block if isinstance(lifecycle.block, dict) else {}
     return (

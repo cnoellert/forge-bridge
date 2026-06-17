@@ -131,6 +131,8 @@ async def start_author(
                 "lock_event": {"kind": "manual_qc_author"},
             }
         )
+        # D6: origin-run GenerationGrant inheritance point; when grant_id lands,
+        # this run mint threads the new grant.
         run = await PipelineRunRepo(session).insert_if_absent(
             {
                 "run_kind": "manual_qc_author",
@@ -212,6 +214,8 @@ async def revise(
                 lineage_graph=InMemoryLineageGraph(),
             ),
         )
+        # D6: derived-run GenerationGrant inheritance point; ReplayEngine must
+        # carry source_run.grant_id onto this remediation run when grants land.
         lifecycle = await replay.reconstruct(
             ReconstructionRequest(
                 request_id=uuid.uuid4(),
@@ -351,18 +355,12 @@ def _select_author_backend(
     for backend_id in sorted(driver_registry.registered_backends()):
         driver = driver_registry.get_driver(backend_id)
         triple = getattr(driver, "backend_identity_triple", {}) if driver else {}
-        if (
-            isinstance(triple, dict)
-            and triple.get("surface") == "ollama-api"
-            and triple.get("path") == AUTHOR_OPERATOR_ID
-        ):
+        # NOTE: backend_identity_triple.path is the model (for example
+        # "llama3.2"); AUTHOR_OPERATOR_ID lives on the plan step as operator_id.
+        # Slice 1 selects the free local authoring surface pragmatically.
+        if isinstance(triple, dict) and triple.get("surface") == "ollama-api":
             return backend_id, dict(triple)
-    for backend_id in sorted(driver_registry.registered_backends()):
-        driver = driver_registry.get_driver(backend_id)
-        triple = getattr(driver, "backend_identity_triple", {}) if driver else {}
-        if isinstance(triple, dict) and triple.get("path") == AUTHOR_OPERATOR_ID:
-            return backend_id, dict(triple)
-    raise RuntimeError("no author_prompt generation driver registered")
+    raise RuntimeError("no local (ollama-api) author_prompt driver registered")
 
 
 def _locked_intent_body(intent: str) -> dict[str, Any]:
