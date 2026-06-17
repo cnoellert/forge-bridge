@@ -31,7 +31,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from forge_bridge.composition.graph_spec import GraphSpec, NodeSpec
+from forge_bridge.composition.graph_spec import (
+    GraphCycleError,
+    GraphEdgeCompatibilityError,
+    GraphSpec,
+    NodeSpec,
+)
 from forge_bridge.composition.node_result import NodeResult
 
 #: Boundary-adapter signature: given a node and its resolved named inputs,
@@ -46,10 +51,47 @@ class GraphExecutor:
         self._dispatch = dispatch
 
     def run(self, graph: GraphSpec) -> dict[str, NodeResult]:
-        # M1 GREEN-BAR TARGET — not yet implemented. The verification vertical
-        # (tests/composition/test_m1_fan_in_vertical.py) is red against this.
-        raise NotImplementedError(
-            "GraphExecutor.run is the M1 green-bar: implement acyclic-enforced "
-            "topological execution with named-port input resolution, per-edge "
-            "accepts_topology validation, and lineage threading."
-        )
+        nodes = {node.node_id: node for node in graph.nodes}
+        outgoing: dict[str, list[str]] = {node_id: [] for node_id in nodes}
+        indegree: dict[str, int] = {node_id: 0 for node_id in nodes}
+
+        for edge in graph.edges:
+            outgoing.setdefault(edge.from_node, []).append(edge.to_node)
+            indegree[edge.to_node] = indegree.get(edge.to_node, 0) + 1
+
+        ready = [node.node_id for node in graph.nodes if indegree.get(node.node_id, 0) == 0]
+        topo_order: list[str] = []
+        cursor = 0
+        while cursor < len(ready):
+            node_id = ready[cursor]
+            cursor += 1
+            topo_order.append(node_id)
+            for downstream in outgoing.get(node_id, ()):
+                indegree[downstream] -= 1
+                if indegree[downstream] == 0:
+                    ready.append(downstream)
+
+        if len(topo_order) != len(nodes):
+            raise GraphCycleError("GraphSpec contains a cycle")
+
+        results: dict[str, NodeResult] = {}
+        for node_id in topo_order:
+            node = nodes[node_id]
+            resolved_inputs: dict[str, NodeResult] = {}
+            for edge in graph.incoming(node_id):
+                upstream_node = nodes[edge.from_node]
+                contract = node.input_ports.get(edge.to_port)
+                if contract is not None and not contract.accepts_topology(
+                    upstream_node.output_port
+                ):
+                    raise GraphEdgeCompatibilityError(
+                        from_node=edge.from_node,
+                        to_node=node_id,
+                        to_port=edge.to_port,
+                        expected=contract.accepts,
+                        actual=upstream_node.output_port,
+                    )
+                resolved_inputs[edge.to_port] = results[edge.from_node]
+            results[node_id] = self._dispatch(node, resolved_inputs)
+
+        return results
