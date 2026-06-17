@@ -146,6 +146,43 @@ def test_aggregation_fence_cross_checks_claimed_field():
     assert msg is not None
 
 
+def test_aggregation_clarify_never_denies_a_valid_groupable_term():
+    # #77: the clarify message keys off whether the term is groupable, NOT off
+    # which branch tripped. With group_by="sequence" (a valid groupable vocab
+    # word), the bad-intent / bad-over / cross-check-mismatch branches must not
+    # claim "I don't have a way to group by sequence" while listing sequence as
+    # a valid option. This probe reproduced the contradiction on all three
+    # branches before the groupability-keyed wording fix.
+    contradiction = "don't have a way to group shots by 'sequence'"
+    branches = {
+        "bad_intent":   {"intent": "bogus",       "group_by": "sequence",
+                         "group_field": "sequence_id", "over": "shot"},
+        "bad_over":     {"intent": "max_by_count", "group_by": "sequence",
+                         "group_field": "sequence_id", "over": "asset"},
+        "cross_check":  {"intent": "count_by",     "group_by": "sequence",
+                         "group_field": "status",      "over": "shot"},
+    }
+    for name, agg in branches.items():
+        grounded, msg = ground_read_aggregation(agg)
+        assert grounded is None, name
+        assert msg is not None, name
+        assert contradiction not in msg, name
+        # It still affirms the term is groupable, not denied.
+        assert "sequence" in msg, name
+
+
+def test_aggregation_clarify_still_denies_genuinely_unknown_term():
+    # The 256 branch (derived is None) is the ONLY honest "I don't have a way to
+    # group by X" — an unknown term must still say so.
+    grounded, msg = ground_read_aggregation({
+        "intent": "max_by_count", "group_by": "artist",
+        "group_field": "artist_id", "over": "shot",
+    })
+    assert grounded is None
+    assert msg is not None
+    assert "don't have a way to group shots by 'artist'" in msg
+
+
 def test_compute_read_aggregation_counts_groups_and_unassigned_bucket():
     aggregation, msg = ground_read_aggregation({
         "intent": "max_by_count",

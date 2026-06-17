@@ -212,10 +212,21 @@ def _resolve_group_field(term: Any) -> str | None:
 
 
 def _aggregation_clarify_question(term: str | None) -> str:
-    phrase = f" by {term!r}" if term else ""
+    # The message keys off whether ``term`` is a groupable field, NOT off which
+    # branch tripped (#77). Only a genuinely unknown term may say "I don't have
+    # a way to group by X" — the bad-intent / bad-over / cross-check-mismatch
+    # branches fire while ``term`` is a valid groupable vocab word, so denying
+    # it would contradict the menu that lists it.
+    if term is None or _resolve_group_field(term) is None:
+        phrase = f" by {term!r}" if term else ""
+        return (
+            f"I don't have a way to group shots{phrase} — I can group shots by "
+            "status, sequence, or role. Which did you mean?"
+        )
     return (
-        f"I don't have a way to group shots{phrase} — I can group shots by "
-        "status, sequence, or role. Which did you mean?"
+        f"I can group shots by {term!r}, but I couldn't tell what you wanted to "
+        "know — I can count shots by status, sequence, or role. "
+        "Which did you mean?"
     )
 
 
