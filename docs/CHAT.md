@@ -20,6 +20,26 @@ Endpoint: `POST http://localhost:9996/api/v1/chat`
 The handler preserves the existing transport envelope and rate limit, then
 routes every user turn through the compile stage.
 
+## Read routing (planner flag)
+
+The bare `POST /api/v1/chat` is the **deterministic mutation/ratify surface**:
+it compiles a turn into a chain and previews host-mutating chains for
+ratification. It is **not** a natural-language *read* router — its deterministic
+tool selection mis-handles read queries (e.g. "how many shots in X",
+"hello").
+
+Natural-language **reads must opt into the planner path** by sending either:
+
+- query param `?planner_front=true`, or
+- header `X-Forge-Planner: v1`
+
+The planner path exposes only read tools, grounds the answer against the store,
+and is reads-only by construction. The Console UI sends this flag by default
+(`forge-chat.js`), so the in-app read experience already routes correctly; only
+raw API consumers need to set it. This split is intentional (#71): the
+deterministic path owns mutations and the planner path owns NL reads — they are
+not interchangeable.
+
 ## Regimes
 
 | Regime | Stop reason | Meaning |

@@ -1722,6 +1722,17 @@ async def chat_handler(request: Request) -> Response:
                         request_id, exc)
             return _chat_error("planner_front_error", str(exc), 500, request_id)
 
+    # ---- Deterministic default path (no planner flag) ------------------------
+    # CONTRACT (#71): a plain `POST /api/v1/chat` with no `?planner_front=true`
+    # / `X-Forge-Planner: v1` is the *deterministic mutation/ratify surface*
+    # (compile_intent -> preview -> ratify -> apply). It is NOT a natural-
+    # language read router: its tool selection mis-handles read queries (e.g.
+    # "how many shots" -> forge_classify_shot, "hello" -> format_result). NL
+    # *read* consumers MUST send the planner flag, which exposes only read tools
+    # and grounds the answer. Routing reads through the planner here was
+    # rejected (the planner is reads-only and would strand mutations; intent-
+    # routing at this seam is out of scope for a path no shipping consumer
+    # hits — the Console UI always sends the flag). See #71.
     for i, msg in enumerate(messages):
         if not isinstance(msg, dict):
             return _chat_error(
