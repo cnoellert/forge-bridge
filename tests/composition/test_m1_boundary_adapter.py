@@ -131,3 +131,16 @@ def test_mcp_boundary_rejects_generation_nodes_before_dispatch():
         boundary.dispatch(node, {})
 
     assert fake.calls == []
+
+
+def test_mcp_boundary_null_error_field_is_not_error_status():
+    # A success envelope carrying a null/empty `error` slot must map to ok —
+    # the status check is truthy, not key-presence (latent landmine for the
+    # next admitted operator). Pins boundary.py:_status_for_payload.
+    fake = _FakeMCP([{"is_greenscreen": True, "verdict": "pass", "error": None}])
+    boundary = MCPToolBoundary(mcp=fake, artifact_id_factory=_ids())
+
+    result = boundary.dispatch(_greenscreen_node("gs_010"), {})
+
+    assert result.status == "ok"
+    assert result.output["is_greenscreen"] is True

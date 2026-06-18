@@ -189,7 +189,7 @@ def _status_for_payload(payload: Any) -> str:
         return "abstained"
     if payload.get("verdict") in {"abstained", "inconclusive"}:
         return "abstained"
-    if "error" in payload:
+    if payload.get("error"):
         return "error"
     if payload.get("partial_fidelity_report"):
         return "partial"
