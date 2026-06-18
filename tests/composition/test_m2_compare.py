@@ -186,6 +186,71 @@ def test_normalize_chain_body_rejects_clarification_needed_status():
         normalize_chain_body(body)
 
 
+def test_normalize_chain_body_marks_only_engine_injected_skip_as_skipped():
+    body = {
+        "status": "success",
+        "request_id": "req",
+        "error": None,
+        "chain": [
+            {"step": "read", "result": {"type": "mutation_plan"}},
+            {
+                "step": "if(proposed_changes exists)",
+                "result": {
+                    "type": "mutation_plan",
+                    "execution_state": "skipped",
+                    "if_gate": {"matched": False},
+                },
+            },
+            {
+                "step": "downstream",
+                "result": {
+                    "type": "mutation_plan",
+                    "execution_state": "skipped",
+                    "skipped_step": "downstream",
+                },
+            },
+        ],
+    }
+
+    assert normalize_chain_body(body).status_vector == ("ok", "ok", "skipped")
+
+
+@pytest.mark.asyncio
+async def test_graph_status_tokens_gate_ran_ok_downstream_skipped():
+    calls: list[str] = []
+
+    async def dispatch(node: NodeSpec, _resolved):
+        calls.append(node.node_id)
+        if node.node_id == "gate":
+            return NodeResult(
+                status="ok",
+                run_id=uuid.uuid4(),
+                output={"execution_state": "skipped"},
+                control_signal="skip",
+            )
+        return NodeResult(status="ok", run_id=uuid.uuid4(), output={"ran": True})
+
+    graph = GraphSpec(
+        nodes=(
+            NodeSpec(node_id="gate", operator_id="if"),
+            NodeSpec(
+                node_id="downstream",
+                operator_id="forge_roto_ref",
+                input_ports={"input": PortContract.any()},
+            ),
+        ),
+        edges=(Edge(from_node="gate", to_node="downstream", to_port="input"),),
+    )
+    wrapper = SkipPropagationDispatch(dispatch)
+    results = await GraphExecutor(wrapper.dispatch).run(graph)
+
+    assert calls == ["gate"]
+    assert normalize_graph_results(results, terminal_node_id="downstream").status_vector == (
+        "ok",
+        "skipped",
+    )
+
+
 @pytest.mark.asyncio
 async def test_lineage_flows_through_filter_primitive_artifact():
     filter_id = uuid.UUID("22222222-2222-2222-2222-222222222222")

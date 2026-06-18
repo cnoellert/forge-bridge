@@ -137,7 +137,7 @@ def normalize_chain_body(
         raise ValueError(f"Cannot normalize chain body status: {status!r}")
 
     chain = body.get("chain") or []
-    statuses: list[str] = ["ok"] * len(chain)
+    statuses: list[str] = [_chain_step_status(entry) for entry in chain]
     terminal_output = normalize_terminal_output(chain[-1]["result"]) if chain else None
 
     if status == "error":
@@ -174,6 +174,13 @@ def _status_token(result: NodeResult) -> str:
     if result.reason_code == DID_NOT_RUN_REASON_CODE:
         return "skipped"
     return result.status
+
+
+def _chain_step_status(entry: dict[str, Any]) -> str:
+    result = entry.get("result")
+    if isinstance(result, dict) and "skipped_step" in result:
+        return "skipped"
+    return "ok"
 
 
 def _non_flowing(result: NodeResult) -> bool:
