@@ -116,3 +116,30 @@ This proof — *capabilities composing through named ports, every edge validated
 
 ## Fossilizing choices that survived pressure
 **A1** (4 variants), **B2** (GraphSpec as IR-of-record + permissive migration invariant), **B4** (GraphSpec ≠ emit-log). All three survived the DT + Creative redline unchanged in direction.
+
+---
+
+## Phase 4b — config→args invocation lowering (converged 2026-06-18)
+
+Phase 4 decomposed once review showed its two "follow-ups" were prerequisites: **P4a** async executor (closes #83, shipped) → **P4b** invocation lowering (this section, closes Finding F) → **P4c** the `run_chain_steps` cutover.
+
+**Finding F:** the compiler writes `config["inputs"]`; the boundary adapter reads `config["arguments"]` — they never meet, so a compiled plan dispatches with `{}`. Masked because every compiler test used a stub dispatch. A broken composition *seam*, not a missing graph feature.
+
+**The split (DT + Creative ratified):** **compiler = composition structure** (operator-agnostic); **adapter = invocation lowering** (turns `(node.config, resolved_inputs)` → operator kwargs). Invocation knowledge lives at the adapter, never the compiler. Safe because `normalize_tool_args` is **translation-only** — it restructures shape, never injects a value.
+
+### Resolved (the convention)
+| Q | Resolution |
+|---|---|
+| **Q1 — which layer** | **B: adapter-owned lowering.** Compiler stays operator-agnostic (verified load-bearing — a real `_plan_body` compiles clean *because* the compiler reads no operator semantics). |
+| **Q2 — fix F / arg source** | Fix F now (adapter reads what the compiler writes). M1 kwargs carrier = `inputs[].metadata.scalars` (the real carrier in `_plan_body`); required kwargs grounded against the live `forge_is_greenscreen` schema (`shot_id, clip_ref`). **Do not block on #86.** |
+| **Q3 — edge-fed args** | **M1 edges are value-blind by design** — lineage / dependency / ordering only. NO `upstream.output → kwarg` extraction; that's the deferred typed invocation envelope (contracts/M2). |
+| **Q4 — scope** | Confirmed: minimal static-config kwargs from scalars, grounded vs real schema, provisional. Typed invocation envelope deferred to contracts/M2. |
+
+### The bright-line invariant (`[[feedback_adapter_translates_never_synthesizes]]`)
+**The adapter may TRANSLATE; it may NOT SYNTHESIZE.** A required kwarg the plan omitted → **honest failure** (tool errors / adapter declines), never `infer`/`default`/`guess`/`fabricate`. Enforced by a **mandatory negative test** (omitted required kwarg → honest failure, never a default) — it protects the architectural boundary, not just the implementation.
+
+### Explicitly unbound (re-open trigger)
+**Identity-param-vs-scalar split** — `shot_id`/`clip_ref` are input-*identity* params (what to assess) and may legitimately come from the input's `artifact_id`/`locator`, not from `scalars`. Unresolvable without a real read-op specimen → **unbound pending #86.** M1 sources from `metadata.scalars` knowingly and provisionally; do not paper over the split.
+
+### Carry-along folds (P4b touches `boundary.py` + `compiler.py`)
+boundary docstring: "requires an async MCP client" (#83 follow-on) + the no-invention invariant + "M1 edges value-blind by design" + the unbound identity-split note. compiler docstring: "cycle-rejection is delegated to the executor, not enforced at compile" (Phase-3 Finding 2).
