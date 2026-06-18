@@ -199,5 +199,5 @@ def test_compare_strategy_routes_idempotent_vs_record_replay():
     records = admitted_records_for(GREENSCREEN_FILTER_ROTO.graph)
     assert compare_strategy_for(records) == "double_exec"
 
-    non_idempotent = replace(records[0], idempotent=False)
+    non_idempotent = replace(records[0], idempotent_result=False)
     assert compare_strategy_for((non_idempotent, *records[1:])) == "record_replay"

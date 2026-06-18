@@ -91,9 +91,9 @@ async def compare_idempotent_paths(
 ) -> CompareResult:
     """Run both paths and compare normalized outputs.
 
-    This is the slice-1 route for admitted idempotent operators. The
-    record-replay route is selected and tested separately because slice-1's
-    concrete corpus is entirely idempotent.
+    This is the slice-1 route for operators whose admitted declarations say
+    they produce idempotent results. The record-replay route is selected and
+    tested separately because slice-1's concrete corpus is result-idempotent.
     """
 
     legacy_body = await legacy_runner()
@@ -111,7 +111,11 @@ async def compare_idempotent_paths(
 def compare_strategy_for(records: tuple[AdmissionRecord, ...]) -> CompareStrategy:
     """Select compare mode from admitted operator properties."""
 
-    return "double_exec" if all(record.idempotent for record in records) else "record_replay"
+    return (
+        "double_exec"
+        if all(record.idempotent_result for record in records)
+        else "record_replay"
+    )
 
 
 def admitted_records_for(graph: GraphSpec) -> tuple[AdmissionRecord, ...]:

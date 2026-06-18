@@ -4,10 +4,10 @@ This is the single routing table for the slice. It is intentionally keyed on
 ``operator_id`` rather than graph-step text: the text grammars join this table
 later, while the current compiler/executor path already carries operator ids.
 
-The table is an admission declaration, not proof of semantic truth. In
-particular, a read/perception declaration does not prove an operator is harmless;
-it only says this narrow slice has reviewed and admitted that operator id for
-the corresponding dispatch class.
+The table records declared sibling/operator properties, not bridge-verified
+facts. Bridge can require that every admission declares its compare-relevant
+profile, but the truth of properties such as ``no_state_mutation`` remains a
+sibling-contractual obligation until a concrete specimen proves otherwise.
 """
 from __future__ import annotations
 
@@ -29,8 +29,27 @@ class AdmissionRecord:
     operator_id: str
     resolved_class: str
     dispatch_kind: DispatchKind
-    idempotent: bool
-    declaration: str
+    synchronous: bool
+    returns_reference: bool
+    no_state_mutation: bool
+    idempotent_result: bool
+
+    def __post_init__(self) -> None:
+        declarations = {
+            "synchronous": self.synchronous,
+            "returns_reference": self.returns_reference,
+            "no_state_mutation": self.no_state_mutation,
+            "idempotent_result": self.idempotent_result,
+        }
+        missing = [
+            name for name, value in declarations.items()
+            if not isinstance(value, bool)
+        ]
+        if missing:
+            raise AdmissionRejected(
+                f"AdmissionRecord {self.operator_id!r} missing bool declarations: "
+                f"{', '.join(missing)}"
+            )
 
 
 _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
@@ -38,22 +57,28 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         operator_id="forge_is_greenscreen",
         resolved_class="mcp.read_perception",
         dispatch_kind="mcp",
-        idempotent=True,
-        declaration="read/perception operator admitted for slice-1 compare",
+        synchronous=True,
+        returns_reference=False,
+        no_state_mutation=True,
+        idempotent_result=True,
     ),
     AdmissionRecord(
         operator_id="forge_roto_ref",
-        resolved_class="mcp.read_perception",
+        resolved_class="mcp.synchronous_make",
         dispatch_kind="mcp",
-        idempotent=True,
-        declaration="read/perception operator admitted for slice-1 compare",
+        synchronous=True,
+        returns_reference=True,
+        no_state_mutation=True,
+        idempotent_result=True,
     ),
     AdmissionRecord(
         operator_id="filter",
         resolved_class="primitive.filter",
         dispatch_kind="primitive",
-        idempotent=True,
-        declaration="value-transform primitive admitted for slice-1 compare",
+        synchronous=True,
+        returns_reference=False,
+        no_state_mutation=True,
+        idempotent_result=True,
     ),
 )
 
@@ -69,4 +94,3 @@ def admit_operator(operator_id: str) -> AdmissionRecord:
     if record is None:
         raise AdmissionRejected(f"operator_id {operator_id!r} is not admitted")
     return record
-
