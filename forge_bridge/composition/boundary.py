@@ -3,7 +3,15 @@
 ``GraphExecutor`` is intentionally substrate-agnostic: it topo-sorts and hands
 named input ``NodeResult``s to a dispatch callable. This module is that first
 real dispatch callable for M1 Phase 2: cheap read/perception MCP operators
-wrapped into bridge-internal ``NodeResult`` envelopes.
+wrapped into bridge-internal ``NodeResult`` envelopes. It requires an async MCP
+client.
+
+The boundary owns invocation lowering: it translates ``node.config`` into MCP
+kwargs, but never invents missing values. In M1, kwargs come from explicit
+``config["arguments"]``/``config["args"]`` or, for compiled plans, from static
+``inputs[].metadata.scalars``. Edges are value-blind by design: upstream
+``NodeResult.output`` is used for lineage only, not for kwarg extraction. The
+input-identity-to-kwarg mapping remains unbound pending #86.
 
 Generation/make operators are intentionally not admitted here. They need
 submit/poll/cost/non-determinism handling and belong to M2, not this read-only
@@ -110,7 +118,31 @@ async def _maybe_list_tools(mcp: Any) -> Any | None:
 
 
 def _node_arguments(node: NodeSpec) -> dict[str, Any]:
-    raw = node.config.get("arguments", node.config.get("args", {}))
+    if "arguments" in node.config:
+        return _mapping_arguments(node, "arguments")
+    if "args" in node.config:
+        return _mapping_arguments(node, "args")
+
+    kwargs: dict[str, Any] = {}
+    for input_entry in node.config.get("inputs") or []:
+        if not isinstance(input_entry, Mapping):
+            continue
+        metadata = input_entry.get("metadata")
+        if not isinstance(metadata, Mapping):
+            continue
+        scalars = metadata.get("scalars")
+        if scalars is None:
+            continue
+        if not isinstance(scalars, Mapping):
+            raise TypeError(
+                f"node {node.node_id!r} metadata.scalars must be a mapping"
+            )
+        kwargs.update(scalars)
+    return kwargs
+
+
+def _mapping_arguments(node: NodeSpec, key: str) -> dict[str, Any]:
+    raw = node.config.get(key)
     if raw is None:
         return {}
     if not isinstance(raw, Mapping):
