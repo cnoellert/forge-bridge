@@ -8,6 +8,8 @@ side-effect policy.
 """
 from __future__ import annotations
 
+import copy
+import re
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -21,6 +23,11 @@ from forge_bridge.composition.node_result import NodeResult
 DispatchCallable = Callable[[NodeSpec, dict[str, NodeResult]], Awaitable[NodeResult]]
 CompareStrategy = Literal["double_exec", "record_replay"]
 SKIPPED_REASON_CODE = "skipped_after_error"
+_ARTIFACT_ID_RE = re.compile(r"roto_[0-9a-f]{32}")
+_UUID_RE = re.compile(
+    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -122,7 +129,7 @@ def normalize_chain_body(
 
     chain = body.get("chain") or []
     statuses: list[str] = ["ok"] * len(chain)
-    terminal_output = chain[-1]["result"] if chain else None
+    terminal_output = normalize_terminal_output(chain[-1]["result"]) if chain else None
 
     if body.get("status") == "error":
         step_index = int((body.get("error") or {}).get("step_index", len(chain)))
@@ -146,7 +153,9 @@ def normalize_graph_results(
 
     statuses = tuple(_status_token(result) for result in results.values())
     terminal = results.get(terminal_node_id)
-    terminal_output = terminal.output if terminal is not None else None
+    terminal_output = (
+        normalize_terminal_output(terminal.output) if terminal is not None else None
+    )
     if terminal is not None and _status_token(terminal) != "ok":
         terminal_output = None
     return CompareSnapshot(statuses, terminal_output)
@@ -157,3 +166,60 @@ def _status_token(result: NodeResult) -> str:
         return "skipped"
     return result.status
 
+
+def normalize_terminal_output(value: Any) -> Any:
+    """Normalize volatile execution envelope fields before parity comparison.
+
+    This is deliberately surgical and capture-derived. It removes or
+    canonicalizes provenance that differs across identical roto calls while
+    preserving the content hashes that prove the resulting matte bytes are
+    identical. A live daemon double-exec remains slice-5 work; this function is
+    the slice-1 real-shape, real-volatility compare boundary.
+    """
+
+    normalized = copy.deepcopy(value)
+    _normalize_in_place(normalized, ())
+    return normalized
+
+
+def _normalize_in_place(value: Any, path: tuple[str | int, ...]) -> None:
+    if isinstance(value, dict):
+        for key in list(value):
+            child_path = (*path, key)
+            if _strip_field(child_path):
+                del value[key]
+                continue
+            if _canonicalize_field(child_path):
+                value[key] = _canonicalize_token(str(value[key]))
+                continue
+            _normalize_in_place(value[key], child_path)
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            _normalize_in_place(item, (*path, index))
+
+
+def _strip_field(path: tuple[str | int, ...]) -> bool:
+    return path in {
+        ("content_hash",),
+        ("graph_event_id",),
+        ("request_id",),
+    }
+
+
+def _canonicalize_field(path: tuple[str | int, ...]) -> bool:
+    if path == ("artifact", "artifact_id"):
+        return True
+    if path == ("artifact", "sequence_locator", "path"):
+        return True
+    if len(path) == 3 and path[0] == "artifact_refs" and path[2] in {
+        "artifact_id",
+        "locator",
+    }:
+        return True
+    return False
+
+
+def _canonicalize_token(value: str) -> str:
+    value = _ARTIFACT_ID_RE.sub("roto_<artifact_id>", value)
+    return _UUID_RE.sub("<uuid>", value)

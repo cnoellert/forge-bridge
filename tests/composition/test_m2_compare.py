@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -14,6 +16,7 @@ from forge_bridge.composition.compare import (
     compare_idempotent_paths,
     compare_strategy_for,
     normalize_graph_results,
+    normalize_terminal_output,
 )
 from forge_bridge.composition.dispatch import UnifiedDispatch
 from forge_bridge.composition.executor import GraphExecutor
@@ -44,9 +47,13 @@ def _tool(name: str, properties: dict, required: list[str]):
     )
 
 
+_FIXTURE_DIR = Path(__file__).parent / "fixtures"
+
+
 class _FakeMCP:
-    def __init__(self) -> None:
+    def __init__(self, *, roto_payload: dict | None = None) -> None:
         self.calls: list[tuple[str, dict]] = []
+        self._roto_payload = roto_payload
 
     async def list_tools(self):
         return _tools()
@@ -62,14 +69,9 @@ class _FakeMCP:
                 "count": 2,
             }
         if name == "forge_roto_ref":
-            return {
-                "shot_id": "gs_010",
-                "artifact_refs": [{
-                    "artifact_type": "DerivedHoldoutsArtifact",
-                    "locator": "mock://gs_010_matte.exr",
-                    "payload_id": "payload-gs-010",
-                }],
-            }
+            if self._roto_payload is not None:
+                return self._roto_payload
+            return _load_roto_capture("a")
         raise AssertionError(name)
 
 
@@ -94,10 +96,15 @@ def _tools() -> list:
     ]
 
 
+def _load_roto_capture(name: str) -> dict:
+    path = _FIXTURE_DIR / f"roto_ref_gs_010_call_{name}.json"
+    return json.loads(path.read_text())
+
+
 @pytest.mark.asyncio
 async def test_compare_harness_proves_greenscreen_filter_roto_vertical_equal():
-    legacy_mcp = _FakeMCP()
-    graph_mcp = _FakeMCP()
+    legacy_mcp = _FakeMCP(roto_payload=_load_roto_capture("a"))
+    graph_mcp = _FakeMCP(roto_payload=_load_roto_capture("b"))
     case = GREENSCREEN_FILTER_ROTO
 
     async def legacy_runner():
@@ -123,7 +130,38 @@ async def test_compare_harness_proves_greenscreen_filter_roto_vertical_equal():
 
     assert result.equivalent
     assert result.graph.status_vector == ("ok", "ok", "ok")
-    assert result.graph.terminal_output["artifact_refs"][0]["locator"].endswith(".exr")
+    assert result.graph.terminal_output["artifact"]["media_content_sha256"].startswith(
+        "19ffdc03"
+    )
+
+
+def test_roto_real_capture_normalizer_collapses_volatile_envelope():
+    call_a = _load_roto_capture("a")
+    call_b = _load_roto_capture("b")
+
+    normalized_a = normalize_terminal_output(call_a)
+    normalized_b = normalize_terminal_output(call_b)
+
+    assert normalized_a == normalized_b
+    assert normalized_a["artifact"]["media_content_sha256"].startswith("19ffdc03")
+    assert normalized_a["artifact"]["derived_from"]["media_content_sha256"].startswith(
+        "8f66f347"
+    )
+    assert normalized_a["artifact_refs"][0]["payload_id"].startswith("19ffdc03")
+    assert normalized_a["artifact"]["derivation_run"]["request_id"] == (
+        "bb3d7891b27d3b6c"
+    )
+    assert normalized_a["artifact"]["sequence_locator"]["path"] == (
+        "mock://roto_ref/roto_<artifact_id>/gs_010_roto.####.exr"
+    )
+
+
+def test_roto_normalizer_preserves_matte_sha_divergence():
+    call_a = _load_roto_capture("a")
+    call_b = _load_roto_capture("b")
+    call_b["artifact"]["media_content_sha256"] = "different-matte-sha"
+
+    assert normalize_terminal_output(call_a) != normalize_terminal_output(call_b)
 
 
 @pytest.mark.asyncio
