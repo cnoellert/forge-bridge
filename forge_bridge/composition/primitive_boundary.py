@@ -1,0 +1,140 @@
+"""In-process graph primitives for the composition executor.
+
+Primitive nodes are value transforms. Unlike operator dispatch, a primitive may
+consume the upstream edge value as data. That does not relax the M1
+operator-boundary rule: MCP/operator kwargs are still lowered only from static
+configuration by the MCP boundary.
+"""
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass
+from typing import Any, Callable
+
+from forge_bridge.composition.admission import admit_operator
+from forge_bridge.composition.graph_spec import NodeSpec
+from forge_bridge.composition.node_result import NodeResult
+from forge_bridge.graph.filter import (
+    FilterNode,
+    FilterPredicate,
+    GraphInputError,
+    PredicateParseError,
+    parse_filter_step,
+)
+from forge_bridge.graph.ports import infer_topology
+
+
+@dataclass
+class PrimitiveBoundary:
+    """Dispatch in-process graph primitives."""
+
+    artifact_id_factory: Callable[[], uuid.UUID] = uuid.uuid4
+
+    async def dispatch(
+        self,
+        node: NodeSpec,
+        resolved_inputs: dict[str, NodeResult],
+    ) -> NodeResult:
+        admission = admit_operator(node.operator_id)
+        if admission.dispatch_kind != "primitive":
+            return _error(
+                "not_primitive",
+                f"Operator {node.operator_id!r} is not a primitive.",
+                admission.resolved_class,
+        )
+        if node.operator_id == "filter":
+            return _run_filter(
+                node,
+                resolved_inputs,
+                admission.resolved_class,
+                self.artifact_id_factory,
+            )
+        return _error(
+            "unknown_primitive",
+            f"Primitive {node.operator_id!r} is not implemented.",
+            admission.resolved_class,
+        )
+
+
+def _run_filter(
+    node: NodeSpec,
+    resolved_inputs: dict[str, NodeResult],
+    resolved_class: str,
+    artifact_id_factory: Callable[[], uuid.UUID],
+) -> NodeResult:
+    if len(resolved_inputs) != 1:
+        return _error(
+            "invalid_primitive_input",
+            "Filter requires exactly one upstream input.",
+            resolved_class,
+        )
+    upstream = next(iter(resolved_inputs.values()))
+    if not upstream.has_usable_output:
+        return _error(
+            "invalid_primitive_input",
+            "Filter requires a usable upstream output.",
+            resolved_class,
+            source_artifact_ids=_source_artifact_ids(resolved_inputs),
+        )
+
+    try:
+        predicate = _filter_predicate(node.config)
+        output = FilterNode(predicate).run(upstream.output)
+    except (GraphInputError, PredicateParseError) as exc:
+        return _error(
+            getattr(exc, "code", "primitive_error"),
+            getattr(exc, "message", str(exc)),
+            resolved_class,
+            source_artifact_ids=_source_artifact_ids(resolved_inputs),
+        )
+
+    topology = infer_topology(output)
+    return NodeResult(
+        status="ok",
+        run_id=uuid.uuid4(),
+        artifact_id=artifact_id_factory(),
+        output=output,
+        output_topology=topology.to_dict(),
+        artifact_type=topology.item_type if topology.kind == "list" else topology.kind,
+        source_artifact_ids=_source_artifact_ids(resolved_inputs),
+        resolved_class=resolved_class,
+    )
+
+
+def _filter_predicate(config: dict[str, Any]) -> FilterPredicate:
+    predicate = config.get("predicate")
+    if isinstance(predicate, FilterPredicate):
+        return predicate
+    if isinstance(predicate, dict):
+        return FilterPredicate.from_dict(predicate)
+    step_text = config.get("step_text")
+    if isinstance(step_text, str):
+        return parse_filter_step(step_text)
+    raise PredicateParseError("missing_predicate", "Filter predicate is required.")
+
+
+def _source_artifact_ids(
+    resolved_inputs: dict[str, NodeResult],
+) -> tuple[uuid.UUID, ...]:
+    return tuple(
+        result.artifact_id
+        for result in resolved_inputs.values()
+        if result.artifact_id is not None
+    )
+
+
+def _error(
+    reason_code: str,
+    message: str,
+    resolved_class: str | None,
+    *,
+    source_artifact_ids: tuple[uuid.UUID, ...] = (),
+) -> NodeResult:
+    return NodeResult(
+        status="error",
+        run_id=uuid.uuid4(),
+        reason_code=reason_code,
+        message=message,
+        source_artifact_ids=source_artifact_ids,
+        resolved_class=resolved_class,
+    )
