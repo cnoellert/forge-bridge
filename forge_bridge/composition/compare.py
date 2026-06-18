@@ -139,6 +139,8 @@ def normalize_chain_body(
     chain = body.get("chain") or []
     statuses: list[str] = [_chain_step_status(entry) for entry in chain]
     terminal_output = normalize_terminal_output(chain[-1]["result"]) if chain else None
+    if statuses and statuses[-1] != "ok":
+        terminal_output = None
 
     if status == "error":
         step_index = int((body.get("error") or {}).get("step_index", len(chain)))
