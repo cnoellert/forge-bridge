@@ -2,9 +2,8 @@
 
 ``GraphExecutor`` is intentionally substrate-agnostic: it topo-sorts and hands
 named input ``NodeResult``s to a dispatch callable. This module is that first
-real dispatch callable for M1 Phase 2: cheap read/perception MCP operators
-wrapped into bridge-internal ``NodeResult`` envelopes. It requires an async MCP
-client.
+real dispatch callable for M1/M2 composition: admitted MCP operators wrapped
+into bridge-internal ``NodeResult`` envelopes. It requires an async MCP client.
 
 The boundary owns invocation lowering: it translates ``node.config`` into MCP
 kwargs, but never invents missing values. In M1, kwargs come from explicit
@@ -13,9 +12,10 @@ kwargs, but never invents missing values. In M1, kwargs come from explicit
 ``NodeResult.output`` is used for lineage only, not for kwarg extraction. The
 input-identity-to-kwarg mapping remains unbound pending #86.
 
-Generation/make operators are intentionally not admitted here. They need
-submit/poll/cost/non-determinism handling and belong to M2, not this read-only
-boundary.
+Asynchronous generation/make operators are intentionally not admitted here. They
+need submit/poll/cost/non-determinism handling. Synchronous reference-producing
+makes can be admitted through ``admission.py`` and still dispatch through this
+MCP boundary.
 """
 from __future__ import annotations
 
@@ -32,11 +32,11 @@ from forge_bridge.mcp.arguments import normalize_tool_args
 
 
 class UnsupportedCompositionNodeError(ValueError):
-    """A node is outside M1's cheap read/perception boundary."""
+    """A node is outside the admitted MCP composition boundary."""
 
 
 class MCPToolBoundary:
-    """Dispatch read/perception MCP tools and mint ``NodeResult`` envelopes."""
+    """Dispatch admitted MCP tools and mint ``NodeResult`` envelopes."""
 
     def __init__(
         self,
@@ -64,11 +64,13 @@ class MCPToolBoundary:
             admission = admit_operator(node.operator_id)
         except AdmissionRejected as exc:
             raise UnsupportedCompositionNodeError(
-                f"{node.operator_id!r} is outside M1 read/perception boundary"
+                f"{node.operator_id!r} is not admitted to the M2 dispatch surface"
             ) from exc
         if admission.dispatch_kind != "mcp":
             raise UnsupportedCompositionNodeError(
-                f"{node.operator_id!r} is outside M1 read/perception boundary"
+                f"{node.operator_id!r} is admitted but not an MCP operator "
+                f"(dispatch_kind={admission.dispatch_kind!r}); route via "
+                "UnifiedDispatch"
             )
 
         mcp = self._mcp if self._mcp is not None else _default_mcp()
