@@ -19,9 +19,10 @@ from forge_bridge.composition.dispatch import UnifiedDispatch
 from forge_bridge.composition.executor import GraphExecutor
 from forge_bridge.composition.graph_spec import Edge, GraphSpec, NodeSpec
 from forge_bridge.composition.node_result import NodeResult
+from forge_bridge.composition.parity_corpus import GREENSCREEN_FILTER_ROTO
 from forge_bridge.composition.primitive_boundary import PrimitiveBoundary
 from forge_bridge.console._engine import run_chain_steps
-from forge_bridge.graph.ports import PortContract, PortTopology
+from forge_bridge.graph.ports import PortContract
 
 
 def _tool(name: str, properties: dict, required: list[str]):
@@ -93,65 +94,15 @@ def _tools() -> list:
     ]
 
 
-def _greenscreen_graph() -> GraphSpec:
-    return GraphSpec(
-        nodes=(
-            NodeSpec(
-                node_id="greenscreen",
-                operator_id="forge_is_greenscreen",
-                output_port=PortTopology.list_of("shot"),
-                config={
-                    "arguments": {
-                        "shot_id": "batch",
-                        "clip_ref": "mock://batch.mov",
-                    }
-                },
-            ),
-            NodeSpec(
-                node_id="route_greenscreen",
-                operator_id="filter",
-                input_ports={"input": PortContract.any()},
-                output_port=PortTopology.list_of("shot"),
-                config={
-                    "predicate": {
-                        "field": "is_greenscreen",
-                        "operator": "==",
-                        "value": True,
-                    }
-                },
-            ),
-            NodeSpec(
-                node_id="roto",
-                operator_id="forge_roto_ref",
-                input_ports={"input": PortContract.any()},
-                config={
-                    "arguments": {
-                        "shot_id": "gs_010",
-                        "clip_ref": "mock://gs_010.mov",
-                    }
-                },
-            ),
-        ),
-        edges=(
-            Edge(from_node="greenscreen", to_node="route_greenscreen", to_port="input"),
-            Edge(from_node="route_greenscreen", to_node="roto", to_port="input"),
-        ),
-    )
-
-
 @pytest.mark.asyncio
 async def test_compare_harness_proves_greenscreen_filter_roto_vertical_equal():
     legacy_mcp = _FakeMCP()
     graph_mcp = _FakeMCP()
-    graph = _greenscreen_graph()
+    case = GREENSCREEN_FILTER_ROTO
 
     async def legacy_runner():
         return await run_chain_steps(
-            steps=[
-                "forge_is_greenscreen shot_id=batch clip_ref=mock://batch.mov",
-                "filter(is_greenscreen == true)",
-                "forge_roto_ref shot_id=gs_010 clip_ref=mock://gs_010.mov",
-            ],
+            steps=list(case.legacy_steps),
             tools=_tools(),
             mcp=legacy_mcp,
             request_id="req-compare",
@@ -161,13 +112,13 @@ async def test_compare_harness_proves_greenscreen_filter_roto_vertical_equal():
 
     result = await compare_idempotent_paths(
         legacy_runner=legacy_runner,
-        graph=graph,
+        graph=case.graph,
         dispatch=UnifiedDispatch(
             mcp_boundary=MCPToolBoundary(mcp=graph_mcp),
             primitive_boundary=PrimitiveBoundary(),
         ).dispatch,
-        terminal_node_id="roto",
-        expected_steps=3,
+        terminal_node_id=case.terminal_node_id,
+        expected_steps=len(case.legacy_steps),
     )
 
     assert result.equivalent
@@ -207,7 +158,7 @@ async def test_abort_wrapper_skips_downstream_dispatch_after_error():
 
 
 def test_compare_strategy_routes_idempotent_vs_record_replay():
-    records = admitted_records_for(_greenscreen_graph())
+    records = admitted_records_for(GREENSCREEN_FILTER_ROTO.graph)
     assert compare_strategy_for(records) == "double_exec"
 
     non_idempotent = replace(records[0], idempotent=False)
