@@ -30,7 +30,7 @@ from forge_bridge.composition.parity_corpus import (
 )
 from forge_bridge.composition.primitive_boundary import PrimitiveBoundary
 from forge_bridge.console._engine import run_chain_steps
-from forge_bridge.graph.ports import PortContract
+from forge_bridge.graph.ports import PortContract, PortTopology
 
 
 def _tool(name: str, properties: dict, required: list[str]):
@@ -202,6 +202,119 @@ async def test_compare_harness_aligns_if_gate_linear_prune(case, changes, expect
     assert result.equivalent
     assert result.legacy.status_vector == expected
     assert result.graph.status_vector == expected
+
+
+@pytest.mark.asyncio
+async def test_if_gate_parity_oracle_diverges_beyond_single_step_tail():
+    """if-gate parity-vs-legacy holds ONLY for a single post-gate step.
+
+    Legacy (``_engine.py``) pops ``__if_gate_skip_next__`` and skips *exactly
+    one* step, then resumes. The graph wrapper re-mints
+    ``control_signal="skip"`` on each skipped node, so the skip cascades through
+    the whole downstream cone. The two semantics coincide at a one-step tail
+    (the linear-prune specimens above) and DIVERGE at n>=2.
+
+    This divergence is *by design*: the graph's subgraph-prune is the correct
+    gate semantic on a DAG, while legacy's "skip the next step" is a linear-list
+    artifact that does not even define a gate on a branching graph. The
+    consequence — recorded here so it is loud, not latent — is that the
+    if-gate parity oracle does not extend the way roto/filter parity does. A
+    future multi-step-tail gate specimen must fail *here*, deliberately, rather
+    than mysteriously in the equivalent-by-contract parity corpus.
+    """
+    # read_manifest -> if(closed) -> first -> second  (TWO post-gate steps).
+    legacy_steps = (
+        "forge_is_greenscreen shot_id=manifest clip_ref=mock://manifest.mov",
+        "if(proposed_changes exists)",
+        "forge_roto_ref shot_id=gs_010 clip_ref=mock://gs_010.mov",
+        "forge_roto_ref shot_id=gs_011 clip_ref=mock://gs_011.mov",
+    )
+    graph = GraphSpec(
+        nodes=(
+            NodeSpec(
+                node_id="read_manifest",
+                operator_id="forge_is_greenscreen",
+                output_port=PortTopology.manifest(),
+                config={
+                    "arguments": {
+                        "shot_id": "manifest",
+                        "clip_ref": "mock://manifest.mov",
+                    }
+                },
+            ),
+            NodeSpec(
+                node_id="if_gate",
+                operator_id="if",
+                input_ports={"input": PortContract.manifest_gate()},
+                output_port=PortTopology.manifest(),
+                config={"step_text": "if(proposed_changes exists)"},
+            ),
+            NodeSpec(
+                node_id="first",
+                operator_id="forge_roto_ref",
+                input_ports={"input": PortContract.any()},
+                config={
+                    "arguments": {
+                        "shot_id": "gs_010",
+                        "clip_ref": "mock://gs_010.mov",
+                    }
+                },
+            ),
+            NodeSpec(
+                node_id="second",
+                operator_id="forge_roto_ref",
+                input_ports={"input": PortContract.any()},
+                config={
+                    "arguments": {
+                        "shot_id": "gs_011",
+                        "clip_ref": "mock://gs_011.mov",
+                    }
+                },
+            ),
+        ),
+        edges=(
+            Edge(from_node="read_manifest", to_node="if_gate", to_port="input"),
+            Edge(from_node="if_gate", to_node="first", to_port="input"),
+            Edge(from_node="first", to_node="second", to_port="input"),
+        ),
+    )
+
+    legacy_mcp = _FakeMCP(
+        greenscreen_payload=_manifest_payload(changes=False),
+        roto_payload=_load_roto_capture("a"),
+    )
+    graph_mcp = _FakeMCP(
+        greenscreen_payload=_manifest_payload(changes=False),
+        roto_payload=_load_roto_capture("b"),
+    )
+
+    async def legacy_runner():
+        return await run_chain_steps(
+            steps=list(legacy_steps),
+            tools=_tools(),
+            mcp=legacy_mcp,
+            request_id="req-ifgate-cascade",
+            client_ip="127.0.0.1",
+            started=time.monotonic(),
+        )
+
+    result = await compare_idempotent_paths(
+        legacy_runner=legacy_runner,
+        graph=graph,
+        dispatch=UnifiedDispatch(
+            mcp_boundary=MCPToolBoundary(mcp=graph_mcp),
+            primitive_boundary=PrimitiveBoundary(),
+        ).dispatch,
+        terminal_node_id="second",
+        expected_steps=len(legacy_steps),
+    )
+
+    # Legacy skips ONLY the immediate next step; the final step still runs.
+    assert result.legacy.status_vector == ("ok", "ok", "skipped", "ok")
+    # Graph cascades the skip through the entire downstream cone.
+    assert result.graph.status_vector == ("ok", "ok", "skipped", "skipped")
+    # Therefore the parity oracle does NOT hold beyond a single-step tail.
+    assert not result.equivalent
 
 
 @pytest.mark.asyncio
