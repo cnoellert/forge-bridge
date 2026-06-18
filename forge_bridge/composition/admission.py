@@ -80,6 +80,15 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         no_state_mutation=True,
         idempotent_result=True,
     ),
+    AdmissionRecord(
+        operator_id="if",
+        resolved_class="primitive.if_gate",
+        dispatch_kind="primitive",
+        synchronous=True,
+        returns_reference=False,
+        no_state_mutation=True,
+        idempotent_result=True,
+    ),
 )
 
 ADMISSION_TABLE = MappingProxyType(
