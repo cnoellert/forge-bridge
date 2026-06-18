@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from forge_bridge.composition.admission import admit_operator
 from forge_bridge.composition.graph_spec import NodeSpec
@@ -28,6 +28,8 @@ from forge_bridge.graph.ports import infer_topology
 class PrimitiveBoundary:
     """Dispatch in-process graph primitives."""
 
+    artifact_id_factory: Callable[[], uuid.UUID] = uuid.uuid4
+
     async def dispatch(
         self,
         node: NodeSpec,
@@ -39,9 +41,14 @@ class PrimitiveBoundary:
                 "not_primitive",
                 f"Operator {node.operator_id!r} is not a primitive.",
                 admission.resolved_class,
-            )
+        )
         if node.operator_id == "filter":
-            return _run_filter(node, resolved_inputs, admission.resolved_class)
+            return _run_filter(
+                node,
+                resolved_inputs,
+                admission.resolved_class,
+                self.artifact_id_factory,
+            )
         return _error(
             "unknown_primitive",
             f"Primitive {node.operator_id!r} is not implemented.",
@@ -53,6 +60,7 @@ def _run_filter(
     node: NodeSpec,
     resolved_inputs: dict[str, NodeResult],
     resolved_class: str,
+    artifact_id_factory: Callable[[], uuid.UUID],
 ) -> NodeResult:
     if len(resolved_inputs) != 1:
         return _error(
@@ -84,6 +92,7 @@ def _run_filter(
     return NodeResult(
         status="ok",
         run_id=uuid.uuid4(),
+        artifact_id=artifact_id_factory(),
         output=output,
         output_topology=topology.to_dict(),
         artifact_type=topology.item_type if topology.kind == "list" else topology.kind,
@@ -129,4 +138,3 @@ def _error(
         source_artifact_ids=source_artifact_ids,
         resolved_class=resolved_class,
     )
-

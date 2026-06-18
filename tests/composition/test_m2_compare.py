@@ -101,6 +101,11 @@ def _load_roto_capture(name: str) -> dict:
     return json.loads(path.read_text())
 
 
+def _uuid_factory(*values: str):
+    ids = iter(uuid.UUID(value) for value in values)
+    return lambda: next(ids)
+
+
 @pytest.mark.asyncio
 async def test_compare_harness_proves_greenscreen_filter_roto_vertical_equal():
     legacy_mcp = _FakeMCP(roto_payload=_load_roto_capture("a"))
@@ -162,6 +167,32 @@ def test_roto_normalizer_preserves_matte_sha_divergence():
     call_b["artifact"]["media_content_sha256"] = "different-matte-sha"
 
     assert normalize_terminal_output(call_a) != normalize_terminal_output(call_b)
+
+
+@pytest.mark.asyncio
+async def test_lineage_flows_through_filter_primitive_artifact():
+    filter_id = uuid.UUID("22222222-2222-2222-2222-222222222222")
+    graph_mcp = _FakeMCP(roto_payload=_load_roto_capture("a"))
+
+    results = await GraphExecutor(UnifiedDispatch(
+        mcp_boundary=MCPToolBoundary(
+            mcp=graph_mcp,
+            artifact_id_factory=_uuid_factory(
+                "11111111-1111-1111-1111-111111111111",
+                "33333333-3333-3333-3333-333333333333",
+            ),
+        ),
+        primitive_boundary=PrimitiveBoundary(
+            artifact_id_factory=lambda: filter_id,
+        ),
+    ).dispatch).run(GREENSCREEN_FILTER_ROTO.graph)
+
+    greenscreen = results["greenscreen"]
+    filter_result = results["route_greenscreen"]
+    roto = results["roto"]
+    assert filter_result.artifact_id == filter_id
+    assert filter_result.source_artifact_ids == (greenscreen.artifact_id,)
+    assert roto.source_artifact_ids == (filter_result.artifact_id,)
 
 
 @pytest.mark.asyncio
