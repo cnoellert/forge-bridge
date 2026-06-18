@@ -3,7 +3,8 @@
 M1 Phase 3 keeps the live chain path untouched while making the B2 decision
 concrete: a linear chain is a degenerate graph, and ``GraphSpec`` is the IR of
 record. The compiler is structural and operator-agnostic; dispatch remains
-responsible for deciding whether a node can execute.
+responsible for deciding whether a node can execute. Cycle rejection is
+delegated to ``GraphExecutor``; compile only makes implicit structure explicit.
 """
 from __future__ import annotations
 
