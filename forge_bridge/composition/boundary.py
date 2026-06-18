@@ -24,14 +24,11 @@ import uuid
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from forge_bridge.composition.admission import AdmissionRejected, admit_operator
 from forge_bridge.composition.graph_spec import NodeSpec
 from forge_bridge.composition.node_result import NodeResult
 from forge_bridge.graph.ports import infer_topology
 from forge_bridge.mcp.arguments import normalize_tool_args
-
-READ_PERCEPTION_OPERATORS: frozenset[str] = frozenset({
-    "forge_is_greenscreen",
-})
 
 
 class UnsupportedCompositionNodeError(ValueError):
@@ -45,12 +42,10 @@ class MCPToolBoundary:
         self,
         *,
         mcp: Any | None = None,
-        allowed_operators: frozenset[str] = READ_PERCEPTION_OPERATORS,
         run_id: uuid.UUID | None = None,
         artifact_id_factory: Callable[[], uuid.UUID] = uuid.uuid4,
     ) -> None:
         self._mcp = mcp
-        self._allowed_operators = allowed_operators
         self._run_id = run_id or uuid.uuid4()
         self._artifact_id_factory = artifact_id_factory
 
@@ -65,7 +60,13 @@ class MCPToolBoundary:
         values. The executor stays purely mechanical; the boundary mints the
         envelope and lineage.
         """
-        if node.operator_id not in self._allowed_operators:
+        try:
+            admission = admit_operator(node.operator_id)
+        except AdmissionRejected as exc:
+            raise UnsupportedCompositionNodeError(
+                f"{node.operator_id!r} is outside M1 read/perception boundary"
+            ) from exc
+        if admission.dispatch_kind != "mcp":
             raise UnsupportedCompositionNodeError(
                 f"{node.operator_id!r} is outside M1 read/perception boundary"
             )
@@ -101,6 +102,7 @@ class MCPToolBoundary:
             message=_message(payload),
             candidates=_candidates(payload),
             source_artifact_ids=srcs,
+            resolved_class=admission.resolved_class,
         )
 
 
@@ -265,6 +267,5 @@ def _candidates(payload: Any) -> tuple[Any, ...]:
 
 __all__ = [
     "MCPToolBoundary",
-    "READ_PERCEPTION_OPERATORS",
     "UnsupportedCompositionNodeError",
 ]
