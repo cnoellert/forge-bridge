@@ -85,8 +85,8 @@ def _boundary(*captures: str) -> MCPToolBoundary:
 
 
 # ── true: a confident positive is ok, answer carried in output ───────────────
-def test_real_greenscreen_true_maps_to_ok():
-    result = _boundary(_REAL_TRUE).dispatch(_gs_node("gs_010"), {})
+async def test_real_greenscreen_true_maps_to_ok():
+    result = await _boundary(_REAL_TRUE).dispatch(_gs_node("gs_010"), {})
     assert result.status == "ok"
     assert result.has_usable_output is True
     assert result.output["is_greenscreen"] is True
@@ -95,8 +95,8 @@ def test_real_greenscreen_true_maps_to_ok():
 
 # ── false: a confident NEGATIVE is also ok — status is assessment-success, ───
 #    not the boolean answer; downstream branches on output["is_greenscreen"].
-def test_real_greenscreen_false_maps_to_ok_with_negative_answer():
-    result = _boundary(_REAL_FALSE).dispatch(_gs_node("neg_010"), {})
+async def test_real_greenscreen_false_maps_to_ok_with_negative_answer():
+    result = await _boundary(_REAL_FALSE).dispatch(_gs_node("neg_010"), {})
     assert result.status == "ok"
     assert result.has_usable_output is True
     assert result.output["is_greenscreen"] is False
@@ -105,8 +105,8 @@ def test_real_greenscreen_false_maps_to_ok_with_negative_answer():
 
 # ── abstain: nested artifact.abstention_reason + verdict=inconclusive → ───────
 #    abstained, no usable output, honest reason/message surfaced.
-def test_real_greenscreen_abstain_maps_to_abstained():
-    result = _boundary(_REAL_ABSTAIN).dispatch(_gs_node("amb_030"), {})
+async def test_real_greenscreen_abstain_maps_to_abstained():
+    result = await _boundary(_REAL_ABSTAIN).dispatch(_gs_node("amb_030"), {})
     assert result.status == "abstained"
     assert result.has_usable_output is False
     assert result.output is None
@@ -116,7 +116,7 @@ def test_real_greenscreen_abstain_maps_to_abstained():
 
 # ── the report's live proof, made hermetic: true upstream -> abstain ─────────
 #    downstream through the executor, with forward lineage carried.
-def test_real_chain_true_then_abstain_through_executor():
+async def test_real_chain_true_then_abstain_through_executor():
     source = _gs_node("gs_010")
     consumer = _gs_node("amb_030", input_ports={"previous": PortContract.any()})
     graph = GraphSpec(
@@ -125,7 +125,7 @@ def test_real_chain_true_then_abstain_through_executor():
     )
     boundary = _boundary(_REAL_TRUE, _REAL_ABSTAIN)  # popped in topo order
 
-    results = GraphExecutor(boundary.dispatch).run(graph)
+    results = await GraphExecutor(boundary.dispatch).run(graph)
 
     assert results["gs_010"].status == "ok"
     assert results["amb_030"].status == "abstained"

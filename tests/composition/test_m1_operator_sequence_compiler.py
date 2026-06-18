@@ -16,7 +16,7 @@ def _artifact_id(node_id: str) -> uuid.UUID:
 
 
 def _dispatch(calls: list[tuple[str, tuple[str, ...]]]):
-    def dispatch(node, resolved_inputs):
+    async def dispatch(node, resolved_inputs):
         calls.append((node.node_id, tuple(sorted(resolved_inputs))))
         return NodeResult(
             status="ok",
@@ -34,7 +34,7 @@ def _dispatch(calls: list[tuple[str, tuple[str, ...]]]):
     return dispatch
 
 
-def test_compile_operator_sequence_single_step_static_inputs_runs():
+async def test_compile_operator_sequence_single_step_static_inputs_runs():
     static_input = {
         "artifact_id": "manual_intent:abc",
         "artifact_type": "text_intent",
@@ -62,12 +62,12 @@ def test_compile_operator_sequence_single_step_static_inputs_runs():
     assert node.config["output_artifact_id"] == "draft-001"
 
     calls: list[tuple[str, tuple[str, ...]]] = []
-    results = GraphExecutor(_dispatch(calls)).run(graph)
+    results = await GraphExecutor(_dispatch(calls)).run(graph)
     assert calls == [("author_prompt#0", ())]
     assert results["author_prompt#0"].status == "ok"
 
 
-def test_compile_operator_sequence_links_referenced_output_as_named_any_edge():
+async def test_compile_operator_sequence_links_referenced_output_as_named_any_edge():
     operator_sequence = [
         {
             "operator_id": "author_prompt",
@@ -119,7 +119,7 @@ def test_compile_operator_sequence_links_referenced_output_as_named_any_edge():
     assert target.config["inputs"] == [operator_sequence[1]["inputs"][1]]
 
     calls: list[tuple[str, tuple[str, ...]]] = []
-    results = GraphExecutor(_dispatch(calls)).run(graph)
+    results = await GraphExecutor(_dispatch(calls)).run(graph)
     assert calls == [
         ("author_prompt#0", ()),
         ("author_prompt#1", ("source_text",)),
@@ -129,7 +129,7 @@ def test_compile_operator_sequence_links_referenced_output_as_named_any_edge():
     )
 
 
-def test_compile_operator_sequence_declares_every_derived_edge_port():
+async def test_compile_operator_sequence_declares_every_derived_edge_port():
     graph = compile_operator_sequence([
         {
             "operator_id": "a",
@@ -147,5 +147,5 @@ def test_compile_operator_sequence_declares_every_derived_edge_port():
         assert edge.to_port in graph.node(edge.to_node).input_ports
 
     calls: list[tuple[str, tuple[str, ...]]] = []
-    GraphExecutor(_dispatch(calls)).run(graph)
+    await GraphExecutor(_dispatch(calls)).run(graph)
     assert calls == [("a#0", ()), ("b#1", ("draft",))]

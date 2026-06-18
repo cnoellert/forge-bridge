@@ -11,8 +11,6 @@ boundary.
 """
 from __future__ import annotations
 
-import asyncio
-import inspect
 import json
 import uuid
 from collections.abc import Callable, Mapping
@@ -48,7 +46,7 @@ class MCPToolBoundary:
         self._run_id = run_id or uuid.uuid4()
         self._artifact_id_factory = artifact_id_factory
 
-    def dispatch(
+    async def dispatch(
         self,
         node: NodeSpec,
         resolved_inputs: dict[str, NodeResult],
@@ -66,11 +64,11 @@ class MCPToolBoundary:
 
         mcp = self._mcp if self._mcp is not None else _default_mcp()
         arguments = _node_arguments(node)
-        available = _maybe_list_tools(mcp)
+        available = await _maybe_list_tools(mcp)
         if available is not None:
             arguments = normalize_tool_args(node.operator_id, arguments, available)
 
-        raw = _run_sync(mcp.call_tool(node.operator_id, arguments=arguments))
+        raw = await mcp.call_tool(node.operator_id, arguments=arguments)
         payload = _extract_payload(raw)
         status = _status_for_payload(payload)
         srcs = tuple(
@@ -104,23 +102,11 @@ def _default_mcp() -> Any:
     return mcp
 
 
-def _run_sync(value: Any) -> Any:
-    if not inspect.isawaitable(value):
-        return value
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(value)
-    raise RuntimeError(
-        "MCPToolBoundary.dispatch cannot await while an event loop is running"
-    )
-
-
-def _maybe_list_tools(mcp: Any) -> Any | None:
+async def _maybe_list_tools(mcp: Any) -> Any | None:
     list_tools = getattr(mcp, "list_tools", None)
     if list_tools is None:
         return None
-    return _run_sync(list_tools())
+    return await list_tools()
 
 
 def _node_arguments(node: NodeSpec) -> dict[str, Any]:
