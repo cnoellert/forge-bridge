@@ -15,6 +15,7 @@ from forge_bridge.composition.compare import (
     admitted_records_for,
     compare_idempotent_paths,
     compare_strategy_for,
+    normalize_chain_body,
     normalize_graph_results,
     normalize_terminal_output,
 )
@@ -167,6 +168,22 @@ def test_roto_normalizer_preserves_matte_sha_divergence():
     call_b["artifact"]["media_content_sha256"] = "different-matte-sha"
 
     assert normalize_terminal_output(call_a) != normalize_terminal_output(call_b)
+
+
+def test_normalize_chain_body_rejects_clarification_needed_status():
+    body = {
+        "status": "clarification_needed",
+        "request_id": "req",
+        "clarification_needed": {
+            "kind": "referent",
+            "prompt": "Which shot?",
+        },
+        "stop_reason": "clarification_needed",
+        "chain": [],
+    }
+
+    with pytest.raises(ValueError, match="clarification_needed"):
+        normalize_chain_body(body)
 
 
 @pytest.mark.asyncio

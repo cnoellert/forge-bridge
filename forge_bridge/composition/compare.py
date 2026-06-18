@@ -131,11 +131,15 @@ def normalize_chain_body(
 ) -> CompareSnapshot:
     """Normalize ``run_chain_steps`` output into a status vector and terminal."""
 
+    status = body.get("status")
+    if status not in {"success", "error"}:
+        raise ValueError(f"Cannot normalize chain body status: {status!r}")
+
     chain = body.get("chain") or []
     statuses: list[str] = ["ok"] * len(chain)
     terminal_output = normalize_terminal_output(chain[-1]["result"]) if chain else None
 
-    if body.get("status") == "error":
+    if status == "error":
         step_index = int((body.get("error") or {}).get("step_index", len(chain)))
         while len(statuses) < step_index:
             statuses.append("ok")
