@@ -77,7 +77,10 @@ def _stub_dispatch(canned: dict[str, NodeResult], captured: dict[str, tuple[str,
     forward-only lineage from the resolved upstream results.
     """
 
-    def dispatch(node: NodeSpec, resolved_inputs: dict[str, NodeResult]) -> NodeResult:
+    async def dispatch(
+        node: NodeSpec,
+        resolved_inputs: dict[str, NodeResult],
+    ) -> NodeResult:
         captured[node.node_id] = tuple(sorted(resolved_inputs))
         srcs = tuple(
             r.artifact_id for r in resolved_inputs.values() if r.artifact_id is not None
@@ -111,15 +114,15 @@ def _canned_for(graph: GraphSpec) -> dict[str, NodeResult]:
 
 
 # ── 1. named-port fan-in ─────────────────────────────────────────────────────
-def test_fan_in_resolves_three_named_ports():
+async def test_fan_in_resolves_three_named_ports():
     graph = _fan_in_graph({"camera": _CAM, "depth": _DEPTH, "planes": _PLANES})
     captured: dict[str, tuple[str, ...]] = {}
-    GraphExecutor(_stub_dispatch(_canned_for(graph), captured)).run(graph)
+    await GraphExecutor(_stub_dispatch(_canned_for(graph), captured)).run(graph)
     assert captured["consumer"] == ("camera", "depth", "planes")
 
 
 # ── 2. per-edge validation (graph-native error) ──────────────────────────────
-def test_mistyped_edge_raises_graph_edge_error():
+async def test_mistyped_edge_raises_graph_edge_error():
     # depth's DepthEstimate routed into the camera port (accepts CameraMotionEstimate)
     graph = _fan_in_graph({"camera": _CAM, "depth": _DEPTH, "planes": _PLANES})
     bad = GraphSpec(
@@ -132,13 +135,13 @@ def test_mistyped_edge_raises_graph_edge_error():
     )
     captured: dict[str, tuple[str, ...]] = {}
     with pytest.raises(GraphEdgeCompatibilityError) as exc:
-        GraphExecutor(_stub_dispatch(_canned_for(bad), captured)).run(bad)
+        await GraphExecutor(_stub_dispatch(_canned_for(bad), captured)).run(bad)
     assert exc.value.to_port == "camera"
     assert exc.value.from_node == "depth"
 
 
 # ── 3. permissive-by-default (no regression of unvalidated edges) ────────────
-def test_permissive_any_port_accepts_anything():
+async def test_permissive_any_port_accepts_anything():
     # A consumer whose ports are permissive any() — mirrors a semantic operator
     # whose derived contract is PortContract.any(). Mismatched topology must NOT
     # fail an edge that is unvalidated today.
@@ -148,12 +151,12 @@ def test_permissive_any_port_accepts_anything():
         "planes": PortTopology.any(),
     })
     captured: dict[str, tuple[str, ...]] = {}
-    results = GraphExecutor(_stub_dispatch(_canned_for(graph), captured)).run(graph)
+    results = await GraphExecutor(_stub_dispatch(_canned_for(graph), captured)).run(graph)
     assert results["consumer"].status == "ok"
 
 
 # ── 4. acyclic enforcement ───────────────────────────────────────────────────
-def test_cyclic_graph_is_rejected():
+async def test_cyclic_graph_is_rejected():
     a = NodeSpec(node_id="a", operator_id="op_a",
                  input_ports={"in": PortContract.any()})
     b = NodeSpec(node_id="b", operator_id="op_b",
@@ -166,11 +169,11 @@ def test_cyclic_graph_is_rejected():
         ),
     )
     with pytest.raises(GraphCycleError):
-        GraphExecutor(_stub_dispatch({}, {})).run(cyclic)
+        await GraphExecutor(_stub_dispatch({}, {})).run(cyclic)
 
 
 # ── 5. discriminator branch rule (usable-output from status ALONE) ───────────
-def test_usable_output_derivable_from_discriminator_alone():
+async def test_usable_output_derivable_from_discriminator_alone():
     rid = uuid.uuid4()
     assert NodeResult(status="ok", run_id=rid).has_usable_output is True
     assert NodeResult(status="partial", run_id=rid).has_usable_output is True
@@ -179,17 +182,17 @@ def test_usable_output_derivable_from_discriminator_alone():
 
 
 # ── 6. forward-only lineage recorded ─────────────────────────────────────────
-def test_consumer_lineage_names_three_upstreams():
+async def test_consumer_lineage_names_three_upstreams():
     graph = _fan_in_graph({"camera": _CAM, "depth": _DEPTH, "planes": _PLANES})
     canned = _canned_for(graph)
     captured: dict[str, tuple[str, ...]] = {}
-    results = GraphExecutor(_stub_dispatch(canned, captured)).run(graph)
+    results = await GraphExecutor(_stub_dispatch(canned, captured)).run(graph)
     expected = {canned[n].artifact_id for n in ("camera", "depth", "planes")}
     assert set(results["consumer"].source_artifact_ids) == expected
 
 
 # ── 7. type validation is a PRE-PASS — fail before spending any dispatch ──────
-def test_mistyped_edge_rejected_before_any_dispatch():
+async def test_mistyped_edge_rejected_before_any_dispatch():
     # The mistyped edge terminates at the consumer (indegree 3); the three
     # sources have indegree 0. If validation were interleaved with dispatch,
     # the sources would dispatch BEFORE the consumer edge raised. A pre-pass
@@ -205,12 +208,12 @@ def test_mistyped_edge_rejected_before_any_dispatch():
     )
     captured: dict[str, tuple[str, ...]] = {}
     with pytest.raises(GraphEdgeCompatibilityError):
-        GraphExecutor(_stub_dispatch(_canned_for(bad), captured)).run(bad)
+        await GraphExecutor(_stub_dispatch(_canned_for(bad), captured)).run(bad)
     assert captured == {}, "no node may dispatch when the graph is type-invalid"
 
 
 # ── 8. structural well-formedness — dangling edge endpoint ───────────────────
-def test_dangling_edge_endpoint_rejected():
+async def test_dangling_edge_endpoint_rejected():
     graph = _fan_in_graph({"camera": _CAM, "depth": _DEPTH, "planes": _PLANES})
     bad = GraphSpec(
         nodes=graph.nodes,
@@ -220,12 +223,12 @@ def test_dangling_edge_endpoint_rejected():
     )
     captured: dict[str, tuple[str, ...]] = {}
     with pytest.raises(GraphSpecError):
-        GraphExecutor(_stub_dispatch(_canned_for(graph), captured)).run(bad)
+        await GraphExecutor(_stub_dispatch(_canned_for(graph), captured)).run(bad)
     assert captured == {}
 
 
 # ── 9. structural well-formedness — edge to an UNDECLARED port (not permissive) ─
-def test_edge_to_undeclared_port_rejected():
+async def test_edge_to_undeclared_port_rejected():
     # An edge to a port the node never declared is a wiring mistake — it must
     # error, NOT be silently accepted. (Permissiveness is PortContract.any(),
     # not an unknown port name.)
@@ -240,12 +243,12 @@ def test_edge_to_undeclared_port_rejected():
     )
     captured: dict[str, tuple[str, ...]] = {}
     with pytest.raises(GraphSpecError):
-        GraphExecutor(_stub_dispatch(_canned_for(graph), captured)).run(bad)
+        await GraphExecutor(_stub_dispatch(_canned_for(graph), captured)).run(bad)
     assert captured == {}
 
 
 # ── 10. mechanism not policy — a non-ok upstream propagates, no short-circuit ─
-def test_non_ok_upstream_propagates_without_short_circuit():
+async def test_non_ok_upstream_propagates_without_short_circuit():
     # camera ABSTAINS. The executor must still hand that NodeResult to the
     # consumer and dispatch it — branching on status is the node's job, never
     # the executor's. (Static edge validation uses the DECLARED output_port, so
@@ -261,11 +264,14 @@ def test_non_ok_upstream_propagates_without_short_circuit():
     )
     seen_status: dict[str, str] = {}
 
-    def dispatch(node: NodeSpec, resolved_inputs: dict[str, NodeResult]) -> NodeResult:
+    async def dispatch(
+        node: NodeSpec,
+        resolved_inputs: dict[str, NodeResult],
+    ) -> NodeResult:
         for port, result in resolved_inputs.items():
             seen_status[port] = result.status
         return canned[node.node_id]
 
-    results = GraphExecutor(dispatch).run(graph)
+    results = await GraphExecutor(dispatch).run(graph)
     assert "consumer" in results  # dispatched despite an abstained upstream
     assert seen_status["camera"] == "abstained"  # propagated unchanged

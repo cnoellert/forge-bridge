@@ -40,12 +40,13 @@ masquerades as a cycle.
 6. **Lineage** — the dispatch mints each ``NodeResult`` with
    ``source_artifact_ids`` drawn from the resolved upstream results.
 
-``dispatch`` is the bridge boundary adapter: ``(NodeSpec, resolved_inputs) ->
-NodeResult``. Siblings never emit ``NodeResult``; the adapter mints it.
+``dispatch`` is the bridge boundary adapter: async ``(NodeSpec,
+resolved_inputs) -> NodeResult``. Siblings never emit ``NodeResult``; the
+adapter mints it.
 """
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from forge_bridge.composition.graph_spec import (
     GraphCycleError,
@@ -58,7 +59,7 @@ from forge_bridge.composition.node_result import NodeResult
 
 #: Boundary-adapter signature: given a node and its resolved named inputs,
 #: dispatch the operator and mint the typed ``NodeResult``.
-DispatchFn = Callable[[NodeSpec, "dict[str, NodeResult]"], NodeResult]
+DispatchFn = Callable[[NodeSpec, "dict[str, NodeResult]"], Awaitable[NodeResult]]
 
 
 class GraphExecutor:
@@ -67,7 +68,7 @@ class GraphExecutor:
     def __init__(self, dispatch: DispatchFn) -> None:
         self._dispatch = dispatch
 
-    def run(self, graph: GraphSpec) -> dict[str, NodeResult]:
+    async def run(self, graph: GraphSpec) -> dict[str, NodeResult]:
         nodes = {node.node_id: node for node in graph.nodes}
 
         # 1. Structural well-formedness — endpoints exist, ports are declared.
@@ -114,7 +115,7 @@ class GraphExecutor:
                 edge.to_port: results[edge.from_node]
                 for edge in graph.incoming(node_id)
             }
-            results[node_id] = self._dispatch(node, resolved_inputs)
+            results[node_id] = await self._dispatch(node, resolved_inputs)
 
         return results
 

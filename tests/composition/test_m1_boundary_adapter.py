@@ -29,6 +29,13 @@ class _FakeMCP:
         )
 
 
+class _ListedFakeMCP(_FakeMCP):
+    async def list_tools(self):
+        return [
+            SimpleNamespace(name="forge_is_greenscreen", inputSchema=None),
+        ]
+
+
 def _ids():
     values = iter([
         uuid.UUID("00000000-0000-0000-0000-000000000001"),
@@ -56,7 +63,7 @@ def _greenscreen_node(
     )
 
 
-def test_mcp_boundary_runs_vision_node_and_records_lineage_through_any_edge():
+async def test_mcp_boundary_runs_vision_node_and_records_lineage_through_any_edge():
     fake = _FakeMCP([
         {"is_greenscreen": True, "recommendation": "route"},
         {"is_greenscreen": True, "recommendation": "route"},
@@ -76,7 +83,7 @@ def test_mcp_boundary_runs_vision_node_and_records_lineage_through_any_edge():
         artifact_id_factory=_ids(),
     )
 
-    results = GraphExecutor(boundary.dispatch).run(graph)
+    results = await GraphExecutor(boundary.dispatch).run(graph)
 
     assert results["gs_010"].status == "ok"
     assert results["gs_020"].status == "ok"
@@ -101,7 +108,27 @@ def test_mcp_boundary_runs_vision_node_and_records_lineage_through_any_edge():
     ]
 
 
-def test_mcp_boundary_maps_structured_abstention_to_node_result():
+async def test_mcp_boundary_dispatches_inside_running_event_loop():
+    fake = _ListedFakeMCP([
+        {"is_greenscreen": True, "recommendation": "route"},
+    ])
+    boundary = MCPToolBoundary(mcp=fake, artifact_id_factory=_ids())
+
+    result = await boundary.dispatch(_greenscreen_node("gs_010"), {})
+
+    assert result.status == "ok"
+    assert fake.calls == [
+        (
+            "forge_is_greenscreen",
+            {
+                "shot_id": "gs_010",
+                "clip_ref": "mock://perception/is_greenscreen/gs_010_true",
+            },
+        )
+    ]
+
+
+async def test_mcp_boundary_maps_structured_abstention_to_node_result():
     fake = _FakeMCP([{
         "artifact": {"abstention_reason": "mock_abstain"},
         "verdict": "inconclusive",
@@ -113,7 +140,7 @@ def test_mcp_boundary_maps_structured_abstention_to_node_result():
         artifact_id_factory=_ids(),
     )
 
-    result = boundary.dispatch(_greenscreen_node("amb_030"), {})
+    result = await boundary.dispatch(_greenscreen_node("amb_030"), {})
 
     assert result.status == "abstained"
     assert result.has_usable_output is False
@@ -122,25 +149,25 @@ def test_mcp_boundary_maps_structured_abstention_to_node_result():
     assert result.message == "abstained on greenscreen question"
 
 
-def test_mcp_boundary_rejects_generation_nodes_before_dispatch():
+async def test_mcp_boundary_rejects_generation_nodes_before_dispatch():
     fake = _FakeMCP([{"ok": True}])
     boundary = MCPToolBoundary(mcp=fake)
     node = NodeSpec(node_id="make", operator_id="forge_generate_image")
 
     with pytest.raises(UnsupportedCompositionNodeError):
-        boundary.dispatch(node, {})
+        await boundary.dispatch(node, {})
 
     assert fake.calls == []
 
 
-def test_mcp_boundary_null_error_field_is_not_error_status():
+async def test_mcp_boundary_null_error_field_is_not_error_status():
     # A success envelope carrying a null/empty `error` slot must map to ok —
     # the status check is truthy, not key-presence (latent landmine for the
     # next admitted operator). Pins boundary.py:_status_for_payload.
     fake = _FakeMCP([{"is_greenscreen": True, "verdict": "pass", "error": None}])
     boundary = MCPToolBoundary(mcp=fake, artifact_id_factory=_ids())
 
-    result = boundary.dispatch(_greenscreen_node("gs_010"), {})
+    result = await boundary.dispatch(_greenscreen_node("gs_010"), {})
 
     assert result.status == "ok"
     assert result.output["is_greenscreen"] is True
