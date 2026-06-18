@@ -11,7 +11,7 @@ import pytest
 
 from forge_bridge.composition.boundary import MCPToolBoundary
 from forge_bridge.composition.compare import (
-    AbortOnFirstErrorDispatch,
+    SkipPropagationDispatch,
     admitted_records_for,
     compare_idempotent_paths,
     compare_strategy_for,
@@ -213,7 +213,7 @@ async def test_lineage_flows_through_filter_primitive_artifact():
 
 
 @pytest.mark.asyncio
-async def test_abort_wrapper_skips_downstream_dispatch_after_error():
+async def test_skip_propagation_wrapper_preserves_abort_after_error():
     calls: list[str] = []
 
     async def dispatch(node: NodeSpec, _resolved):
@@ -232,7 +232,7 @@ async def test_abort_wrapper_skips_downstream_dispatch_after_error():
         ),
         edges=(Edge(from_node="source", to_node="downstream", to_port="input"),),
     )
-    wrapper = AbortOnFirstErrorDispatch(dispatch)
+    wrapper = SkipPropagationDispatch(dispatch)
     results = await GraphExecutor(wrapper.dispatch).run(graph)
 
     assert calls == ["source"]

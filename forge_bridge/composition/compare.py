@@ -1,10 +1,10 @@
 """Compare legacy chain execution with graph execution.
 
 The harness is intentionally outside ``GraphExecutor``. Legacy
-``run_chain_steps`` aborts after the first failed step; the executor remains a
-pure graph runner. ``AbortOnFirstErrorDispatch`` is the orchestration wrapper
-that makes graph-side status vectors comparable without giving the executor a
-side-effect policy.
+``run_chain_steps`` aborts/skips downstream steps outside the executor; the
+executor remains a pure graph runner. ``SkipPropagationDispatch`` is the
+orchestration wrapper that makes graph-side status vectors comparable without
+giving the executor a side-effect policy.
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from forge_bridge.composition.node_result import NodeResult
 
 DispatchCallable = Callable[[NodeSpec, dict[str, NodeResult]], Awaitable[NodeResult]]
 CompareStrategy = Literal["double_exec", "record_replay"]
-SKIPPED_REASON_CODE = "skipped_after_error"
+DID_NOT_RUN_REASON_CODE = "did_not_run_after_skip"
 _ARTIFACT_ID_RE = re.compile(r"roto_[0-9a-f]{32}")
 _UUID_RE = re.compile(
     r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
@@ -50,12 +50,12 @@ class CompareResult:
         return self.legacy == self.graph
 
 
-class AbortOnFirstErrorDispatch:
-    """Short-circuit downstream graph dispatch after an upstream error.
+class SkipPropagationDispatch:
+    """Short-circuit downstream graph dispatch after a non-flowing input.
 
     ``skipped`` is a compare status token, not a fifth ``NodeResult`` status.
     The wrapper returns an ``error`` envelope tagged with
-    ``SKIPPED_REASON_CODE`` so normalizers can represent the orchestration
+    ``DID_NOT_RUN_REASON_CODE`` so normalizers can represent the orchestration
     decision while no concrete downstream boundary is invoked.
     """
 
@@ -69,13 +69,14 @@ class AbortOnFirstErrorDispatch:
         node: NodeSpec,
         resolved_inputs: dict[str, NodeResult],
     ) -> NodeResult:
-        if any(result.status == "error" for result in resolved_inputs.values()):
+        if any(_non_flowing(result) for result in resolved_inputs.values()):
             self.skipped_node_ids.append(node.node_id)
             return NodeResult(
                 status="error",
                 run_id=uuid.uuid4(),
-                reason_code=SKIPPED_REASON_CODE,
-                message="Skipped after upstream graph error.",
+                reason_code=DID_NOT_RUN_REASON_CODE,
+                message="Skipped after upstream graph control signal.",
+                control_signal="skip",
             )
         self.dispatched_node_ids.append(node.node_id)
         return await self._dispatch(node, resolved_inputs)
@@ -97,7 +98,7 @@ async def compare_idempotent_paths(
     """
 
     legacy_body = await legacy_runner()
-    aborting = AbortOnFirstErrorDispatch(dispatch)
+    aborting = SkipPropagationDispatch(dispatch)
     graph_results = await GraphExecutor(aborting.dispatch).run(graph)
     return CompareResult(
         legacy=normalize_chain_body(legacy_body, expected_steps=expected_steps),
@@ -170,9 +171,16 @@ def normalize_graph_results(
 
 
 def _status_token(result: NodeResult) -> str:
-    if result.reason_code == SKIPPED_REASON_CODE:
+    if result.reason_code == DID_NOT_RUN_REASON_CODE:
         return "skipped"
     return result.status
+
+
+def _non_flowing(result: NodeResult) -> bool:
+    # Error folding is intentionally local to the orchestration wrapper for 2a:
+    # boundaries do not all need to remint historical errors with a control
+    # signal for compare parity to preserve abort semantics.
+    return result.control_signal == "skip" or result.status == "error"
 
 
 def normalize_terminal_output(value: Any) -> Any:
