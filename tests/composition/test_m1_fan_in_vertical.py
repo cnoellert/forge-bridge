@@ -179,6 +179,12 @@ async def test_usable_output_derivable_from_discriminator_alone():
     assert NodeResult(status="partial", run_id=rid).has_usable_output is True
     assert NodeResult(status="abstained", run_id=rid).has_usable_output is False
     assert NodeResult(status="error", run_id=rid).has_usable_output is False
+    assert NodeResult(status="ok", run_id=rid).resolved_class is None
+    assert (
+        NodeResult(status="ok", run_id=rid, resolved_class="mcp.read_perception")
+        .resolved_class
+        == "mcp.read_perception"
+    )
 
 
 # ── 6. forward-only lineage recorded ─────────────────────────────────────────

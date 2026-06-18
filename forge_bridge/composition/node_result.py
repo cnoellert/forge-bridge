@@ -38,6 +38,7 @@ class NodeResult:
     message: str | None = None  # human (abstained/error)
     candidates: tuple[Any, ...] = ()  # abstained (à la ReferenceResolution)
     source_artifact_ids: tuple[uuid.UUID, ...] = ()  # forward-only lineage
+    resolved_class: str | None = None  # replay/audit class resolved by dispatch
 
     def __post_init__(self) -> None:
         if self.status not in NODE_STATUSES:
