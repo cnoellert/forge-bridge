@@ -204,6 +204,22 @@ async def test_compare_harness_aligns_if_gate_linear_prune(case, changes, expect
     assert result.graph.status_vector == expected
 
 
+@pytest.mark.asyncio
+async def test_if_gate_prune_preserves_static_outer_node_set():
+    case = READ_IFGATE_PRUNE_CLOSED
+    graph_mcp = _FakeMCP(
+        greenscreen_payload=_manifest_payload(changes=False),
+        roto_payload=_load_roto_capture("b"),
+    )
+
+    results = await GraphExecutor(UnifiedDispatch(
+        mcp_boundary=MCPToolBoundary(mcp=graph_mcp),
+        primitive_boundary=PrimitiveBoundary(),
+    ).dispatch).run(case.graph)
+
+    assert set(results) == {node.node_id for node in case.graph.nodes}
+
+
 def test_roto_real_capture_normalizer_collapses_volatile_envelope():
     call_a = _load_roto_capture("a")
     call_b = _load_roto_capture("b")
