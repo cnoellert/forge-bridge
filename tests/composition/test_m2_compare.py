@@ -299,6 +299,25 @@ async def test_compare_harness_aligns_foreach_first_body_error():
 
 
 @pytest.mark.asyncio
+async def test_foreach_expansion_preserves_static_outer_node_set():
+    case = READ_FOREACH_EXPAND
+    graph_mcp = _FakeMCP(
+        greenscreen_payload=_load_real_greenscreen_collection(),
+        roto_payload=_load_roto_capture("b"),
+    )
+
+    results = await GraphExecutor(UnifiedDispatch(
+        mcp_boundary=MCPToolBoundary(mcp=graph_mcp),
+        primitive_boundary=PrimitiveBoundary(),
+    ).dispatch).run(case.graph)
+
+    assert set(results) == {node.node_id for node in case.graph.nodes}
+    assert set(results) == {"read_collection", "foreach_roto"}
+    assert results["foreach_roto"].output["count"] == 1
+    assert len(results["foreach_roto"].output["iterations"]) == 1
+
+
+@pytest.mark.asyncio
 async def test_if_gate_parity_oracle_diverges_beyond_single_step_tail():
     """if-gate parity-vs-legacy holds ONLY for a single post-gate step.
 
