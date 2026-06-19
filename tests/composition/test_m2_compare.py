@@ -548,3 +548,27 @@ def test_compare_strategy_routes_idempotent_vs_record_replay():
 
     non_idempotent = replace(records[0], idempotent_result=False)
     assert compare_strategy_for((non_idempotent, *records[1:])) == "record_replay"
+
+
+def test_admitted_records_for_foreach_includes_body_operator_profile():
+    graph = GraphSpec(
+        nodes=(NodeSpec(
+            node_id="foreach",
+            operator_id="foreach",
+            config={
+                "body": NodeSpec(
+                    node_id="body",
+                    operator_id="forge_roto_ref",
+                )
+            },
+        ),),
+        edges=(),
+    )
+
+    records = admitted_records_for(graph)
+
+    assert [record.operator_id for record in records] == [
+        "foreach",
+        "forge_roto_ref",
+    ]
+    assert compare_strategy_for(records) == "double_exec"

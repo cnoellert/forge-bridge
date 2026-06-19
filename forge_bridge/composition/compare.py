@@ -122,7 +122,19 @@ def compare_strategy_for(records: tuple[AdmissionRecord, ...]) -> CompareStrateg
 def admitted_records_for(graph: GraphSpec) -> tuple[AdmissionRecord, ...]:
     """Return admission records for every node in graph order."""
 
-    return tuple(admit_operator(node.operator_id) for node in graph.nodes)
+    records: list[AdmissionRecord] = []
+    for node in graph.nodes:
+        records.extend(_admitted_records_for_node(node))
+    return tuple(records)
+
+
+def _admitted_records_for_node(node: NodeSpec) -> tuple[AdmissionRecord, ...]:
+    records = [admit_operator(node.operator_id)]
+    if node.operator_id == "foreach":
+        body = node.config.get("body")
+        if isinstance(body, NodeSpec):
+            records.extend(_admitted_records_for_node(body))
+    return tuple(records)
 
 
 def normalize_chain_body(
