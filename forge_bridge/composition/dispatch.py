@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 from forge_bridge.composition.admission import admit_operator
 from forge_bridge.composition.boundary import MCPToolBoundary
+from forge_bridge.composition.foreach_boundary import ForeachBoundary
 from forge_bridge.composition.graph_spec import NodeSpec
 from forge_bridge.composition.node_result import NodeResult
 from forge_bridge.composition.primitive_boundary import PrimitiveBoundary
@@ -21,6 +22,7 @@ class UnifiedDispatch:
 
     mcp_boundary: MCPToolBoundary = field(default_factory=MCPToolBoundary)
     primitive_boundary: PrimitiveBoundary = field(default_factory=PrimitiveBoundary)
+    foreach_boundary: ForeachBoundary = field(default_factory=ForeachBoundary)
 
     async def dispatch(
         self,
@@ -32,5 +34,10 @@ class UnifiedDispatch:
             return await self.mcp_boundary.dispatch(node, resolved_inputs)
         if admission.dispatch_kind == "primitive":
             return await self.primitive_boundary.dispatch(node, resolved_inputs)
+        if admission.dispatch_kind == "foreach":
+            return await self.foreach_boundary.dispatch(
+                node,
+                resolved_inputs,
+                reenter=self.dispatch,
+            )
         raise AssertionError(f"Unhandled dispatch kind: {admission.dispatch_kind!r}")
-

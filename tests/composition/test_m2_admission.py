@@ -21,6 +21,7 @@ def test_admission_accepts_slice_one_operator_ids():
     assert roto.returns_reference is True
     assert admit_operator("filter").resolved_class == "primitive.filter"
     assert admit_operator("if").resolved_class == "primitive.if_gate"
+    assert admit_operator("foreach").dispatch_kind == "foreach"
 
 
 def test_admission_fails_closed_for_unknown_operator():
@@ -34,9 +35,11 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "forge_roto_ref",
         "filter",
         "if",
+        "foreach",
     }
     assert "filter(is_greenscreen == true)" not in ADMISSION_TABLE
     assert "if(disposition == pass)" not in ADMISSION_TABLE
+    assert "foreach(forge_roto_ref)" not in ADMISSION_TABLE
 
 
 def test_declaration_is_not_treated_as_truth():

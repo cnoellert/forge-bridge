@@ -127,8 +127,58 @@ READ_IFGATE_PRUNE_CLOSED = _read_ifgate_prune_case(
     "read_ifgate_prune_closed",
 )
 
+READ_FOREACH_EXPAND = ParityCase(
+    name="read_foreach_expand",
+    legacy_steps=(
+        "forge_is_greenscreen shot_id=gs_probe "
+        "clip_ref=mock://perception/is_greenscreen/gs_probe_true",
+        "foreach(forge_roto_ref shot_id=gs_010 clip_ref=mock://gs_010.mov)",
+    ),
+    graph=GraphSpec(
+        nodes=(
+            NodeSpec(
+                node_id="read_collection",
+                operator_id="forge_is_greenscreen",
+                output_port=PortTopology.list_of("shot"),
+                config={
+                    "arguments": {
+                        "shot_id": "gs_probe",
+                        "clip_ref": (
+                            "mock://perception/is_greenscreen/gs_probe_true"
+                        ),
+                    }
+                },
+            ),
+            NodeSpec(
+                node_id="foreach_roto",
+                operator_id="foreach",
+                input_ports={"input": PortContract.any()},
+                output_port=PortTopology.iteration_results(),
+                config={
+                    "body": NodeSpec(
+                        node_id="foreach_roto_body",
+                        operator_id="forge_roto_ref",
+                        input_ports={"item": PortContract.any()},
+                        config={
+                            "arguments": {
+                                "shot_id": "gs_010",
+                                "clip_ref": "mock://gs_010.mov",
+                            }
+                        },
+                    )
+                },
+            ),
+        ),
+        edges=(
+            Edge(from_node="read_collection", to_node="foreach_roto", to_port="input"),
+        ),
+    ),
+    terminal_node_id="foreach_roto",
+)
+
 PARITY_CASES = (
     GREENSCREEN_FILTER_ROTO,
     READ_IFGATE_PRUNE_OPEN,
     READ_IFGATE_PRUNE_CLOSED,
+    READ_FOREACH_EXPAND,
 )
