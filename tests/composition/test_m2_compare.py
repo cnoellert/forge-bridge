@@ -25,6 +25,7 @@ from forge_bridge.composition.executor import GraphExecutor
 from forge_bridge.composition.graph_spec import Edge, GraphSpec, NodeSpec
 from forge_bridge.composition.node_result import NodeResult
 from forge_bridge.composition.parity_corpus import (
+    DELIVERABLE_FANIN,
     GREENSCREEN_FILTER_ROTO,
     READ_FOREACH_EXPAND,
     READ_IFGATE_PRUNE_CLOSED,
@@ -104,6 +105,18 @@ class _FakeMCP:
         raise AssertionError(name)
 
 
+class _DeliverableMCP:
+    def __init__(self, payload: dict):
+        self.calls: list[tuple[str, dict]] = []
+        self._payload = payload
+
+    async def call_tool(self, name: str, arguments: dict):
+        self.calls.append((name, arguments))
+        if name != "forge_assemble_deliverable_package":
+            raise AssertionError(name)
+        return self._payload
+
+
 def _tools() -> list:
     return [
         _tool(
@@ -174,6 +187,18 @@ def _manifest_payload(*, changes: bool) -> dict:
 def _uuid_factory(*values: str):
     ids = iter(uuid.UUID(value) for value in values)
     return lambda: next(ids)
+
+
+def _source_uuid_for_port(port: str) -> uuid.UUID:
+    ports = (
+        "plate_artifact",
+        "holdouts_artifact",
+        "locked_intent_ref",
+        "audit_report_ref",
+        "provenance_manifest_ref",
+    )
+    index = ports.index(port) + 1
+    return uuid.UUID(f"00000000-0000-0000-0000-{index:012d}")
 
 
 @pytest.mark.asyncio
@@ -867,6 +892,83 @@ async def test_merge_content_error_is_not_reduction_skip():
         "ok",
         "error",
     )
+
+
+@pytest.mark.asyncio
+async def test_deliverable_fanin_all_flow_matches_captured_hashes_and_lineage():
+    case = DELIVERABLE_FANIN
+    fixture = _load_deliverable_fixture()
+    mcp = _DeliverableMCP(fixture["output"])
+    boundary = MCPToolBoundary(mcp=mcp)
+
+    async def dispatch(node: NodeSpec, resolved):
+        if node.operator_id == "fixture_source":
+            port = node.node_id.removeprefix("source_")
+            return NodeResult(
+                status="ok",
+                run_id=uuid.uuid4(),
+                artifact_id=_source_uuid_for_port(port),
+                output=node.config["output"],
+            )
+        return await boundary.dispatch(node, resolved)
+
+    results = await GraphExecutor(SkipPropagationDispatch(dispatch).dispatch).run(
+        case.graph
+    )
+    merge = results[case.terminal_node_id]
+
+    assert merge.status == "ok"
+    assert merge.output["artifact"]["package_content_sha256"] == (
+        fixture["output"]["artifact"]["package_content_sha256"]
+    )
+    assert merge.output["artifact"]["manifest_sha256"] == (
+        fixture["output"]["artifact"]["manifest_sha256"]
+    )
+    assert normalize_terminal_output(merge.output) == normalize_terminal_output(
+        fixture["output"]
+    )
+    assert merge.source_artifact_ids == tuple(
+        _source_uuid_for_port(edge.to_port) for edge in case.graph.edges
+    )
+    assert mcp.calls == [(
+        "forge_assemble_deliverable_package",
+        fixture["inputs"],
+    )]
+
+
+@pytest.mark.asyncio
+async def test_deliverable_fanin_any_skip_short_circuits_before_merge_dispatch():
+    case = DELIVERABLE_FANIN
+    fixture = _load_deliverable_fixture()
+    mcp = _DeliverableMCP(fixture["output"])
+    boundary = MCPToolBoundary(mcp=mcp)
+
+    async def dispatch(node: NodeSpec, resolved):
+        if node.operator_id == "fixture_source":
+            port = node.node_id.removeprefix("source_")
+            return NodeResult(
+                status="error" if port == "holdouts_artifact" else "ok",
+                run_id=uuid.uuid4(),
+                artifact_id=_source_uuid_for_port(port),
+                output=node.config["output"],
+                reason_code=(
+                    "missing_required_input"
+                    if port == "holdouts_artifact"
+                    else None
+                ),
+            )
+        return await boundary.dispatch(node, resolved)
+
+    wrapper = SkipPropagationDispatch(dispatch)
+    results = await GraphExecutor(wrapper.dispatch).run(case.graph)
+
+    assert wrapper.skipped_node_ids == [case.terminal_node_id]
+    assert results[case.terminal_node_id].reason_code == DID_NOT_RUN_REASON_CODE
+    assert mcp.calls == []
+    assert normalize_graph_results(
+        results,
+        terminal_node_id=case.terminal_node_id,
+    ).status_vector == ("ok", "error", "ok", "ok", "ok", "skipped")
 
 
 def test_compare_strategy_routes_idempotent_vs_record_replay():
