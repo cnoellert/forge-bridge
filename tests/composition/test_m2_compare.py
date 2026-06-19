@@ -11,7 +11,8 @@ import pytest
 
 from forge_bridge.composition.boundary import MCPToolBoundary
 from forge_bridge.composition.compare import (
-    AbortOnFirstErrorDispatch,
+    DID_NOT_RUN_REASON_CODE,
+    SkipPropagationDispatch,
     admitted_records_for,
     compare_idempotent_paths,
     compare_strategy_for,
@@ -23,10 +24,14 @@ from forge_bridge.composition.dispatch import UnifiedDispatch
 from forge_bridge.composition.executor import GraphExecutor
 from forge_bridge.composition.graph_spec import Edge, GraphSpec, NodeSpec
 from forge_bridge.composition.node_result import NodeResult
-from forge_bridge.composition.parity_corpus import GREENSCREEN_FILTER_ROTO
+from forge_bridge.composition.parity_corpus import (
+    GREENSCREEN_FILTER_ROTO,
+    READ_IFGATE_PRUNE_CLOSED,
+    READ_IFGATE_PRUNE_OPEN,
+)
 from forge_bridge.composition.primitive_boundary import PrimitiveBoundary
 from forge_bridge.console._engine import run_chain_steps
-from forge_bridge.graph.ports import PortContract
+from forge_bridge.graph.ports import PortContract, PortTopology
 
 
 def _tool(name: str, properties: dict, required: list[str]):
@@ -52,9 +57,15 @@ _FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
 
 class _FakeMCP:
-    def __init__(self, *, roto_payload: dict | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        roto_payload: dict | None = None,
+        greenscreen_payload: dict | None = None,
+    ) -> None:
         self.calls: list[tuple[str, dict]] = []
         self._roto_payload = roto_payload
+        self._greenscreen_payload = greenscreen_payload
 
     async def list_tools(self):
         return _tools()
@@ -62,6 +73,8 @@ class _FakeMCP:
     async def call_tool(self, name: str, arguments: dict):
         self.calls.append((name, arguments))
         if name == "forge_is_greenscreen":
+            if self._greenscreen_payload is not None:
+                return self._greenscreen_payload
             return {
                 "shots": [
                     {"id": "gs_010", "is_greenscreen": True},
@@ -102,6 +115,13 @@ def _load_roto_capture(name: str) -> dict:
     return json.loads(path.read_text())
 
 
+def _manifest_payload(*, changes: bool) -> dict:
+    return {
+        "type": "mutation_plan",
+        "proposed_changes": [{"id": "a"}] if changes else [],
+    }
+
+
 def _uuid_factory(*values: str):
     ids = iter(uuid.UUID(value) for value in values)
     return lambda: next(ids)
@@ -139,6 +159,181 @@ async def test_compare_harness_proves_greenscreen_filter_roto_vertical_equal():
     assert result.graph.terminal_output["artifact"]["media_content_sha256"].startswith(
         "19ffdc03"
     )
+
+
+@pytest.mark.parametrize(
+    ("case", "changes", "expected"),
+    [
+        (READ_IFGATE_PRUNE_OPEN, True, ("ok", "ok", "ok")),
+        (READ_IFGATE_PRUNE_CLOSED, False, ("ok", "ok", "skipped")),
+    ],
+)
+@pytest.mark.asyncio
+async def test_compare_harness_aligns_if_gate_linear_prune(case, changes, expected):
+    legacy_mcp = _FakeMCP(
+        greenscreen_payload=_manifest_payload(changes=changes),
+        roto_payload=_load_roto_capture("a"),
+    )
+    graph_mcp = _FakeMCP(
+        greenscreen_payload=_manifest_payload(changes=changes),
+        roto_payload=_load_roto_capture("b"),
+    )
+
+    async def legacy_runner():
+        return await run_chain_steps(
+            steps=list(case.legacy_steps),
+            tools=_tools(),
+            mcp=legacy_mcp,
+            request_id=f"req-{case.name}",
+            client_ip="127.0.0.1",
+            started=time.monotonic(),
+        )
+
+    result = await compare_idempotent_paths(
+        legacy_runner=legacy_runner,
+        graph=case.graph,
+        dispatch=UnifiedDispatch(
+            mcp_boundary=MCPToolBoundary(mcp=graph_mcp),
+            primitive_boundary=PrimitiveBoundary(),
+        ).dispatch,
+        terminal_node_id=case.terminal_node_id,
+        expected_steps=len(case.legacy_steps),
+    )
+
+    assert result.equivalent
+    assert result.legacy.status_vector == expected
+    assert result.graph.status_vector == expected
+
+
+@pytest.mark.asyncio
+async def test_if_gate_parity_oracle_diverges_beyond_single_step_tail():
+    """if-gate parity-vs-legacy holds ONLY for a single post-gate step.
+
+    Legacy (``_engine.py``) pops ``__if_gate_skip_next__`` and skips *exactly
+    one* step, then resumes. The graph wrapper re-mints
+    ``control_signal="skip"`` on each skipped node, so the skip cascades through
+    the whole downstream cone. The two semantics coincide at a one-step tail
+    (the linear-prune specimens above) and DIVERGE at n>=2.
+
+    This divergence is *by design*: the graph's subgraph-prune is the correct
+    gate semantic on a DAG, while legacy's "skip the next step" is a linear-list
+    artifact that does not even define a gate on a branching graph. The
+    consequence — recorded here so it is loud, not latent — is that the
+    if-gate parity oracle does not extend the way roto/filter parity does. A
+    future multi-step-tail gate specimen must fail *here*, deliberately, rather
+    than mysteriously in the equivalent-by-contract parity corpus.
+    """
+    # read_manifest -> if(closed) -> first -> second  (TWO post-gate steps).
+    legacy_steps = (
+        "forge_is_greenscreen shot_id=manifest clip_ref=mock://manifest.mov",
+        "if(proposed_changes exists)",
+        "forge_roto_ref shot_id=gs_010 clip_ref=mock://gs_010.mov",
+        "forge_roto_ref shot_id=gs_011 clip_ref=mock://gs_011.mov",
+    )
+    graph = GraphSpec(
+        nodes=(
+            NodeSpec(
+                node_id="read_manifest",
+                operator_id="forge_is_greenscreen",
+                output_port=PortTopology.manifest(),
+                config={
+                    "arguments": {
+                        "shot_id": "manifest",
+                        "clip_ref": "mock://manifest.mov",
+                    }
+                },
+            ),
+            NodeSpec(
+                node_id="if_gate",
+                operator_id="if",
+                input_ports={"input": PortContract.manifest_gate()},
+                output_port=PortTopology.manifest(),
+                config={"step_text": "if(proposed_changes exists)"},
+            ),
+            NodeSpec(
+                node_id="first",
+                operator_id="forge_roto_ref",
+                input_ports={"input": PortContract.any()},
+                config={
+                    "arguments": {
+                        "shot_id": "gs_010",
+                        "clip_ref": "mock://gs_010.mov",
+                    }
+                },
+            ),
+            NodeSpec(
+                node_id="second",
+                operator_id="forge_roto_ref",
+                input_ports={"input": PortContract.any()},
+                config={
+                    "arguments": {
+                        "shot_id": "gs_011",
+                        "clip_ref": "mock://gs_011.mov",
+                    }
+                },
+            ),
+        ),
+        edges=(
+            Edge(from_node="read_manifest", to_node="if_gate", to_port="input"),
+            Edge(from_node="if_gate", to_node="first", to_port="input"),
+            Edge(from_node="first", to_node="second", to_port="input"),
+        ),
+    )
+
+    legacy_mcp = _FakeMCP(
+        greenscreen_payload=_manifest_payload(changes=False),
+        roto_payload=_load_roto_capture("a"),
+    )
+    graph_mcp = _FakeMCP(
+        greenscreen_payload=_manifest_payload(changes=False),
+        roto_payload=_load_roto_capture("b"),
+    )
+
+    async def legacy_runner():
+        return await run_chain_steps(
+            steps=list(legacy_steps),
+            tools=_tools(),
+            mcp=legacy_mcp,
+            request_id="req-ifgate-cascade",
+            client_ip="127.0.0.1",
+            started=time.monotonic(),
+        )
+
+    result = await compare_idempotent_paths(
+        legacy_runner=legacy_runner,
+        graph=graph,
+        dispatch=UnifiedDispatch(
+            mcp_boundary=MCPToolBoundary(mcp=graph_mcp),
+            primitive_boundary=PrimitiveBoundary(),
+        ).dispatch,
+        terminal_node_id="second",
+        expected_steps=len(legacy_steps),
+    )
+
+    # Legacy skips ONLY the immediate next step; the final step still runs.
+    assert result.legacy.status_vector == ("ok", "ok", "skipped", "ok")
+    # Graph cascades the skip through the entire downstream cone.
+    assert result.graph.status_vector == ("ok", "ok", "skipped", "skipped")
+    # Therefore the parity oracle does NOT hold beyond a single-step tail.
+    assert not result.equivalent
+
+
+@pytest.mark.asyncio
+async def test_if_gate_prune_preserves_static_outer_node_set():
+    case = READ_IFGATE_PRUNE_CLOSED
+    graph_mcp = _FakeMCP(
+        greenscreen_payload=_manifest_payload(changes=False),
+    )
+
+    wrapper = SkipPropagationDispatch(UnifiedDispatch(
+        mcp_boundary=MCPToolBoundary(mcp=graph_mcp),
+        primitive_boundary=PrimitiveBoundary(),
+    ).dispatch)
+    results = await GraphExecutor(wrapper.dispatch).run(case.graph)
+
+    assert set(results) == {node.node_id for node in case.graph.nodes}
+    assert wrapper.skipped_node_ids == ["downstream"]
+    assert results["downstream"].reason_code == DID_NOT_RUN_REASON_CODE
 
 
 def test_roto_real_capture_normalizer_collapses_volatile_envelope():
@@ -186,6 +381,71 @@ def test_normalize_chain_body_rejects_clarification_needed_status():
         normalize_chain_body(body)
 
 
+def test_normalize_chain_body_marks_only_engine_injected_skip_as_skipped():
+    body = {
+        "status": "success",
+        "request_id": "req",
+        "error": None,
+        "chain": [
+            {"step": "read", "result": {"type": "mutation_plan"}},
+            {
+                "step": "if(proposed_changes exists)",
+                "result": {
+                    "type": "mutation_plan",
+                    "execution_state": "skipped",
+                    "if_gate": {"matched": False},
+                },
+            },
+            {
+                "step": "downstream",
+                "result": {
+                    "type": "mutation_plan",
+                    "execution_state": "skipped",
+                    "skipped_step": "downstream",
+                },
+            },
+        ],
+    }
+
+    assert normalize_chain_body(body).status_vector == ("ok", "ok", "skipped")
+
+
+@pytest.mark.asyncio
+async def test_graph_status_tokens_gate_ran_ok_downstream_skipped():
+    calls: list[str] = []
+
+    async def dispatch(node: NodeSpec, _resolved):
+        calls.append(node.node_id)
+        if node.node_id == "gate":
+            return NodeResult(
+                status="ok",
+                run_id=uuid.uuid4(),
+                output={"execution_state": "skipped"},
+                control_signal="skip",
+            )
+        return NodeResult(status="ok", run_id=uuid.uuid4(), output={"ran": True})
+
+    graph = GraphSpec(
+        nodes=(
+            NodeSpec(node_id="gate", operator_id="if"),
+            NodeSpec(
+                node_id="downstream",
+                operator_id="forge_roto_ref",
+                input_ports={"input": PortContract.any()},
+            ),
+        ),
+        edges=(Edge(from_node="gate", to_node="downstream", to_port="input"),),
+    )
+    wrapper = SkipPropagationDispatch(dispatch)
+    results = await GraphExecutor(wrapper.dispatch).run(graph)
+
+    assert calls == ["gate"]
+    assert normalize_graph_results(results, terminal_node_id="downstream").status_vector == (
+        "ok",
+        "skipped",
+    )
+
+
 @pytest.mark.asyncio
 async def test_lineage_flows_through_filter_primitive_artifact():
     filter_id = uuid.UUID("22222222-2222-2222-2222-222222222222")
@@ -213,7 +473,7 @@ async def test_lineage_flows_through_filter_primitive_artifact():
 
 
 @pytest.mark.asyncio
-async def test_abort_wrapper_skips_downstream_dispatch_after_error():
+async def test_skip_propagation_wrapper_preserves_abort_after_error():
     calls: list[str] = []
 
     async def dispatch(node: NodeSpec, _resolved):
@@ -232,7 +492,7 @@ async def test_abort_wrapper_skips_downstream_dispatch_after_error():
         ),
         edges=(Edge(from_node="source", to_node="downstream", to_port="input"),),
     )
-    wrapper = AbortOnFirstErrorDispatch(dispatch)
+    wrapper = SkipPropagationDispatch(dispatch)
     results = await GraphExecutor(wrapper.dispatch).run(graph)
 
     assert calls == ["source"]

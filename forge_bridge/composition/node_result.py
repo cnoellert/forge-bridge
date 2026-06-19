@@ -39,12 +39,18 @@ class NodeResult:
     candidates: tuple[Any, ...] = ()  # abstained (à la ReferenceResolution)
     source_artifact_ids: tuple[uuid.UUID, ...] = ()  # forward-only lineage
     resolved_class: str | None = None  # replay/audit class resolved by dispatch
+    # Orthogonal to status: status says whether this node produced usable output;
+    # control_signal says what orchestration must do next. Slice 2a only uses
+    # "skip", emitted by gates/errors to stop downstream dispatch.
+    control_signal: str | None = None
 
     def __post_init__(self) -> None:
         if self.status not in NODE_STATUSES:
             raise ValueError(
                 f"NodeResult.status {self.status!r} not in {NODE_STATUSES}"
             )
+        if self.control_signal not in {None, "skip"}:
+            raise ValueError("NodeResult.control_signal must be None or 'skip'")
 
     @property
     def has_usable_output(self) -> bool:

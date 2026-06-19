@@ -21,6 +21,7 @@ from forge_bridge.graph.filter import (
     PredicateParseError,
     parse_filter_step,
 )
+from forge_bridge.graph.if_gate import IfGateNode, parse_if_step
 from forge_bridge.graph.ports import infer_topology
 
 
@@ -44,6 +45,13 @@ class PrimitiveBoundary:
         )
         if node.operator_id == "filter":
             return _run_filter(
+                node,
+                resolved_inputs,
+                admission.resolved_class,
+                self.artifact_id_factory,
+            )
+        if node.operator_id == "if":
+            return _run_if_gate(
                 node,
                 resolved_inputs,
                 admission.resolved_class,
@@ -101,6 +109,52 @@ def _run_filter(
     )
 
 
+def _run_if_gate(
+    node: NodeSpec,
+    resolved_inputs: dict[str, NodeResult],
+    resolved_class: str,
+    artifact_id_factory: Callable[[], uuid.UUID],
+) -> NodeResult:
+    if len(resolved_inputs) != 1:
+        return _error(
+            "invalid_primitive_input",
+            "IfGate requires exactly one upstream input.",
+            resolved_class,
+        )
+    upstream = next(iter(resolved_inputs.values()))
+    if not upstream.has_usable_output:
+        return _error(
+            "invalid_primitive_input",
+            "IfGate requires a usable upstream output.",
+            resolved_class,
+            source_artifact_ids=_source_artifact_ids(resolved_inputs),
+        )
+
+    try:
+        predicate = _if_predicate(node.config)
+        output = IfGateNode(predicate).run(upstream.output)
+    except (GraphInputError, PredicateParseError) as exc:
+        return _error(
+            getattr(exc, "code", "primitive_error"),
+            getattr(exc, "message", str(exc)),
+            resolved_class,
+            source_artifact_ids=_source_artifact_ids(resolved_inputs),
+        )
+
+    topology = infer_topology(output)
+    return NodeResult(
+        status="ok",
+        run_id=uuid.uuid4(),
+        artifact_id=artifact_id_factory(),
+        output=output,
+        output_topology=topology.to_dict(),
+        artifact_type=topology.item_type if topology.kind == "list" else topology.kind,
+        source_artifact_ids=_source_artifact_ids(resolved_inputs),
+        resolved_class=resolved_class,
+        control_signal="skip" if output.get("execution_state") == "skipped" else None,
+    )
+
+
 def _filter_predicate(config: dict[str, Any]) -> FilterPredicate:
     predicate = config.get("predicate")
     if isinstance(predicate, FilterPredicate):
@@ -111,6 +165,18 @@ def _filter_predicate(config: dict[str, Any]) -> FilterPredicate:
     if isinstance(step_text, str):
         return parse_filter_step(step_text)
     raise PredicateParseError("missing_predicate", "Filter predicate is required.")
+
+
+def _if_predicate(config: dict[str, Any]) -> FilterPredicate:
+    predicate = config.get("predicate")
+    if isinstance(predicate, FilterPredicate):
+        return predicate
+    if isinstance(predicate, dict):
+        return FilterPredicate.from_dict(predicate)
+    step_text = config.get("step_text")
+    if isinstance(step_text, str):
+        return parse_if_step(step_text)
+    raise PredicateParseError("missing_predicate", "IfGate predicate is required.")
 
 
 def _source_artifact_ids(

@@ -185,6 +185,9 @@ async def test_usable_output_derivable_from_discriminator_alone():
         .resolved_class
         == "mcp.read_perception"
     )
+    gate = NodeResult(status="ok", run_id=rid, control_signal="skip")
+    assert gate.has_usable_output is True
+    assert gate.control_signal == "skip"
 
 
 # ── 6. forward-only lineage recorded ─────────────────────────────────────────
