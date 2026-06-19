@@ -26,6 +26,8 @@ DID_NOT_RUN_REASON_CODE = "did_not_run_after_skip"
 FAIL_ON_NON_FLOWING_INPUT = "fail"
 DEFERRED_REDUCTION_POLICIES = frozenset({"degrade", "omit-continue"})
 _ARTIFACT_ID_RE = re.compile(r"roto_[0-9a-f]{32}")
+_DELIVERABLE_ID_RE = re.compile(r"deliverable_[0-9a-f]{32}")
+_PACKAGE_ID_RE = re.compile(r"package_[0-9a-f]{32}")
 _UUID_RE = re.compile(
     r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
     re.IGNORECASE,
@@ -259,7 +261,7 @@ def _normalize_in_place(value: Any, path: tuple[str | int, ...]) -> None:
                 del value[key]
                 continue
             if _canonicalize_field(compare_path):
-                value[key] = _canonicalize_token(str(value[key]))
+                value[key] = _canonicalize_value(compare_path, str(value[key]))
                 continue
             _normalize_in_place(value[key], child_path)
         return
@@ -280,7 +282,21 @@ def _strip_field(path: tuple[str | int, ...]) -> bool:
 def _canonicalize_field(path: tuple[str | int, ...]) -> bool:
     if path == ("artifact", "artifact_id"):
         return True
+    if path == ("artifact", "deliverable_id"):
+        return True
     if path == ("artifact", "sequence_locator", "path"):
+        return True
+    if path == ("artifact", "package_root", "path"):
+        return True
+    if path == ("artifact", "assembly_run", "request_id"):
+        return True
+    if (
+        len(path) == 3
+        and path[0] == "artifact"
+        and isinstance(path[1], str)
+        and path[1].endswith("_ref")
+        and path[2] == "artifact_id"
+    ):
         return True
     if len(path) == 3 and path[0] == "artifact_refs" and path[2] in {
         "artifact_id",
@@ -303,4 +319,29 @@ def _compare_path(path: tuple[str | int, ...]) -> tuple[str | int, ...]:
 
 def _canonicalize_token(value: str) -> str:
     value = _ARTIFACT_ID_RE.sub("roto_<artifact_id>", value)
+    value = _DELIVERABLE_ID_RE.sub("deliverable_<deliverable_id>", value)
+    value = _PACKAGE_ID_RE.sub("package_<artifact_id>", value)
     return _UUID_RE.sub("<uuid>", value)
+
+
+def _canonicalize_value(path: tuple[str | int, ...], value: str) -> str:
+    if path == ("artifact", "assembly_run", "request_id"):
+        return "<request_id>"
+    if path == ("artifact", "package_root", "path"):
+        return "<deliverable_package_root>"
+    if (
+        len(path) == 3
+        and path[0] == "artifact_refs"
+        and path[2] == "locator"
+        and "deliverable_" in value
+    ):
+        return "<deliverable_package_root>"
+    if (
+        len(path) == 3
+        and path[0] == "artifact"
+        and isinstance(path[1], str)
+        and path[1].endswith("_ref")
+        and path[2] == "artifact_id"
+    ):
+        return "<bundled_artifact_id>"
+    return _canonicalize_token(value)

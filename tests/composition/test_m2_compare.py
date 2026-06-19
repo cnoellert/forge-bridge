@@ -130,6 +130,11 @@ def _load_roto_capture(name: str) -> dict:
     return json.loads(path.read_text())
 
 
+def _load_deliverable_fixture() -> dict:
+    path = _FIXTURE_DIR / "deliverable_fanin_sh010.json"
+    return json.loads(path.read_text())
+
+
 def _load_real_greenscreen_collection() -> dict:
     return json.loads(_REAL_TRUE)
 
@@ -578,6 +583,48 @@ def test_foreach_iteration_result_normalizer_reroots_real_roto_captures():
     assert "body" not in normalized_a["foreach"]
 
 
+def test_deliverable_normalizer_preserves_hash_oracle_across_volatile_ids():
+    call_a = _load_deliverable_fixture()["output"]
+    call_b = json.loads(json.dumps(call_a))
+    call_b["artifact"]["artifact_id"] = "package_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    call_b["artifact"]["deliverable_id"] = "deliverable_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    call_b["artifact"]["package_root"]["path"] = (
+        "/tmp/other/deliverable_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    )
+    call_b["artifact"]["assembly_run"]["request_id"] = (
+        "cccccccccccccccccccccccccccccccc"
+    )
+    for ref_name in (
+        "plate_ref",
+        "holdouts_ref",
+        "locked_intent_ref",
+        "audit_report_ref",
+        "provenance_manifest_ref",
+    ):
+        call_b["artifact"][ref_name]["artifact_id"] = f"{ref_name}_volatile"
+    call_b["artifact_refs"][0]["artifact_id"] = call_b["artifact"]["artifact_id"]
+    call_b["artifact_refs"][0]["locator"] = call_b["artifact"]["package_root"]["path"]
+
+    normalized_a = normalize_terminal_output(call_a)
+    normalized_b = normalize_terminal_output(call_b)
+
+    assert normalized_a == normalized_b
+    assert normalized_a["artifact"]["package_content_sha256"] == (
+        "82c718922bd37ac0b737cb2bcd9ac288afca22151822e4b9313d1440e9f8be94"
+    )
+    assert normalized_a["artifact"]["manifest_sha256"] == (
+        "74e8f2978f3b47e14af7b3ad1b0228162eccfc97adf9655684c74faec00f1bc3"
+    )
+
+
+def test_deliverable_normalizer_preserves_hash_mismatch():
+    call_a = _load_deliverable_fixture()["output"]
+    call_b = json.loads(json.dumps(call_a))
+    call_b["artifact"]["package_content_sha256"] = "f" * 64
+
+    assert normalize_terminal_output(call_a) != normalize_terminal_output(call_b)
+
+
 def test_normalize_chain_body_rejects_clarification_needed_status():
     body = {
         "status": "clarification_needed",
@@ -766,6 +813,60 @@ async def test_deferred_reduction_policy_fails_loudly_until_grounded():
 
     with pytest.raises(NotImplementedError, match="degrade"):
         await GraphExecutor(SkipPropagationDispatch(dispatch).dispatch).run(graph)
+
+
+@pytest.mark.asyncio
+async def test_merge_content_error_is_not_reduction_skip():
+    source_nodes = tuple(
+        NodeSpec(node_id=f"source_{index}", operator_id="forge_is_greenscreen")
+        for index in range(5)
+    )
+    merge = NodeSpec(
+        node_id="merge",
+        operator_id="forge_assemble_deliverable_package",
+        input_ports={f"in{index}": PortContract.any() for index in range(5)},
+        config={"reduction": {"on_non_flowing_input": "fail"}},
+    )
+    graph = GraphSpec(
+        nodes=(*source_nodes, merge),
+        edges=tuple(
+            Edge(from_node=f"source_{index}", to_node="merge", to_port=f"in{index}")
+            for index in range(5)
+        ),
+    )
+    source_ids = tuple(uuid.uuid4() for _ in range(5))
+    calls: list[str] = []
+
+    async def dispatch(node: NodeSpec, _resolved):
+        calls.append(node.node_id)
+        if node.node_id == "merge":
+            return NodeResult(
+                status="error",
+                run_id=uuid.uuid4(),
+                reason_code="shot_id_mismatch",
+                message="holdouts shot_id does not match locked_intent shot_id",
+            )
+        index = int(node.node_id.removeprefix("source_"))
+        return NodeResult(
+            status="ok",
+            run_id=uuid.uuid4(),
+            artifact_id=source_ids[index],
+        )
+
+    wrapper = SkipPropagationDispatch(dispatch)
+    results = await GraphExecutor(wrapper.dispatch).run(graph)
+
+    assert calls == ["source_0", "source_1", "source_2", "source_3", "source_4", "merge"]
+    assert wrapper.skipped_node_ids == []
+    assert results["merge"].reason_code == "shot_id_mismatch"
+    assert normalize_graph_results(results, terminal_node_id="merge").status_vector == (
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "error",
+    )
 
 
 def test_compare_strategy_routes_idempotent_vs_record_replay():
