@@ -1,6 +1,6 @@
 # M2 Slice 3 — Orch Framing (mutations / authority) — positions for the room
 
-**Date:** 2026-06-19 · **Status:** ORCH DRAFT + CREATIVE CONVERGED (positions on Q1–Q5; DT grounding pending).
+**Date:** 2026-06-19 · **Status:** CONVERGED (Orch + Creative + DT). Ready for pass-to-code. **Fixtures CAPTURED** (live controlled rename on `30sec_edit 21`, 6 artifacts, byte-exact round-trip verified twice; see "Live capture" below).
 **Base:** main `0d7fb61` (arc 2a/2b/2c closed). **Parents:** [[M2-SLICE-3-FRAMING-SEED]] · [[M2-SLICE-2-SEAM-DESIGN]] · the 2a/2b/2c pass-to-code docs.
 **Grounded against live reads (2026-06-19):** `graph/commit.py`, `graph/mutation.py`, `graph/stage.py`, `composition/{admission,compare,dispatch}.py`, `console/_chat_compile.py:run_apply_branch`, `tests/composition/test_m2_executor_invariants.py`.
 
@@ -10,7 +10,9 @@
 
 ## Thesis
 
-Slice 3 brings the **mutation apply** through the composition substrate (GraphExecutor + a new `CommitBoundary`) **without touching the executor and without moving assent into the graph.** The mechanism already exists in pieces — `CommitNode.verify(held, fresh, assent)` is the gate; `UnifiedDispatch` is the router; `run_apply_branch` is the legacy reference. Slice 3 wires them: compile a ratified chain into a `GraphSpec` carrying a `CommitNode`, dispatch it through the pure executor, and parity-check the terminal against the legacy `run_apply_branch`. The state machine (`proposed→ratified→applied|failed`) stays in `AssentRecordRepo`/the harness — the graph only carries *verify-then-apply*.
+Slice 3 brings the **mutation apply** through the composition substrate (GraphExecutor + a new `CommitBoundary`) **without touching the executor and without moving assent into the graph.** The mechanism already exists in pieces — `CommitNode.verify(held, fresh, assent)` is the gate; `UnifiedDispatch` is the router; `run_apply_branch` is the legacy reference. Slice 3 wires them: **hand-author a `GraphSpec` specimen carrying a `CommitNode`** (the 2a/2b/2c fixture pattern), dispatch it through the pure executor, verify plan-equivalence + post-state, and check against the legacy reference. The state machine (`proposed→ratified→applied|failed`) stays in `AssentRecordRepo`/the harness — the graph only carries *verify-then-apply*.
+
+> **Scope boundary (DT correction):** chain_steps→`GraphSpec` compilation is **slice 4** (text→GraphSpec). Slice 3 hand-authors the specimen exactly like the deliverable fan-in fixture. Do **not** pull `compile_operator_sequence` into slice 3 — it's operator-agnostic and would route a commit step with no edit, but the specimen is hand-authored. What's actually missing for slice 3: `admission(commit)` + `CommitBoundary` + the specimen. The compiler is a non-dependency.
 
 This is the same shape as 2a–2c (the primitive exists; the slice admits + dispatches + compares it), with one new load-bearing constraint: **three different authors must own three different facts**, and no two may collapse.
 
@@ -50,7 +52,7 @@ Anything less is representation parity, not apply parity.
 
 **Why this shape:** it mirrors how `SkipPropagationDispatch` already sits *outside* the executor as an orchestration wrapper. The boundary is where side-effect/authority policy is allowed to live; the executor stays a pure runner. `CommitNode.verify` already returns `assent_valid` and `matched` separately — the boundary maps `(matched, assent_valid)` → apply-or-error.
 
-**Settled flow:** the `AssentRecord` *lifecycle* (ratify/persist/mark_applied) stays in `run_apply_branch`; only the verify+apply dispatch moves into the graph. The harness ratifies → compiles `chain_steps` into a `GraphSpec` with a `CommitNode` → runs the executor → reads the terminal `NodeResult` → transitions the `AssentRecord`. **Keep the state machine out of the graph** (assent enters `CommitBoundary` via the dispatch closure, never as executor state).
+**Settled flow:** the `AssentRecord` *lifecycle* (ratify/persist/mark_applied) stays in `run_apply_branch`; only the verify+apply dispatch moves into the graph. The harness ratifies → runs the executor over a (slice-3: hand-authored) `GraphSpec` with a `CommitNode` → reads the terminal `NodeResult` → transitions the `AssentRecord`. **Keep the state machine out of the graph** (assent enters `CommitBoundary` via the dispatch closure, never as executor state, and — DT-2 guard — is **never embedded in a returned `NodeResult`**; the boundary returns a plain ok/error/drift result).
 
 ---
 
@@ -62,9 +64,15 @@ Anything less is representation parity, not apply parity.
 2. **Apply-once** = the mutation tool's discover/verify/apply contract guarantees single application; the graph dispatches `apply` exactly once.
 3. **Post-state** = the single apply produced the expected controlled state transition. The fair comparison is: same `held` manifest, same `ratified` assent, same `matched` result → one apply against one controlled state → assert the resulting state is the expected one. This is a *state-transition* assertion, not a second execution.
 
-**For the cross-path (legacy-vs-graph) oracle the milestone spine demands:** compare the **plans**, not the post-mutation states. `compare_strategy_for` already returns `record_replay` for non-idempotent ops — slice 3 finally exercises that path for real. Concretely: capture the legacy path's resolved plan (what it *would* apply) and the graph path's held manifest, normalize, compare; then apply **once** on one path. This sidesteps the "mutating the world twice" problem entirely.
+**For the cross-path oracle: compare the plans (held-vs-held manifests), not the post-mutation states.**
 
-**Surface loudly:** capturing a legacy-apply reference *mutates the state the graph-apply would need*. So the parity fixture is harder to capture than any read fixture — it must be **captured-not-assembled** from a fresh real state, and the drift case needs a fixture where state genuinely changed between preview and recompute. This is the third application of the oracle wall, and the first where the comparison shape is plan-equivalence rather than result-equivalence.
+> **DT-1 correction — `record_replay` is a stub, not "selected-but-untested."** `compare_strategy_for` returns the string `"record_replay"` (`compare.py:130`), but there is **no `compare_record_replay` function and zero callers** — nothing in `forge_bridge/` or `tests/` calls `compare_strategy_for` at all. So "slice 3 finally exercises that path" was wrong: there is nothing to exercise.
+>
+> **Scoping (don't over-build):** slice 3 needs **plan-equivalence on manifests** — compare two `MutationManifest`s (held-vs-held), a modest extension of the existing `normalize_terminal_output`/`CompareSnapshot` machinery (the deliverable already taught it manifest-shaped normalization). Build that + the post-state assertion. **Do not** construct a generic double-exec-of-mutated-world replay engine to satisfy a string. Repurpose the `"record_replay"` label to mean "plan-equivalence" or leave it — but don't build the engine.
+
+Concretely: plan-equivalence is `held == fresh` (Commit's verify); apply **once**; assert post-state. **Why plan-equivalence is sufficient here (DT):** under the Q1 decision (apply through the executor via the *shared* commit substrate), same `held` + same apply code + one post-state assertion ⇒ post-state parity *by construction*. The heavy double-apply/rollback fixture is only needed in the rejected branch (apply-stays-legacy), which Q1 closed. A single post-state assertion on the one graph apply discharges the obligation.
+
+**Surface loudly:** the post-state fixture is the genuinely hardest in the milestone — a controlled live rename captured pre/post, **captured-not-assembled**, because capturing a reference *mutates the world the graph would need*. It's an isolation/capture problem, not a missing-capability one (DT-3).
 
 ---
 
@@ -86,15 +94,19 @@ Anything less is representation parity, not apply parity.
 
 **The one crack to watch (surface loudly):** if Commit ever needs to mutate the `AssentRecord` state machine *mid-graph* (proposed→applied), that would drag assent into the dispatch path. It must not. The transition stays in `run_apply_branch`/`AssentRecordRepo`; the graph returns a result, the harness transitions the record. If a specimen forces the executor or the dispatch generic to become assent-aware, **that is the first crack in the slice-2 reframe — stop and escalate, don't paper over it.**
 
+**DT-2 — holds by construction.** `CommitBoundary` takes assent via the dispatch closure (the `ForeachBoundary.reenter` pattern: a call-time param threaded by `UnifiedDispatch`, not stored on the executor). The executor calls `self._dispatch(node, resolved_inputs)` and only ever carries `NodeResult`s; it never references assent. So `executor.py` stays byte-identical and token-free; `test_m2_executor_invariants` survives. **Literal-ban guard:** assent must stay boundary-local — **never embed it in a returned `NodeResult`** (the executor *carries* `NodeResult`s; keep assent out of them so the ban is literal, not just spirit).
+
 ---
 
 ## Q5 — forcing specimen
 
-**Position:** `flame_preview_rename` (discover/preview → `held` manifest) + `flame_rename_shots` (apply) — both are real forge-core MCP tools, and v1.7 already ships this rename through the **legacy** `compile→preview→ratify→apply` chain, so the parity reference already exists. `MutationManifest.apply_counterpart.tool = "flame_rename_shots"`.
+**Position:** `flame_rename_shots` is the specimen. **Live-grounding update (2026-06-19, Phase 25.0):** `flame_preview_rename` is now a *compatibility shim* that delegates to `flame_rename_shots(dry_run=True)`. The tool **already implements the discover/verify/apply contract** `CommitNode` was designed against: `mode: discover | verify | apply` + a `resolved_plan` (the `ChangeRecord` list). So `held` and `fresh` are both `flame_rename_shots(dry_run=True)` manifests; apply is `mode="apply", resolved_plan=<held plan>`; `CommitBoundary` wraps this existing contract rather than reinventing it. `MutationManifest.apply_counterpart.tool = "flame_rename_shots"`.
+
+**Specimen surface (corrected):** the mutation and its post-state read are both **Flame-side** on a loaded **sequence** — `flame_get_sequence_segments` reads segment names pre/post. Not the canonical `forge_*` shot registry (DT-3 correction above). The capture therefore mutates a Flame sequence in the **currently-loaded Flame project**, so the capture target is a *throwaway sequence*, an operator-authorized choice (assent stays the operator's — fittingly).
 
 **Captured-not-assembled matters MORE here than in reads (Creative — theater risk).** Four fixtures must each be a real capture or controlled live capture, never reconstructed: the **held** manifest (live `flame_preview_rename`), the **ratified** assent, the **fresh** state recompute, and the **post-state** after apply. The drift fixture is a capture where state genuinely changed between preview and recompute. If any of these is assembled rather than captured, the slice looks proven while being theater.
 
-**Build first-moves (for the pass-to-code, not this framing):** `composition/compiler.py` (how `chain_steps` → `GraphSpec`, and where a `CommitNode` is emitted), `composition/boundary.py` + `primitive_boundary.py` (the boundary shape to clone for `CommitBoundary`), and the `record_replay` arm of `compare.py` (selected-but-untested today).
+**Build first-moves (for the pass-to-code, not this framing):** `composition/boundary.py` + `primitive_boundary.py` + `foreach_boundary.py` (the boundary shape + closure-threading pattern to clone for `CommitBoundary`), `composition/admission.py` (the new `dispatch_kind="commit"` entry), and the `normalize_terminal_output`/`CompareSnapshot` machinery in `compare.py` (extend to manifest plan-equivalence — **not** the `record_replay` string, which is an unimplemented stub). `composition/compiler.py` is **not** touched (slice 4).
 
 ---
 
@@ -104,11 +116,48 @@ Anything less is representation parity, not apply parity.
 
 ---
 
-## Open for DT (grounding) — Creative converged, operator Q1 decided
+## DT grounding — all four resolved
 
-- **DT-1:** Does the `record_replay` arm of `compare.py` actually exist to be exercised, or is it a stub? (Slice-1 note says selected-but-untested.)
-- **DT-2:** Verify the assent-token-ban stays green under a `CommitBoundary` — i.e., assent reaches the boundary via the dispatch closure with **zero** new tokens in `executor.py`. Confirm the byte-for-byte lock survives.
-- **DT-3:** Ground the post-state assertion (Q2 wall 3): is there a real read path to confirm the controlled mutation landed (e.g. re-query shot names post-rename), and can it be captured-not-assembled?
-- **DT-4:** Confirm `composition/compiler.py` can emit a `CommitNode` into a `GraphSpec` from ratified `chain_steps`, or surface what's missing.
+- **DT-1:** `record_replay` is a **stub** — the string is returned but unimplemented, zero callers. Slice 3 builds **plan-equivalence on manifests** (extend `normalize_terminal_output`/`CompareSnapshot`), not a replay engine. *(folded into Q2)*
+- **DT-2:** Assent-token-ban **holds by construction** (closure-threaded like `ForeachBoundary.reenter`); `executor.py` stays byte-identical. Guard: never embed assent in a returned `NodeResult`. *(folded into Q4)*
+- **DT-3 (CORRECTED 2026-06-19 live grounding):** Post-state read path exists but DT-3 named the **wrong surface**. `flame_rename_shots` mutates **Flame timeline** segments on a `sequence_name`; `forge_get_shot`/`forge_list_shots` read **canonical Postgres** shots by `project_id`. Bridge is substrate-not-producer — the Flame rename is **not** auto-reflected into the canonical registry. The post-state read for this specimen is **Flame-side: `flame_get_sequence_segments`** (re-read segment names pre/post). The slice stays coherent (held==fresh + post-state both Flame-side). *(folded into Q2/Q5)*
+- **DT-4:** Compiler is operator-agnostic and **not needed** — slice 3 hand-authors the specimen; chain→GraphSpec is **slice 4**. *(folded into Thesis scope boundary)*
 
-**Resolved:** Q1 (apply through executor — Orch+Creative) · Q2 oracle shape (plan-equivalence + apply-once + post-state — Creative) · drift UX (plain explanation — Creative). **Parked, not blocking:** #86 (slice 3 gives it the contrast; open it after the unambiguous mutation lands — operator call on timing).
+**Resolved:** Q1 (apply through executor — Orch+Creative) · Q2 oracle (plan-equivalence + apply-once + post-state, no replay engine — Creative+DT) · Q4 (token-ban by construction — DT) · drift UX (plain explanation — Creative). **Parked, not blocking:** #86 (rename anchors it, doesn't block; open after the unambiguous mutation lands — operator call on timing).
+
+---
+
+## Pass-to-code (scoped — DT)
+
+**Build:**
+1. **`admission(commit)`** — `AdmissionRecord` for the rename op: `dispatch_kind="commit"`, `no_state_mutation=False`, `idempotent_result=False`, `apply_counterpart.tool="flame_rename_shots"`, new `resolved_class` (e.g. `mcp.host_mutation`).
+2. **`CommitBoundary`** — closure-threaded assent → `CommitNode.verify(held, fresh, assent)` → gated apply (only on `matched AND ratified`) → plain ok/error/drift `NodeResult` (assent never embedded). Routed by a new `dispatch_kind="commit"` arm in `UnifiedDispatch`.
+3. **Plan-equivalence-on-manifests in `compare.py`** — extend `normalize_terminal_output`/`CompareSnapshot` to compare two `MutationManifest`s. Do **not** build a record-replay engine. **Comparator firewall (capture-derived, load-bearing):** held payloads carry `{shot_name, segment_name}`; drift payloads carry `{shot_name}` only. **Do NOT normalize that asymmetry away** — it is real state-moved signal, not volatility (same firewall posture as 2c: reduction-skip ≠ content error). The drift case `matched=False` *depends* on it.
+4. **Hand-authored commit `GraphSpec` specimen** — 2a/2b/2c fixture pattern.
+5. **Fixtures are captured** (`.slice3-captures/` staging → move to `tests/composition/fixtures/` on the feature branch). Post-state read is Flame-side `flame_get_sequence_segments` (*not* `forge_get_shot`; DT-3 correction). `held`/`fresh` are `flame_rename_shots(dry_run=True)` manifests, byte-identical → `matched=True, drift=0`. Drift fixture is a real `discover` on the post-apply (`dt_*`) world against `held`'s `DATA_*` identities → `matched=False`.
+6. **`ratified` `AssentRecord` is minted in-test, NOT captured** — assent is bridge-internal (exec gates it behind `clarification_needed`), so mint a ratified record in-test via the existing `run_apply_branch`/`test_tf1` pattern. This is legitimate: assent is the **operator-authored fact** (not an external tool observation), so captured-not-assembled does *not* apply to it — it applies to the external tool payloads, which are all captured. Constructing the assent ≠ theater; faking a tool payload would be.
+
+**Not in scope:** generic record-replay engine · `compiler.py` changes · chain→GraphSpec compilation (slice 4) · #86 resolution.
+
+**Invariants that must stay green:** `executor.py` byte-for-byte main · assent-token-ban · `len(forge_bridge.__all__) == 19`.
+
+**Three-authors maps onto real code:** `CommitNode.verify` is the mechanical `matched` author; `assent.status == "ratified"` is the operator's out-of-band fact; neither is model-reachable. **The seam holds.**
+
+---
+
+## Live capture (2026-06-19) — DT + operator, blocker cleared
+
+Real controlled rename driven through the v1.7 chain on sequence `30sec_edit 21` (turned out to be **real genesis client footage** `DATA_*` / `1248_genesis_built_to_thrill`, not the assumed `tst_` dogfood — caught, surfaced, operator-OK'd with backup, **fully restored**; source media never touched — rename only relabels timeline segments). Six fixtures, captured-not-assembled; `held.json` + `README.md` persisted to `.slice3-captures/` (staging on the feature branch — **move to `tests/composition/fixtures/`, do not commit the staging dir**).
+
+| fixture | what | key fact |
+|---|---|---|
+| pre-state | 25 `DATA_*` segments | `== post-reset` (round-trip exact) |
+| held | `mutation_plan`, `DATA_*→dt_*` | the `CommitNode.verify` input |
+| fresh | second discover | byte-identical to held → `matched=True, drift=0` |
+| post-state | 25 `dt_*` segments | the apply landed |
+| drift | discover on the `dt_*` world | held's `DATA_*` identities vs `dt_*` → `matched=False`, real state-moved drift |
+| apply/reset | 25 renamed each way | round-trip restores byte-for-byte |
+
+**Verified facts that de-risk the slice:** preview-determinism (`held==fresh`) · genuine drift (`matched=False`) from a *real* state change, not synthesized · `MutationManifest` shape matches `graph/mutation.py` + `CommitNode.verify` (`resolved_plan` of `{identity, payload}` + `apply_counterpart`) · the payload-asymmetry comparator nuance (build item 3) · assent minted-in-test, not captured (build item 6).
+
+**Re-capture path:** `README.md` in `.slice3-captures/` documents the exact procedure (proven reversible). Cleanest for code: lift the captures from `held.json` / the handoff transcript rather than re-mutate; live re-capture is the byte-exact-validation fallback.
