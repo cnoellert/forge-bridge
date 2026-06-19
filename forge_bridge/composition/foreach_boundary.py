@@ -72,7 +72,15 @@ class ForeachBoundary:
                 ),
                 source_artifact_ids=_source_artifact_ids(resolved_inputs),
             )
-            body_result = await reenter(body_node, {body_port: item_input})
+            try:
+                body_result = await reenter(body_node, {body_port: item_input})
+            except Exception as exc:  # noqa: BLE001 - boundary converts body failure
+                body_result = NodeResult(
+                    status="error",
+                    run_id=uuid.uuid4(),
+                    reason_code=type(exc).__name__,
+                    message=str(exc),
+                )
             if body_result.status == "error":
                 return _foreach_error(index, body_node, body_result, node)
             if body_result.control_signal == "skip":
@@ -172,4 +180,3 @@ def _foreach_error(
             },
         },
     )
-

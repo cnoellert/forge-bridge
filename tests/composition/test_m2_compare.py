@@ -26,12 +26,14 @@ from forge_bridge.composition.graph_spec import Edge, GraphSpec, NodeSpec
 from forge_bridge.composition.node_result import NodeResult
 from forge_bridge.composition.parity_corpus import (
     GREENSCREEN_FILTER_ROTO,
+    READ_FOREACH_EXPAND,
     READ_IFGATE_PRUNE_CLOSED,
     READ_IFGATE_PRUNE_OPEN,
 )
 from forge_bridge.composition.primitive_boundary import PrimitiveBoundary
 from forge_bridge.console._engine import run_chain_steps
 from forge_bridge.graph.ports import PortContract, PortTopology
+from tests.composition.test_m1_boundary_contract import _REAL_TRUE
 
 
 def _tool(name: str, properties: dict, required: list[str]):
@@ -62,10 +64,12 @@ class _FakeMCP:
         *,
         roto_payload: dict | None = None,
         greenscreen_payload: dict | None = None,
+        roto_error: Exception | None = None,
     ) -> None:
         self.calls: list[tuple[str, dict]] = []
         self._roto_payload = roto_payload
         self._greenscreen_payload = greenscreen_payload
+        self._roto_error = roto_error
 
     async def list_tools(self):
         return _tools()
@@ -83,6 +87,8 @@ class _FakeMCP:
                 "count": 2,
             }
         if name == "forge_roto_ref":
+            if self._roto_error is not None:
+                raise self._roto_error
             if self._roto_payload is not None:
                 return self._roto_payload
             return _load_roto_capture("a")
@@ -113,6 +119,10 @@ def _tools() -> list:
 def _load_roto_capture(name: str) -> dict:
     path = _FIXTURE_DIR / f"roto_ref_gs_010_call_{name}.json"
     return json.loads(path.read_text())
+
+
+def _load_real_greenscreen_collection() -> dict:
+    return json.loads(_REAL_TRUE)
 
 
 def _manifest_payload(*, changes: bool) -> dict:
@@ -203,6 +213,89 @@ async def test_compare_harness_aligns_if_gate_linear_prune(case, changes, expect
     assert result.equivalent
     assert result.legacy.status_vector == expected
     assert result.graph.status_vector == expected
+
+
+@pytest.mark.asyncio
+async def test_compare_harness_aligns_foreach_expand_iterations():
+    case = READ_FOREACH_EXPAND
+    legacy_mcp = _FakeMCP(
+        greenscreen_payload=_load_real_greenscreen_collection(),
+        roto_payload=_load_roto_capture("a"),
+    )
+    graph_mcp = _FakeMCP(
+        greenscreen_payload=_load_real_greenscreen_collection(),
+        roto_payload=_load_roto_capture("b"),
+    )
+
+    async def legacy_runner():
+        return await run_chain_steps(
+            steps=list(case.legacy_steps),
+            tools=_tools(),
+            mcp=legacy_mcp,
+            request_id=f"req-{case.name}",
+            client_ip="127.0.0.1",
+            started=time.monotonic(),
+        )
+
+    result = await compare_idempotent_paths(
+        legacy_runner=legacy_runner,
+        graph=case.graph,
+        dispatch=UnifiedDispatch(
+            mcp_boundary=MCPToolBoundary(mcp=graph_mcp),
+            primitive_boundary=PrimitiveBoundary(),
+        ).dispatch,
+        terminal_node_id=case.terminal_node_id,
+        expected_steps=len(case.legacy_steps),
+    )
+
+    assert result.equivalent
+    assert result.legacy.status_vector == ("ok", "ok")
+    assert result.graph.terminal_output["count"] == 1
+    iteration = result.graph.terminal_output["iterations"][0]
+    assert iteration["item"]["role"] == "greenscreen_backdrop"
+    assert iteration["item"]["grounding"] == "mock_chroma_screen_region"
+    assert iteration["emitted_topology"] == {"kind": "manifest"}
+    assert iteration["result"]["artifact"]["media_content_sha256"].startswith(
+        "19ffdc03"
+    )
+
+
+@pytest.mark.asyncio
+async def test_compare_harness_aligns_foreach_first_body_error():
+    case = READ_FOREACH_EXPAND
+    legacy_mcp = _FakeMCP(
+        greenscreen_payload=_load_real_greenscreen_collection(),
+        roto_error=RuntimeError("roto exploded"),
+    )
+    graph_mcp = _FakeMCP(
+        greenscreen_payload=_load_real_greenscreen_collection(),
+        roto_error=RuntimeError("roto exploded"),
+    )
+
+    async def legacy_runner():
+        return await run_chain_steps(
+            steps=list(case.legacy_steps),
+            tools=_tools(),
+            mcp=legacy_mcp,
+            request_id=f"req-{case.name}-error",
+            client_ip="127.0.0.1",
+            started=time.monotonic(),
+        )
+
+    result = await compare_idempotent_paths(
+        legacy_runner=legacy_runner,
+        graph=case.graph,
+        dispatch=UnifiedDispatch(
+            mcp_boundary=MCPToolBoundary(mcp=graph_mcp),
+            primitive_boundary=PrimitiveBoundary(),
+        ).dispatch,
+        terminal_node_id=case.terminal_node_id,
+        expected_steps=len(case.legacy_steps),
+    )
+
+    assert result.equivalent
+    assert result.legacy.status_vector == ("ok", "error")
+    assert result.graph.status_vector == ("ok", "error")
 
 
 @pytest.mark.asyncio
