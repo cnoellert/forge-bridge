@@ -77,3 +77,26 @@ A ~10-line test: a multi-incoming-edge node through `GraphExecutor`, asserting `
 2. **Order:** T1 → T7. T1 (fixture lift) is the grounding prerequisite; T4 (node-declared reduction) and T5 (the presence≠correctness firewall) are the load-bearing design.
 3. **Do not `git add` `.planning/M2-SLICE-2C-*.md`** into the code PR.
 4. **Report back:** all-flow self-consistency (hashes match capture); any-skip short-circuit (op not dispatched); fan-in lineage from all five sources; executor byte-untouched; reduction policy node-declared (only fail-arm built); comparator firewall (a shot_id-mismatch case tokens as content-error, not reduction-skip); suite count; `__all__` 19; ruff.
+
+---
+
+## RATIFIED AS-BUILT (merged `ddf331d`, PR #99) — DT-verified
+
+Shipped exactly as scoped. Verified writer's-room + DT guard-mutations (deferred-policy fail-loud + content-hash oracle both confirmed load-bearing). **Merged without cloud ultra** — free ultrareviews exhausted; the writer's-room + DT-mutation coverage was deemed sufficient given 2c's smaller surface (one admission + the comparator + the specimen).
+
+- **Fan-in is executor-native** — the executor resolves all incoming edges by port; 2c added **no executor change** (a byte-untouched test locks it). Specimen wires a true 5-way fan-in (one source + one edge per `_DELIVERABLE_INPUT_PORTS` entry, comprehension-generated).
+- **Oracle shift confirmed** — the specimen is graph-only (`legacy_steps=()`); a true fan-in has no legacy form, so validation is intra-graph self-consistency (output `package_content_sha256` + `manifest_sha256` == captured sh010), not cross-path parity.
+- **Reduction node-declared** (`config["reduction"]`, string or `{on_non_flowing_input}`); only `fail`/any-skip built. `degrade`(→`partial`) / `omit-continue`(→all-skip) recognized as `DEFERRED_REDUCTION_POLICIES` and **raise** until a flowing optional input gives a referent. Multi-input any-skip proven non-degenerate (1 of 5 non-flowing → merge short-circuits).
+- **Admission provisional-pending-#86** — comment names "this entry and forge_roto_ref both flip False" if #86 resolves side-effect-as-mutation. **The deliverable op makes #86 urgent to resolve before its admission is leaned on hard.**
+
+### THE ARC CLOSED
+M2 control-flow + topology — **2a if-gate · 2b foreach · 2c fan-in** — with `executor.py` byte-untouched across all three. The slice-2 reframe held completely: control flow, iteration, and topology all live in dispatch/comparator; the lone growth-trigger (runtime outer-graph materialization) was never hit.
+
+### Carry-forward (non-blocking)
+- **#86** — resolve before leaning hard on the deliverable admission (side-effect-as-mutation).
+- `degrade` / `omit-continue` reduction — defer until a real flowing-optional-input producer (forge-vision v0.2 `preview`, or a second merge consumer).
+- Multi-sink comparator (single-`terminal_node_id` model stays) — defer until something emits >1 sink.
+- **Trivial cleanup:** the unreachable `if policy != "fail": raise AssertionError` in `SkipPropagationDispatch.dispatch` — `_non_flowing_input_policy` already raises for every non-`fail` value. Drop whenever.
+
+### Next frontier
+**Slice 3 — mutations / authority:** the `AssentRecord` / ratify chain (preview → ratify → apply), a distinct shape from the read/compose substrate of 2a–2c.
