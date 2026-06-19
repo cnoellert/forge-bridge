@@ -11,6 +11,7 @@ import pytest
 
 from forge_bridge.composition.boundary import MCPToolBoundary
 from forge_bridge.composition.compare import (
+    DID_NOT_RUN_REASON_CODE,
     SkipPropagationDispatch,
     admitted_records_for,
     compare_idempotent_paths,
@@ -322,15 +323,17 @@ async def test_if_gate_prune_preserves_static_outer_node_set():
     case = READ_IFGATE_PRUNE_CLOSED
     graph_mcp = _FakeMCP(
         greenscreen_payload=_manifest_payload(changes=False),
-        roto_payload=_load_roto_capture("b"),
     )
 
-    results = await GraphExecutor(UnifiedDispatch(
+    wrapper = SkipPropagationDispatch(UnifiedDispatch(
         mcp_boundary=MCPToolBoundary(mcp=graph_mcp),
         primitive_boundary=PrimitiveBoundary(),
-    ).dispatch).run(case.graph)
+    ).dispatch)
+    results = await GraphExecutor(wrapper.dispatch).run(case.graph)
 
     assert set(results) == {node.node_id for node in case.graph.nodes}
+    assert wrapper.skipped_node_ids == ["downstream"]
+    assert results["downstream"].reason_code == DID_NOT_RUN_REASON_CODE
 
 
 def test_roto_real_capture_normalizer_collapses_volatile_envelope():
