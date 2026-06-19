@@ -32,6 +32,21 @@ class _SpyBoundary:
         )
 
 
+@dataclass
+class _SpyForeachBoundary:
+    calls: list[tuple[str, bool]] = field(default_factory=list)
+
+    async def dispatch(
+        self,
+        node: NodeSpec,
+        resolved_inputs: dict[str, NodeResult],
+        *,
+        reenter,
+    ) -> NodeResult:
+        self.calls.append((node.operator_id, callable(reenter)))
+        return NodeResult(status="ok", run_id=uuid.uuid4())
+
+
 @pytest.mark.asyncio
 async def test_unified_dispatch_routes_mcp_and_primitive_halves():
     mcp = _SpyBoundary()
@@ -43,6 +58,16 @@ async def test_unified_dispatch_routes_mcp_and_primitive_halves():
 
     assert mcp.calls == [("forge_roto_ref", ())]
     assert primitive.calls == [("filter", ())]
+
+
+@pytest.mark.asyncio
+async def test_unified_dispatch_routes_foreach_with_reentry_callable():
+    foreach = _SpyForeachBoundary()
+    dispatch = UnifiedDispatch(foreach_boundary=foreach)
+
+    await dispatch.dispatch(NodeSpec(node_id="foreach", operator_id="foreach"), {})
+
+    assert foreach.calls == [("foreach", True)]
 
 
 @pytest.mark.asyncio
@@ -73,4 +98,3 @@ def test_executor_stays_dispatch_injection_only():
     assert "UnifiedDispatch" not in source
     assert "admit_operator" not in source
     assert "PrimitiveBoundary" not in source
-
