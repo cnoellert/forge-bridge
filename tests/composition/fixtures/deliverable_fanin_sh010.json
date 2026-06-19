@@ -1,0 +1,251 @@
+{
+  "inputs": {
+    "audit_report_ref": {
+      "artifact_id": "audit_62fccccee53845d3b3d86beccea93c2f",
+      "artifact_kind": "audit_report",
+      "document": {
+        "aggregation_run": {
+          "backend_id": "substrate",
+          "operator_id": "aggregate_audit_report",
+          "request_id": "6fc36ce4435b46b39cbcdafbbf0b2f08"
+        },
+        "artifact_id": "audit_62fccccee53845d3b3d86beccea93c2f",
+        "artifact_kind": "audit_report",
+        "candidate_generation_id": "generation_smoke",
+        "locked_intent_id": "locked_intent_smoke",
+        "overall_disposition": "pass",
+        "per_criterion_verdicts": [
+          {
+            "criterion_id": "c_visual_fidelity",
+            "source_validation_report_id": "vr_visual",
+            "verdict": "pass"
+          },
+          {
+            "criterion_id": "c_temporal_stability",
+            "source_validation_report_id": "vr_temporal",
+            "verdict": "pass"
+          }
+        ],
+        "schema_version": "0.1"
+      },
+      "shot_id": "sh010",
+      "version": "v1"
+    },
+    "holdouts_artifact": {
+      "artifact_id": "holdouts_430b06bc4bef48a5b2bc542cdc2667a6",
+      "artifact_kind": "derived_holdouts",
+      "channels": [
+        {
+          "derivation_state": "derived",
+          "exr_channel_name": "person",
+          "semantic_entity_id": "person_foreground"
+        },
+        {
+          "derivation_state": "derived",
+          "exr_channel_name": "car",
+          "semantic_entity_id": "vehicle_subject"
+        },
+        {
+          "derivation_state": "derived",
+          "exr_channel_name": "shadow",
+          "semantic_entity_id": "cast_shadow"
+        }
+      ],
+      "color_space": "ACEScg",
+      "compression": "DWAB",
+      "derivation_run": {
+        "backend_id": "mock",
+        "operator_id": "derive_holdout_mattes",
+        "request_id": "32c1f58541e249bab72038ab61597c55"
+      },
+      "derived_from": {
+        "media_content_sha256": "db0bd76d56998df53b8b15e2f60f2ea48e02ec1581b54308e3d8969f2ddad57d",
+        "media_instance_id": "media-sh010",
+        "shot_id": "sh010"
+      },
+      "frame_range": [
+        1001,
+        1001
+      ],
+      "media_content_sha256": "ab6820f4eaf511342ff9a52589f60e5a9582ada8d9a8d83ae11dd092e32bd231",
+      "pixel_format": "half_float",
+      "resolution": [
+        1920,
+        1080
+      ],
+      "schema_version": "0.1",
+      "sequence_locator": {
+        "path": "mock://derived_holdouts/holdouts_430b06bc4bef48a5b2bc542cdc2667a6/holdouts.####.exr"
+      }
+    },
+    "locked_intent_ref": {
+      "artifact_id": "locked_intent_smoke",
+      "artifact_kind": "locked_intent",
+      "document": {
+        "channel_map": [
+          {
+            "channel_label": "person",
+            "required": true,
+            "semantic_entity_id": "person_foreground",
+            "text_prompt": null
+          },
+          {
+            "channel_label": "car",
+            "required": true,
+            "semantic_entity_id": "vehicle_subject",
+            "text_prompt": null
+          },
+          {
+            "channel_label": "shadow",
+            "required": false,
+            "semantic_entity_id": "cast_shadow",
+            "text_prompt": null
+          }
+        ],
+        "holdout_format": {
+          "compression": "DWAB",
+          "pixel_format": "half_float"
+        },
+        "plate_spec": {
+          "color_space": "ACEScg",
+          "compression": "PIZ",
+          "frame_rate": 24.0,
+          "optional_normalizations": [],
+          "pixel_format": "half_float",
+          "required_normalizations": [
+            "color_space",
+            "frame_rate_metadata",
+            "resolution_metadata"
+          ],
+          "resolution": [
+            1920,
+            1080
+          ]
+        },
+        "success_criteria": [
+          "c_visual_fidelity",
+          "c_temporal_stability"
+        ]
+      },
+      "shot_id": "sh010",
+      "version": "v1"
+    },
+    "plate_artifact": {
+      "artifact_id": "plate_f67bc0c5f4f942459d403e26dee34bb4",
+      "artifact_kind": "normalized_plate",
+      "color_space": "ACEScg",
+      "compression": "PIZ",
+      "derived_from": {
+        "media_content_sha256": "db0bd76d56998df53b8b15e2f60f2ea48e02ec1581b54308e3d8969f2ddad57d",
+        "media_instance_id": "media-sh010",
+        "shot_id": "sh010"
+      },
+      "frame_range": [
+        1001,
+        1001
+      ],
+      "frame_rate": 24.0,
+      "media_content_sha256": "df4f3a3cd0bbb7ee8602ad027fa49d1b664ba4850dacf1f3d86dc2e1ac28720b",
+      "normalization_run": {
+        "backend_id": "conform",
+        "operator_id": "normalize_plate",
+        "request_id": "6e669f06834f447c83bf292c9c4cfc07"
+      },
+      "normalization_summary": {
+        "already_conformant": [],
+        "applied": [
+          "color_space",
+          "frame_rate_metadata",
+          "resolution_metadata"
+        ],
+        "failed": [],
+        "skipped": []
+      },
+      "pixel_format": "half_float",
+      "resolution": [
+        1920,
+        1080
+      ],
+      "schema_version": "0.1",
+      "sequence_locator": {
+        "path": "/private/tmp/forge-bridge-m2-slice2c-fixture/conform/plate_f67bc0c5f4f942459d403e26dee34bb4/plate.####.exr"
+      }
+    },
+    "provenance_manifest_ref": {
+      "artifact_id": "provenance_smoke",
+      "artifact_kind": "provenance_manifest",
+      "document": {
+        "lineage_summary": "smoke-fabricated"
+      },
+      "shot_id": "sh010",
+      "version": "v1"
+    }
+  },
+  "output": {
+    "artifact": {
+      "artifact_id": "package_3e8021734a204f14b5c7b811263be055",
+      "artifact_kind": "deliverable_package",
+      "assembly_run": {
+        "backend_id": "packaging",
+        "operator_id": "assemble_deliverable_package",
+        "request_id": "ef7dd4fcdefd46e2993026b3b83f3c27"
+      },
+      "audit_report_ref": {
+        "artifact_id": "audit_95f28cf691f848f18e114c674085ea6e",
+        "artifact_kind": "audit_report",
+        "relative_path": "references/audit_report.json"
+      },
+      "deliverable_id": "deliverable_e80e08e42eb74c41bae6a5f9b8742ed2",
+      "extension_artifacts": [],
+      "holdouts_ref": {
+        "artifact_id": "holdouts_430b06bc4bef48a5b2bc542cdc2667a6",
+        "artifact_kind": "derived_holdouts",
+        "relative_path": "holdouts/holdouts.####.exr"
+      },
+      "locked_intent_ref": {
+        "artifact_id": "locked_intent_smoke",
+        "artifact_kind": "locked_intent",
+        "relative_path": "references/locked_intent.json"
+      },
+      "manifest_sha256": "74e8f2978f3b47e14af7b3ad1b0228162eccfc97adf9655684c74faec00f1bc3",
+      "package_content_sha256": "82c718922bd37ac0b737cb2bcd9ac288afca22151822e4b9313d1440e9f8be94",
+      "package_root": {
+        "path": "/private/tmp/forge-bridge-m2-slice2c-fixture/packages/deliverable_e80e08e42eb74c41bae6a5f9b8742ed2"
+      },
+      "package_schema_version": "1.0",
+      "plate_ref": {
+        "artifact_id": "plate_f67bc0c5f4f942459d403e26dee34bb4",
+        "artifact_kind": "normalized_plate",
+        "relative_path": "plate/plate.####.exr"
+      },
+      "preview_ref": null,
+      "provenance_manifest_ref": {
+        "artifact_id": "provenance_smoke",
+        "artifact_kind": "provenance_manifest",
+        "relative_path": "references/provenance_manifest.json"
+      },
+      "schema_version": "1.0",
+      "shot_id": "sh010"
+    },
+    "artifact_refs": [
+      {
+        "artifact_id": "package_3e8021734a204f14b5c7b811263be055",
+        "artifact_type": "DeliverablePackageArtifact",
+        "locator": "/private/tmp/forge-bridge-m2-slice2c-fixture/packages/deliverable_e80e08e42eb74c41bae6a5f9b8742ed2",
+        "payload_id": "82c718922bd37ac0b737cb2bcd9ac288afca22151822e4b9313d1440e9f8be94"
+      }
+    ],
+    "confidence": 1.0,
+    "execution_surface": "forge-bridge",
+    "request_id": "ef7dd4fcdefd46e2993026b3b83f3c27",
+    "verdict": "pass"
+  },
+  "source": {
+    "frame_count": 1,
+    "package_root": "/private/tmp/forge-bridge-m2-slice2c-fixture/packages/deliverable_e80e08e42eb74c41bae6a5f9b8742ed2",
+    "producer": "forge_vision.demos.first_light_common.run_first_light_thin_pipeline",
+    "shot_id": "sh010",
+    "source_mov": "/Users/cnoellert/GitHub/forge-vision/footage/PF0033-01_Clip-1_REC709_HD.mov",
+    "start_frame": 1001
+  }
+}
