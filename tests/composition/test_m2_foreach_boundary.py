@@ -147,3 +147,23 @@ async def test_foreach_boundary_requires_exactly_one_upstream():
 
     assert result.status == "error"
     assert result.reason_code == "invalid_foreach_input"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("config", [{}, {"body": {"operator_id": "forge_roto_ref"}}])
+async def test_foreach_boundary_malformed_body_config_fails_closed(config):
+    async def reenter(_node: NodeSpec, _resolved_inputs: dict[str, NodeResult]):
+        raise AssertionError("should not re-enter")
+
+    result = await ForeachBoundary().dispatch(
+        NodeSpec(node_id="foreach", operator_id="foreach", config=config),
+        {"input": _collection_result()},
+        reenter=reenter,
+    )
+
+    assert result.status == "error"
+    assert result.reason_code == "invalid_foreach_config"
+    assert "config['body']" in (result.message or "")
+    assert result.source_artifact_ids == (
+        uuid.UUID("11111111-1111-1111-1111-111111111111"),
+    )

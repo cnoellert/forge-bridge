@@ -25,7 +25,15 @@ class ForeachBoundary:
         *,
         reenter: ReenterDispatch,
     ) -> NodeResult:
-        body_node = _body_node(node)
+        try:
+            body_node = _body_node(node)
+        except TypeError as exc:
+            return _error(
+                "invalid_foreach_config",
+                str(exc),
+                node,
+                source_artifact_ids=_source_artifact_ids(resolved_inputs),
+            )
         foreach = ForEachNode(body_node.operator_id)
 
         if len(resolved_inputs) != 1:
