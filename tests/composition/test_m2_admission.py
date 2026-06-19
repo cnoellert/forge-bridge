@@ -13,12 +13,18 @@ from forge_bridge.composition.admission import (
 def test_admission_accepts_slice_one_operator_ids():
     greenscreen = admit_operator("forge_is_greenscreen")
     roto = admit_operator("forge_roto_ref")
+    deliverable = admit_operator("forge_assemble_deliverable_package")
 
     assert greenscreen.resolved_class == "mcp.read_perception"
     assert greenscreen.returns_reference is False
     assert roto.resolved_class == "mcp.synchronous_make"
     assert roto.dispatch_kind == "mcp"
     assert roto.returns_reference is True
+    assert deliverable.resolved_class == "mcp.synchronous_make"
+    assert deliverable.dispatch_kind == "mcp"
+    assert deliverable.returns_reference is True
+    assert deliverable.no_state_mutation is True
+    assert deliverable.idempotent_result is True
     assert admit_operator("filter").resolved_class == "primitive.filter"
     assert admit_operator("if").resolved_class == "primitive.if_gate"
     assert admit_operator("foreach").dispatch_kind == "foreach"
@@ -33,6 +39,7 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
     assert set(ADMISSION_TABLE) == {
         "forge_is_greenscreen",
         "forge_roto_ref",
+        "forge_assemble_deliverable_package",
         "filter",
         "if",
         "foreach",
