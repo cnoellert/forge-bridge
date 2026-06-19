@@ -81,7 +81,7 @@ class ForeachBoundary:
                     reason_code=type(exc).__name__,
                     message=str(exc),
                 )
-            if body_result.status == "error":
+            if not body_result.has_usable_output:
                 return _foreach_error(
                     index,
                     body_node,

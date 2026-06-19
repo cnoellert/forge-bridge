@@ -109,6 +109,32 @@ async def test_foreach_boundary_first_body_error_fails_whole_node():
 
 
 @pytest.mark.asyncio
+async def test_foreach_boundary_abstained_body_fails_whole_node():
+    async def reenter(_node: NodeSpec, _resolved_inputs: dict[str, NodeResult]):
+        return NodeResult(
+            status="abstained",
+            run_id=uuid.uuid4(),
+            reason_code="body_abstained",
+            message="body abstained",
+        )
+
+    result = await ForeachBoundary().dispatch(
+        _foreach_node(),
+        {"input": _collection_result()},
+        reenter=reenter,
+    )
+
+    assert result.status == "error"
+    assert result.reason_code == "body_abstained"
+    assert result.message == "body abstained"
+    assert result.source_artifact_ids == (
+        uuid.UUID("11111111-1111-1111-1111-111111111111"),
+    )
+    assert result.output["iteration_index"] == 0
+    assert result.output["body_error"]["reason_code"] == "body_abstained"
+
+
+@pytest.mark.asyncio
 async def test_foreach_boundary_requires_exactly_one_upstream():
     async def reenter(_node: NodeSpec, _resolved_inputs: dict[str, NodeResult]):
         raise AssertionError("should not re-enter")
