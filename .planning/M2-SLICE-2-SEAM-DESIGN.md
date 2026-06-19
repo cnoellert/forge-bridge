@@ -33,7 +33,9 @@ Different mechanisms, different risk: 2a = skip-propagation (generalize the abor
 
 ## Seam S2-A — if-gate via a generalized `SkipPropagationDispatch`, on a first-class `control_signal`
 
-Generalize slice-1's `AbortOnFirstErrorDispatch` into `SkipPropagationDispatch`: short-circuit a downstream node **iff any resolved input carries `control_signal == "skip"`**. **Fold slice-1's abort onto the same channel** — one short-circuit predicate, and the comparator's `skipped` token derives from **one place** instead of the current `reason_code == SKIPPED_REASON_CODE` special-case. Executor untouched; pruning stays in the dispatch composition.
+Generalize slice-1's `AbortOnFirstErrorDispatch` into `SkipPropagationDispatch`: short-circuit a downstream node when any resolved input is **non-flowing**. The comparator's `skipped` token derives from **one place** (the wrapper's `DID_NOT_RUN` marker) instead of the old `reason_code == SKIPPED_REASON_CODE` special-case. Executor untouched; pruning stays in the dispatch composition.
+
+> **RATIFIED-AS-BUILT (slice-2a, PR #97): Design B for the abort fold.** The draft preferred Design A (errors re-mint `control_signal="skip"` so the predicate is literally `iff control_signal=="skip"`). The build chose **Design B** — `_non_flowing(r) = r.control_signal == "skip" or r.status == "error"` — boundaries' error-mints untouched; the synthetic short-circuit result carries `control_signal="skip"` so *propagation* is single-channel. The room ratified B as **more** faithful to the register-distinction principle: Design A would bake a skip *directive* onto an *error* result (conflating the two registers), whereas B keeps `error` and `skip` distinct on the result and only unifies them at the wrapper's non-flowing test. Compare-equivalent. (Slice-5 note: B's `status=="error"` clause means a production wrapper would abort-on-error in production too — a slice-5 policy call, not a 2a issue.)
 
 ### Q1 RESOLVED — add `NodeResult.control_signal: str | None = None`. It is *required*, not merely preferred, and it is low-risk.
 
@@ -48,6 +50,18 @@ Generalize slice-1's `AbortOnFirstErrorDispatch` into `SkipPropagationDispatch`:
 **Rejected alternatives:** payload-inspection (`output["execution_state"]`) — the crispness violation by name, rejected outright. `reason_code` overload — the honest counter (no new field) but it conflates **explain** (reason codes) with **direct** (control signals) across two registers, which this project has repeatedly rejected (register-conflation discipline).
 
 **Noted future wrapper-policy (not slice-2 work):** when gate-skip meets a true **fan-in**, `SkipPropagationDispatch` needs an any-skip-vs-all-skip reduction policy at the merge node. Deferred with the branching/multi-sink work; the 2a specimen is linear (below), so it isn't forced now.
+
+### RATIFIED DOCTRINE (slice-2a, DT + Orch + Creative) — a closed gate prunes the downstream cone; the parity oracle has a validity boundary
+
+The 2a build surfaced the first genuine **graph-vs-linear semantic divergence**, encoded in `test_if_gate_parity_oracle_diverges_beyond_single_step_tail`. At an n≥2 tail the two paths *intentionally* differ:
+- **Legacy** `(ok, ok, skipped, ok)` = *"skip the next linear instruction"* — `_engine.py` only has a notion of "the next step."
+- **Graph** `(ok, ok, skipped, skipped)` = *"prune the downstream subgraph"*.
+
+**Ruling: graph-cascade is correct; legacy skip-next is a linear-list artifact.** On a branching DAG "next step" is undefined — there is no list adjacency, only a downstream cone. This is not "parity failed"; it is **the parity oracle reaching its validity boundary** (Creative). The oracle is valid at the single-step tail (where 2a is tested and parity holds); beyond it, divergence in favor of the graph is the *correct* result, and the test is the **semantic guardrail** against regression toward linear-list semantics. **Keep the test exactly as written.**
+
+**Why this strengthens the reframe (Creative):** a closed gate does not change the **graph** — it changes **reachability**. Pruning the cone when reachability disappears is exactly what a graph runtime should do, and it aligns precisely with the invariant (*the executor grows only if the outer GraphSpec changes at runtime* — a gate changes neither nodes nor edges). The graph behavior is *more* consistent with the M2 model than the legacy implementation. The feared executor-growth never materialized: control semantics moved into `NodeResult.control_signal` + dispatch propagation, the executor stayed byte-untouched, and the first real divergence favored the graph.
+
+**Carry-forward (non-blocking for 2b):** the gate evaluates an *assembled* `_manifest_payload` — parity-valid (both paths consume it), but this is *gate-fixture realism*, distinct from *gate semantics* (which the test proves). Confirm the manifest mirrors a real greenscreen-manifest shape before gate **predicates** become load-bearing (captured-not-assembled).
 
 ---
 
