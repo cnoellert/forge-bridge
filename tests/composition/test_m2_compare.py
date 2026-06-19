@@ -716,6 +716,58 @@ async def test_skip_propagation_wrapper_preserves_abort_after_error():
     )
 
 
+@pytest.mark.asyncio
+async def test_skip_propagation_uses_node_declared_fail_reduction():
+    calls: list[str] = []
+
+    async def dispatch(node: NodeSpec, _resolved):
+        calls.append(node.node_id)
+        status = "error" if node.node_id == "source" else "ok"
+        return NodeResult(status=status, run_id=uuid.uuid4())
+
+    graph = GraphSpec(
+        nodes=(
+            NodeSpec(node_id="source", operator_id="forge_is_greenscreen"),
+            NodeSpec(
+                node_id="merge",
+                operator_id="forge_assemble_deliverable_package",
+                input_ports={"input": PortContract.any()},
+                config={"reduction": {"on_non_flowing_input": "fail"}},
+            ),
+        ),
+        edges=(Edge(from_node="source", to_node="merge", to_port="input"),),
+    )
+    wrapper = SkipPropagationDispatch(dispatch)
+    results = await GraphExecutor(wrapper.dispatch).run(graph)
+
+    assert calls == ["source"]
+    assert wrapper.skipped_node_ids == ["merge"]
+    assert results["merge"].reason_code == DID_NOT_RUN_REASON_CODE
+
+
+@pytest.mark.asyncio
+async def test_deferred_reduction_policy_fails_loudly_until_grounded():
+    async def dispatch(node: NodeSpec, _resolved):
+        status = "error" if node.node_id == "source" else "ok"
+        return NodeResult(status=status, run_id=uuid.uuid4())
+
+    graph = GraphSpec(
+        nodes=(
+            NodeSpec(node_id="source", operator_id="forge_is_greenscreen"),
+            NodeSpec(
+                node_id="merge",
+                operator_id="forge_assemble_deliverable_package",
+                input_ports={"input": PortContract.any()},
+                config={"reduction": {"on_non_flowing_input": "degrade"}},
+            ),
+        ),
+        edges=(Edge(from_node="source", to_node="merge", to_port="input"),),
+    )
+
+    with pytest.raises(NotImplementedError, match="degrade"):
+        await GraphExecutor(SkipPropagationDispatch(dispatch).dispatch).run(graph)
+
+
 def test_compare_strategy_routes_idempotent_vs_record_replay():
     records = admitted_records_for(GREENSCREEN_FILTER_ROTO.graph)
     assert compare_strategy_for(records) == "double_exec"

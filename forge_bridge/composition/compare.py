@@ -11,7 +11,7 @@ from __future__ import annotations
 import copy
 import re
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -23,6 +23,8 @@ from forge_bridge.composition.node_result import NodeResult
 DispatchCallable = Callable[[NodeSpec, dict[str, NodeResult]], Awaitable[NodeResult]]
 CompareStrategy = Literal["double_exec", "record_replay"]
 DID_NOT_RUN_REASON_CODE = "did_not_run_after_skip"
+FAIL_ON_NON_FLOWING_INPUT = "fail"
+DEFERRED_REDUCTION_POLICIES = frozenset({"degrade", "omit-continue"})
 _ARTIFACT_ID_RE = re.compile(r"roto_[0-9a-f]{32}")
 _UUID_RE = re.compile(
     r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
@@ -51,12 +53,17 @@ class CompareResult:
 
 
 class SkipPropagationDispatch:
-    """Short-circuit downstream graph dispatch after a non-flowing input.
+    """Apply node-declared non-flowing-input reduction before dispatch.
 
     ``skipped`` is a compare status token, not a fifth ``NodeResult`` status.
-    The wrapper returns an ``error`` envelope tagged with
-    ``DID_NOT_RUN_REASON_CODE`` so normalizers can represent the orchestration
+    For slice 2c only the grounded ``fail``/any-skip arm is implemented:
+    the wrapper returns an ``error`` envelope tagged with
+    ``DID_NOT_RUN_REASON_CODE`` so normalizers can represent the reduction
     decision while no concrete downstream boundary is invoked.
+
+    ``degrade`` and ``omit-continue`` are recognized policy names but deferred
+    until a real flowing-optional-input producer makes their semantics
+    observable.
     """
 
     def __init__(self, dispatch: DispatchCallable) -> None:
@@ -70,6 +77,9 @@ class SkipPropagationDispatch:
         resolved_inputs: dict[str, NodeResult],
     ) -> NodeResult:
         if any(_non_flowing(result) for result in resolved_inputs.values()):
+            policy = _non_flowing_input_policy(node)
+            if policy != FAIL_ON_NON_FLOWING_INPUT:
+                raise AssertionError(f"Unhandled reduction policy: {policy!r}")
             self.skipped_node_ids.append(node.node_id)
             return NodeResult(
                 status="error",
@@ -202,6 +212,27 @@ def _non_flowing(result: NodeResult) -> bool:
     # boundaries do not all need to remint historical errors with a control
     # signal for compare parity to preserve abort semantics.
     return result.control_signal == "skip" or result.status == "error"
+
+
+def _non_flowing_input_policy(node: NodeSpec) -> str:
+    raw = node.config.get("reduction", FAIL_ON_NON_FLOWING_INPUT)
+    if isinstance(raw, str):
+        policy = raw
+    elif isinstance(raw, Mapping):
+        policy = str(raw.get("on_non_flowing_input", FAIL_ON_NON_FLOWING_INPUT))
+    else:
+        raise ValueError(
+            f"node {node.node_id!r} reduction policy must be a string or mapping"
+        )
+
+    if policy == FAIL_ON_NON_FLOWING_INPUT:
+        return policy
+    if policy in DEFERRED_REDUCTION_POLICIES:
+        raise NotImplementedError(
+            f"reduction policy {policy!r} is declared but deferred until a "
+            "flowing optional input provides a concrete referent"
+        )
+    raise ValueError(f"unknown reduction policy {policy!r} on node {node.node_id!r}")
 
 
 def normalize_terminal_output(value: Any) -> Any:
