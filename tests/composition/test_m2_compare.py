@@ -365,6 +365,45 @@ def test_roto_normalizer_preserves_matte_sha_divergence():
     assert normalize_terminal_output(call_a) != normalize_terminal_output(call_b)
 
 
+def test_foreach_iteration_result_normalizer_reroots_real_roto_captures():
+    envelope_a = {
+        "iterations": [{
+            "index": 0,
+            "item": {"id": "gs_010"},
+            "result": _load_roto_capture("a"),
+            "emitted_topology": {"kind": "manifest"},
+        }],
+        "foreach": {
+            "body": "forge_roto_ref shot_id=gs_010",
+            "input_count": 1,
+            "output_count": 1,
+        },
+        "count": 1,
+    }
+    envelope_b = {
+        "iterations": [{
+            "index": 0,
+            "item": {"id": "gs_010"},
+            "result": _load_roto_capture("b"),
+            "emitted_topology": {"kind": "manifest"},
+        }],
+        "foreach": {
+            "body": "different cosmetic body label",
+            "input_count": 1,
+            "output_count": 1,
+        },
+        "count": 1,
+    }
+
+    normalized_a = normalize_terminal_output(envelope_a)
+    normalized_b = normalize_terminal_output(envelope_b)
+
+    assert normalized_a == normalized_b
+    assert normalized_a["iterations"][0]["item"] == {"id": "gs_010"}
+    assert normalized_a["iterations"][0]["emitted_topology"] == {"kind": "manifest"}
+    assert "body" not in normalized_a["foreach"]
+
+
 def test_normalize_chain_body_rejects_clarification_needed_status():
     body = {
         "status": "clarification_needed",

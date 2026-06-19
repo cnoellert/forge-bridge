@@ -211,10 +211,11 @@ def _normalize_in_place(value: Any, path: tuple[str | int, ...]) -> None:
     if isinstance(value, dict):
         for key in list(value):
             child_path = (*path, key)
-            if _strip_field(child_path):
+            compare_path = _compare_path(child_path)
+            if _strip_field(compare_path):
                 del value[key]
                 continue
-            if _canonicalize_field(child_path):
+            if _canonicalize_field(compare_path):
                 value[key] = _canonicalize_token(str(value[key]))
                 continue
             _normalize_in_place(value[key], child_path)
@@ -227,6 +228,7 @@ def _normalize_in_place(value: Any, path: tuple[str | int, ...]) -> None:
 def _strip_field(path: tuple[str | int, ...]) -> bool:
     return path in {
         ("content_hash",),
+        ("foreach", "body"),
         ("graph_event_id",),
         ("request_id",),
     }
@@ -243,6 +245,17 @@ def _canonicalize_field(path: tuple[str | int, ...]) -> bool:
     }:
         return True
     return False
+
+
+def _compare_path(path: tuple[str | int, ...]) -> tuple[str | int, ...]:
+    if (
+        len(path) >= 3
+        and path[0] == "iterations"
+        and isinstance(path[1], int)
+        and path[2] == "result"
+    ):
+        return path[3:]
+    return path
 
 
 def _canonicalize_token(value: str) -> str:
