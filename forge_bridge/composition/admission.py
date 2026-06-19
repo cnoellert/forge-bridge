@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
 
-DispatchKind = Literal["mcp", "primitive"]
+DispatchKind = Literal["mcp", "primitive", "foreach"]
 
 
 class AdmissionRejected(ValueError):
@@ -84,6 +84,15 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         operator_id="if",
         resolved_class="primitive.if_gate",
         dispatch_kind="primitive",
+        synchronous=True,
+        returns_reference=False,
+        no_state_mutation=True,
+        idempotent_result=True,
+    ),
+    AdmissionRecord(
+        operator_id="foreach",
+        resolved_class="primitive.foreach",
+        dispatch_kind="foreach",
         synchronous=True,
         returns_reference=False,
         no_state_mutation=True,
