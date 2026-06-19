@@ -65,11 +65,13 @@ class _FakeMCP:
         roto_payload: dict | None = None,
         greenscreen_payload: dict | None = None,
         roto_error: Exception | None = None,
+        roto_error_call_index: int | None = None,
     ) -> None:
         self.calls: list[tuple[str, dict]] = []
         self._roto_payload = roto_payload
         self._greenscreen_payload = greenscreen_payload
         self._roto_error = roto_error
+        self._roto_error_call_index = roto_error_call_index
 
     async def list_tools(self):
         return _tools()
@@ -87,7 +89,14 @@ class _FakeMCP:
                 "count": 2,
             }
         if name == "forge_roto_ref":
-            if self._roto_error is not None:
+            call_index = sum(1 for call in self.calls if call[0] == name) - 1
+            if (
+                self._roto_error is not None
+                and (
+                    self._roto_error_call_index is None
+                    or self._roto_error_call_index == call_index
+                )
+            ):
                 raise self._roto_error
             if self._roto_payload is not None:
                 return self._roto_payload
@@ -123,6 +132,31 @@ def _load_roto_capture(name: str) -> dict:
 
 def _load_real_greenscreen_collection() -> dict:
     return json.loads(_REAL_TRUE)
+
+
+def _load_multi_item_greenscreen_collection() -> dict:
+    """Derived N=3 fixture from the real greenscreen capture.
+
+    A live multi-shot capture was not available in this model-free test pass, so
+    this fixture keeps the real per-item shape and adds distinct identities for
+    foreach semantics. It deliberately avoids the thin ``{id, is_greenscreen}``
+    stub that would erase the captured item surface.
+    """
+
+    payload = _load_real_greenscreen_collection()
+    real_item = payload["items"][0]
+    items = []
+    shots = []
+    for index, shot_id in enumerate(("gs_probe_a", "gs_probe_b", "gs_probe_c")):
+        item = dict(real_item)
+        item["id"] = f"region_{index}"
+        item["shot_id"] = shot_id
+        items.append(item)
+        shots.append({"id": shot_id})
+    payload["items"] = items
+    payload["shots"] = shots
+    payload["count"] = len(items)
+    return payload
 
 
 def _manifest_payload(*, changes: bool) -> dict:
@@ -218,12 +252,13 @@ async def test_compare_harness_aligns_if_gate_linear_prune(case, changes, expect
 @pytest.mark.asyncio
 async def test_compare_harness_aligns_foreach_expand_iterations():
     case = READ_FOREACH_EXPAND
+    collection = _load_multi_item_greenscreen_collection()
     legacy_mcp = _FakeMCP(
-        greenscreen_payload=_load_real_greenscreen_collection(),
+        greenscreen_payload=collection,
         roto_payload=_load_roto_capture("a"),
     )
     graph_mcp = _FakeMCP(
-        greenscreen_payload=_load_real_greenscreen_collection(),
+        greenscreen_payload=collection,
         roto_payload=_load_roto_capture("b"),
     )
 
@@ -250,12 +285,28 @@ async def test_compare_harness_aligns_foreach_expand_iterations():
 
     assert result.equivalent
     assert result.legacy.status_vector == ("ok", "ok")
-    assert result.graph.terminal_output["count"] == 1
-    iteration = result.graph.terminal_output["iterations"][0]
-    assert iteration["item"]["role"] == "greenscreen_backdrop"
-    assert iteration["item"]["grounding"] == "mock_chroma_screen_region"
-    assert iteration["emitted_topology"] == {"kind": "manifest"}
-    assert iteration["result"]["artifact"]["media_content_sha256"].startswith(
+    envelope = result.graph.terminal_output
+    iterations = envelope["iterations"]
+    assert envelope["count"] == 3
+    assert envelope["foreach"]["input_count"] == 3
+    assert envelope["foreach"]["output_count"] == 3
+    assert len(iterations) == 3
+    assert [iteration["index"] for iteration in iterations] == [0, 1, 2]
+    assert [iteration["item"] for iteration in iterations] == collection["items"]
+    assert iterations[0]["item"] != iterations[1]["item"]
+    assert [iteration["item"]["shot_id"] for iteration in iterations] == [
+        "gs_probe_a",
+        "gs_probe_b",
+        "gs_probe_c",
+    ]
+    assert all(
+        iteration["emitted_topology"] == {"kind": "manifest"}
+        for iteration in iterations
+    )
+    # The body uses static args in slice 2b, so every iteration returns the same
+    # normalized roto payload by design. Per-item kwarg derivation is #86.
+    assert len({json.dumps(i["result"], sort_keys=True) for i in iterations}) == 1
+    assert iterations[0]["result"]["artifact"]["media_content_sha256"].startswith(
         "19ffdc03"
     )
 
@@ -263,13 +314,16 @@ async def test_compare_harness_aligns_foreach_expand_iterations():
 @pytest.mark.asyncio
 async def test_compare_harness_aligns_foreach_first_body_error():
     case = READ_FOREACH_EXPAND
+    collection = _load_multi_item_greenscreen_collection()
     legacy_mcp = _FakeMCP(
-        greenscreen_payload=_load_real_greenscreen_collection(),
+        greenscreen_payload=collection,
         roto_error=RuntimeError("roto exploded"),
+        roto_error_call_index=1,
     )
     graph_mcp = _FakeMCP(
-        greenscreen_payload=_load_real_greenscreen_collection(),
+        greenscreen_payload=collection,
         roto_error=RuntimeError("roto exploded"),
+        roto_error_call_index=1,
     )
 
     async def legacy_runner():
@@ -296,13 +350,21 @@ async def test_compare_harness_aligns_foreach_first_body_error():
     assert result.equivalent
     assert result.legacy.status_vector == ("ok", "error")
     assert result.graph.status_vector == ("ok", "error")
+    assert [
+        name for name, _args in legacy_mcp.calls
+        if name == "forge_roto_ref"
+    ] == ["forge_roto_ref", "forge_roto_ref"]
+    assert [
+        name for name, _args in graph_mcp.calls
+        if name == "forge_roto_ref"
+    ] == ["forge_roto_ref", "forge_roto_ref"]
 
 
 @pytest.mark.asyncio
 async def test_foreach_expansion_preserves_static_outer_node_set():
     case = READ_FOREACH_EXPAND
     graph_mcp = _FakeMCP(
-        greenscreen_payload=_load_real_greenscreen_collection(),
+        greenscreen_payload=_load_multi_item_greenscreen_collection(),
         roto_payload=_load_roto_capture("b"),
     )
 
@@ -313,8 +375,8 @@ async def test_foreach_expansion_preserves_static_outer_node_set():
 
     assert set(results) == {node.node_id for node in case.graph.nodes}
     assert set(results) == {"read_collection", "foreach_roto"}
-    assert results["foreach_roto"].output["count"] == 1
-    assert len(results["foreach_roto"].output["iterations"]) == 1
+    assert results["foreach_roto"].output["count"] == 3
+    assert len(results["foreach_roto"].output["iterations"]) == 3
 
 
 @pytest.mark.asyncio
