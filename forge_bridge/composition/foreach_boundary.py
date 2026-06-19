@@ -56,7 +56,7 @@ class ForeachBoundary:
             items = foreach.items(upstream.output)
         except ForeachInputError as exc:
             return _error(
-                getattr(exc, "code", "invalid_foreach_input"),
+                str(getattr(exc, "code", "invalid_foreach_input")).lower(),
                 getattr(exc, "message", str(exc)),
                 node,
                 source_artifact_ids=_source_artifact_ids(resolved_inputs),

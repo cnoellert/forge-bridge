@@ -150,6 +150,28 @@ async def test_foreach_boundary_requires_exactly_one_upstream():
 
 
 @pytest.mark.asyncio
+async def test_foreach_boundary_lowercases_graph_input_error_code():
+    async def reenter(_node: NodeSpec, _resolved_inputs: dict[str, NodeResult]):
+        raise AssertionError("should not re-enter")
+
+    bad_collection = NodeResult(
+        status="ok",
+        run_id=uuid.uuid4(),
+        artifact_id=uuid.UUID("11111111-1111-1111-1111-111111111111"),
+        output={"not_a_collection": "nope"},
+    )
+
+    result = await ForeachBoundary().dispatch(
+        _foreach_node(),
+        {"input": bad_collection},
+        reenter=reenter,
+    )
+
+    assert result.status == "error"
+    assert result.reason_code == "invalid_foreach_input"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("config", [{}, {"body": {"operator_id": "forge_roto_ref"}}])
 async def test_foreach_boundary_malformed_body_config_fails_closed(config):
     async def reenter(_node: NodeSpec, _resolved_inputs: dict[str, NodeResult]):
