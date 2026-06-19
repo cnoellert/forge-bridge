@@ -1,7 +1,9 @@
 """Named parity specimens for legacy-chain vs graph-executor comparison."""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 
 from forge_bridge.composition.graph_spec import Edge, GraphSpec, NodeSpec
 from forge_bridge.graph.ports import PortContract, PortTopology
@@ -174,6 +176,71 @@ READ_FOREACH_EXPAND = ParityCase(
         ),
     ),
     terminal_node_id="foreach_roto",
+)
+
+_DELIVERABLE_FIXTURE = json.loads(
+    (
+        Path(__file__).parents[2]
+        / "tests"
+        / "composition"
+        / "fixtures"
+        / "deliverable_fanin_sh010.json"
+    ).read_text()
+)
+_DELIVERABLE_INPUT_PORTS = (
+    "plate_artifact",
+    "holdouts_artifact",
+    "locked_intent_ref",
+    "audit_report_ref",
+    "provenance_manifest_ref",
+)
+
+
+def _fixture_source_node(port: str) -> NodeSpec:
+    artifact = _DELIVERABLE_FIXTURE["inputs"][port]
+    return NodeSpec(
+        node_id=f"source_{port}",
+        operator_id="fixture_source",
+        output_port=PortTopology.any(),
+        config={
+            "artifact_id": artifact["artifact_id"],
+            "output": artifact,
+        },
+    )
+
+
+DELIVERABLE_FANIN = ParityCase(
+    name="deliverable_fanin",
+    legacy_steps=(),
+    graph=GraphSpec(
+        nodes=(
+            *tuple(_fixture_source_node(port) for port in _DELIVERABLE_INPUT_PORTS),
+            NodeSpec(
+                node_id="merge_deliverable",
+                operator_id="forge_assemble_deliverable_package",
+                input_ports={
+                    port: PortContract.any() for port in _DELIVERABLE_INPUT_PORTS
+                },
+                output_port=PortTopology.any(),
+                config={
+                    "arguments": {
+                        port: _DELIVERABLE_FIXTURE["inputs"][port]
+                        for port in _DELIVERABLE_INPUT_PORTS
+                    },
+                    "reduction": {"on_non_flowing_input": "fail"},
+                },
+            ),
+        ),
+        edges=tuple(
+            Edge(
+                from_node=f"source_{port}",
+                to_node="merge_deliverable",
+                to_port=port,
+            )
+            for port in _DELIVERABLE_INPUT_PORTS
+        ),
+    ),
+    terminal_node_id="merge_deliverable",
 )
 
 PARITY_CASES = (

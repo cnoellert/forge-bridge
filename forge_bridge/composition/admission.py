@@ -71,6 +71,20 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         no_state_mutation=True,
         idempotent_result=True,
     ),
+    # Provisional pending #86: forge_assemble_deliverable_package commits an
+    # entire package directory (plate, holdouts EXR, reference JSONs, manifest).
+    # no_state_mutation=True uses the current permissive reading: no canonical
+    # project-state mutation, not "no filesystem side effect". If #86 resolves
+    # side effects as mutation, this entry and forge_roto_ref both flip False.
+    AdmissionRecord(
+        operator_id="forge_assemble_deliverable_package",
+        resolved_class="mcp.synchronous_make",
+        dispatch_kind="mcp",
+        synchronous=True,
+        returns_reference=True,
+        no_state_mutation=True,
+        idempotent_result=True,
+    ),
     AdmissionRecord(
         operator_id="filter",
         resolved_class="primitive.filter",

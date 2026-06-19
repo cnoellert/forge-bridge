@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -13,7 +14,10 @@ from forge_bridge.composition.boundary import (
 from forge_bridge.composition.compiler import compile_operator_sequence
 from forge_bridge.composition.executor import GraphExecutor
 from forge_bridge.composition.graph_spec import Edge, GraphSpec, NodeSpec
+from forge_bridge.composition.node_result import NodeResult
 from forge_bridge.graph.ports import PortContract, PortTopology
+
+_FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
 
 class _FakeMCP:
@@ -91,6 +95,11 @@ def _greenscreen_node(
     )
 
 
+def _load_deliverable_fixture() -> dict:
+    path = _FIXTURE_DIR / "deliverable_fanin_sh010.json"
+    return json.loads(path.read_text())
+
+
 async def test_mcp_boundary_runs_vision_node_and_records_lineage_through_any_edge():
     fake = _FakeMCP([
         {"is_greenscreen": True, "recommendation": "route"},
@@ -133,6 +142,43 @@ async def test_mcp_boundary_runs_vision_node_and_records_lineage_through_any_edg
                 "clip_ref": "mock://perception/is_greenscreen/gs_020_true",
             },
         ),
+    ]
+
+
+async def test_mcp_boundary_records_lineage_from_all_fan_in_inputs():
+    fixture = _load_deliverable_fixture()
+    fake = _FakeMCP([fixture["output"]])
+    boundary = MCPToolBoundary(
+        mcp=fake,
+        run_id=uuid.UUID("11111111-1111-1111-1111-111111111111"),
+        artifact_id_factory=_ids(),
+    )
+    source_ids = (
+        uuid.UUID("00000000-0000-0000-0000-000000000101"),
+        uuid.UUID("00000000-0000-0000-0000-000000000102"),
+        uuid.UUID("00000000-0000-0000-0000-000000000103"),
+        uuid.UUID("00000000-0000-0000-0000-000000000104"),
+        uuid.UUID("00000000-0000-0000-0000-000000000105"),
+    )
+    resolved_inputs = {
+        name: NodeResult(status="ok", run_id=uuid.uuid4(), artifact_id=artifact_id)
+        for name, artifact_id in zip(fixture["inputs"], source_ids, strict=True)
+    }
+    node = NodeSpec(
+        node_id="merge_deliverable",
+        operator_id="forge_assemble_deliverable_package",
+        config={"arguments": fixture["inputs"]},
+    )
+
+    result = await boundary.dispatch(node, resolved_inputs)
+
+    assert result.status == "ok"
+    assert result.source_artifact_ids == source_ids
+    assert result.output["artifact"]["package_content_sha256"] == (
+        fixture["output"]["artifact"]["package_content_sha256"]
+    )
+    assert fake.calls == [
+        ("forge_assemble_deliverable_package", fixture["inputs"]),
     ]
 
 
