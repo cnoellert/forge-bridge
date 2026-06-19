@@ -101,6 +101,9 @@ async def test_foreach_boundary_first_body_error_fails_whole_node():
 
     assert result.status == "error"
     assert result.reason_code == "body_failed"
+    assert result.source_artifact_ids == (
+        uuid.UUID("11111111-1111-1111-1111-111111111111"),
+    )
     assert result.output["iteration_index"] == 0
     assert result.output["body_step"] == "forge_roto_ref"
 
@@ -118,4 +121,3 @@ async def test_foreach_boundary_requires_exactly_one_upstream():
 
     assert result.status == "error"
     assert result.reason_code == "invalid_foreach_input"
-

@@ -82,7 +82,13 @@ class ForeachBoundary:
                     message=str(exc),
                 )
             if body_result.status == "error":
-                return _foreach_error(index, body_node, body_result, node)
+                return _foreach_error(
+                    index,
+                    body_node,
+                    body_result,
+                    node,
+                    resolved_inputs,
+                )
             if body_result.control_signal == "skip":
                 return _error(
                     "unsupported_foreach_body_control_signal",
@@ -165,11 +171,13 @@ def _foreach_error(
     body_node: NodeSpec,
     body_result: NodeResult,
     node: NodeSpec,
+    resolved_inputs: dict[str, NodeResult],
 ) -> NodeResult:
     return _error(
         body_result.reason_code or "foreach_body_error",
         body_result.message or "Foreach body iteration failed.",
         node,
+        source_artifact_ids=_source_artifact_ids(resolved_inputs),
         output={
             "foreach_step": node.node_id,
             "iteration_index": index,
