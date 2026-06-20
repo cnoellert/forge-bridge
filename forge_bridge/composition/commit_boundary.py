@@ -27,6 +27,9 @@ from forge_bridge.mcp.arguments import normalize_tool_args
 DRIFT_OPERATOR_MESSAGE = (
     "could not apply — current state no longer matches what you approved"
 )
+UNRATIFIED_OPERATOR_MESSAGE = (
+    "could not apply — this change hasn't been approved yet"
+)
 
 
 class CommitBoundary:
@@ -107,13 +110,9 @@ class CommitBoundary:
                 first_drift_index=verification.first_drift_index,
             )
         if assent_record is None or not verification.assent_valid:
-            graph_intent_id = getattr(assent_record, "graph_intent_id", None)
-            message = "AssentRecord is not in ratified state."
-            if graph_intent_id:
-                message = f"{message} graph_intent_id={graph_intent_id}"
             return self._error_result(
                 CommitError.ASSENT_INVALID,
-                message,
+                UNRATIFIED_OPERATOR_MESSAGE,
                 resolved_inputs,
             )
 
@@ -223,4 +222,5 @@ def _source_artifact_ids(
 __all__ = [
     "CommitBoundary",
     "DRIFT_OPERATOR_MESSAGE",
+    "UNRATIFIED_OPERATOR_MESSAGE",
 ]

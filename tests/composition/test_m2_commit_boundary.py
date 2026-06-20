@@ -10,6 +10,7 @@ import pytest
 
 from forge_bridge.composition.commit_boundary import (
     DRIFT_OPERATOR_MESSAGE,
+    UNRATIFIED_OPERATOR_MESSAGE,
     CommitBoundary,
 )
 from forge_bridge.composition.compare import (
@@ -200,6 +201,7 @@ async def test_commit_boundary_requires_ratified_assent_before_apply():
 
     assert result.status == "error"
     assert result.reason_code == CommitError.ASSENT_INVALID
+    assert result.message == UNRATIFIED_OPERATOR_MESSAGE
     assert [(name, args["mode"]) for name, args in mcp.calls] == [
         ("flame_rename_shots", "verify"),
     ]
