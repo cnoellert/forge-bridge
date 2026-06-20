@@ -47,6 +47,21 @@ class _SpyForeachBoundary:
         return NodeResult(status="ok", run_id=uuid.uuid4())
 
 
+@dataclass
+class _SpyCommitBoundary:
+    calls: list[tuple[str, object]] = field(default_factory=list)
+
+    async def dispatch(
+        self,
+        node: NodeSpec,
+        resolved_inputs: dict[str, NodeResult],
+        *,
+        assent_record,
+    ) -> NodeResult:
+        self.calls.append((node.operator_id, assent_record))
+        return NodeResult(status="ok", run_id=uuid.uuid4())
+
+
 @pytest.mark.asyncio
 async def test_unified_dispatch_routes_mcp_and_primitive_halves():
     mcp = _SpyBoundary()
@@ -68,6 +83,17 @@ async def test_unified_dispatch_routes_foreach_with_reentry_callable():
     await dispatch.dispatch(NodeSpec(node_id="foreach", operator_id="foreach"), {})
 
     assert foreach.calls == [("foreach", True)]
+
+
+@pytest.mark.asyncio
+async def test_unified_dispatch_routes_commit_with_assent_closure():
+    sentinel = object()
+    commit = _SpyCommitBoundary()
+    dispatch = UnifiedDispatch(commit_boundary=commit, assent_record=sentinel)
+
+    await dispatch.dispatch(NodeSpec(node_id="commit", operator_id="commit"), {})
+
+    assert commit.calls == [("commit", sentinel)]
 
 
 @pytest.mark.asyncio

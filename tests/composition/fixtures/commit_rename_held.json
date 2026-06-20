@@ -1,0 +1,42 @@
+{
+  "_capture": "held — flame_rename_shots discover (dry_run) on DATA_* state. Identical to a second discover (fresh, no-drift). Sequence '30sec_edit 21', genesis client edit, captured 2026-06-19.",
+  "type": "mutation_plan",
+  "intent_parameters": {
+    "sequence_name": "30sec_edit 21",
+    "prefix": "dt",
+    "increment": 10,
+    "padding": 3,
+    "start": 10,
+    "role_overrides": {},
+    "qualifier_overrides": {}
+  },
+  "resolved_plan": [
+    {"identity": {"track_idx": 0, "record_in": "'01:00:00+00'", "seg_name": "DATA_010_graded_L01", "source_name": "B002C002_260302_RNTM", "sequence_name": "30sec_edit 21"}, "payload": {"shot_name": "dt_010", "segment_name": "dt_010_graded_L01"}},
+    {"identity": {"track_idx": 0, "record_in": "'01:00:02+06'", "seg_name": "DATA_020_graded_L01", "source_name": "B005C011_260303_RNTM", "sequence_name": "30sec_edit 21"}, "payload": {"shot_name": "dt_020", "segment_name": "dt_020_graded_L01"}},
+    {"identity": {"track_idx": 0, "record_in": "'01:00:03+17'", "seg_name": "DATA_030_graded_L01", "source_name": "A003C003_120101_NQ96", "sequence_name": "30sec_edit 21"}, "payload": {"shot_name": "dt_030", "segment_name": "dt_030_graded_L01"}},
+    {"identity": {"track_idx": 0, "record_in": "'01:00:05+03'", "seg_name": "DATA_040_graded_L01", "source_name": "B005C014_260303_RNTM", "sequence_name": "30sec_edit 21"}, "payload": {"shot_name": "dt_040", "segment_name": "dt_040_graded_L01"}},
+    {"identity": {"track_idx": 0, "record_in": "'01:00:06+07'", "seg_name": "DATA_050_graded_L01", "source_name": "A002C008_120101_NQ96", "sequence_name": "30sec_edit 21"}, "payload": {"shot_name": "dt_050", "segment_name": "dt_050_graded_L01"}},
+    {"identity": {"track_idx": 0, "record_in": "'01:00:07+13'", "seg_name": "DATA_060_graded_L01", "source_name": "D001C0004_260302_72Q0", "sequence_name": "30sec_edit 21"}, "payload": {"shot_name": "dt_060", "segment_name": "dt_060_graded_L01"}},
+    {"identity": {"track_idx": 0, "record_in": "'01:00:08+06'", "seg_name": "DATA_070_graded_L01", "source_name": "D001C0007_260302_72Q0", "sequence_name": "30sec_edit 21"}, "payload": {"shot_name": "dt_070", "segment_name": "dt_070_graded_L01"}},
+    {"identity": {"track_idx": 0, "record_in": "'01:00:09+02'", "seg_name": "DATA_080_graded_L01", "source_name": "A002C002_120101_NQ96", "sequence_name": "30sec_edit 21"}, "payload": {"shot_name": "dt_080", "segment_name": "dt_080_graded_L01"}},
+    {"identity": {"track_idx": 0, "record_in": "'01:00:11+01'", "seg_name": "DATA_090_graded_L01", "source_name": "B001C003_260302_RNTM", "sequence_name": "30sec_edit 21"}, "payload": {"shot_name": "dt_090", "segment_name": "dt_090_graded_L01"}},
+    {"identity": {"track_idx": 0, "record_in": "'01:00:11+21'", "seg_name": "DATA_100_graded_L01", "source_name": "B004C008_260302_RNTM", "sequence_name": "30sec_edit 21"}, "payload": {"shot_name": "dt_100", "segment_name": "dt_100_graded_L01"}},
+    {"identity": {"track_idx": 0, "record_in": "'01:00:12+20'", "seg_name": "DATA_110_graded_L01", "source_name": "B004C006_260302_RNTM", "sequence_name": "30sec_edit 21"}, "payload": {"shot_name": "dt_110", "segment_name": "dt_110_graded_L01"}},
+    {"identity": {"track_idx": 0, "record_in": "'01:00:13+19'", "seg_name": "DATA_120_graded_L01", "source_name": "A003C006_120101_NQ96", "sequence_name": "30sec_edit 21"}, "payload": {"shot_name": "dt_120", "segment_name": "dt_120_graded_L01"}},
+    {"identity": {"track_idx": 0, "record_in": "'01:00:15+10'", "seg_name": "DATA_130_graded_L01", "source_name": "B006C030_260303_RNTM", "sequence_name": "30sec_edit 21"}, "payload": {"shot_name": "dt_130", "segment_name": "dt_130_graded_L01"}},
+    {"identity": {"track_idx": 0, "record_in": "'01:00:16+05'", "seg_name": "DATA_140_graded_L01", "source_name": "B004C005_260302_RNTM", "sequence_name": "30sec_edit 21"}, "payload": {"shot_name": "dt_140", "segment_name": "dt_140_graded_L01"}},
+    {"identity": {"track_idx": 0, "record_in": "'01:00:17+10'", "seg_name": "DATA_150_graded_L01", "source_name": "A002C027_120101_NQ96", "sequence_name": "30sec_edit 21"}, "payload": {"shot_name": "dt_150", "segment_name": "dt_150_graded_L01"}},
+    {"identity": {"track_idx": 0, "record_in": "'01:00:18+18'", "seg_name": "DATA_160_graded_L01", "source_name": "B006C032_260303_RNTM", "sequence_name": "30sec_edit 21"}, "payload": {"shot_name": "dt_160", "segment_name": "dt_160_graded_L01"}},
+    {"identity": {"track_idx": 0, "record_in": "'01:00:19+11'", "seg_name": "DATA_170_graded_L01", "source_name": "B004C005_260302_RNTM", "sequence_name": "30sec_edit 21"}, "payload": {"shot_name": "dt_170", "segment_name": "dt_170_graded_L01"}},
+    {"identity": {"track_idx": 0, "record_in": "'01:00:20+03'", "seg_name": "DATA_180_graded_L01", "source_name": "B006C006_260303_RNTM", "sequence_name": "30sec_edit 21"}, "payload": {"shot_name": "dt_180", "segment_name": "dt_180_graded_L01"}},
+    {"identity": {"track_idx": 0, "record_in": "'01:00:20+21'", "seg_name": "DATA_190_graded_L01", "source_name": "A005C008_120101_NQ96", "sequence_name": "30sec_edit 21"}, "payload": {"shot_name": "dt_190", "segment_name": "dt_190_graded_L01"}},
+    {"identity": {"track_idx": 0, "record_in": "'01:00:25+20'", "seg_name": "DATA_200_graded_L01", "source_name": "D003C0008_260303_72Q0", "sequence_name": "30sec_edit 21"}, "payload": {"shot_name": "dt_200", "segment_name": "dt_200_graded_L01"}},
+    {"identity": {"track_idx": 1, "record_in": "'01:00:00+00'", "seg_name": "DATA_010_graded_L02", "source_name": "A001C044_130101_NQ96", "sequence_name": "30sec_edit 21"}, "payload": {"shot_name": "dt_010", "segment_name": "dt_010_graded_L02"}},
+    {"identity": {"track_idx": 1, "record_in": "'01:00:12+20'", "seg_name": "DATA_110_graded_L02", "source_name": "A006C002_120101_NQ96", "sequence_name": "30sec_edit 21"}, "payload": {"shot_name": "dt_110", "segment_name": "dt_110_graded_L02"}},
+    {"identity": {"track_idx": 1, "record_in": "'01:00:16+05'", "seg_name": "DATA_140_graded_L02", "source_name": "A002C020_120101_NQ96", "sequence_name": "30sec_edit 21"}, "payload": {"shot_name": "dt_140", "segment_name": "dt_140_graded_L02"}},
+    {"identity": {"track_idx": 1, "record_in": "'01:00:19+11'", "seg_name": "DATA_170_graded_L02", "source_name": "A001C041_130101_NQ96", "sequence_name": "30sec_edit 21"}, "payload": {"shot_name": "dt_170", "segment_name": "dt_170_graded_L02"}},
+    {"identity": {"track_idx": 2, "record_in": "'01:00:12+20'", "seg_name": "DATA_110_graded_L03", "source_name": "A006C002_120101_NQ96", "sequence_name": "30sec_edit 21"}, "payload": {"shot_name": "dt_110", "segment_name": "dt_110_graded_L03"}}
+  ],
+  "originating_capability": "flame_rename_shots",
+  "apply_counterpart": {"tool": "flame_rename_shots", "parameter_overrides": {"mode": "apply"}}
+}

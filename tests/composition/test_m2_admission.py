@@ -28,6 +28,11 @@ def test_admission_accepts_slice_one_operator_ids():
     assert admit_operator("filter").resolved_class == "primitive.filter"
     assert admit_operator("if").resolved_class == "primitive.if_gate"
     assert admit_operator("foreach").dispatch_kind == "foreach"
+    commit = admit_operator("commit")
+    assert commit.resolved_class == "mcp.host_mutation"
+    assert commit.dispatch_kind == "commit"
+    assert commit.no_state_mutation is False
+    assert commit.idempotent_result is False
 
 
 def test_admission_fails_closed_for_unknown_operator():
@@ -43,6 +48,7 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "filter",
         "if",
         "foreach",
+        "commit",
     }
     assert "filter(is_greenscreen == true)" not in ADMISSION_TABLE
     assert "if(disposition == pass)" not in ADMISSION_TABLE

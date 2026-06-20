@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
 
-DispatchKind = Literal["mcp", "primitive", "foreach"]
+DispatchKind = Literal["mcp", "primitive", "foreach", "commit"]
 
 
 class AdmissionRejected(ValueError):
@@ -111,6 +111,15 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         returns_reference=False,
         no_state_mutation=True,
         idempotent_result=True,
+    ),
+    AdmissionRecord(
+        operator_id="commit",
+        resolved_class="mcp.host_mutation",
+        dispatch_kind="commit",
+        synchronous=True,
+        returns_reference=False,
+        no_state_mutation=False,
+        idempotent_result=False,
     ),
 )
 
