@@ -19,6 +19,7 @@ from forge_bridge.composition.admission import AdmissionRecord, admit_operator
 from forge_bridge.composition.executor import GraphExecutor
 from forge_bridge.composition.graph_spec import GraphSpec, NodeSpec
 from forge_bridge.composition.node_result import NodeResult
+from forge_bridge.graph.mutation import MutationManifest, MutationManifestError
 
 DispatchCallable = Callable[[NodeSpec, dict[str, NodeResult]], Awaitable[NodeResult]]
 CompareStrategy = Literal["double_exec", "record_replay"]
@@ -247,9 +248,23 @@ def normalize_terminal_output(value: Any) -> Any:
     the slice-1 real-shape, real-volatility compare boundary.
     """
 
+    mutation = _normalize_mutation_manifest(value)
+    if mutation is not None:
+        return mutation
     normalized = copy.deepcopy(value)
     _normalize_in_place(normalized, ())
     return normalized
+
+
+def _normalize_mutation_manifest(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, MutationManifest):
+        return value.to_dict()
+    if not isinstance(value, dict) or value.get("type") != "mutation_plan":
+        return None
+    try:
+        return MutationManifest.from_dict(value).to_dict()
+    except MutationManifestError:
+        return None
 
 
 def _normalize_in_place(value: Any, path: tuple[str | int, ...]) -> None:
