@@ -160,11 +160,11 @@ Real controlled rename driven through the v1.7 chain on sequence `30sec_edit 21`
 
 **Verified facts that de-risk the slice:** preview-determinism (`held==fresh`) · genuine drift (`matched=False`) from a *real* state change, not synthesized · `MutationManifest` shape matches `graph/mutation.py` + `CommitNode.verify` (`resolved_plan` of `{identity, payload}` + `apply_counterpart`) · the payload-asymmetry comparator nuance (build item 3) · assent minted-in-test, not captured (build item 6).
 
-**Re-capture path:** `tests/composition/fixtures/README.md` documents the exact procedure (proven reversible) alongside the tracked `commit_rename_held.json`. Cleanest for code: lift the captures from the fixture / the handoff transcript rather than re-mutate; live re-capture is the byte-exact-validation fallback. *(The original `.slice3-captures/` scratch dir was removed at M2 close; its content lives in the fixtures README.)*
+**Re-capture path:** `tests/composition/fixtures/README.md` documents the exact procedure (proven reversible) alongside the tracked `commit_rename_held.json`. Cleanest for code: lift the captures from the fixture / the handoff transcript rather than re-mutate; live re-capture is the byte-exact-validation fallback. *(The original `.slice3-captures/` scratch dir was removed at slice-3 close; its content lives in the fixtures README.)*
 
 ---
 
-## As-built — RATIFIED at M2 close (2026-06-20)
+## As-built — RATIFIED at M2 parity-complete (2026-06-20)
 
 **Shipped:** PR **#100** (squash `aec9723`) — commits `1b43617` (commit boundary) + `dc52de9` (operator-facing unratified message). Merged WITHOUT ultra (no credits); **DT-verified end-to-end**.
 
@@ -180,4 +180,4 @@ Real controlled rename driven through the v1.7 chain on sequence `30sec_edit 21`
 
 **Deferred (tracked):** production wiring `chain_steps → GraphSpec` into `run_apply_branch` = **slice 4** (CommitBoundary is proven-in-isolation, zero production callers, like M1) · finding #2 (assent graph-run-scoped, not node-scoped) · #86 (slice 3 anchors the side-effect-as-mutation contrast).
 
-**M2 MILESTONE CLOSED.** The slice-2 reframe — "executor interprets nothing; everything rides in dispatch/boundaries" — held the entire arc, including the operator's assent. → cursor `[[project_passoff_2026_06_20_m2_closed_slice3_authority_shipped]]`.
+**M2 PARITY PHASE COMPLETE — the "Parity-complete wall" (end of slice 3) is reached. M2 is NOT closed:** the locked cutover slices remain — **4** (chain-text → `GraphSpec`) · **5** (planner/daemon dual-path reachability) · **6** (corpus-green → flag-flip → retire `run_chain_steps`). The slice-2 reframe — "executor interprets nothing; everything rides in dispatch/boundaries" — held the entire **parity** arc, including the operator's assent; cutover (4–6) tests it under a real production caller. → cursor `[[project_passoff_2026_06_20_m2_closed_slice3_authority_shipped]]`.
