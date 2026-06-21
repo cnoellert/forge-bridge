@@ -1,6 +1,6 @@
 # M2 Slice 4 — Orch Framing (chain-text → GraphSpec / first production caller) — positions for the room
 
-**Date:** 2026-06-20 · **Status:** ORCH DRAFT (positions on Q1–Q6; for DT/Creative/operator redline).
+**Date:** 2026-06-20 · **Status:** CONVERGED (Orch + DT + Creative) → **Option A with DT's broad-corpus refinement.** Operator confirm pending → pass-to-code.
 **Base:** main `d753d41`. **Parents:** [[M2-SLICE-4-FRAMING-SEED]] · `M2-PARITY-AND-CUTOVER-FRAMING.md` (slice 4 = first cutover slice) · `M2-SLICE-3-FRAMING.md`.
 **Grounded against live reads (2026-06-20):** `console/_step.py::_maybe_execute_commit_step`, `console/_engine.py::run_chain_steps`, `console/_chat_compile.py::{run_compile_branch, run_apply_branch, build_preview_from_steps}`, `composition/compiler.py`, `composition/commit_boundary.py`.
 
@@ -58,7 +58,7 @@ Confirmed in `_maybe_execute_commit_step`: `held = inherited_context["__previous
 
 **Position:** a ratified chain may carry reads + `if`-gates before `commit`; the compiler emits those as their boundary node kinds (MCP / filter / if_gate / foreach — all exist from slices 1/2a/2b). The **admission table is the gate**: a step whose first token isn't admitted → **fail-closed** (compile rejects; the live path stays on legacy, so a reject is safe, not a user-facing failure). `_strip_commit_for_exact_read_graph` (commit-containing-but-all-reads) is a read-path concern → defers with the read-path scope.
 
-**The liveness boundary (slice 4 vs 5) — needs an explicit call.** I read the locked slice order as: **slice 4 builds `chain_compiler` + held-from-edge + the offline parity harness and proves graph-apply ≡ legacy on captured chains; `run_apply_branch`'s LIVE path stays legacy.** Slice 5 is where both paths run on real traffic (dual-path), slice 6 flips. **My lean: keep the live apply path on legacy this slice** (the caution flag) — "first production caller" = the graph path can consume real ratified `chain_steps` and is parity-proven, not that it replaces the live apply. If the operator wants graph-apply *shadowing* live in `run_apply_branch` this slice, that's a deliberate scope-up to flag now.
+**The liveness boundary (slice 4 vs 5) — see the converged decision below.**
 
 ---
 
@@ -68,8 +68,23 @@ The graph-apply entry point: compile `record.chain_steps` → `GraphSpec` → `G
 
 ---
 
-## What I'm asking the room to redline
+## CONVERGED — liveness boundary + the broad-corpus success bar (DT + Creative + Orch)
 
-- **DT (grounding):** is the `[discover node] → commit node` edge shape faithful to how `run_compile_branch` actually emits the ratified chain (does the discover step reliably land a `mutation_plan` in `__previous_result__` as a graph edge would carry it)? Does `chain_compiler` need to handle multi-step pre-commit chains in the *first* fixture, or is `[rename → commit]` the honest slice-4 specimen? Confirm held-from-edge keeps the assent-token-ban + byte-lock green.
-- **Creative (experience):** with the live path staying on legacy, slice 4 is invisible to the operator — correct for a parity slice, but confirm we're not implying a behavior change we haven't shipped.
-- **Operator:** the **liveness boundary** (Q6) — offline-parity-proven is my lean for slice 4, with shadow/flip as slice 5/6. Is that the right cut, or do you want graph-apply shadowing the live `run_apply_branch` this slice?
+**Decision: Option A. Live `run_apply_branch` stays legacy this slice. Option B (live compile+verify shadow) rejected.**
+
+*Why B is rejected (DT, grounded):* B's live shadow still fires a real `flame_rename_shots(mode=verify)` round-trip to live Flame **inside the authority handler** — latency + a failure surface threaded into the exact seam the caution flag guards; "doesn't mutate" undersells that it touches live Flame and enlarges `run_apply_branch`. And its signal accrues **glacially**: the execution log shows **~13 of 18,018 executions** touch rename/apply/ratify (mutations are ~1000:1 rare), so a live shadow would learn chain-variety at a trickle while carrying the live-handler hazard continuously. *Creative:* B also blurs the milestone boundary — live shadow wiring is still a change to the live authority surface and risks the false perception that "graph apply is running live." Slice 4 proves the mechanism on captured chains; slice 5 exposes it to real traffic; slice 6 flips. Keep each milestone honest.
+
+**The load-bearing refinement (DT) — A's corpus must be BROAD, or A is the n=1 trap again.** "Replay captured *ratified* chains" today means replaying ~a handful (the `30sec_edit 21` rename + a few). The compiler's entire risk is **chain variety** — multi-step chains, op mixes (`filter→foreach→commit`), Bug-D salvage text forms, clarification re-entries, empty/edge plans. A handful hides all of it (specimen-size-masks-divergence, now a 4th time after 2a n=1 · 2b n=1 · 2c independent-sink). **The dissolving move:** the compiler's input is `chain_steps`, which come from `compile_intent` — **non-mutating and abundant** (most of the 18k). So capture a **broad corpus of real model-emitted `chain_steps` offline** by driving `compile_intent` over many real intents — B's "compiler firing on real chains" signal, in A's safe offline posture. It's faithful because the live compiler input in `run_apply_branch` is a persisted ratified chain, which is a `compile_intent` output — the compile-capture corpus is a **superset**.
+
+### Slice-4 success bar (converged — explicit)
+1. **`chain_compiler` round-trips a BROAD corpus** of real model-emitted `chain_steps` (captured offline via `compile_intent`, non-mutating) — *not* "the `30sec_edit 21` chain round-trips." This is the bar; shipping on the ratified handful = the n=1 trap on the one component whose entire risk is input variety.
+2. **The ratified handful** (`30sec_edit 21` +) proves **end-to-end** ratify → compile → graph-apply (`held` from edge) → `CommitNode.verify` → apply-once → **expected post-state**, parity-equal to legacy `run_chain_steps` replay.
+3. **Live `run_apply_branch` unchanged** (legacy authoritative); `executor.py` byte-untouched; assent-token-ban green; `__all__` 19.
+
+### Build delta from the seed's pass-to-code
+- Add: **assemble the broad `compile_intent`-derived chain corpus** (extract real `chain_steps` from the execution log / drive `compile_intent` over logged intents; captured-not-assembled) — this is now a first-class slice-4 deliverable, not an afterthought.
+- The two-tier oracle: corpus-wide **compiler round-trip parity** (does the compiled `GraphSpec` execute equivalently to legacy per chain) + the ratified handful's **end-to-end apply fidelity**.
+
+### Remaining for DT at pass-to-code (mechanical, not open questions)
+- Confirm the `[discover node] → commit node` edge faithfully carries the `mutation_plan` the way legacy threads `__previous_result__`; confirm `[rename → commit]` is the honest *minimal* end-to-end specimen while the broad corpus carries variety.
+- Confirm held-from-edge keeps the assent-token-ban + executor byte-lock green after wiring the graph-apply entry point.
