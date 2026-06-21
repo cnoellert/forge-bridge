@@ -160,4 +160,24 @@ Real controlled rename driven through the v1.7 chain on sequence `30sec_edit 21`
 
 **Verified facts that de-risk the slice:** preview-determinism (`held==fresh`) · genuine drift (`matched=False`) from a *real* state change, not synthesized · `MutationManifest` shape matches `graph/mutation.py` + `CommitNode.verify` (`resolved_plan` of `{identity, payload}` + `apply_counterpart`) · the payload-asymmetry comparator nuance (build item 3) · assent minted-in-test, not captured (build item 6).
 
-**Re-capture path:** `README.md` in `.slice3-captures/` documents the exact procedure (proven reversible). Cleanest for code: lift the captures from `held.json` / the handoff transcript rather than re-mutate; live re-capture is the byte-exact-validation fallback.
+**Re-capture path:** `tests/composition/fixtures/README.md` documents the exact procedure (proven reversible) alongside the tracked `commit_rename_held.json`. Cleanest for code: lift the captures from the fixture / the handoff transcript rather than re-mutate; live re-capture is the byte-exact-validation fallback. *(The original `.slice3-captures/` scratch dir was removed at M2 close; its content lives in the fixtures README.)*
+
+---
+
+## As-built — RATIFIED at M2 close (2026-06-20)
+
+**Shipped:** PR **#100** (squash `aec9723`) — commits `1b43617` (commit boundary) + `dc52de9` (operator-facing unratified message). Merged WITHOUT ultra (no credits); **DT-verified end-to-end**.
+
+**Built, matching the scoped pass-to-code:**
+- `commit` admission (`dispatch_kind="commit"`, first `no_state_mutation=False, idempotent_result=False`, `resolved_class="mcp.host_mutation"`, `returns_reference=False`).
+- `forge_bridge/composition/commit_boundary.py::CommitBoundary` — closure-threaded assent → `CommitNode.verify(held, fresh)` → gated apply exactly once → plain `NodeResult` (assent never embedded). `UnifiedDispatch` `"commit"` arm threads `self.assent_record`.
+- Plan-equivalence-on-manifests in `compare.py` (`_normalize_mutation_manifest`, early-return; comparator firewall preserved — payload asymmetry not normalized).
+- Hand-authored commit `GraphSpec` specimen + the captured `commit_rename_held.json` fixture; `AssentRecord` minted in-test.
+
+**Bar — all five met, both gates mutation-proven non-vacuous.** Three break-conditions held: model authors neither `ratified` nor `matched`; executor never inspects assent; boundary reads `assent.status`, never transitions it. `executor.py` byte-for-byte `main` — **across the whole 2a/2b/2c/3 arc**, authority included. 82 composition green + 3 legacy ratification + 3 executor-invariants; ruff clean; `__all__` 19.
+
+**Deviations from the framing (all folded above):** DT-3 post-state surface corrected (Flame-side `flame_get_sequence_segments`, not canonical); `record_replay` found to be an unimplemented stub → built plan-equivalence-on-manifests instead of a replay engine; unratified abort message made operator-facing (`UNRATIFIED_OPERATOR_MESSAGE`).
+
+**Deferred (tracked):** production wiring `chain_steps → GraphSpec` into `run_apply_branch` = **slice 4** (CommitBoundary is proven-in-isolation, zero production callers, like M1) · finding #2 (assent graph-run-scoped, not node-scoped) · #86 (slice 3 anchors the side-effect-as-mutation contrast).
+
+**M2 MILESTONE CLOSED.** The slice-2 reframe — "executor interprets nothing; everything rides in dispatch/boundaries" — held the entire arc, including the operator's assent. → cursor `[[project_passoff_2026_06_20_m2_closed_slice3_authority_shipped]]`.
