@@ -1,6 +1,6 @@
 # M2 Slice 4 — Orch Framing (chain-text → GraphSpec / first production caller) — positions for the room
 
-**Date:** 2026-06-20 · **Status:** CONVERGED + operator-confirmed → **PASS-TO-CODE READY** (Option A, broad corpus; brief at end of doc).
+**Date:** 2026-06-20 · **Status:** SHIPPED (PR #101 / `bc5abb2`, 2026-06-22) — as-built ratified at end of doc. Mechanism DT-verified; broad-real-corpus re-scoped to slice 5.
 **Base:** main `d753d41`. **Parents:** [[M2-SLICE-4-FRAMING-SEED]] · `M2-PARITY-AND-CUTOVER-FRAMING.md` (slice 4 = first cutover slice) · `M2-SLICE-3-FRAMING.md`.
 **Grounded against live reads (2026-06-20):** `console/_step.py::_maybe_execute_commit_step`, `console/_engine.py::run_chain_steps`, `console/_chat_compile.py::{run_compile_branch, run_apply_branch, build_preview_from_steps}`, `composition/compiler.py`, `composition/commit_boundary.py`.
 
@@ -114,3 +114,19 @@ The graph-apply entry point: compile `record.chain_steps` → `GraphSpec` → `G
 **Invariants (tested locks):** `executor.py` byte-for-byte `main` · assent-token-ban (no assent tokens in `executor.py`, assent never in a `NodeResult`) · `__all__` 19 · slice-3 commit-boundary tests green.
 
 **Caution:** `run_apply_branch` is **live in the chat surface**. Slice 4 adds a parallel offline path and must leave the production apply path byte-unchanged. If anything forces a change to the live handler, **stop and escalate** — that's the slice 4/5 boundary, decided to stay closed this slice.
+
+---
+
+## As-built — RATIFIED at slice-4 close (2026-06-22)
+
+**Shipped:** PR **#101** (squash `bc5abb2`) — single commit `5f690a0`. Merged WITHOUT ultra (no credits); **DT-verified**, fail-closed gate **mutation-proven** (defeating it reds all 4 unadmitted-token cases).
+
+**Built, matching the pass-to-code:** `composition/chain_compiler.py` (text `chain_steps` → linear `GraphSpec`, reusing the `graph/` step-predicates + admission — one grammar with legacy; fail-closed on unadmitted tokens) · `CommitBoundary` held-from-edge (additive; edge ≡ config verified) · `flame_rename_shots` admitted as a non-mutating discover MCP node (`mcp.host_mutation_discover`).
+
+**Bar — mechanism met, DT-verified:** compiler builds correct graphs over real structural variety; **Tier-2 end-to-end** — compiled `[rename(discover) → commit]` graph-apply == legacy `run_chain_steps` replay (identical status vectors + discover→verify→apply traces + post-state on the captured `30sec_edit 21` fixture; drift aborts before apply). **Invariants green:** `executor.py` byte-for-byte `main` **across the whole 2a→2b→2c→3→4 arc**; live `_chat_compile`/`_engine`/`_step` byte-unchanged (Option A held; B rejected); `__all__` 19. 92 composition green, ruff clean.
+
+**Bar #1 (broad real corpus) — RE-SCOPED + DEFERRED (room-agreed).** Not met, not pretended. Grounding disproved the premise: the only execution log is the learning-pipeline **code** log (`raw_code`/`code_hash`/`intent`-as-code-label) — **no NL chat intents**, so there is no offline source to drive `compile_intent` over. The gap is encoded as a passing test (`test_execution_log_is_not_a_replayable_chain_corpus_today`). The compiler is proven on real *structural* variety + the ratified handful end-to-end; the broad *distributional* corpus moves to slice 5.
+
+**Slice-5 prerequisite (the real gate on slice 5 opening):** a capture source that **persists replayable `chain_steps`** — capture from `compile_intent` over real intents (non-mutating → real model-emitted distribution, offline). **Slice 5 must NOT open against the hand-authored corpus.** ⚠️ Mind the "no shared-path JSONL writers" learning-pipeline non-goal if the capture route touches the execution log.
+
+**Deferred (tracked):** slice 5 (live dual-path, gated on the corpus-capture source) · slice 6 (corpus-green → flag-flip → retire `run_chain_steps`). → cursor `[[project_passoff_2026_06_22_m2_slice4_compiler_shipped]]`.
