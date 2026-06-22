@@ -15,6 +15,7 @@ from forge_bridge.composition.commit_boundary import CommitBoundary
 from forge_bridge.composition.foreach_boundary import ForeachBoundary
 from forge_bridge.composition.graph_spec import NodeSpec
 from forge_bridge.composition.node_result import NodeResult
+from forge_bridge.composition.operation_boundary import OperationDispatchBoundary
 from forge_bridge.composition.primitive_boundary import PrimitiveBoundary
 
 
@@ -26,6 +27,9 @@ class UnifiedDispatch:
     primitive_boundary: PrimitiveBoundary = field(default_factory=PrimitiveBoundary)
     foreach_boundary: ForeachBoundary = field(default_factory=ForeachBoundary)
     commit_boundary: CommitBoundary = field(default_factory=CommitBoundary)
+    operation_boundary: OperationDispatchBoundary = field(
+        default_factory=OperationDispatchBoundary
+    )
     assent_record: Any | None = None
 
     async def dispatch(
@@ -50,4 +54,6 @@ class UnifiedDispatch:
                 resolved_inputs,
                 assent_record=self.assent_record,
             )
+        if admission.dispatch_kind == "operation":
+            return await self.operation_boundary.dispatch(node, resolved_inputs)
         raise AssertionError(f"Unhandled dispatch kind: {admission.dispatch_kind!r}")
