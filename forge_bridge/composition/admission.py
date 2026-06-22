@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
 
-DispatchKind = Literal["mcp", "primitive", "foreach", "commit"]
+DispatchKind = Literal["mcp", "primitive", "foreach", "commit", "operation"]
 
 
 class AdmissionRejected(ValueError):
@@ -92,6 +92,15 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         synchronous=True,
         returns_reference=False,
         no_state_mutation=True,
+        idempotent_result=False,
+    ),
+    AdmissionRecord(
+        operator_id="traffik.editorial.apply_steps",
+        resolved_class="pipeline.traffik.editorial.apply_steps",
+        dispatch_kind="operation",
+        synchronous=True,
+        returns_reference=False,
+        no_state_mutation=False,
         idempotent_result=False,
     ),
     AdmissionRecord(
