@@ -10,6 +10,7 @@ import json
 import uuid
 from typing import Any, Optional
 
+from forge_bridge.chain_corpus import emit_compile_record, start_trace_capture
 from forge_bridge.console._authority import dispatch_authority
 from forge_bridge.console._engine import run_chain_steps
 from forge_bridge.console._executor_route import apply_executor_routing
@@ -169,6 +170,28 @@ def build_preview_from_steps(
     return preview
 
 
+def _emit_chain_corpus_compile(
+    *,
+    request_id: str,
+    regime: str,
+    steps: list[str],
+    salvage_applied: bool,
+    salvage_reason: str | None,
+    trace: Any,
+) -> None:
+    emit_compile_record(
+        request_id=request_id,
+        regime=regime,
+        chain_steps=steps,
+        salvage_applied=salvage_applied,
+        salvage_reason=salvage_reason,
+        replayable=(
+            regime == "compiled_non_mutating"
+            and not getattr(trace, "has_collision", False)
+        ),
+    )
+
+
 async def run_compile_branch(
     *,
     router: Any,
@@ -188,6 +211,7 @@ async def run_compile_branch(
         if compile_system is not None
         else build_compile_system_prompt(tools)
     )
+    trace = start_trace_capture(request_id=request_id, mcp=mcp)
     steps: list[str] = []
     try:
         steps = await router.compile_intent(
@@ -197,6 +221,14 @@ async def run_compile_branch(
         )
         steps, salvage = normalize_chain_shape(steps)
     except CompileError as exc:
+        _emit_chain_corpus_compile(
+            request_id=request_id,
+            regime="compile_error",
+            steps=steps,
+            salvage_applied=False,
+            salvage_reason=None,
+            trace=trace,
+        )
         return CompileBranchOutcome(
             regime="compile_error",
             steps=steps,
@@ -227,6 +259,14 @@ async def run_compile_branch(
                     await session.commit()
                 graph_intent_id = record.graph_intent_id
                 assent_record_id = record.id
+            _emit_chain_corpus_compile(
+                request_id=request_id,
+                regime="compiled_mutating_preview",
+                steps=steps,
+                salvage_applied=salvage_applied,
+                salvage_reason=salvage_reason,
+                trace=trace,
+            )
             return CompileBranchOutcome(
                 regime="compiled_mutating_preview",
                 steps=steps,
@@ -244,7 +284,7 @@ async def run_compile_branch(
     chain_body = await run_chain_steps(
         steps=steps,
         tools=chain_tools,
-        mcp=mcp,
+        mcp=trace.mcp,
         request_id=request_id,
         client_ip=client_ip,
         started=started,
@@ -257,6 +297,14 @@ async def run_compile_branch(
         "chain_aborted"
         if isinstance(chain_body, dict) and chain_body.get("status") == "error"
         else "compiled_non_mutating"
+    )
+    _emit_chain_corpus_compile(
+        request_id=request_id,
+        regime=regime,
+        steps=steps,
+        salvage_applied=salvage_applied,
+        salvage_reason=salvage_reason,
+        trace=trace,
     )
     return CompileBranchOutcome(
         regime=regime,
