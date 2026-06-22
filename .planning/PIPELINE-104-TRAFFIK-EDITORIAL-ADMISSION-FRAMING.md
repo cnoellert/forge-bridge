@@ -28,6 +28,14 @@ Pipeline owning editorial operators does **not** imply Pipeline owns an editoria
 
 **Mechanism the invariant implies:** Bridge owns graph + orchestration → `UnifiedDispatch` resolves operator → owning peer → boundary *delegates* execution → owning peer enforces its own authority → `NodeResult` returns into the same graph.
 
+**Creative's tightening (the last abstraction layer — locked):** *the graph composes CAPABILITIES, not transports.* Transport (local / sibling-MCP / injected client / HTTP / future) is an **implementation detail of the operator, declared by the capability — not part of the graph model.** The graph must stay oblivious: no "MCP nodes" / "local nodes" / "Vision nodes," only capabilities. This makes **four concerns fully orthogonal:**
+1. **Composition** — the `GraphSpec` (knows only capability identity / `operator_id`).
+2. **Capability resolution** — the registry (capability → implementation).
+3. **Invocation** — dispatch (reads the capability's *declared* invocation mechanism, honors it).
+4. **Authority** — the state owner.
+
+So the question is **not** "MCP operator or Pipeline boundary?" (transport-first). It is **"what invocation mechanism does the `apply_steps` capability *declare*?"** — dispatch resolves it; the graph never knows. Today's `dispatch_kind` enum is Bridge *hardcoding* the invocation mechanism per-operator — a **stand-in** for capability-declared invocation; the seam is to resolve invocation *from the declaration* (touches #24).
+
 ---
 
 ## 0. What #104 asks (one paragraph)
@@ -66,18 +74,18 @@ Pipeline has banked the Traffik editorial substrate and **proven Bridge's real `
 
 **Forward-pointer (draw the line now to prevent a future mistake):** when the `TimelineDelta → Flame` application eventually lands (future work, not #104), *that* step IS Bridge-host mutation territory and WOULD need `commit`/ratify. The authority boundary is: **`apply_steps` (peer editorial mutation) = peer-owned, no ratify; future delta→Flame application = Bridge-host, ratified.** Don't let anyone route the Flame application without a ratify gate later.
 
-### Q-B — Transport routing: **prefer the EXISTING federation transport (`mcp`/sibling capability) — `dispatch_kind` is a transport axis, NEVER a peer axis.** [REVISED under §0.5]
+### Q-B — Invocation resolution: **dispatch honors the mechanism the capability DECLARES; the graph stays oblivious to transport.** [REVISED under §0.5 + Creative]
 
-> An earlier draft proposed `dispatch_kind="pipeline"` + a `PipelineOperationBoundary`. **Rejected** — that labels nodes by implementer and is the composition-boundary error §0.5 forbids. `dispatch_kind` (`mcp`/`primitive`/`foreach`/`commit`) is a **transport/role** axis, not a peer axis.
+> Two superseded drafts: (1) `dispatch_kind="pipeline"` + `PipelineOperationBoundary` — the silo error; (2) "admit over the MCP transport vs add a kind" — *still transport-first*. Both smuggle transport into the graph model. Corrected: the graph composes capabilities; **invocation mechanism is a property the capability declares, resolved at dispatch.**
 
-**Position:** admit `traffik.editorial.apply_steps` over the **same transport Vision's roto already uses** — `dispatch_kind="mcp"` via the sibling capability mechanism — so it composes as a plain operator with no Pipeline-specific machinery. This preserves §0.5 by construction (no new lane) and is the minimal change.
+**Position:** `apply_steps` carries an invocation declaration (it's already published via `forge_core.bridge.contract_registry.iter_capability_declarations(["editorial"])`). Bridge admits the capability and **dispatch resolves invocation from that declaration** — whether the declared mechanism is sibling-MCP (as `forge_roto_ref` already is) or an injected execution client, *the graph and the GraphSpec are identical either way.* No Pipeline lane, no transport category at the graph level.
 
-**The load-bearing grounding question for DT (this replaces the old crux):** *Is `traffik.editorial.apply_steps` reachable over the existing sibling MCP tool-attach transport (like `forge_roto_ref`), or only via an in-process Pipeline execution client?* The proof used a **test-local dispatch adapter** (in-process), but that was a test convenience — Bridge hadn't admitted the operator yet. The operation request (`operation_type`, serialized `state`, `step_plan`, idempotency + project/request metadata) → result (op data with `step_plan_result` packet, `final_state`, `steps`, `deltas`) is JSON-expressible, so it *can* be an MCP tool. Pipeline exposes it via `forge_core.bridge.contract_registry.iter_capability_declarations(["editorial"])` + facade `forge_core.traffik.editorial_packets` — DT to confirm whether that surfaces as a sibling-attached MCP tool or needs a thin registration.
+**The load-bearing grounding question for DT (operationalizes Creative's model):** *Does the `editorial` capability declaration carry an invocation-mechanism contract that dispatch can resolve — or does Bridge today only have the hardcoded `dispatch_kind` enum?* Two implementation paths, both consistent with the locked model:
 
-- **Outcome A (preferred, likely):** reachable over the sibling MCP transport → admit `dispatch_kind="mcp"`, wire Pipeline's operator into the sibling attach path, **no new dispatch kind, no new boundary.** #104 collapses to an admission row + sibling wiring + tests. Invariant preserved trivially.
-- **Outcome B (only if A is genuinely impossible):** the operator needs a different *execution mechanism* (not a different owner). Then add a dispatch kind **named for the mechanism and peer-agnostic** — e.g. a `federated_operation` / typed-capability-invocation kind that serves Vision/Generators/Pipeline alike — never `"pipeline"`. The boundary delegates by resolving `operator_id → owning peer` (capability registry), not by hardcoding Pipeline.
+- **Path A — declaration already carries (or trivially can carry) the invocation mechanism.** Then #104 is the **first capability whose invocation is resolved from its declaration**, not hardcoded — a real, minimal step toward the four-concern model, demonstrated on one operator. Strongly preferred: it instantiates the invariant instead of just preserving it.
+- **Path B — only the hardcoded `dispatch_kind` enum exists today, and the declaration doesn't yet carry invocation metadata.** Then #104 admits `apply_steps` with its current invocation mechanism (most likely the same sibling-MCP path roto uses → `dispatch_kind="mcp"`, no new machinery), **and records the gap**: `dispatch_kind` is a stand-in for capability-declared invocation, and resolving-from-declaration is the seam to close next (the #24 arc). Bridge must NOT add a transport-named-by-peer kind under any path.
 
-**Horizon (named, not built):** the clean end-state may be ONE *federated-capability dispatch* that resolves `operator_id → owning peer` via the capability registry and hides transport, collapsing per-mechanism boundaries (touches #24). #104 stays minimal and must not foreclose it — which Outcome A naturally satisfies.
+**Horizon (named, not built):** the end-state is dispatch resolving `capability → implementation → invocation mechanism` entirely from the registry/declaration, so Bridge never hardcodes a transport. #104 stays minimal; Path A takes the first real step toward it, Path B at minimum must not foreclose it.
 
 ### Q-C — Executor invariant (CONSTRAINT, not a question): `executor.py` byte-stable.
 
@@ -107,7 +115,7 @@ The proof returns full operation data as `NodeResult.output`, with the receipt p
 ## 3. The decisions the room must settle — in order
 
 1. **§0.5 invariant (PRIMARY, operator-locked):** one GraphSpec, freely-mixed operators; federation = implementation boundary. Not up for debate — it's the north star. Everything below serves it.
-2. **Q-B transport grounding (the live crux):** is `apply_steps` reachable over the existing sibling MCP transport (Outcome A, no new machinery) or not (Outcome B, mechanism-named peer-agnostic kind)? This is now the load-bearing grounding question — DT resolves it against the sibling-attach path + the Pipeline facade.
+2. **Q-B invocation resolution (the live crux):** does the `editorial` capability declaration carry an invocation-mechanism contract dispatch can resolve (Path A — #104 becomes the first capability invoked-from-declaration), or only the hardcoded `dispatch_kind` enum today (Path B — admit with current mechanism, record the gap)? Either way the graph stays oblivious to transport; no peer-named kind. DT resolves against the capability declaration + sibling-attach path.
 3. **Q-A state-authority (clean under §0.5):** the *State authority* axis. `apply_steps` mutates Pipeline's own state → Pipeline enforces → Bridge does not ratify (never route through `commit`). If `apply_steps` were routed through `commit`, Bridge would demand an `AssentRecord` for state it has no authority over; if a *future* delta→Flame step were routed *without* `commit`, Bridge would apply host mutations unratified. Draw the line now.
 4. **Q-C executor invariant:** confirm a new route (whichever outcome) is absorbable without touching `executor.py`.
 
@@ -122,7 +130,7 @@ Files: `admission.py` (one record + widen `DispatchKind`) · `dispatch.py` (one 
 
 ## 6. First moves for DT (fresh context)
 1. Read **§0.5 first** (the invariant), then §1 (don't re-ground) + the issue's "Required Bridge work" + the Pipeline proof fixture `forge_core/traffik/tests/test_editing_federation.py::test_bridge_graph_executor_composes_editorial_packet_nodes`.
-2. **Resolve Q-B (the crux):** is `traffik.editorial.apply_steps` reachable over the existing sibling MCP tool-attach transport (like `forge_roto_ref`), or only via an in-process Pipeline execution client? Ground against the sibling-attach path (`forge_bridge/orchestration/discovery.py` + the `forge_bridge.siblings` mechanism) and the Pipeline facade `forge_core.bridge.contract_registry` / `forge_core.traffik.editorial_packets`. → Outcome A (admit as `mcp`, no new machinery) or B (mechanism-named peer-agnostic kind).
+2. **Resolve Q-B (the crux):** does the `editorial` **capability declaration** carry an invocation-mechanism contract dispatch can resolve (Path A — invoked-from-declaration), or does Bridge only have the hardcoded `dispatch_kind` enum today (Path B — admit with current mechanism + record the gap)? Ground the *declaration* shape (`forge_core.bridge.contract_registry.iter_capability_declarations(["editorial"])` / `forge_core.traffik.editorial_packets`) AND Bridge's resolution side (`admission.py` + the `forge_bridge.siblings` / `orchestration/discovery.py` attach path — how does roto's invocation get resolved today?). The graph must stay oblivious to transport under either path; never a peer-named kind.
 3. Pressure-test **Q-A** — any reading where Bridge IS the authority over the editorial mutation? (What does `TimelineDelta` mutate; is the receipt Pipeline-owned?) Confirm `apply_steps` must not route through `commit`.
 4. Confirm **Q-C** — the chosen route is absorbable without touching `executor.py`.
 5. Sanity-check **Q-D** — exact proof output shape against `forge_core/traffik/editorial_packets.py`.
