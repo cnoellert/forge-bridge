@@ -60,7 +60,7 @@ class CommitBoundary:
         """
 
         try:
-            held = _held_manifest(node)
+            held = _held_manifest(node, resolved_inputs)
         except (KeyError, MutationManifestError) as exc:
             return self._error_result(
                 CommitError.MUTATION_MANIFEST_INVALID,
@@ -183,8 +183,22 @@ def _default_mcp() -> Any:
     return mcp
 
 
-def _held_manifest(node: NodeSpec) -> MutationManifest:
-    raw = node.config.get("held") or node.config["manifest"]
+def _held_manifest(
+    node: NodeSpec,
+    resolved_inputs: dict[str, NodeResult] | None = None,
+) -> MutationManifest:
+    if "held" in node.config or "manifest" in node.config:
+        raw = node.config.get("held") or node.config["manifest"]
+        if isinstance(raw, MutationManifest):
+            return raw
+        return MutationManifest.from_dict(raw)
+
+    inputs = list((resolved_inputs or {}).values())
+    if len(inputs) != 1:
+        raise KeyError("commit requires exactly one upstream mutation manifest")
+    if not inputs[0].has_usable_output:
+        raise KeyError("commit upstream did not produce a usable mutation manifest")
+    raw = inputs[0].output
     if isinstance(raw, MutationManifest):
         return raw
     return MutationManifest.from_dict(raw)

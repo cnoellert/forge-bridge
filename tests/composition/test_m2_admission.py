@@ -25,6 +25,11 @@ def test_admission_accepts_slice_one_operator_ids():
     assert deliverable.returns_reference is True
     assert deliverable.no_state_mutation is True
     assert deliverable.idempotent_result is True
+    rename = admit_operator("flame_rename_shots")
+    assert rename.resolved_class == "mcp.host_mutation_discover"
+    assert rename.dispatch_kind == "mcp"
+    assert rename.no_state_mutation is True
+    assert rename.idempotent_result is False
     assert admit_operator("filter").resolved_class == "primitive.filter"
     assert admit_operator("if").resolved_class == "primitive.if_gate"
     assert admit_operator("foreach").dispatch_kind == "foreach"
@@ -45,6 +50,7 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "forge_is_greenscreen",
         "forge_roto_ref",
         "forge_assemble_deliverable_package",
+        "flame_rename_shots",
         "filter",
         "if",
         "foreach",
