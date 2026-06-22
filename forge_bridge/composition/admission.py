@@ -86,6 +86,15 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         idempotent_result=True,
     ),
     AdmissionRecord(
+        operator_id="flame_rename_shots",
+        resolved_class="mcp.host_mutation_discover",
+        dispatch_kind="mcp",
+        synchronous=True,
+        returns_reference=False,
+        no_state_mutation=True,
+        idempotent_result=False,
+    ),
+    AdmissionRecord(
         operator_id="filter",
         resolved_class="primitive.filter",
         dispatch_kind="primitive",
