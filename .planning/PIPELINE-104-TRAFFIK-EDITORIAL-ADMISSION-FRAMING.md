@@ -1,10 +1,10 @@
 # #104 — Admit `traffik.editorial.apply_steps` into Bridge graph dispatch — Orch Framing
 
-**Date:** 2026-06-22 · **Status:** FRAMING (Orch positions + grounded; awaiting DT redline on fresh context → Creative → converge → pass-to-code).
-**Base:** main `1cc3b4c`. **Tracks:** issue **#104** (cross-repo handoff from forge-pipeline PR #13, proof commit `c2685dea`). **Parents:** [[project_passoff_2026_06_22_dt_m2_arc_on_main]] (DT's M2 cursor — load-bearing doctrine) · #92 (the seam note this concretizes) · [[project_federation_facts_judgment_spine]] · [[project_roadmap_finish_m2_then_first_graph_vertical_66]].
-**Why now:** first **real federation peer** composing GraphSpecs against Bridge's executor — the real-consumer substrate pressure the roadmap calls for, and the **pattern-setter for #66** (admit a federation operator into `UnifiedDispatch` via a boundary).
+**Date:** 2026-06-22 · **Status:** CONVERGED (Orch framing + operator §0.5 invariant + Creative four-concern split + DT code-grounded crux resolution; Q-A–Q-E settled → pass-to-code in §5).
+**Base:** main `1cc3b4c`. **Tracks:** issue **#104** (cross-repo handoff from forge-pipeline PR #13, proof commit `c2685dea`). **Parents:** [[project_passoff_2026_06_22_dt_m2_arc_on_main]] (DT's M2 cursor — load-bearing doctrine) · [[project_federation_implementation_not_composition_boundary]] (the §0.5 invariant) · #92 (the seam note this concretizes) · [[project_federation_facts_judgment_spine]] · [[project_roadmap_finish_m2_then_first_graph_vertical_66]].
+**Why now:** first **real federation peer** composing GraphSpecs against Bridge's executor — the real-consumer substrate pressure the roadmap calls for, and the **pattern-setter for #66**.
 
-**Note for DT (fresh context):** §1 is the grounded dispatch surface (already mapped — don't re-ground). **§0.5 is the PRIMARY framing question (operator-elevated 2026-06-22) and governs everything below — read it first.** §2 carries Orch positions, revised under §0.5; **Q-B changed** (an earlier draft proposed `dispatch_kind="pipeline"` + `PipelineOperationBoundary` — that was the silo error, now corrected).
+**CONVERGENCE SUMMARY:** §0.5 invariant locked (graph composes capabilities, not transports — four orthogonal concerns). **Crux (Q-B) resolved by DT against code: Outcome A is CLOSED** (Pipeline attaches zero MCP tools; `apply_steps` is a `forge_core` `PipelineOperator`, not an MCP tool; the MCP shim would discard receipt/idempotency/packet identity). **Answer = a new `dispatch_kind="operation"`** routing the **forge_core operation-dispatch** mechanism — which is **already multi-peer in production** (Blender/render/probe route through the same `forge_core.operations.dispatch`), so this is a clean *second federation transport*, not a Pipeline lane. Q-A/Q-C/Q-D/Q-E confirmed against the proof. #104 collapses to: one admission row + one `UnifiedDispatch` field/branch + `composition/operation_boundary.py` (injected dispatch callable) + tests; `executor.py` byte-stable.
 
 ---
 
@@ -68,22 +68,28 @@ Pipeline has banked the Traffik editorial substrate and **proven Bridge's real `
 - Within #104's scope, `apply_steps` mutates Pipeline editorial state and **returns `TimelineDelta` payloads for a host adapter to apply later** — and applying those deltas to Flame is **explicitly out of scope** (non-goal: "Do not require Flame/live DCC state"). So nothing in #104 touches Bridge-host state.
 - This is the **federation facts/judgment spine** ([[project_federation_facts_judgment_spine]]): peers own disposition over their own domain. "Do not make Traffik part of the Bridge graph runtime."
 
-**Position:** route through a **new non-commit boundary that mints a `NodeResult` but never touches `AssentRecord`.** Structurally clean — only `commit` ever sees assent (`dispatch.py:47-52`), so a non-commit kind *cannot* accidentally acquire a ratify gate.
+**Position (DT-confirmed against code):** route through the **new non-commit `operation` boundary that mints a `NodeResult` but never touches `AssentRecord`.** Structurally clean — only `commit` ever sees assent (`dispatch.py:47-52`), so a non-commit kind *cannot* accidentally acquire a ratify gate. DT evidence: `apply_steps` mints a Pipeline-owned receipt (`forge_core.operations.receipts`) under its own `idempotency_key`, mutates Pipeline editorial state, returns `TimelineDelta` for later host application (out of scope).
 
 **This sharpens #86's unresolved `no_state_mutation` semantics — a genuine contribution back:** the flag conflates two orthogonal axes. (1) *Does it change state?* (`no_state_mutation`) and (2) *Whose authority gates the change?* `apply_steps` is `no_state_mutation=False` (axis 1: yes) AND peer-authority (axis 2: Pipeline's receipt/idempotency, no Bridge ratify). Bridge ratify-gates **only Bridge-host** mutations. Recommend recording this two-axis split on #86.
 
 **Forward-pointer (draw the line now to prevent a future mistake):** when the `TimelineDelta → Flame` application eventually lands (future work, not #104), *that* step IS Bridge-host mutation territory and WOULD need `commit`/ratify. The authority boundary is: **`apply_steps` (peer editorial mutation) = peer-owned, no ratify; future delta→Flame application = Bridge-host, ratified.** Don't let anyone route the Flame application without a ratify gate later.
 
-### Q-B — Invocation resolution: **dispatch honors the mechanism the capability DECLARES; the graph stays oblivious to transport.** [REVISED under §0.5 + Creative]
+### Q-B — Invocation resolution: **new `dispatch_kind="operation"` (the forge_core operation-dispatch transport). RESOLVED by DT against code.** [CONVERGED]
 
-> Two superseded drafts: (1) `dispatch_kind="pipeline"` + `PipelineOperationBoundary` — the silo error; (2) "admit over the MCP transport vs add a kind" — *still transport-first*. Both smuggle transport into the graph model. Corrected: the graph composes capabilities; **invocation mechanism is a property the capability declares, resolved at dispatch.**
+> Superseded drafts: (1) `dispatch_kind="pipeline"` + `PipelineOperationBoundary` — the silo error; (2) "admit over the MCP transport" — transport-first and, per DT, factually closed. Corrected: the graph composes capabilities; the **invocation mechanism lives in the admission/resolution layer, never in the `GraphSpec`.**
 
-**Position:** `apply_steps` carries an invocation declaration (it's already published via `forge_core.bridge.contract_registry.iter_capability_declarations(["editorial"])`). Bridge admits the capability and **dispatch resolves invocation from that declaration** — whether the declared mechanism is sibling-MCP (as `forge_roto_ref` already is) or an injected execution client, *the graph and the GraphSpec are identical either way.* No Pipeline lane, no transport category at the graph level.
+**Outcome A (MCP) is CLOSED — DT, three decisive facts against `origin/codex/traffik-editorial-conform` @ `c2685dea`:**
+1. **Pipeline attaches zero MCP tools.** Its `forge_bridge.siblings` entry point targets `forge_core.bridge.contract_registry:register_bridge_adapters` (forge-pipeline `pyproject.toml:60`) — the *declaration/planner* path (`register_all_siblings`), never the tool-attach path (`discovery.py:112-176` derives `<pkg>.bridge.registry:register_with`). No `register_with` exists in Pipeline (`git grep "def register_with"` → empty); no `@mcp.tool`/`add_tool`/`call_tool` in any non-test module. So `mcp.call_tool("traffik.editorial.apply_steps", …)` fails closed today.
+2. **`apply_steps` is a `PipelineOperator`, not an MCP tool.** It implements `forge_core.operations.protocol:PipelineOperator` (`operation_type` + `async execute(OperationRequest) -> OperationResult`), resolved by `OperatorRegistry.get(operation_type)` and run through `forge_core.operations.dispatch:dispatch(request, registry, receipt_path=…)`. The proof's `bridge_dispatch` (`test_editing_federation.py:1182-1222`) builds an `OperationRequest` and calls *that* dispatch — a typed envelope (`operation_type`, `state`, `step_plan`, idempotency/project metadata, `receipt_path`) → typed `OperationResult`, **not** `mcp.call_tool`.
+3. **The MCP shim would discard exactly what Q-D preserves.** `MCPToolBoundary` flattens through `_extract_payload`/`_status_for_payload` (read-result heuristics) — no receipt sink, no `idempotency_key` semantics, no typed-packet identity. "Thin MCP registration" is not just unavailable, it's the **wrong contract.** → **Correction to send Pipeline: do NOT expose it as MCP.**
 
-**The load-bearing grounding question for DT (operationalizes Creative's model):** *Does the `editorial` capability declaration carry an invocation-mechanism contract that dispatch can resolve — or does Bridge today only have the hardcoded `dispatch_kind` enum?* Two implementation paths, both consistent with the locked model:
+**Answer = new `dispatch_kind="operation"`** + `OperationDispatchBoundary`, holding an **injected dispatch callable** (+ `OperatorRegistry`) wired at the daemon edge (Q-E: zero `forge_core`/`traffik` import in composition).
 
-- **Path A — declaration already carries (or trivially can carry) the invocation mechanism.** Then #104 is the **first capability whose invocation is resolved from its declaration**, not hardcoded — a real, minimal step toward the four-concern model, demonstrated on one operator. Strongly preferred: it instantiates the invariant instead of just preserving it.
-- **Path B — only the hardcoded `dispatch_kind` enum exists today, and the declaration doesn't yet carry invocation metadata.** Then #104 admits `apply_steps` with its current invocation mechanism (most likely the same sibling-MCP path roto uses → `dispatch_kind="mcp"`, no new machinery), **and records the gap**: `dispatch_kind` is a stand-in for capability-declared invocation, and resolving-from-declaration is the seam to close next (the #24 arc). Bridge must NOT add a transport-named-by-peer kind under any path.
+**Why this is §0.5-compliant, not a silo (the Creative reconciliation — load-bearing, don't relitigate):** the **`GraphSpec`/`NodeSpec` carries only `operator_id`** — never the transport. The transport lives in the **admission record** (Bridge's resolution layer = concern 2/3), not the graph (concern 1). So composition stays capability-pure; `mcp` and `operation` are *invocation mechanisms in the resolution layer*, not graph categories. In the five-peer graph, Vision's roto routes via `mcp`, Pipeline's editorial via `operation`, and they compose in one `GraphSpec` **because each node is routed by its admission record's transport, not by who implements it.** Transport multiplicity ≠ peer lanes. And `operation` is **already peer-agnostic in production** — `forge_blender` operators, `render_client.publish`, `forge_core.operations.probe:ProbeOperator` all implement `PipelineOperator` through the same dispatch. We're adding a *second federation transport*, not a Pipeline lane. The §0.5 evidence (roto-as-`mcp`) holds verbatim; nothing forks.
+
+**The declaration-gap (the #24 seam, recorded not closed):** today the admission record *hardcodes* the transport — it's a stand-in for capability-declared invocation. The clean end-state resolves `operation` vs `mcp` *from the capability declaration* rather than the admission enum. #104 stays minimal (admission carries it) and does not foreclose that — closing the gap is the #24 "consume capability facts" arc.
+
+**Naming:** `dispatch_kind="operation"` (terse, matches the existing `mcp`/`primitive`/`foreach`/`commit` register and the `OperationRequest`/`PipelineOperator` protocol). Alt `"federated_operation"` if the room wants it explicit — a low-stakes naming call for code.
 
 **Horizon (named, not built):** the end-state is dispatch resolving `capability → implementation → invocation mechanism` entirely from the registry/declaration, so Bridge never hardcodes a transport. #104 stays minimal; Path A takes the first real step toward it, Path B at minimum must not foreclose it.
 
@@ -91,18 +97,18 @@ Pipeline has banked the Traffik editorial substrate and **proven Bridge's real `
 
 DT's banked doctrine: *"executor interprets nothing; control-flow + topology + authority + capture all ride in dispatch/boundaries; `executor.py` byte-untouched since #87 across the WHOLE M2 arc."* The new kind lands in **`admission.py`** (one record + widen the Literal), **`dispatch.py`** (one `UnifiedDispatch` field + one routing branch), and a **new `pipeline_boundary.py`**. The executor routes generically via `dispatch.dispatch(node, resolved_inputs)` — untouched. **The issue lists `executor.py` as "likely involved" — that's the one correction to send back to Pipeline: it must NOT be.** Verify byte-stability post-build (a tested invariant, same as every M2 slice).
 
-### Q-D — NodeResult / packet-identity shape: **preserve the banked Pipeline-proof shape.**
+### Q-D — NodeResult / packet-identity shape: **preserve the banked Pipeline-proof shape.** [DT-confirmed]
 
-The proof returns full operation data as `NodeResult.output`, with the receipt packet at `output["step_plan_result"]`, plus `final_state`/`steps`/`deltas`. The issue allows preserve-or-deliberately-change (Pipeline will mirror a change). **Position: preserve** — captured-not-assembled ([[feedback_captured_not_assembled]]); match what the banked proof already produces, don't redesign the contract mid-admission. Mapping:
-- Pipeline success → `NodeResult(status="ok", output=<full op data dict>, artifact_type="traffik.editorial_step_plan_result")` (preserves packet identity; `artifact_type` advisory in M1).
+Preserve — captured-not-assembled ([[feedback_captured_not_assembled]]). **Build the boundary against the captured proof fixtures (`test_editing_federation.py:866-893` "Bridge-shaped caller" + `:1129-1253` GraphExecutor proof), not a reconstructed dict.** Mapping (DT-verified against the proof):
+- Pipeline success → `NodeResult(status="ok", output=<full op data dict>, resolved_class="pipeline.traffik.editorial.apply_steps")` — the proof sets exactly this `resolved_class` (matches the admission record's `resolved_class`); receipt packet at `output["step_plan_result"]`, plus `final_state`/`steps`/`deltas`.
 - Pipeline partial → `status="partial"`, `fidelity=...`.
 - Pipeline failure → `status="error"`, `reason_code=<Pipeline error_code or stable fallback>`, `message=<Pipeline error>`, `output=None`.
 - Lineage → `source_artifact_ids` from upstream `NodeResult.artifact_id` (the established pattern).
-- Any future "output the result packet directly, store full data elsewhere" is a **deliberate, documented** contract change Pipeline mirrors — out of scope here.
+- Any future "output the result packet directly" is a **deliberate, documented** contract change Pipeline mirrors — out of scope.
 
-### Q-E — Dependency injection: **injected Pipeline client; zero Traffik import in Bridge.**
+### Q-E — Dependency injection: **injected operation-dispatch callable; zero forge_core/Traffik import in Bridge.** [confirmed]
 
-`PipelineOperationBoundary.__init__(*, pipeline_client=None, run_id=None, artifact_id_factory=uuid4)` — same shape as `MCPToolBoundary(*, mcp=...)`. Bridge composition imports **no** Pipeline/Traffik code; the boundary holds an injected callable with a narrow signature `(operation_type, state, step_plan, **metadata) -> result`. Tests inject a fake client. The **real** client is wired at the daemon / `UnifiedDispatch` construction edge (where the env has Pipeline installed), never in composition modules. Satisfies "no Traffik graph-runtime import" + "acceptable deps = injected callable/client."
+`OperationDispatchBoundary.__init__(*, run_operation=None, run_id=None, artifact_id_factory=uuid4)` — same shape as `MCPToolBoundary(*, mcp=...)`. The injected `run_operation` callable encapsulates request-building + `OperatorRegistry` + `forge_core.operations.dispatch` behind a narrow signature `async (operation_type: str, *, state, step_plan, receipt_path=None, **metadata) -> OperationResult-shaped`. Composition imports **no** `forge_core`/`traffik` code; the registry + real dispatch live inside the injected callable's closure, **wired at the daemon / `UnifiedDispatch` construction edge** (where Pipeline is installed). Tests inject a fake `run_operation`. (DT phrased this as "dispatch-callable + `OperatorRegistry`"; collapsing both behind one injected `run_operation` keeps composition fully import-free — a small refinement for code to confirm.)
 
 ### Input resolution + failure discipline (mechanical, follows precedent)
 - `step_plan` from `resolved_inputs["step_plan"].output` (edge, preferred) **or** `node.config["arguments"]["step_plan"]` (single-node) — the `CommitBoundary` held dual-source pattern.
@@ -112,26 +118,47 @@ The proof returns full operation data as `NodeResult.output`, with the receipt p
 
 ---
 
-## 3. The decisions the room must settle — in order
+## 3. Decisions — SETTLED
+1. **§0.5 invariant** — one GraphSpec, freely-mixed operators; federation = implementation boundary; four orthogonal concerns. Locked.
+2. **Q-B** — new `dispatch_kind="operation"` (forge_core operation-dispatch transport; Outcome A/MCP closed). DT-resolved.
+3. **Q-A** — `operation` is non-commit; `apply_steps` never gets `assent_record`; Bridge does not ratify a peer's state mutation. Confirmed.
+4. **Q-C** — `executor.py` byte-stable; the new route is one Literal widening + one field + one branch + one boundary module. Confirmed by the proof (`GraphExecutor(bridge_dispatch).run(graph)`, `test_editing_federation.py:1253` — real executor, only the dispatch callable swapped).
+5. **Q-D/Q-E** — preserve proof shape (build against captured fixtures); inject `run_operation`, zero forge_core import in composition.
 
-1. **§0.5 invariant (PRIMARY, operator-locked):** one GraphSpec, freely-mixed operators; federation = implementation boundary. Not up for debate — it's the north star. Everything below serves it.
-2. **Q-B invocation resolution (the live crux):** does the `editorial` capability declaration carry an invocation-mechanism contract dispatch can resolve (Path A — #104 becomes the first capability invoked-from-declaration), or only the hardcoded `dispatch_kind` enum today (Path B — admit with current mechanism, record the gap)? Either way the graph stays oblivious to transport; no peer-named kind. DT resolves against the capability declaration + sibling-attach path.
-3. **Q-A state-authority (clean under §0.5):** the *State authority* axis. `apply_steps` mutates Pipeline's own state → Pipeline enforces → Bridge does not ratify (never route through `commit`). If `apply_steps` were routed through `commit`, Bridge would demand an `AssentRecord` for state it has no authority over; if a *future* delta→Flame step were routed *without* `commit`, Bridge would apply host mutations unratified. Draw the line now.
-4. **Q-C executor invariant:** confirm a new route (whichever outcome) is absorbable without touching `executor.py`.
+## 4. Non-goals (binding)
+- Do not make Traffik part of the Bridge graph runtime; no `forge_core`/`traffik`/Flame/DCC import in Bridge composition (injected `run_operation` only).
+- Do not add more Traffik editorial atoms; do not solve delta→Flame application or 2-pop/reference conform sync here.
+- `executor.py` byte-stable; `forge_bridge.__all__` stays 19.
+- Do **not** route `operation` through `commit`/assent. Do **not** name a dispatch kind for a peer.
 
-## 4. Non-goals (binding — from the issue + carried)
-- Do not make Traffik part of the Bridge graph runtime; no Traffik/Flame/DCC/conform-internal imports in Bridge composition.
-- Do not add more Traffik editorial atoms in Bridge.
-- Do not solve delta→Flame application or 2-pop/reference-picture conform sync here.
-- `executor.py` byte-stable; `forge_bridge.__all__` stays 19; new package work carries its own surface.
+## 5. Pass-to-code brief (CONVERGED — ready)
 
-## 5. Pass-to-code shape (after convergence)
-Files: `admission.py` (one record + widen `DispatchKind`) · `dispatch.py` (one field + one branch) · **new `composition/pipeline_boundary.py`** (`PipelineOperationBoundary`) · `tests/composition/` (admission · boundary-with-fake-client · real `GraphExecutor`+`UnifiedDispatch` integration · failure-maps-to-error-NodeResult · executor-byte-stable assertion). Mirror the issue's unit + graph-integration + (Pipeline-side) cross-repo acceptance test plan. Cross-reference #86 (two-axis `no_state_mutation`) and reply on #104 with the executor-stability correction + the authority position so Pipeline knows Bridge will *not* ratify-gate `apply_steps`.
+**Scope:** one admission row + one `UnifiedDispatch` field/branch + one new boundary module + tests. `executor.py` untouched.
 
-## 6. First moves for DT (fresh context)
-1. Read **§0.5 first** (the invariant), then §1 (don't re-ground) + the issue's "Required Bridge work" + the Pipeline proof fixture `forge_core/traffik/tests/test_editing_federation.py::test_bridge_graph_executor_composes_editorial_packet_nodes`.
-2. **Resolve Q-B (the crux):** does the `editorial` **capability declaration** carry an invocation-mechanism contract dispatch can resolve (Path A — invoked-from-declaration), or does Bridge only have the hardcoded `dispatch_kind` enum today (Path B — admit with current mechanism + record the gap)? Ground the *declaration* shape (`forge_core.bridge.contract_registry.iter_capability_declarations(["editorial"])` / `forge_core.traffik.editorial_packets`) AND Bridge's resolution side (`admission.py` + the `forge_bridge.siblings` / `orchestration/discovery.py` attach path — how does roto's invocation get resolved today?). The graph must stay oblivious to transport under either path; never a peer-named kind.
-3. Pressure-test **Q-A** — any reading where Bridge IS the authority over the editorial mutation? (What does `TimelineDelta` mutate; is the receipt Pipeline-owned?) Confirm `apply_steps` must not route through `commit`.
-4. Confirm **Q-C** — the chosen route is absorbable without touching `executor.py`.
-5. Sanity-check **Q-D** — exact proof output shape against `forge_core/traffik/editorial_packets.py`.
-6. Redline → Creative (does the chosen transport shape scale to the §0.5 five-peer graph?) → converge → pass-to-code. Then reply on #104 with the transport decision + the `executor.py` correction + the authority position.
+1. **`admission.py`** — widen `DispatchKind` Literal to include `"operation"`; add:
+   ```python
+   AdmissionRecord(
+       operator_id="traffik.editorial.apply_steps",
+       resolved_class="pipeline.traffik.editorial.apply_steps",  # matches the proof's NodeResult.resolved_class
+       dispatch_kind="operation",
+       synchronous=True,
+       returns_reference=False,
+       no_state_mutation=False,   # mutates Pipeline editorial state
+       idempotent_result=False,   # carries idempotency_key, but the result mutates target state
+   )
+   ```
+2. **`dispatch.py`** — add `operation_boundary: OperationDispatchBoundary = field(default_factory=OperationDispatchBoundary)` + a routing branch `elif record.dispatch_kind == "operation": return await self.operation_boundary.dispatch(node, resolved_inputs)`. **No `assent_record` passed** (structurally enforces Q-A).
+3. **new `composition/operation_boundary.py`** — `OperationDispatchBoundary`:
+   - `__init__(*, run_operation=None, run_id=None, artifact_id_factory=uuid4)` (Q-E).
+   - `async def dispatch(self, node, resolved_inputs) -> NodeResult`: `admit_operator(node.operator_id)` (assert `dispatch_kind=="operation"`); resolve `step_plan` from `resolved_inputs["step_plan"].output` **or** `node.config["arguments"]["step_plan"]` (CommitBoundary dual-source); `state` from `node.config["arguments"]["state"]`; optional `bridge_asset_ids`/`idempotency_key`/`project_id`/`requested_by` from `config["arguments"]`, `receipt_path` from `config["receipt_path"]`; call injected `run_operation(...)`; map per Q-D; `source_artifact_ids` from upstream `.artifact_id`; **missing/invalid `state`/`step_plan` → deterministic error `NodeResult`, never raise.** Input port `{"step_plan": PortContract.manifest_gate()}`, output `PortTopology.manifest()`.
+4. **`tests/composition/`** — admission (record fields + unknown-traffik-op fails closed) · boundary with fake `run_operation` (edge step_plan → correct call; success→ok w/ packet identity + `resolved_class`; lineage copied; failure→error w/ reason_code/message/no output; missing input→deterministic error, not raise) · real `GraphExecutor`+`UnifiedDispatch` integration routing the `operation` node (fake `run_operation`) — the proof through *real* dispatch, no test-local shim · **`executor.py` byte-stable assertion**. Build against captured fixtures (`test_editing_federation.py:866-893`, `:1129-1253`).
+5. **Verify:** `__all__`==19, ruff clean, composition suite green, `git diff` shows `executor.py` empty.
+
+## 6. Reply to #104 (for the operator to send — cross-repo handoff)
+- **Decision:** Bridge admits `apply_steps` as a **new `dispatch_kind="operation"`** (the forge_core operation-dispatch transport), via `OperationDispatchBoundary` holding an injected `run_operation` callable. It composes in any GraphSpec beside `mcp` operators (roto) — routed by admission transport, not by peer.
+- **Correction 1:** **do NOT expose `apply_steps` as an MCP tool / add a `register_with(mcp)` wrapper** — `MCPToolBoundary` would discard the receipt sink, `idempotency_key`, and typed-packet identity. The `operation` transport is the right contract.
+- **Correction 2:** the issue lists `executor.py` as "likely involved" — **it must NOT be**; the new route is absorbed in admission/dispatch + a boundary.
+- **Authority:** Bridge will **not** ratify `apply_steps` (peer-owned editorial mutation + Pipeline receipt/idempotency; never routes through `commit`). **Forward-pointer:** a future `TimelineDelta → Flame` application IS Bridge-host territory and *would* need `commit`/ratify — keep that boundary.
+- **Contract:** Bridge mirrors the proof's `NodeResult` (`resolved_class="pipeline.traffik.editorial.apply_steps"`, `output`=full op data w/ `step_plan_result`). If Pipeline changes that shape, tell us.
+- **Acceptance:** after Bridge lands, Pipeline removes the test-local adapter and runs real `UnifiedDispatch`.
+- **Note for #86:** `no_state_mutation` = *does it change state* (descriptive), orthogonal to *whose authority gates it* (peer vs Bridge-host) — the two-axis split.
