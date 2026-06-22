@@ -62,6 +62,19 @@ class _SpyCommitBoundary:
         return NodeResult(status="ok", run_id=uuid.uuid4())
 
 
+@dataclass
+class _SpyOperationBoundary:
+    calls: list[tuple[str, tuple[str, ...]]] = field(default_factory=list)
+
+    async def dispatch(
+        self,
+        node: NodeSpec,
+        resolved_inputs: dict[str, NodeResult],
+    ) -> NodeResult:
+        self.calls.append((node.operator_id, tuple(sorted(resolved_inputs))))
+        return NodeResult(status="ok", run_id=uuid.uuid4())
+
+
 @pytest.mark.asyncio
 async def test_unified_dispatch_routes_mcp_and_primitive_halves():
     mcp = _SpyBoundary()
@@ -83,6 +96,22 @@ async def test_unified_dispatch_routes_foreach_with_reentry_callable():
     await dispatch.dispatch(NodeSpec(node_id="foreach", operator_id="foreach"), {})
 
     assert foreach.calls == [("foreach", True)]
+
+
+@pytest.mark.asyncio
+async def test_unified_dispatch_routes_operation_without_assent():
+    operation = _SpyOperationBoundary()
+    dispatch = UnifiedDispatch(
+        operation_boundary=operation,
+        assent_record=object(),
+    )
+
+    await dispatch.dispatch(
+        NodeSpec(node_id="op", operator_id="traffik.editorial.apply_steps"),
+        {"step_plan": NodeResult(status="ok", run_id=uuid.uuid4())},
+    )
+
+    assert operation.calls == [("traffik.editorial.apply_steps", ("step_plan",))]
 
 
 @pytest.mark.asyncio
