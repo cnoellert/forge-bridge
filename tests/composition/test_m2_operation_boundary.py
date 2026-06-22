@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import uuid
+from enum import Enum
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -267,3 +268,105 @@ def test_graph_executor_is_byte_stable_vs_main():
         text=True,
     )
     assert diff.stdout == ""
+
+
+# --- Captured-shape regression: the REAL forge_core OperationResult contract ---
+#
+# The boundary must map the *captured* Pipeline contract, not an assembled
+# lowercase-string shape. forge_core.operations.protocol defines:
+#
+#     class OperationStatus(str, Enum):
+#         PENDING="pending"; RUNNING="running"; SUCCEEDED="succeeded"
+#         FAILED="failed"; PARTIAL="partial"; NO_PROVIDER="no_provider"
+#
+#     @dataclass
+#     class OperationResult:
+#         status: OperationStatus; error: str|None=None; data: dict=...
+#
+# The trap: a (str, Enum) member's ``str()`` is the QUALIFIED NAME
+# ("OperationStatus.FAILED"), not the value ("failed") — so any mapping that
+# does ``str(status).lower()`` and matches "failed"/"partial" tokens silently
+# falls through to its default. The proof maps by member identity, fail-closed:
+#     SUCCEEDED -> ok ; PARTIAL -> partial ; everything else -> error.
+# These cases reproduce the captured enum so the mapping is proven against it.
+
+
+class _OperationStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    PARTIAL = "partial"
+    NO_PROVIDER = "no_provider"
+
+
+def _operation_result(status, *, data=None, error=None):
+    """Reproduce forge_core OperationResult's attribute surface + enum status."""
+    return SimpleNamespace(status=status, error=error, data=data or {})
+
+
+@pytest.mark.asyncio
+async def test_captured_succeeded_maps_to_ok_with_packet_output():
+    async def run_operation(operation_type: str, **kwargs):
+        return _operation_result(
+            _OperationStatus.SUCCEEDED, data=_success_packet()
+        )
+
+    result = await OperationDispatchBoundary(run_operation=run_operation).dispatch(
+        _operation_node(arguments={"state": _state(), "step_plan": _step_plan()}),
+        {},
+    )
+
+    assert result.status == "ok"
+    assert result.output == _success_packet()
+
+
+@pytest.mark.asyncio
+async def test_captured_partial_maps_to_partial():
+    async def run_operation(operation_type: str, **kwargs):
+        return _operation_result(
+            _OperationStatus.PARTIAL,
+            data={**_success_packet(), "partial_fidelity_report": {"missing": 1}},
+        )
+
+    result = await OperationDispatchBoundary(run_operation=run_operation).dispatch(
+        _operation_node(arguments={"state": _state(), "step_plan": _step_plan()}),
+        {},
+    )
+
+    assert result.status == "partial"
+
+
+@pytest.mark.asyncio
+async def test_captured_failed_maps_to_error_not_ok():
+    async def run_operation(operation_type: str, **kwargs):
+        return _operation_result(
+            _OperationStatus.FAILED, error="TRAFFIK_STEP_INVALID: cannot apply"
+        )
+
+    result = await OperationDispatchBoundary(run_operation=run_operation).dispatch(
+        _operation_node(arguments={"state": _state(), "step_plan": _step_plan()}),
+        {},
+    )
+
+    assert result.status == "error"
+    assert result.output is None
+    assert "TRAFFIK_STEP_INVALID" in (result.message or "")
+
+
+@pytest.mark.asyncio
+async def test_captured_no_provider_maps_to_error_not_ok():
+    async def run_operation(operation_type: str, **kwargs):
+        return _operation_result(
+            _OperationStatus.NO_PROVIDER,
+            error="No provider registered for capability",
+            data={"error_code": "no_provider"},
+        )
+
+    result = await OperationDispatchBoundary(run_operation=run_operation).dispatch(
+        _operation_node(arguments={"state": _state(), "step_plan": _step_plan()}),
+        {},
+    )
+
+    assert result.status == "error"
+    assert result.output is None

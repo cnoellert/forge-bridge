@@ -43,6 +43,10 @@ class OperationDispatchBoundary:
         run_id: uuid.UUID | None = None,
         artifact_id_factory: Callable[[], uuid.UUID] = uuid.uuid4,
     ) -> None:
+        # Daemon-edge adapters must build the real forge_core OperationRequest:
+        # state/step_plan live under params, while bridge_asset_ids and
+        # idempotency_key are OperationRequest fields. Keep that mapping outside
+        # composition; this boundary only owns the injected call seam.
         self._run_operation = run_operation
         self._run_id = run_id or uuid.uuid4()
         self._artifact_id_factory = artifact_id_factory
@@ -231,14 +235,16 @@ def _operation_status(operation_result: Any, data: dict[str, Any]) -> str:
         or data.get("status")
         or data.get("outcome")
     )
-    token = str(raw or "").lower()
-    if token in {"partial", "degraded"}:
+    token = str(getattr(raw, "value", raw or "")).lower()
+    if token in {"succeeded", "success", "ok"}:
+        return "ok"
+    if token == "partial":
         return "partial"
-    if token in {"failed", "failure", "error"}:
+    if token in {"failed", "failure", "error", "no_provider"}:
         return "error"
     if data.get("error") or data.get("failure"):
         return "error"
-    return "ok"
+    return "error"
 
 
 def _operation_fidelity(operation_result: Any, data: dict[str, Any]) -> dict[str, Any] | None:
