@@ -1,6 +1,6 @@
 # M2 Slice 4 — Orch Framing (chain-text → GraphSpec / first production caller) — positions for the room
 
-**Date:** 2026-06-20 · **Status:** CONVERGED (Orch + DT + Creative) → **Option A with DT's broad-corpus refinement.** Operator confirm pending → pass-to-code.
+**Date:** 2026-06-20 · **Status:** CONVERGED + operator-confirmed → **PASS-TO-CODE READY** (Option A, broad corpus; brief at end of doc).
 **Base:** main `d753d41`. **Parents:** [[M2-SLICE-4-FRAMING-SEED]] · `M2-PARITY-AND-CUTOVER-FRAMING.md` (slice 4 = first cutover slice) · `M2-SLICE-3-FRAMING.md`.
 **Grounded against live reads (2026-06-20):** `console/_step.py::_maybe_execute_commit_step`, `console/_engine.py::run_chain_steps`, `console/_chat_compile.py::{run_compile_branch, run_apply_branch, build_preview_from_steps}`, `composition/compiler.py`, `composition/commit_boundary.py`.
 
@@ -88,3 +88,29 @@ The graph-apply entry point: compile `record.chain_steps` → `GraphSpec` → `G
 ### Remaining for DT at pass-to-code (mechanical, not open questions)
 - Confirm the `[discover node] → commit node` edge faithfully carries the `mutation_plan` the way legacy threads `__previous_result__`; confirm `[rename → commit]` is the honest *minimal* end-to-end specimen while the broad corpus carries variety.
 - Confirm held-from-edge keeps the assent-token-ban + executor byte-lock green after wiring the graph-apply entry point.
+
+---
+
+## Pass-to-code (scoped — Option A, broad corpus)
+
+**Scope:** apply-path-first, **offline**. Build the graph-apply path + prove it ≡ legacy on a broad corpus. **Do not touch the live `run_apply_branch` execution path.**
+
+**The bar (all must hold):**
+1. `chain_compiler` round-trips a **broad corpus** of real model-emitted `chain_steps` (not just the ratified handful).
+2. The ratified handful proves **end-to-end** ratify → compile → graph-apply (`held` from edge) → `CommitNode.verify` → apply-once → expected post-state, parity-equal to legacy.
+3. Live `run_apply_branch` unchanged · `executor.py` byte-for-byte `main` · assent-token-ban green · `forge_bridge.__all__` == 19 · slice-3 commit-boundary tests stay green.
+
+**Build (in order):**
+1. **`composition/chain_compiler.py`** — `compile_chain_steps(steps: list[str]) -> GraphSpec`. Classify each `step_text` by **reusing the existing `graph/` step-predicates** (`is_commit_step`, `is_foreach_step`, `is_filter_step`, `is_collect_step`, `is_if_step`, …) + the `admission.py` table — the same grammar `run_chain_steps`/`_step.py` dispatch on. Emit one `NodeSpec` per step with the right `operator_id`/dispatch-kind; wire **linear edges** (step N output → step N+1 input port), mirroring `__previous_result__` threading. **Fail-closed** on an unadmitted first token (compile rejects; safe — live path is legacy). Sibling to `compile_operator_sequence`, **not** an extension of it. Don't duplicate `_step.py` parsing.
+2. **`CommitBoundary._held_manifest` extension** — read `held` from `resolved_inputs` (the single upstream node's `mutation_plan` output) when `config` has no `held`/`manifest`; **keep the config path** for slice-3 specimens. Additive only — no change to verify logic. Parity test: held-from-edge ≡ held-from-config on the same captured manifest.
+3. **Broad chain corpus (captured-not-assembled)** — assemble a broad set of real model-emitted `chain_steps` from the execution log (`~/.forge-bridge/executions.jsonl`) and/or by driving `compile_intent` over logged real intents. Must carry variety: multi-step, op mixes (`filter→foreach→commit`), Bug-D salvage forms, clarification re-entries, empty/edge plans. **Never hand-author chains.** First-move grounding: confirm the log captures enough to **replay deterministically** (the `chain_steps` + per-step recorded tool results, or a stub MCP keyed on recorded results) — both paths must run offline with identical inputs.
+4. **Two-tier parity oracle:**
+   - **Tier 1 — corpus-wide compiler round-trip** (broad, non-mutating): for each corpus chain, run legacy `run_chain_steps` and graph (`compile_chain_steps` → `GraphExecutor`) against the **same recorded tool results**, compare via the existing `compare.py` harness. Reads are idempotent → safe to run both ways, no live calls.
+   - **Tier 2 — ratified handful end-to-end** (mutation): the `30sec_edit 21` capture — compile the ratified `chain_steps` → `[discover node] --edge--> [commit node]` → graph-apply with `held` from the edge → `CommitNode.verify` → apply-once → post-state, parity vs legacy replay. Slice-3 fixtures + the captured chain.
+5. **Graph-apply entry point** (offline harness, NOT wired live) — `compile_chain_steps(record.chain_steps)` → `GraphExecutor(UnifiedDispatch(assent_record=record).dispatch).run(graph)` → map terminal `NodeResult` → apply outcome. Exercised by the parity harness, **not** called from the production `run_apply_branch`.
+
+**Not in scope:** live wiring / shadow into `run_apply_branch` (slice 5) · authority flip / retire `run_chain_steps` (slice 6) · read-path chain compilation as a product surface (`_strip_commit_for_exact_read_graph` defers with it) · any preview→apply drift anchor (Q3 — preserve the discover→commit window exactly).
+
+**Invariants (tested locks):** `executor.py` byte-for-byte `main` · assent-token-ban (no assent tokens in `executor.py`, assent never in a `NodeResult`) · `__all__` 19 · slice-3 commit-boundary tests green.
+
+**Caution:** `run_apply_branch` is **live in the chat surface**. Slice 4 adds a parallel offline path and must leave the production apply path byte-unchanged. If anything forces a change to the live handler, **stop and escalate** — that's the slice 4/5 boundary, decided to stay closed this slice.
