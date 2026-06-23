@@ -15,7 +15,14 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
 
-DispatchKind = Literal["mcp", "primitive", "foreach", "commit", "operation"]
+DispatchKind = Literal[
+    "mcp",
+    "primitive",
+    "foreach",
+    "commit",
+    "operation",
+    "generation",
+]
 
 
 class AdmissionRejected(ValueError):
@@ -101,6 +108,15 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         synchronous=True,
         returns_reference=False,
         no_state_mutation=False,
+        idempotent_result=False,
+    ),
+    AdmissionRecord(
+        operator_id="author_prompt",
+        resolved_class="generators.author_prompt",
+        dispatch_kind="generation",
+        synchronous=True,
+        returns_reference=False,
+        no_state_mutation=True,
         idempotent_result=False,
     ),
     AdmissionRecord(
