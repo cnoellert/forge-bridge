@@ -295,7 +295,16 @@ def graph_run_cmd(
         typer.Option("--no-color", help="Disable color output."),
     ] = False,
 ) -> None:
-    """Run a GraphSpec through the production graph runtime."""
+    """Run a GraphSpec through the production graph runtime.
+
+    Exit codes:
+      0  graph ran and no node returned status="error"
+      1  graph load/run failed, or at least one node returned status="error"
+
+    Node status semantics are precise here: only ``error`` makes the command
+    fail. ``ok``, ``partial``, and ``abstained`` are completed node assessments
+    and therefore exit 0.
+    """
 
     try:
         raw = json.loads(spec_path.read_text(encoding="utf-8"))
@@ -313,6 +322,8 @@ def graph_run_cmd(
     }
     if as_json:
         sys.stdout.write(json.dumps(payload, sort_keys=True) + "\n")
+        if _has_error_node(results):
+            raise typer.Exit(code=1)
         return
 
     console = make_console(no_color=no_color)
@@ -329,6 +340,12 @@ def graph_run_cmd(
             result.message or "—",
         )
     console.print(table)
+    if _has_error_node(results):
+        raise typer.Exit(code=1)
+
+
+def _has_error_node(results: dict[str, Any]) -> bool:
+    return any(getattr(result, "status", None) == "error" for result in results.values())
 
 
 def _emit_run_error(exc: Exception, *, as_json: bool) -> None:

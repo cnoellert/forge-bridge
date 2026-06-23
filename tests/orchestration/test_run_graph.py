@@ -238,6 +238,41 @@ def test_cli_graph_run_uses_run_graph_entrypoint(monkeypatch, tmp_path):
     assert calls[0].nodes[0].operator_id == "traffik.editorial.apply_steps"
 
 
+@pytest.mark.parametrize(
+    ("status", "expected_exit_code"),
+    [
+        ("error", 1),
+        ("abstained", 0),
+    ],
+)
+def test_cli_graph_run_exit_code_tracks_error_status_only(
+    monkeypatch,
+    tmp_path,
+    status,
+    expected_exit_code,
+):
+    spec_path = tmp_path / "graph.json"
+    spec_path.write_text(json.dumps(_graph_spec_json()), encoding="utf-8")
+
+    async def _fake_run_graph(spec, *, registry=None, receipt_dir=None):
+        return {
+            "apply_steps": NodeResult(
+                status=status,
+                run_id=uuid.UUID("00000000-0000-0000-0000-000000000104"),
+                reason_code="example_reason" if status != "ok" else None,
+                message="example message" if status != "ok" else None,
+            )
+        }
+
+    monkeypatch.setattr("forge_bridge.cli.graph.run_graph", _fake_run_graph)
+
+    result = CliRunner().invoke(app, ["graph", "run", str(spec_path), "--json"])
+
+    assert result.exit_code == expected_exit_code
+    payload = json.loads(result.output)
+    assert payload["data"]["apply_steps"]["status"] == status
+
+
 def test_graph_spec_from_dict_round_trips_minimal_json():
     spec = graph_spec_from_dict(_graph_spec_json())
 
