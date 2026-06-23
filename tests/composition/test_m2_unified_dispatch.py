@@ -76,6 +76,19 @@ class _SpyOperationBoundary:
 
 
 @dataclass
+class _SpyHostResolveBoundary:
+    calls: list[tuple[str, tuple[str, ...]]] = field(default_factory=list)
+
+    async def dispatch(
+        self,
+        node: NodeSpec,
+        resolved_inputs: dict[str, NodeResult],
+    ) -> NodeResult:
+        self.calls.append((node.operator_id, tuple(sorted(resolved_inputs))))
+        return NodeResult(status="ok", run_id=uuid.uuid4())
+
+
+@dataclass
 class _SpyGenerationBoundary:
     calls: list[tuple[str, tuple[str, ...]]] = field(default_factory=list)
 
@@ -125,6 +138,22 @@ async def test_unified_dispatch_routes_operation_without_assent():
     )
 
     assert operation.calls == [("traffik.editorial.apply_steps", ("step_plan",))]
+
+
+@pytest.mark.asyncio
+async def test_unified_dispatch_routes_host_resolve_without_assent():
+    host_resolve = _SpyHostResolveBoundary()
+    dispatch = UnifiedDispatch(
+        host_resolve_boundary=host_resolve,
+        assent_record=object(),
+    )
+
+    await dispatch.dispatch(
+        NodeSpec(node_id="resolve", operator_id="delta_to_manifest"),
+        {"deltas": NodeResult(status="ok", run_id=uuid.uuid4())},
+    )
+
+    assert host_resolve.calls == [("delta_to_manifest", ("deltas",))]
 
 
 @pytest.mark.asyncio
