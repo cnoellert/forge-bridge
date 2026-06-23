@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 
@@ -16,7 +17,14 @@ class OperationRunnerUnavailable(ImportError):
     """Raised when the forge-core operation-dispatch surface is unavailable."""
 
 
-def build_operation_runner(registry: Any | None = None):
+DEFAULT_OPERATION_RECEIPT_DIR = Path.home() / ".forge-bridge" / "operation-receipts"
+
+
+def build_operation_runner(
+    registry: Any | None = None,
+    *,
+    receipt_dir: str | Path | None = None,
+):
     """Return an async callable matching ``OperationDispatchBoundary``.
 
     The import is deliberately guarded: stock Bridge installations may not have
@@ -43,23 +51,32 @@ def build_operation_runner(registry: Any | None = None):
         receipt_path: str | None = None,
         **metadata: Any,
     ) -> Any:
+        idempotency_key = metadata.get("idempotency_key") or _derive_idempotency_key(
+            operation_type=operation_type,
+            state=state,
+            step_plan=step_plan,
+            metadata=metadata,
+        )
+        resolved_receipt_path = receipt_path
+        if resolved_receipt_path is None:
+            target_dir = (
+                Path(receipt_dir)
+                if receipt_dir is not None
+                else DEFAULT_OPERATION_RECEIPT_DIR
+            )
+            target_dir = target_dir.expanduser()
+            target_dir.mkdir(parents=True, exist_ok=True)
+            resolved_receipt_path = str(target_dir / f"{idempotency_key}.jsonl")
+
         request = OperationRequest(
             operation_type=operation_type,
             bridge_asset_ids=list(metadata.get("bridge_asset_ids") or []),
-            idempotency_key=(
-                metadata.get("idempotency_key")
-                or _derive_idempotency_key(
-                    operation_type=operation_type,
-                    state=state,
-                    step_plan=step_plan,
-                    metadata=metadata,
-                )
-            ),
+            idempotency_key=idempotency_key,
             params={"state": dict(state), "step_plan": dict(step_plan)},
             project_id=metadata.get("project_id"),
             requested_by=metadata.get("requested_by"),
         )
-        return await dispatch(request, reg, receipt_path=receipt_path)
+        return await dispatch(request, reg, receipt_path=resolved_receipt_path)
 
     return run_operation
 

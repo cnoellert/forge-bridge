@@ -29,15 +29,21 @@ discovery-shaped, not pre-committed).
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from pathlib import Path
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any
 
 import typer
 from rich.table import Table
 
 from forge_bridge.cli.render import HEADER_STYLE, TOOLS_BOX, make_console, status_chip
+from forge_bridge.orchestration.run_graph import (
+    graph_spec_from_dict,
+    node_results_to_dict,
+    run_graph,
+)
 from forge_bridge.runtime.graph_emit import graph_dir
 
 _DEFAULT_LIST_LIMIT = 20
@@ -260,6 +266,105 @@ def graph_show_cmd(
             )
 
 
+# ── run ───────────────────────────────────────────────────────────────────
+
+
+_GRAPH_RUN_EPILOG = """\
+Examples:
+  fbridge graph run examples/graphs/traffik_editorial_apply_steps.json
+  fbridge graph run graph.json --json
+
+What this does:
+  Loads a composition GraphSpec JSON file and runs it through the production
+  GraphExecutor/UnifiedDispatch entrypoint. It is intentionally a direct graph
+  runner, not a chat/apply-path cutover.
+"""
+
+
+def graph_run_cmd(
+    spec_path: Annotated[
+        Path,
+        typer.Argument(help="Path to a GraphSpec JSON file."),
+    ],
+    as_json: Annotated[
+        bool,
+        typer.Option("--json", help="Emit JSON envelope to stdout."),
+    ] = False,
+    no_color: Annotated[
+        bool,
+        typer.Option("--no-color", help="Disable color output."),
+    ] = False,
+) -> None:
+    """Run a GraphSpec through the production graph runtime.
+
+    Exit codes:
+      0  graph ran and no node returned status="error"
+      1  graph load/run failed, or at least one node returned status="error"
+
+    Node status semantics are precise here: only ``error`` makes the command
+    fail. ``ok``, ``partial``, and ``abstained`` are completed node assessments
+    and therefore exit 0.
+    """
+
+    try:
+        raw = json.loads(spec_path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError("GraphSpec JSON must be an object")
+        spec = graph_spec_from_dict(raw)
+        results = asyncio.run(run_graph(spec))
+    except Exception as exc:  # noqa: BLE001
+        _emit_run_error(exc, as_json=as_json)
+        raise typer.Exit(code=1) from exc
+
+    payload = {
+        "data": node_results_to_dict(results),
+        "path": str(spec_path),
+    }
+    if as_json:
+        sys.stdout.write(json.dumps(payload, sort_keys=True) + "\n")
+        if _has_error_node(results):
+            raise typer.Exit(code=1)
+        return
+
+    console = make_console(no_color=no_color)
+    table = Table(box=TOOLS_BOX, header_style=HEADER_STYLE)
+    table.add_column("Node")
+    table.add_column("Status")
+    table.add_column("Class")
+    table.add_column("Message")
+    for node_id, result in results.items():
+        table.add_row(
+            node_id,
+            status_chip(_chip_for_status(result.status)),
+            result.resolved_class or "—",
+            result.message or "—",
+        )
+    console.print(table)
+    if _has_error_node(results):
+        raise typer.Exit(code=1)
+
+
+def _has_error_node(results: dict[str, Any]) -> bool:
+    return any(getattr(result, "status", None) == "error" for result in results.values())
+
+
+def _emit_run_error(exc: Exception, *, as_json: bool) -> None:
+    if as_json:
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "error": {
+                        "code": "graph_run_failed",
+                        "message": str(exc),
+                    }
+                }
+            )
+            + "\n"
+        )
+        return
+    sys.stderr.write(f"forge-bridge graph run failed: {exc}\n")
+
+
 def _resolve_graph_path(
     target: Path,
     requested: str,
@@ -337,7 +442,9 @@ def _emit_ambiguous(
 
 __all__ = [
     "graph_list_cmd",
+    "graph_run_cmd",
     "graph_show_cmd",
     "_GRAPH_LIST_EPILOG",
+    "_GRAPH_RUN_EPILOG",
     "_GRAPH_SHOW_EPILOG",
 ]

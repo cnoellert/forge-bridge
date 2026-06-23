@@ -739,6 +739,11 @@ graph_app.command(
     ),
     epilog=_graph._GRAPH_SHOW_EPILOG,
 )(_graph.graph_show_cmd)
+graph_app.command(
+    "run",
+    help="Run a composition GraphSpec JSON file through the production runtime.",
+    epilog=_graph._GRAPH_RUN_EPILOG,
+)(_graph.graph_run_cmd)
 app.add_typer(graph_app, name="graph")
 
 
