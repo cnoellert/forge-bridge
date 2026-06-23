@@ -22,6 +22,7 @@ from forge_bridge.graph.ports import PortContract, PortTopology
 HETEROGENEOUS_DELTA = "HETEROGENEOUS_DELTA"
 UNSUPPORTED_DELTA_ACTION = "UNSUPPORTED_DELTA_ACTION"
 UNRESOLVED_TARGET = "UNRESOLVED_TARGET"
+HOST_DISCOVER_FAILED = "HOST_DISCOVER_FAILED"
 
 _APPLY_TOOL_BY_DELTA_CLASS: dict[tuple[str, str], str] = {
     ("updated", "segment"): "flame_rename_shots",
@@ -116,13 +117,41 @@ class HostResolveBoundary:
             )
             if inspect.isawaitable(manifest):
                 manifest = await manifest
+            discover_error = _discover_error_code(manifest)
+            if discover_error is not None:
+                return self._error(
+                    admission.resolved_class,
+                    srcs,
+                    reason_code=(
+                        UNRESOLVED_TARGET
+                        if discover_error == "identity_unresolved"
+                        else HOST_DISCOVER_FAILED
+                    ),
+                    message=_discover_error_message(manifest),
+                )
             manifest_dict = _manifest_dict(manifest)
         except Exception as exc:  # noqa: BLE001
+            discover_error = _discover_error_code(exc)
             return self._error(
                 admission.resolved_class,
                 srcs,
-                reason_code=UNRESOLVED_TARGET,
+                reason_code=(
+                    UNRESOLVED_TARGET
+                    if discover_error == "identity_unresolved"
+                    else HOST_DISCOVER_FAILED
+                ),
                 message=str(exc),
+            )
+        if manifest_dict["apply_counterpart"]["tool"] != apply_tool:
+            return self._error(
+                admission.resolved_class,
+                srcs,
+                reason_code=HOST_DISCOVER_FAILED,
+                message=(
+                    "host discover returned apply_counterpart.tool "
+                    f"{manifest_dict['apply_counterpart']['tool']!r}, expected "
+                    f"{apply_tool!r}"
+                ),
             )
 
         return NodeResult(
@@ -190,6 +219,39 @@ def _manifest_dict(value: Any) -> dict[str, Any]:
     return manifest.to_dict()
 
 
+def _discover_error_code(value: Any) -> str | None:
+    for key in ("code", "error_code", "reason_code"):
+        field = _get(value, key)
+        if isinstance(field, str) and field:
+            return field
+    error = _get(value, "error")
+    if isinstance(error, Mapping):
+        for key in ("code", "error_code", "reason_code", "type"):
+            field = error.get(key)
+            if isinstance(field, str) and field:
+                return field
+    return None
+
+
+def _discover_error_message(value: Any) -> str:
+    for key in ("message", "error"):
+        field = _get(value, key)
+        if isinstance(field, str) and field:
+            return field
+    error = _get(value, "error")
+    if isinstance(error, Mapping):
+        field = error.get("message")
+        if isinstance(field, str) and field:
+            return field
+    return "Host discover failed."
+
+
+def _get(value: Any, key: str) -> Any:
+    if isinstance(value, Mapping):
+        return value.get(key)
+    return getattr(value, key, None)
+
+
 def _source_artifact_ids(
     resolved_inputs: dict[str, NodeResult],
 ) -> tuple[uuid.UUID, ...]:
@@ -202,6 +264,7 @@ def _source_artifact_ids(
 
 __all__ = [
     "HETEROGENEOUS_DELTA",
+    "HOST_DISCOVER_FAILED",
     "HostResolveBoundary",
     "UNRESOLVED_TARGET",
     "UNSUPPORTED_DELTA_ACTION",

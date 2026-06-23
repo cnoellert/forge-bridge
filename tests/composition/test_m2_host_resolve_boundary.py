@@ -19,6 +19,7 @@ from forge_bridge.composition.executor import GraphExecutor
 from forge_bridge.composition.graph_spec import Edge, GraphSpec, NodeSpec
 from forge_bridge.composition.host_resolve_boundary import (
     HETEROGENEOUS_DELTA,
+    HOST_DISCOVER_FAILED,
     UNRESOLVED_TARGET,
     UNSUPPORTED_DELTA_ACTION,
     HostResolveBoundary,
@@ -71,7 +72,11 @@ def _operation_output(*entries: dict) -> dict:
     }
 
 
-def _manifest_dict(*, payload_name: str = "new_name") -> dict:
+def _manifest_dict(
+    *,
+    payload_name: str = "new_name",
+    apply_tool: str = "flame_rename_shots",
+) -> dict:
     identity = dict(_entry()["metadata"])
     return {
         "type": "mutation_plan",
@@ -84,7 +89,7 @@ def _manifest_dict(*, payload_name: str = "new_name") -> dict:
         ],
         "originating_capability": "flame_rename_shots",
         "apply_counterpart": {
-            "tool": "flame_rename_shots",
+            "tool": apply_tool,
             "parameter_overrides": {},
         },
     }
@@ -221,7 +226,14 @@ async def test_host_resolve_rejects_unmapped_delta_action():
 @pytest.mark.asyncio
 async def test_host_resolve_reports_unresolved_target_for_discover_failure():
     async def run_discover(_tool_name: str, *, request: dict):
-        return {"error": "target not found"}
+        return {
+            "error": {
+                "code": "identity_unresolved",
+                "error_code": "identity_unresolved",
+                "reason_code": "identity_unresolved",
+                "message": "target not found",
+            }
+        }
 
     result = await HostResolveBoundary(run_discover=run_discover).dispatch(
         _delta_node(),
@@ -230,6 +242,36 @@ async def test_host_resolve_reports_unresolved_target_for_discover_failure():
 
     assert result.status == "error"
     assert result.reason_code == UNRESOLVED_TARGET
+
+
+@pytest.mark.asyncio
+async def test_host_resolve_reports_generic_discover_failure_distinctly():
+    async def run_discover(_tool_name: str, *, request: dict):
+        return {"error": {"code": "transport_error", "message": "bridge down"}}
+
+    result = await HostResolveBoundary(run_discover=run_discover).dispatch(
+        _delta_node(),
+        {"deltas": _upstream_result()},
+    )
+
+    assert result.status == "error"
+    assert result.reason_code == HOST_DISCOVER_FAILED
+    assert result.reason_code != UNRESOLVED_TARGET
+
+
+@pytest.mark.asyncio
+async def test_host_resolve_enforces_manifest_apply_counterpart_tool():
+    async def run_discover(_tool_name: str, *, request: dict):
+        return _manifest_dict(apply_tool="wrong_tool")
+
+    result = await HostResolveBoundary(run_discover=run_discover).dispatch(
+        _delta_node(),
+        {"deltas": _upstream_result()},
+    )
+
+    assert result.status == "error"
+    assert result.reason_code == HOST_DISCOVER_FAILED
+    assert "expected 'flame_rename_shots'" in (result.message or "")
 
 
 def _three_node_graph() -> GraphSpec:
@@ -376,3 +418,35 @@ def test_executor_is_byte_stable_and_public_all_unchanged():
     assert diff.stdout == ""
     assert diff.returncode == 0
     assert len(forge_bridge.__all__) == 19
+
+
+@pytest.mark.asyncio
+async def test_host_resolve_rejects_manifest_naming_a_different_tool():
+    """Catch #1: Bridge owns ``apply_counterpart`` (convergence Q1), never the
+    injected adapter.
+
+    The boundary resolves the apply tool from its OWN ``_APPLY_TOOL_BY_DELTA_CLASS``
+    map ((updated, segment) -> flame_rename_shots) and calls ``run_discover`` with
+    it. If the returned manifest names a DIFFERENT tool, forwarding it unchecked
+    lets the adapter override Bridge's host-tool decision: CommitBoundary derives
+    its verify/apply tool from ``held.apply_counterpart["tool"]``, so held-discover
+    and fresh-verify would silently diverge onto two tools. The boundary must
+    reject the divergence rather than trust the injected runner.
+    """
+
+    async def run_discover(tool_name: str, *, request: dict, **kwargs):
+        # tool_name is "flame_rename_shots" (Bridge-resolved), but the runner
+        # returns a manifest naming a different tool.
+        manifest = _manifest_dict()
+        manifest["apply_counterpart"]["tool"] = "flame_create_reel"
+        manifest["originating_capability"] = "flame_create_reel"
+        return manifest
+
+    result = await HostResolveBoundary(run_discover=run_discover).dispatch(
+        _delta_node(),
+        {"deltas": _upstream_result()},
+    )
+
+    # Today this passes through as status="ok" carrying the wrong tool downstream.
+    assert result.status == "error"
+    assert "flame_create_reel" in (result.message or "")
