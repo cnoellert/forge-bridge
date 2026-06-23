@@ -9,6 +9,8 @@
 
 `run_graph` is genuinely the **first production caller** of `GraphExecutor`/`UnifiedDispatch` (verified: no live construction anywhere in non-test code). That crosses the project's most-repeated invariant, so it is articulated deliberately, not silently.
 
+**This slice proves the production execution substrate, not planner parity** (Creative) — it introduces the first live caller of `GraphExecutor` for *additive* operations and therefore sits entirely outside the Track-B chain-corpus/parity gate. The graph runtime can become production infrastructure *before* it becomes the chat runtime; those are separate milestones.
+
 **Two live-reachability tracks — separate, do not conflate:**
 - **Track A (THIS slice):** first production caller for **additive federated operations** (`traffik.editorial.apply_steps`). No legacy `run_chain_steps` equivalent → **no parity obligation → NOT corpus-gated.** Same reasoning as the generation-trust reframe: additive ≠ replacement. Real, bounded, north-star.
 - **Track B (slice 5/6 — STILL CLOSED):** dual-path cutover of the existing **chat/NL** surface onto the graph. Has a parity obligation against `run_chain_steps`, is **corpus-gated** (n=1 specimen trap). **Untouched by this slice.**
@@ -32,7 +34,7 @@ async def run_graph(spec, *, registry=None, receipt_dir=None) -> dict[str, NodeR
 ```
 - **CLI:** `fbridge graph run <spec.json>` — a *thin* wrapper over `run_graph` (the `fbridge graph` group already exists: `list`/`show`). CLI and all tests invoke the **exact same** `run_graph` — no parallel impl.
 - **Receipt sink:** default `~/.forge-bridge/operation-receipts/`, overridable. **Decision (Caution #3):** the **runner defaults the receipt path when the node supplies none** — `build_operation_runner(registry=None, receipt_dir=DEFAULT)`; when `node.config` carries no `receipt_path`, the runner writes `<receipt_dir>/<idempotency_key>.jsonl` (the key it already computes). One locus, explicit, no frozen-NodeSpec mutation. (DT confirm the locus.) Receipts = runtime evidence (JSONL files; review reads the files), not durable domain artifacts.
-- **Canonical example:** one **single-node** `traffik.editorial.apply_steps` GraphSpec under examples/ (step_plan from `config["arguments"]`), documented "**run with Pipeline's registry**."
+- **First live production graph (intentionally minimal — NOT "canonical"):** one **single-node** `traffik.editorial.apply_steps` GraphSpec under examples/ (step_plan from `config["arguments"]`), documented "**run with Pipeline's registry**." It's a production smoke test, not the canonical demo — composition is the point of `GraphExecutor`, so heterogeneous-composition examples become canonical later. Name/document it as minimal-by-intent.
 - **Tag:** cut a Bridge release tag once this lands so Pipeline pins a release, not `fc58540`.
 
 ## 2. DT's build cautions — baked in (captured, not assembled)
