@@ -15,6 +15,7 @@ from forge_bridge.composition.commit_boundary import CommitBoundary
 from forge_bridge.composition.foreach_boundary import ForeachBoundary
 from forge_bridge.composition.generation_boundary import GenerationDispatchBoundary
 from forge_bridge.composition.graph_spec import NodeSpec
+from forge_bridge.composition.host_resolve_boundary import HostResolveBoundary
 from forge_bridge.composition.node_result import NodeResult
 from forge_bridge.composition.operation_boundary import OperationDispatchBoundary
 from forge_bridge.composition.primitive_boundary import PrimitiveBoundary
@@ -31,6 +32,7 @@ class UnifiedDispatch:
     operation_boundary: OperationDispatchBoundary = field(
         default_factory=OperationDispatchBoundary
     )
+    host_resolve_boundary: HostResolveBoundary = field(default_factory=HostResolveBoundary)
     generation_boundary: GenerationDispatchBoundary = field(
         default_factory=GenerationDispatchBoundary
     )
@@ -60,6 +62,8 @@ class UnifiedDispatch:
             )
         if admission.dispatch_kind == "operation":
             return await self.operation_boundary.dispatch(node, resolved_inputs)
+        if admission.dispatch_kind == "host_resolve":
+            return await self.host_resolve_boundary.dispatch(node, resolved_inputs)
         if admission.dispatch_kind == "generation":
             return await self.generation_boundary.dispatch(node, resolved_inputs)
         raise AssertionError(f"Unhandled dispatch kind: {admission.dispatch_kind!r}")
