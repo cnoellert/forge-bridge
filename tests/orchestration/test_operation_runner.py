@@ -162,6 +162,31 @@ async def test_build_operation_runner_derives_stable_idempotency_key(monkeypatch
     assert first.data["idempotency_key"] == second.data["idempotency_key"]
 
 
+@pytest.mark.asyncio
+async def test_build_operation_runner_defaults_receipt_path_after_key_derivation(
+    monkeypatch,
+    tmp_path,
+):
+    registry_cls, dispatch = _install_fake_forge_core(monkeypatch)
+    registry = registry_cls()
+    operator = _ApplyStepsOperator()
+    registry.register(operator)
+
+    runner = build_operation_runner(registry=registry, receipt_dir=tmp_path)
+    result = await runner(
+        "traffik.editorial.apply_steps",
+        state={"timeline": "t1"},
+        step_plan={"steps": [{"op": "insert"}]},
+        project_id="project-104",
+    )
+
+    request = operator.requests[0]
+    assert dispatch.calls == [
+        (request, registry, str(tmp_path / f"{request.idempotency_key}.jsonl"))
+    ]
+    assert result.data["idempotency_key"] == request.idempotency_key
+
+
 def test_build_operation_runner_degrades_when_forge_core_dispatch_absent(monkeypatch):
     monkeypatch.setitem(sys.modules, "forge_core.operations.dispatch", None)
 
