@@ -1,0 +1,36 @@
+{
+  "_note": "First live production graph for #104. Intentionally minimal: run with Pipeline's operation registry installed; this is not the canonical product demo.",
+  "nodes": [
+    {
+      "node_id": "apply_steps",
+      "operator_id": "traffik.editorial.apply_steps",
+      "config": {
+        "arguments": {
+          "state": {
+            "timeline_id": "example-timeline",
+            "tracks": [
+              {
+                "id": "v1",
+                "items": [
+                  "sh010"
+                ]
+              }
+            ]
+          },
+          "step_plan": {
+            "packet_type": "EditorialStepPlan",
+            "steps": [
+              {
+                "op": "insert",
+                "track": "v1",
+                "clip": "sh020",
+                "at_frame": 100
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "edges": []
+}
