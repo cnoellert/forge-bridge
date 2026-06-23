@@ -37,6 +37,13 @@ def test_admission_accepts_slice_one_operator_ids():
     assert editorial.returns_reference is False
     assert editorial.no_state_mutation is False
     assert editorial.idempotent_result is False
+    author = admit_operator("author_prompt")
+    assert author.resolved_class == "generators.author_prompt"
+    assert author.dispatch_kind == "generation"
+    assert author.synchronous is True
+    assert author.returns_reference is False
+    assert author.no_state_mutation is True
+    assert author.idempotent_result is False
     assert admit_operator("filter").resolved_class == "primitive.filter"
     assert admit_operator("if").resolved_class == "primitive.if_gate"
     assert admit_operator("foreach").dispatch_kind == "foreach"
@@ -59,6 +66,7 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "forge_assemble_deliverable_package",
         "flame_rename_shots",
         "traffik.editorial.apply_steps",
+        "author_prompt",
         "filter",
         "if",
         "foreach",
@@ -72,6 +80,11 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
 def test_unknown_traffik_operator_fails_closed():
     with pytest.raises(AdmissionRejected):
         admit_operator("traffik.editorial.preview_steps")
+
+
+def test_unknown_generation_operator_fails_closed():
+    with pytest.raises(AdmissionRejected):
+        admit_operator("generate_video")
 
 
 def test_declaration_is_not_treated_as_truth():

@@ -75,6 +75,19 @@ class _SpyOperationBoundary:
         return NodeResult(status="ok", run_id=uuid.uuid4())
 
 
+@dataclass
+class _SpyGenerationBoundary:
+    calls: list[tuple[str, tuple[str, ...]]] = field(default_factory=list)
+
+    async def dispatch(
+        self,
+        node: NodeSpec,
+        resolved_inputs: dict[str, NodeResult],
+    ) -> NodeResult:
+        self.calls.append((node.operator_id, tuple(sorted(resolved_inputs))))
+        return NodeResult(status="ok", run_id=uuid.uuid4())
+
+
 @pytest.mark.asyncio
 async def test_unified_dispatch_routes_mcp_and_primitive_halves():
     mcp = _SpyBoundary()
@@ -112,6 +125,22 @@ async def test_unified_dispatch_routes_operation_without_assent():
     )
 
     assert operation.calls == [("traffik.editorial.apply_steps", ("step_plan",))]
+
+
+@pytest.mark.asyncio
+async def test_unified_dispatch_routes_generation_without_assent():
+    generation = _SpyGenerationBoundary()
+    dispatch = UnifiedDispatch(
+        generation_boundary=generation,
+        assent_record=object(),
+    )
+
+    await dispatch.dispatch(
+        NodeSpec(node_id="author", operator_id="author_prompt"),
+        {"intent": NodeResult(status="ok", run_id=uuid.uuid4())},
+    )
+
+    assert generation.calls == [("author_prompt", ("intent",))]
 
 
 @pytest.mark.asyncio

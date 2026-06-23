@@ -13,6 +13,7 @@ from forge_bridge.composition.admission import admit_operator
 from forge_bridge.composition.boundary import MCPToolBoundary
 from forge_bridge.composition.commit_boundary import CommitBoundary
 from forge_bridge.composition.foreach_boundary import ForeachBoundary
+from forge_bridge.composition.generation_boundary import GenerationDispatchBoundary
 from forge_bridge.composition.graph_spec import NodeSpec
 from forge_bridge.composition.node_result import NodeResult
 from forge_bridge.composition.operation_boundary import OperationDispatchBoundary
@@ -29,6 +30,9 @@ class UnifiedDispatch:
     commit_boundary: CommitBoundary = field(default_factory=CommitBoundary)
     operation_boundary: OperationDispatchBoundary = field(
         default_factory=OperationDispatchBoundary
+    )
+    generation_boundary: GenerationDispatchBoundary = field(
+        default_factory=GenerationDispatchBoundary
     )
     assent_record: Any | None = None
 
@@ -56,4 +60,6 @@ class UnifiedDispatch:
             )
         if admission.dispatch_kind == "operation":
             return await self.operation_boundary.dispatch(node, resolved_inputs)
+        if admission.dispatch_kind == "generation":
+            return await self.generation_boundary.dispatch(node, resolved_inputs)
         raise AssertionError(f"Unhandled dispatch kind: {admission.dispatch_kind!r}")
