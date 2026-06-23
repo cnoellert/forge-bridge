@@ -21,6 +21,7 @@ DispatchKind = Literal[
     "foreach",
     "commit",
     "operation",
+    "host_resolve",
     "generation",
 ]
 
@@ -108,6 +109,15 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         synchronous=True,
         returns_reference=False,
         no_state_mutation=False,
+        idempotent_result=False,
+    ),
+    AdmissionRecord(
+        operator_id="delta_to_manifest",
+        resolved_class="host.resolve.delta_to_manifest",
+        dispatch_kind="host_resolve",
+        synchronous=True,
+        returns_reference=False,
+        no_state_mutation=True,
         idempotent_result=False,
     ),
     AdmissionRecord(

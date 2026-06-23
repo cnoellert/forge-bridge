@@ -37,6 +37,13 @@ def test_admission_accepts_slice_one_operator_ids():
     assert editorial.returns_reference is False
     assert editorial.no_state_mutation is False
     assert editorial.idempotent_result is False
+    delta = admit_operator("delta_to_manifest")
+    assert delta.resolved_class == "host.resolve.delta_to_manifest"
+    assert delta.dispatch_kind == "host_resolve"
+    assert delta.synchronous is True
+    assert delta.returns_reference is False
+    assert delta.no_state_mutation is True
+    assert delta.idempotent_result is False
     author = admit_operator("author_prompt")
     assert author.resolved_class == "generators.author_prompt"
     assert author.dispatch_kind == "generation"
@@ -66,6 +73,7 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "forge_assemble_deliverable_package",
         "flame_rename_shots",
         "traffik.editorial.apply_steps",
+        "delta_to_manifest",
         "author_prompt",
         "filter",
         "if",
