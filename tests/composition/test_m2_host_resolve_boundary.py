@@ -29,6 +29,7 @@ from forge_bridge.composition.operation_boundary import OperationDispatchBoundar
 from forge_bridge.core.assent import AssentRecord
 from forge_bridge.graph.commit import CommitError
 from forge_bridge.graph.ports import PortContract, PortTopology
+import forge_bridge.orchestration.apply_editorial_delta as apply_delta_module
 
 
 OPERATION_NODE_ID = "apply_steps"
@@ -97,9 +98,10 @@ def _manifest_dict(
 
 
 class _SegmentDeltaMCP:
-    def __init__(self, *, fresh_manifest: dict):
+    def __init__(self, *, fresh_manifest: dict, apply_drift: bool = False):
         self.calls: list[tuple[str, dict]] = []
         self._fresh_manifest = copy.deepcopy(fresh_manifest)
+        self._apply_drift = apply_drift
 
     async def list_tools(self):
         return [
@@ -115,7 +117,15 @@ class _SegmentDeltaMCP:
             raise AssertionError(name)
         if arguments["mode"] == "verify":
             return copy.deepcopy(self._fresh_manifest)
+        if arguments["mode"] == "discover":
+            return _manifest_dict()
         if arguments["mode"] == "apply":
+            if self._apply_drift:
+                return {
+                    "drift": True,
+                    "error_code": "plan_state_drift",
+                    "reason_code": "plan_state_drift",
+                }
             return {
                 "type": "rename_apply_result",
                 "renamed": len(arguments["resolved_plan"]),
@@ -245,13 +255,17 @@ async def test_host_resolve_rejects_unmapped_delta_action():
 
 
 @pytest.mark.asyncio
-async def test_host_resolve_reports_unresolved_target_for_discover_failure():
+@pytest.mark.parametrize(
+    "error_code",
+    ["missing_flame_identity", "invalid_flame_identity"],
+)
+async def test_host_resolve_reports_unresolved_target_for_identity_failures(error_code):
     async def run_discover(_tool_name: str, *, request: dict):
         return {
             "error": {
-                "code": "missing_flame_identity",
-                "error_code": "missing_flame_identity",
-                "reason_code": "missing_flame_identity",
+                "code": error_code,
+                "error_code": error_code,
+                "reason_code": error_code,
                 "message": "target not found",
             }
         }
@@ -396,6 +410,9 @@ async def test_three_node_delta_apply_graph_commits_when_ratified():
     assert results[COMMIT_NODE_ID].output["count"] == 1
     assert operation_calls[0]["operation_type"] == "traffik.editorial.apply_steps"
     assert discover_calls[0]["tool_name"] == "forge_apply_segment_delta"
+    assert results[RESOLVE_NODE_ID].output["apply_counterpart"]["tool"] == (
+        "forge_apply_segment_delta"
+    )
     assert [(name, args["mode"]) for name, args in mcp.calls] == [
         ("forge_apply_segment_delta", "verify"),
         ("forge_apply_segment_delta", "apply"),
@@ -433,6 +450,60 @@ async def test_three_node_delta_apply_graph_reports_plan_state_drift():
     assert [(name, args["mode"]) for name, args in mcp.calls] == [
         ("forge_apply_segment_delta", "verify"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_three_node_delta_apply_graph_reports_apply_drift_signal():
+    async def run_operation(operation_type: str, **kwargs):
+        return {"status": "success", "data": _operation_output()}
+
+    async def run_discover(tool_name: str, *, request: dict):
+        return _manifest_dict()
+
+    mcp = _SegmentDeltaMCP(fresh_manifest=_manifest_dict(), apply_drift=True)
+    dispatch = UnifiedDispatch(
+        operation_boundary=OperationDispatchBoundary(run_operation=run_operation),
+        host_resolve_boundary=HostResolveBoundary(run_discover=run_discover),
+        commit_boundary=CommitBoundary(mcp=mcp),
+        assent_record=_ratified_assent(),
+    )
+
+    results = await GraphExecutor(dispatch.dispatch).run(_three_node_graph())
+
+    assert results[COMMIT_NODE_ID].status == "error"
+    assert results[COMMIT_NODE_ID].reason_code == CommitError.PLAN_STATE_DRIFT
+    assert [(name, args["mode"]) for name, args in mcp.calls] == [
+        ("forge_apply_segment_delta", "verify"),
+        ("forge_apply_segment_delta", "apply"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_apply_editorial_delta_uses_mcp_discover_verify_and_apply(monkeypatch):
+    async def operation_runner(operation_type: str, **kwargs):
+        return {"status": "success", "data": _operation_output()}
+
+    monkeypatch.setattr(
+        apply_delta_module,
+        "build_operation_runner",
+        lambda *args, **kwargs: operation_runner,
+    )
+    mcp = _SegmentDeltaMCP(fresh_manifest=_manifest_dict())
+
+    results = await apply_delta_module.apply_editorial_delta(
+        _three_node_graph(),
+        assent_record=_ratified_assent(),
+        mcp=mcp,
+    )
+
+    assert results[COMMIT_NODE_ID].status == "ok"
+    assert [(name, args["mode"]) for name, args in mcp.calls] == [
+        ("forge_apply_segment_delta", "discover"),
+        ("forge_apply_segment_delta", "verify"),
+        ("forge_apply_segment_delta", "apply"),
+    ]
+    assert mcp.calls[0][1]["sequence_name"] == "seq_001"
+    assert mcp.calls[0][1]["entries"] == [_entry()]
 
 
 def test_composition_imports_no_peer_host_packages():
