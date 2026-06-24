@@ -128,6 +128,23 @@ def _collect_segments(seq):
 """
 
 
+def _guard_host_write_result(data):
+    """Prevent empty/no-op host-write payloads from reading as success."""
+
+    if isinstance(data, dict) and not (
+        data.get("ok")
+        or data.get("dry_run")
+        or data.get("proposed_changes")
+        or "error" in data
+    ):
+        return {
+            "ok": False,
+            "error": "host write did not complete (empty/no-op result)",
+            "raw": data,
+        }
+    return data
+
+
 # ── Tool: flame_get_sequence_segments ─────────────────────────────────
 
 
@@ -1069,7 +1086,7 @@ async def set_start_frames(params: SetStartFramesInput) -> str:
     complex sequences until this limitation is understood.
     """
     data = await bridge.execute_json(f"""
-import flame, json, threading
+import flame, json
 {_COLLECT_CODE}
 
 seq = _find_seq({params.sequence_name!r})
@@ -1081,60 +1098,55 @@ else:
     dry_run       = {params.dry_run!r}
 
     result = {{'applied': 0, 'skipped': 0, 'errors': [], 'changes': []}}
-    event  = threading.Event()
+    try:
+        tracks = []
+        for ver in seq.versions:
+            for track in ver.tracks:
+                tracks.append(track)
 
-    def _do():
-        try:
-            tracks = []
-            for ver in seq.versions:
-                for track in ver.tracks:
-                    tracks.append(track)
-
-            for track in tracks:
-                for seg in track.segments:
-                    if not seg.source_name:
-                        continue
-                    shot_name = ''
+        for track in tracks:
+            for seg in track.segments:
+                if not seg.source_name:
+                    continue
+                shot_name = ''
+                try:
+                    shot_name = seg.shot_name.get_value() if hasattr(seg.shot_name, 'get_value') else str(seg.shot_name)
+                except: pass
+                target = overrides.get(shot_name, default_frame)
+                head   = 0
+                try: head = int(seg.head)
+                except: pass
+                clip_start = target - head   # informational — negative = invalid
+                if clip_start < 0:
+                    result['errors'].append(f"{{shot_name}}: clip_start={{clip_start}} < 0, skipped")
+                    result['skipped'] += 1
+                    continue
+                try:
+                    current = None
                     try:
-                        shot_name = seg.shot_name.get_value() if hasattr(seg.shot_name, 'get_value') else str(seg.shot_name)
+                        current = int(seg.start_frame) if seg.start_frame else None
                     except: pass
-                    target = overrides.get(shot_name, default_frame)
-                    head   = 0
-                    try: head = int(seg.head)
-                    except: pass
-                    clip_start = target - head   # informational — negative = invalid
-                    if clip_start < 0:
-                        result['errors'].append(f"{{shot_name}}: clip_start={{clip_start}} < 0, skipped")
-                        result['skipped'] += 1
-                        continue
-                    try:
-                        current = None
-                        try:
-                            current = int(seg.start_frame) if seg.start_frame else None
-                        except: pass
-                        if dry_run:
-                            result['changes'].append({{
-                                'index': len(result['changes']),
-                                'current': current,
-                                'proposed': target,
-                                'type': 'start_frame',
-                                'shot': shot_name,
-                                'head': head,
-                                'clip_start': clip_start,
-                            }})
-                        else:
-                            seg.change_start_frame(target)
-                            result['changes'].append({{'shot': shot_name, 'target': target, 'head': head, 'clip_start': clip_start}})
-                        result['applied'] += 1
-                    except Exception as e:
-                        result['errors'].append(f"{{shot_name}}: {{e}}")
-                        result['skipped'] += 1
-        except Exception as e:
-            result['error'] = str(e)
-        event.set()
-
-    flame.schedule_idle_event(_do)
-    event.wait(timeout=60)
+                    if dry_run:
+                        result['changes'].append({{
+                            'index': len(result['changes']),
+                            'current': current,
+                            'proposed': target,
+                            'type': 'start_frame',
+                            'shot': shot_name,
+                            'head': head,
+                            'clip_start': clip_start,
+                        }})
+                    else:
+                        seg.change_start_frame(target)
+                        result['changes'].append({{'shot': shot_name, 'target': target, 'head': head, 'clip_start': clip_start}})
+                    result['applied'] += 1
+                except Exception as e:
+                    result['errors'].append(f"{{shot_name}}: {{e}}")
+                    result['skipped'] += 1
+    except Exception as e:
+        result['error'] = str(e)
+    if 'error' not in result:
+        result['ok'] = True
     if dry_run:
         print(json.dumps({{
             'dry_run': True,
@@ -1146,6 +1158,7 @@ else:
     else:
         print(json.dumps(result))
 """, main_thread=True)
+    data = _guard_host_write_result(data)
     return json.dumps(data, indent=2)
 
 
@@ -1176,7 +1189,7 @@ async def set_segment_attribute(params: SetSegmentInput) -> str:
         value_code = params.value
 
     data = await bridge.execute_json(f"""
-import flame, json, threading
+import flame, json
 {_COLLECT_CODE}
 
 seq = _find_seq({params.sequence_name!r})
@@ -1200,35 +1213,31 @@ else:
     if not target:
         print(json.dumps({{'error': 'Segment not found: ' + {params.segment_name!r}}}))
     else:
-        event  = threading.Event()
         result = {{}}
-        def _do():
-            try:
-                attr = getattr(target, attr_name)
-                current = str(attr.get_value()) if hasattr(attr, 'get_value') else str(attr)
-                if dry_run:
-                    result['dry_run'] = True
-                    result['proposed_changes'] = [{{
-                        'index': 0,
-                        'current': current,
-                        'proposed': str(new_value),
-                        'type': 'attribute',
-                        'attribute': attr_name,
-                        'segment': {params.segment_name!r},
-                    }}]
-                    result['count'] = 1
-                else:
-                    attr.set_value(new_value)
-                    result['ok']        = True
-                    result['attribute'] = attr_name
-                    result['new_value'] = str(attr.get_value())
-            except Exception as e:
-                result['error'] = str(e)
-            event.set()
-        flame.schedule_idle_event(_do)
-        event.wait(timeout=10)
+        try:
+            attr = getattr(target, attr_name)
+            current = str(attr.get_value()) if hasattr(attr, 'get_value') else str(attr)
+            if dry_run:
+                result['dry_run'] = True
+                result['proposed_changes'] = [{{
+                    'index': 0,
+                    'current': current,
+                    'proposed': str(new_value),
+                    'type': 'attribute',
+                    'attribute': attr_name,
+                    'segment': {params.segment_name!r},
+                }}]
+                result['count'] = 1
+            else:
+                attr.set_value(new_value)
+                result['ok']        = True
+                result['attribute'] = attr_name
+                result['new_value'] = str(attr.get_value())
+        except Exception as e:
+            result['error'] = str(e)
         print(json.dumps(result))
-""", main_thread=True)
+        """, main_thread=True)
+    data = _guard_host_write_result(data)
     return json.dumps(data, indent=2)
 
 
@@ -1539,7 +1548,7 @@ async def create_version(params: CreateVersionInput) -> str:
     Runs on Flame's main thread.
     """
     data = await bridge.execute_json(f"""
-import flame, json, threading
+import flame, json
 
 {_COLLECT_CODE}
 
@@ -1547,10 +1556,7 @@ seq = _find_seq({params.sequence_name!r})
 if not seq:
     print(json.dumps({{"error": "Sequence not found: " + {params.sequence_name!r}}}))
 else:
-    result = {{}}
-    event = threading.Event()
-
-    def _do():
+        result = {{}}
         try:
             before_count = len(seq.versions)
             new_ver = seq.create_version()
@@ -1567,12 +1573,9 @@ else:
             }})
         except Exception as e:
             result["error"] = str(e)
-        event.set()
-
-    flame.schedule_idle_event(_do)
-    event.wait(timeout=10)
-    print(json.dumps(result))
-""", main_thread=True)
+        print(json.dumps(result))
+        """, main_thread=True)
+    data = _guard_host_write_result(data)
     return json.dumps(data, indent=2)
 
 
@@ -1621,7 +1624,7 @@ async def reconstruct_track(params: ReconstructTrackInput) -> str:
     Runs on Flame's main thread.
     """
     data = await bridge.execute_json(f"""
-import flame, json, threading
+import flame, json
 
 {_COLLECT_CODE}
 
@@ -1642,63 +1645,58 @@ elif not scratch_reel:
     print(json.dumps({{"error": "Scratch reel not found: " + {params.scratch_reel_name!r}}}))
 else:
     result = {{"placed": [], "skipped": [], "errors": []}}
-    event = threading.Event()
+    try:
+        src_ver = seq.versions[{params.source_version_index}]
+        src_track = src_ver.tracks[{params.source_track_index}]
+        tgt_ver = seq.versions[{params.target_version_index}]
+        tgt_track = tgt_ver.tracks[{params.target_track_index}]
 
-    def _do():
-        try:
-            src_ver = seq.versions[{params.source_version_index}]
-            src_track = src_ver.tracks[{params.source_track_index}]
-            tgt_ver = seq.versions[{params.target_version_index}]
-            tgt_track = tgt_ver.tracks[{params.target_track_index}]
+        scratch_clips = []
+        for seg in src_track.segments:
+            name = seg.name.get_value()
+            if not name:
+                result["skipped"].append({{"rec_in": seg.record_in.timecode, "reason": "gap"}})
+                continue
+            try:
+                clip = seg.copy_to_media_panel(scratch_reel)
+                scratch_clips.append(clip)
+                seq.overwrite(clip, seg.record_in, tgt_track)
+                result["placed"].append({{
+                    "name": name,
+                    "rec_in": seg.record_in.timecode,
+                    "rec_out": seg.record_out.timecode,
+                    "src_in": seg.source_in.timecode,
+                }})
+            except Exception as e:
+                result["errors"].append({{"name": name, "error": str(e)}})
 
-            scratch_clips = []
-            for seg in src_track.segments:
-                name = seg.name.get_value()
-                if not name:
-                    result["skipped"].append({{"rec_in": seg.record_in.timecode, "reason": "gap"}})
-                    continue
-                try:
-                    clip = seg.copy_to_media_panel(scratch_reel)
-                    scratch_clips.append(clip)
-                    seq.overwrite(clip, seg.record_in, tgt_track)
-                    result["placed"].append({{
-                        "name": name,
-                        "rec_in": seg.record_in.timecode,
-                        "rec_out": seg.record_out.timecode,
-                        "src_in": seg.source_in.timecode,
-                    }})
-                except Exception as e:
-                    result["errors"].append({{"name": name, "error": str(e)}})
+        # Verify fidelity
+        mismatches = []
+        tgt_segs = [s for s in tgt_track.segments if s.name.get_value()]
+        src_segs = [s for s in src_track.segments if s.name.get_value()]
+        for s0, s1 in zip(src_segs, tgt_segs):
+            if (s0.record_in.timecode != s1.record_in.timecode or
+                s0.source_in.timecode != s1.source_in.timecode):
+                mismatches.append(s0.name.get_value())
+        result["fidelity_mismatches"] = mismatches
+        result["fidelity_ok"] = len(mismatches) == 0
 
-            # Verify fidelity
-            mismatches = []
-            tgt_segs = [s for s in tgt_track.segments if s.name.get_value()]
-            src_segs = [s for s in src_track.segments if s.name.get_value()]
-            for s0, s1 in zip(src_segs, tgt_segs):
-                if (s0.record_in.timecode != s1.record_in.timecode or
-                    s0.source_in.timecode != s1.source_in.timecode):
-                    mismatches.append(s0.name.get_value())
-            result["fidelity_mismatches"] = mismatches
-            result["fidelity_ok"] = len(mismatches) == 0
+        # Clean up scratch clips
+        for clip in scratch_clips:
+            try:
+                flame.delete(clip, confirm=False)
+            except Exception:
+                pass
 
-            # Clean up scratch clips
-            for clip in scratch_clips:
-                try:
-                    flame.delete(clip, confirm=False)
-                except Exception:
-                    pass
+        result["segments_placed"] = len(result["placed"])
+        result["segments_skipped"] = len(result["skipped"])
+        result["ok"] = True
 
-            result["segments_placed"] = len(result["placed"])
-            result["segments_skipped"] = len(result["skipped"])
-
-        except Exception as e:
-            result["error"] = str(e)
-        event.set()
-
-    flame.schedule_idle_event(_do)
-    event.wait(timeout=60)
+    except Exception as e:
+        result["error"] = str(e)
     print(json.dumps(result))
-""", main_thread=True)
+        """, main_thread=True)
+    data = _guard_host_write_result(data)
     return json.dumps(data, indent=2)
 
 
@@ -1738,7 +1736,7 @@ async def clone_version(params: CloneVersionInput) -> str:
     Runs on Flame's main thread.
     """
     data = await bridge.execute_json(f"""
-import flame, json, threading
+import flame, json
 
 {_COLLECT_CODE}
 
@@ -1759,85 +1757,80 @@ elif not scratch_reel:
     print(json.dumps({{"error": "Scratch reel not found: " + {params.scratch_reel_name!r}}}))
 else:
     result = {{"tracks": [], "errors": []}}
-    event = threading.Event()
+    try:
+        src_ver = seq.versions[{params.source_version_index}]
+        src_tracks = src_ver.tracks
 
-    def _do():
-        try:
-            src_ver = seq.versions[{params.source_version_index}]
-            src_tracks = src_ver.tracks
+        # Create blank version — comes with 1 track
+        new_ver = seq.create_version()
+        new_idx = len(seq.versions) - 1
+        result["new_version_index"] = new_idx
 
-            # Create blank version — comes with 1 track
-            new_ver = seq.create_version()
-            new_idx = len(seq.versions) - 1
-            result["new_version_index"] = new_idx
+        # Create additional tracks if source has more than 1
+        while len(new_ver.tracks) < len(src_tracks):
+            new_ver.create_track()
 
-            # Create additional tracks if source has more than 1
-            while len(new_ver.tracks) < len(src_tracks):
-                new_ver.create_track()
+        # Reconstruct each track
+        scratch_clips_all = []
+        for ti, src_track in enumerate(src_tracks):
+            tgt_track = new_ver.tracks[ti]
+            placed = []
+            skipped = []
+            t_errors = []
+            scratch_clips = []
 
-            # Reconstruct each track
-            scratch_clips_all = []
-            for ti, src_track in enumerate(src_tracks):
-                tgt_track = new_ver.tracks[ti]
-                placed = []
-                skipped = []
-                t_errors = []
-                scratch_clips = []
-
-                for seg in src_track.segments:
-                    name = seg.name.get_value()
-                    if not name:
-                        skipped.append(seg.record_in.timecode)
-                        continue
-                    try:
-                        clip = seg.copy_to_media_panel(scratch_reel)
-                        scratch_clips.append(clip)
-                        scratch_clips_all.append(clip)
-                        seq.overwrite(clip, seg.record_in, tgt_track)
-                        placed.append({{
-                            "name": name,
-                            "rec_in": seg.record_in.timecode,
-                            "src_in": seg.source_in.timecode,
-                        }})
-                    except Exception as e:
-                        t_errors.append({{"name": name, "error": str(e)}})
-
-                # Fidelity check
-                tgt_segs = [s for s in tgt_track.segments if s.name.get_value()]
-                src_segs = [s for s in src_track.segments if s.name.get_value()]
-                mismatches = []
-                for s0, s1 in zip(src_segs, tgt_segs):
-                    if (s0.record_in.timecode != s1.record_in.timecode or
-                        s0.source_in.timecode != s1.source_in.timecode):
-                        mismatches.append(s0.name.get_value())
-
-                result["tracks"].append({{
-                    "track_index": ti,
-                    "segments_placed": len(placed),
-                    "segments_skipped": len(skipped),
-                    "fidelity_ok": len(mismatches) == 0,
-                    "mismatches": mismatches,
-                    "errors": t_errors,
-                }})
-
-            # Clean up all scratch clips
-            for clip in scratch_clips_all:
+            for seg in src_track.segments:
+                name = seg.name.get_value()
+                if not name:
+                    skipped.append(seg.record_in.timecode)
+                    continue
                 try:
-                    flame.delete(clip, confirm=False)
-                except Exception:
-                    pass
+                    clip = seg.copy_to_media_panel(scratch_reel)
+                    scratch_clips.append(clip)
+                    scratch_clips_all.append(clip)
+                    seq.overwrite(clip, seg.record_in, tgt_track)
+                    placed.append({{
+                        "name": name,
+                        "rec_in": seg.record_in.timecode,
+                        "src_in": seg.source_in.timecode,
+                    }})
+                except Exception as e:
+                    t_errors.append({{"name": name, "error": str(e)}})
 
-            result["tracks_cloned"] = len(src_tracks)
-            result["source_version_index"] = {params.source_version_index}
+            # Fidelity check
+            tgt_segs = [s for s in tgt_track.segments if s.name.get_value()]
+            src_segs = [s for s in src_track.segments if s.name.get_value()]
+            mismatches = []
+            for s0, s1 in zip(src_segs, tgt_segs):
+                if (s0.record_in.timecode != s1.record_in.timecode or
+                    s0.source_in.timecode != s1.source_in.timecode):
+                    mismatches.append(s0.name.get_value())
 
-        except Exception as e:
-            result["error"] = str(e)
-        event.set()
+            result["tracks"].append({{
+                "track_index": ti,
+                "segments_placed": len(placed),
+                "segments_skipped": len(skipped),
+                "fidelity_ok": len(mismatches) == 0,
+                "mismatches": mismatches,
+                "errors": t_errors,
+            }})
 
-    flame.schedule_idle_event(_do)
-    event.wait(timeout=120)
+        # Clean up all scratch clips
+        for clip in scratch_clips_all:
+            try:
+                flame.delete(clip, confirm=False)
+            except Exception:
+                pass
+
+        result["tracks_cloned"] = len(src_tracks)
+        result["source_version_index"] = {params.source_version_index}
+        result["ok"] = True
+
+    except Exception as e:
+        result["error"] = str(e)
     print(json.dumps(result))
-""", main_thread=True)
+        """, main_thread=True)
+    data = _guard_host_write_result(data)
     return json.dumps(data, indent=2)
 
 
@@ -1875,49 +1868,44 @@ async def disconnect_segments(params: DisconnectSegmentsInput) -> str:
     """
     seq_filter = params.sequence_name
     data = await bridge.execute_json(f"""
-import flame, json, threading
+import flame, json
 
-event = threading.Event()
 result = {{"sequences": [], "total_processed": 0, "errors": []}}
-
-def _do():
-    try:
-        desk = flame.projects.current_project.current_workspace.desktop
-        for rg in desk.reel_groups:
-            for reel in rg.reels:
-                if reel.name.get_value() != {params.reel_name!r}:
+try:
+    desk = flame.projects.current_project.current_workspace.desktop
+    for rg in desk.reel_groups:
+        for reel in rg.reels:
+            if reel.name.get_value() != {params.reel_name!r}:
+                continue
+            for seq in reel.sequences:
+                seq_name = seq.name.get_value()
+                seq_filter = {seq_filter!r}
+                if seq_filter and seq_name != seq_filter:
                     continue
-                for seq in reel.sequences:
-                    seq_name = seq.name.get_value()
-                    seq_filter = {seq_filter!r}
-                    if seq_filter and seq_name != seq_filter:
-                        continue
-                    count = 0
-                    for ver in seq.versions:
-                        for t in ver.tracks:
-                            for seg in t.segments:
-                                src = str(seg.source_name) if seg.source_name else ""
-                                if not src:
-                                    continue
-                                try:
-                                    seg.remove_connection()
-                                    count += 1
-                                except Exception as e:
-                                    result["errors"].append(
-                                        str(seg.name.get_value()) + ": " + str(e)
-                                    )
-                    result["sequences"].append(
-                        {{"name": seq_name, "processed": count}}
-                    )
-                    result["total_processed"] += count
-    except Exception as e:
-        result["errors"].append(str(e))
-    event.set()
-
-flame.schedule_idle_event(_do)
-event.wait(timeout=30)
+                count = 0
+                for ver in seq.versions:
+                    for t in ver.tracks:
+                        for seg in t.segments:
+                            src = str(seg.source_name) if seg.source_name else ""
+                            if not src:
+                                continue
+                            try:
+                                seg.remove_connection()
+                                count += 1
+                            except Exception as e:
+                                result["errors"].append(
+                                    str(seg.name.get_value()) + ": " + str(e)
+                                )
+                result["sequences"].append(
+                    {{"name": seq_name, "processed": count}}
+                )
+                result["total_processed"] += count
+except Exception as e:
+    result["errors"].append(str(e))
+result["ok"] = True
 print(json.dumps(result))
-""", main_thread=True)
+        """, main_thread=True)
+    data = _guard_host_write_result(data)
     return json.dumps(data, indent=2)
 
 
