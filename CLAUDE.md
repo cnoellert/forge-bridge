@@ -285,6 +285,12 @@ Full recovery + symptom catalogue: `docs/TROUBLESHOOTING.md` → "Failure mode: 
 
 This precondition check matters more on this project than on most because the daily workflow involves multiple checkouts (main + worktrees + AI-assistant scratch branches) and the active conda env is typically anchored to exactly one of them.
 
+### Planning docs always commit to `main` (pre-commit guard)
+
+Planning history (`.planning/**`) lives linearly on `main`; code rides feature branches through PRs. Because this is a single shared working tree, a planning-only `git commit` made while HEAD is on a feature branch silently lands the doc on the **wrong** branch — and a later `git push origin main` reports "Everything up-to-date" because `main` never moved (issue #95).
+
+A tracked pre-commit guard now blocks this: a commit whose staged paths are **entirely** under `.planning/**` while HEAD is not on `main` is refused loudly. Mixed and code-only commits pass untouched. Install it in a fresh checkout with `./scripts/install-git-hooks.sh` (hooks aren't shared by `git clone`). To override intentionally: `ALLOW_PLANNING_OFF_MAIN=1 git commit …` or `git commit --no-verify`.
+
 ---
 
 ## Questions To Come Back To

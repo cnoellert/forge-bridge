@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+#
+# forge-bridge pre-commit guard — planning-docs-on-main (issue #95)
+#
+# Planning docs (.planning/**) are intended to live as a linear history on `main`,
+# decoupled from code PRs. Because this project uses a single shared working tree,
+# a planning-only `git commit` made while HEAD is on a feature branch silently
+# lands the doc on the WRONG branch — and a later `git push origin main` reports
+# "Everything up-to-date" because main never moved.
+#
+# This guard converts that silent mis-landing into a loud block, consistent with
+# the project's fail-loud discipline. It ONLY blocks commits whose staged paths
+# are ENTIRELY under .planning/** while HEAD is not on `main`. Mixed commits
+# (planning + code) and code-only commits are never touched.
+#
+# Override (when you really do mean to commit planning docs off main):
+#   ALLOW_PLANNING_OFF_MAIN=1 git commit ...
+#   # or bypass all hooks: git commit --no-verify
+#
+set -euo pipefail
+
+# Explicit override.
+if [ -n "${ALLOW_PLANNING_OFF_MAIN:-}" ]; then
+    exit 0
+fi
+
+staged="$(git diff --cached --name-only)"
+
+# Nothing staged (e.g. `git commit` that git will reject anyway) — not our concern.
+if [ -z "$staged" ]; then
+    exit 0
+fi
+
+# Any staged path NOT under .planning/ means this is a code or mixed commit — allow.
+if printf '%s\n' "$staged" | grep -qv '^\.planning/'; then
+    exit 0
+fi
+
+# Reaching here: every staged path is under .planning/**.
+branch="$(git branch --show-current)"
+
+# On main (the intended home for planning history) — allow.
+if [ "$branch" = "main" ]; then
+    exit 0
+fi
+
+# Planning-only commit, off main (feature branch or detached HEAD) — BLOCK loudly.
+where="${branch:-detached HEAD}"
+cat >&2 <<EOF
+
+  ✖ pre-commit: refusing a planning-only commit on '${where}'.
+
+  Every staged path is under .planning/**, but HEAD is not on 'main'.
+  Committing here would silently land the planning doc on the wrong branch
+  (and a later 'git push origin main' would report "up-to-date"). See issue #95.
+
+  Fix — route the planning commit to main:
+      git stash --staged        # or: git restore --staged .planning
+      git switch main
+      git add .planning/... && git commit ...
+
+  Or, if you really mean to commit planning docs here, override:
+      ALLOW_PLANNING_OFF_MAIN=1 git commit ...
+      # or bypass all hooks:   git commit --no-verify
+
+EOF
+exit 1
