@@ -25,8 +25,19 @@ UNRESOLVED_TARGET = "UNRESOLVED_TARGET"
 HOST_DISCOVER_FAILED = "HOST_DISCOVER_FAILED"
 
 _APPLY_TOOL_BY_DELTA_CLASS: dict[tuple[str, str], str] = {
-    ("updated", "segment"): "flame_rename_shots",
+    ("updated", "segment"): "forge_apply_segment_delta",
 }
+
+_UNRESOLVED_TARGET_CODES = frozenset({
+    "missing_flame_identity",
+    "invalid_flame_identity",
+})
+_UNSUPPORTED_DELTA_CODES = frozenset({
+    "unknown_delta_action",
+    "object_type_requires_future_executor",
+    "unknown_segment_fields",
+    "no_segment_fields_changed",
+})
 
 
 class HostResolveBoundary:
@@ -96,21 +107,14 @@ class HostResolveBoundary:
             return self._error(
                 admission.resolved_class,
                 srcs,
-                reason_code=UNRESOLVED_TARGET,
+                reason_code=HOST_DISCOVER_FAILED,
                 message="No host discover runner is configured.",
             )
 
         request = {
-            "entries": [
-                {
-                    "identity": dict(entry.get("metadata") or {}),
-                    "intent": dict(entry.get("after") or {}),
-                }
-                for entry in entries
-            ]
+            "sequence_name": sequence_name,
+            "entries": [dict(entry) for entry in entries],
         }
-        if sequence_name is not None:
-            request["sequence_name"] = sequence_name
         try:
             manifest = self._run_discover(
                 apply_tool,
@@ -124,11 +128,7 @@ class HostResolveBoundary:
                 return self._error(
                     admission.resolved_class,
                     srcs,
-                    reason_code=(
-                        UNRESOLVED_TARGET
-                        if discover_error == "identity_unresolved"
-                        else HOST_DISCOVER_FAILED
-                    ),
+                    reason_code=_host_discover_reason_code(discover_error),
                     message=_discover_error_message(manifest),
                 )
             manifest_dict = _manifest_dict(manifest)
@@ -137,11 +137,7 @@ class HostResolveBoundary:
             return self._error(
                 admission.resolved_class,
                 srcs,
-                reason_code=(
-                    UNRESOLVED_TARGET
-                    if discover_error == "identity_unresolved"
-                    else HOST_DISCOVER_FAILED
-                ),
+                reason_code=_host_discover_reason_code(discover_error),
                 message=str(exc),
             )
         if manifest_dict["apply_counterpart"]["tool"] != apply_tool:
@@ -256,6 +252,18 @@ def _discover_error_message(value: Any) -> str:
         if isinstance(field, str) and field:
             return field
     return "Host discover failed."
+
+
+def _host_discover_reason_code(error_code: str | None) -> str:
+    if error_code in _UNRESOLVED_TARGET_CODES:
+        return UNRESOLVED_TARGET
+    if error_code in _UNSUPPORTED_DELTA_CODES or (
+        isinstance(error_code, str)
+        and error_code.startswith("segment_")
+        and error_code.endswith("_requires_future_executor")
+    ):
+        return UNSUPPORTED_DELTA_ACTION
+    return HOST_DISCOVER_FAILED
 
 
 def _get(value: Any, key: str) -> Any:

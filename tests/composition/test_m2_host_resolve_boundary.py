@@ -76,7 +76,7 @@ def _operation_output(*entries: dict) -> dict:
 def _manifest_dict(
     *,
     payload_name: str = "new_name",
-    apply_tool: str = "flame_rename_shots",
+    apply_tool: str = "forge_apply_segment_delta",
 ) -> dict:
     identity = dict(_entry()["metadata"])
     return {
@@ -88,15 +88,15 @@ def _manifest_dict(
                 "payload": {"shot_name": payload_name},
             }
         ],
-        "originating_capability": "flame_rename_shots",
+        "originating_capability": "forge_apply_segment_delta",
         "apply_counterpart": {
             "tool": apply_tool,
-            "parameter_overrides": {},
+            "parameter_overrides": {"mode": "apply"},
         },
     }
 
 
-class _RenameMCP:
+class _SegmentDeltaMCP:
     def __init__(self, *, fresh_manifest: dict):
         self.calls: list[tuple[str, dict]] = []
         self._fresh_manifest = copy.deepcopy(fresh_manifest)
@@ -104,14 +104,14 @@ class _RenameMCP:
     async def list_tools(self):
         return [
             SimpleNamespace(
-                name="flame_rename_shots",
+                name="forge_apply_segment_delta",
                 inputSchema={"type": "object", "properties": {}, "required": []},
             )
         ]
 
     async def call_tool(self, name: str, arguments: dict):
         self.calls.append((name, copy.deepcopy(arguments)))
-        if name != "flame_rename_shots":
+        if name != "forge_apply_segment_delta":
             raise AssertionError(name)
         if arguments["mode"] == "verify":
             return copy.deepcopy(self._fresh_manifest)
@@ -185,17 +185,14 @@ async def test_host_resolve_builds_discover_request_and_forwards_manifest():
     assert result.source_artifact_ids == (source_id,)
     assert result.resolved_class == "host.resolve.delta_to_manifest"
     assert calls == [{
-        "tool_name": "flame_rename_shots",
+        "tool_name": "forge_apply_segment_delta",
         "request": {
             "sequence_name": "seq_001",
-            "entries": [{
-                "identity": _entry()["metadata"],
-                "intent": {"name": "new_name"},
-            }]
+            "entries": [_entry()],
         },
         "kwargs": {"project_id": "project-001"},
     }]
-    assert "before" not in calls[0]["request"]["entries"][0]
+    assert "before" in calls[0]["request"]["entries"][0]
 
 
 @pytest.mark.asyncio
@@ -252,9 +249,9 @@ async def test_host_resolve_reports_unresolved_target_for_discover_failure():
     async def run_discover(_tool_name: str, *, request: dict):
         return {
             "error": {
-                "code": "identity_unresolved",
-                "error_code": "identity_unresolved",
-                "reason_code": "identity_unresolved",
+                "code": "missing_flame_identity",
+                "error_code": "missing_flame_identity",
+                "reason_code": "missing_flame_identity",
                 "message": "target not found",
             }
         }
@@ -284,6 +281,32 @@ async def test_host_resolve_reports_generic_discover_failure_distinctly():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error_code",
+    [
+        "unknown_delta_action",
+        "object_type_requires_future_executor",
+        "segment_inserted_requires_future_executor",
+        "segment_removed_requires_future_executor",
+        "segment_shifted_requires_future_executor",
+        "unknown_segment_fields",
+        "no_segment_fields_changed",
+    ],
+)
+async def test_host_resolve_maps_real_unsupported_classifier_codes(error_code):
+    async def run_discover(_tool_name: str, *, request: dict):
+        return {"error": {"code": error_code, "message": error_code}}
+
+    result = await HostResolveBoundary(run_discover=run_discover).dispatch(
+        _delta_node(),
+        {"deltas": _upstream_result()},
+    )
+
+    assert result.status == "error"
+    assert result.reason_code == UNSUPPORTED_DELTA_ACTION
+
+
+@pytest.mark.asyncio
 async def test_host_resolve_enforces_manifest_apply_counterpart_tool():
     async def run_discover(_tool_name: str, *, request: dict):
         return _manifest_dict(apply_tool="wrong_tool")
@@ -295,7 +318,7 @@ async def test_host_resolve_enforces_manifest_apply_counterpart_tool():
 
     assert result.status == "error"
     assert result.reason_code == HOST_DISCOVER_FAILED
-    assert "expected 'flame_rename_shots'" in (result.message or "")
+    assert "expected 'forge_apply_segment_delta'" in (result.message or "")
 
 
 def _three_node_graph() -> GraphSpec:
@@ -350,7 +373,7 @@ async def _run_three_node_graph(
         discover_calls.append({"tool_name": tool_name, "request": request})
         return _manifest_dict()
 
-    mcp = _RenameMCP(fresh_manifest=fresh_manifest)
+    mcp = _SegmentDeltaMCP(fresh_manifest=fresh_manifest)
     dispatch = UnifiedDispatch(
         operation_boundary=OperationDispatchBoundary(run_operation=run_operation),
         host_resolve_boundary=HostResolveBoundary(run_discover=run_discover),
@@ -372,10 +395,10 @@ async def test_three_node_delta_apply_graph_commits_when_ratified():
     assert results[COMMIT_NODE_ID].output["type"] == "commit_applied"
     assert results[COMMIT_NODE_ID].output["count"] == 1
     assert operation_calls[0]["operation_type"] == "traffik.editorial.apply_steps"
-    assert discover_calls[0]["tool_name"] == "flame_rename_shots"
+    assert discover_calls[0]["tool_name"] == "forge_apply_segment_delta"
     assert [(name, args["mode"]) for name, args in mcp.calls] == [
-        ("flame_rename_shots", "verify"),
-        ("flame_rename_shots", "apply"),
+        ("forge_apply_segment_delta", "verify"),
+        ("forge_apply_segment_delta", "apply"),
     ]
     assert results[COMMIT_NODE_ID].source_artifact_ids == (
         results[RESOLVE_NODE_ID].artifact_id,
@@ -393,7 +416,7 @@ async def test_three_node_delta_apply_graph_requires_ratified_assent():
     assert results[COMMIT_NODE_ID].reason_code == CommitError.ASSENT_INVALID
     assert results[COMMIT_NODE_ID].message == UNRATIFIED_OPERATOR_MESSAGE
     assert [(name, args["mode"]) for name, args in mcp.calls] == [
-        ("flame_rename_shots", "verify"),
+        ("forge_apply_segment_delta", "verify"),
     ]
 
 
@@ -408,7 +431,7 @@ async def test_three_node_delta_apply_graph_reports_plan_state_drift():
     assert results[COMMIT_NODE_ID].reason_code == CommitError.PLAN_STATE_DRIFT
     assert results[COMMIT_NODE_ID].message == DRIFT_OPERATOR_MESSAGE
     assert [(name, args["mode"]) for name, args in mcp.calls] == [
-        ("flame_rename_shots", "verify"),
+        ("forge_apply_segment_delta", "verify"),
     ]
 
 
