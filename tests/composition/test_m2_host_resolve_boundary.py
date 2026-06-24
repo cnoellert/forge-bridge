@@ -58,10 +58,11 @@ def _entry(
     }
 
 
-def _timeline_delta(*entries: dict) -> dict:
+def _timeline_delta(*entries: dict, sequence_id: str = "seq_001") -> dict:
     return {
         "type": "timeline_delta",
-        "entries": list(entries or (_entry(),)),
+        "sequence_id": sequence_id,
+        "changes": list(entries or (_entry(),)),
     }
 
 
@@ -186,6 +187,7 @@ async def test_host_resolve_builds_discover_request_and_forwards_manifest():
     assert calls == [{
         "tool_name": "flame_rename_shots",
         "request": {
+            "sequence_name": "seq_001",
             "entries": [{
                 "identity": _entry()["metadata"],
                 "intent": {"name": "new_name"},
@@ -206,6 +208,28 @@ async def test_host_resolve_rejects_heterogeneous_delta_classes():
                 _entry(action="inserted", object_type="segment"),
             )
         },
+    )
+
+    assert result.status == "error"
+    assert result.reason_code == HETEROGENEOUS_DELTA
+
+
+@pytest.mark.asyncio
+async def test_host_resolve_rejects_multiple_sequence_ids_before_flattening():
+    upstream = NodeResult(
+        status="ok",
+        run_id=uuid.uuid4(),
+        output={
+            "deltas": [
+                _timeline_delta(_entry(), sequence_id="seq_001"),
+                _timeline_delta(_entry(), sequence_id="seq_002"),
+            ]
+        },
+    )
+
+    result = await HostResolveBoundary(run_discover=lambda *a, **k: _manifest_dict()).dispatch(
+        _delta_node(),
+        {"deltas": upstream},
     )
 
     assert result.status == "error"

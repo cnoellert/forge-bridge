@@ -67,7 +67,7 @@ class HostResolveBoundary:
             )
 
         srcs = _source_artifact_ids(resolved_inputs)
-        entries = _delta_entries(resolved_inputs)
+        sequence_name, entries = _delta_sequence_and_entries(resolved_inputs)
         delta_classes = {
             (str(entry.get("action")), str(entry.get("object_type")))
             for entry in entries
@@ -109,6 +109,8 @@ class HostResolveBoundary:
                 for entry in entries
             ]
         }
+        if sequence_name is not None:
+            request["sequence_name"] = sequence_name
         try:
             manifest = self._run_discover(
                 apply_tool,
@@ -185,25 +187,35 @@ class HostResolveBoundary:
         )
 
 
-def _delta_entries(resolved_inputs: dict[str, NodeResult]) -> list[dict[str, Any]]:
+def _delta_sequence_and_entries(
+    resolved_inputs: dict[str, NodeResult],
+) -> tuple[str | None, list[dict[str, Any]]]:
     for result in resolved_inputs.values():
         if not result.has_usable_output or not isinstance(result.output, Mapping):
             continue
         deltas = result.output.get("deltas")
         if not isinstance(deltas, list):
             continue
+        sequence_ids = {
+            str(delta.get("sequence_id"))
+            for delta in deltas
+            if isinstance(delta, Mapping) and delta.get("sequence_id") is not None
+        }
+        if len(sequence_ids) > 1:
+            return None, []
         entries: list[dict[str, Any]] = []
         for delta in deltas:
-            if isinstance(delta, Mapping) and isinstance(delta.get("entries"), list):
+            if not isinstance(delta, Mapping):
+                continue
+            changes = delta.get("changes", delta.get("entries", []))
+            if isinstance(changes, list):
                 entries.extend(
                     dict(entry)
-                    for entry in delta["entries"]
+                    for entry in changes
                     if isinstance(entry, Mapping)
                 )
-            elif isinstance(delta, Mapping):
-                entries.append(dict(delta))
-        return entries
-    return []
+        return (next(iter(sequence_ids)) if sequence_ids else None), entries
+    return None, []
 
 
 def _manifest_dict(value: Any) -> dict[str, Any]:
