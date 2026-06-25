@@ -128,6 +128,17 @@ class CommitBoundary:
                 DRIFT_OPERATOR_MESSAGE,
                 resolved_inputs,
             )
+        if isinstance(apply_payload, dict) and apply_payload.get("error"):
+            error_code = (
+                apply_payload["error"].get("code")
+                if isinstance(apply_payload["error"], dict)
+                else None
+            )
+            return self._error_result(
+                CommitError.APPLY_FAILED,
+                f"could not apply — host reported {error_code or 'an apply failure'}",
+                resolved_inputs,
+            )
 
         output = {
             "type": "commit_applied",
