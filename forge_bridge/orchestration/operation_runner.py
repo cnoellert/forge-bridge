@@ -46,15 +46,13 @@ def build_operation_runner(
     async def run_operation(
         operation_type: str,
         *,
-        state: Mapping[str, Any],
-        step_plan: Mapping[str, Any],
+        params: Mapping[str, Any],
         receipt_path: str | None = None,
         **metadata: Any,
     ) -> Any:
         idempotency_key = metadata.get("idempotency_key") or _derive_idempotency_key(
             operation_type=operation_type,
-            state=state,
-            step_plan=step_plan,
+            params=params,
             metadata=metadata,
         )
         resolved_receipt_path = receipt_path
@@ -72,7 +70,7 @@ def build_operation_runner(
             operation_type=operation_type,
             bridge_asset_ids=list(metadata.get("bridge_asset_ids") or []),
             idempotency_key=idempotency_key,
-            params={"state": dict(state), "step_plan": dict(step_plan)},
+            params=dict(params),
             project_id=metadata.get("project_id"),
             requested_by=metadata.get("requested_by"),
         )
@@ -84,8 +82,7 @@ def build_operation_runner(
 def _derive_idempotency_key(
     *,
     operation_type: str,
-    state: Mapping[str, Any],
-    step_plan: Mapping[str, Any],
+    params: Mapping[str, Any],
     metadata: Mapping[str, Any],
 ) -> str:
     """Derive a stable key when the graph caller omits one."""
@@ -93,8 +90,7 @@ def _derive_idempotency_key(
     seed = json.dumps(
         {
             "operation_type": operation_type,
-            "state": state,
-            "step_plan": step_plan,
+            "params": params,
             "bridge_asset_ids": list(metadata.get("bridge_asset_ids") or []),
             "project_id": metadata.get("project_id"),
             "requested_by": metadata.get("requested_by"),

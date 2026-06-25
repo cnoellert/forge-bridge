@@ -114,8 +114,10 @@ async def test_build_operation_runner_dispatches_operation_request(monkeypatch):
     runner = build_operation_runner(registry=registry)
     result = await runner(
         "traffik.editorial.apply_steps",
-        state={"timeline": "t1"},
-        step_plan={"steps": [{"op": "insert"}]},
+        params={
+            "state": {"timeline": "t1"},
+            "step_plan": {"steps": [{"op": "insert"}]},
+        },
         receipt_path="/tmp/receipt.json",
         bridge_asset_ids=["asset-1"],
         idempotency_key="idem-104",
@@ -148,14 +150,18 @@ async def test_build_operation_runner_derives_stable_idempotency_key(monkeypatch
     runner = build_operation_runner(registry=registry)
     first = await runner(
         "traffik.editorial.apply_steps",
-        state={"timeline": "t1"},
-        step_plan={"steps": [{"op": "insert"}]},
+        params={
+            "state": {"timeline": "t1"},
+            "step_plan": {"steps": [{"op": "insert"}]},
+        },
         project_id="project-104",
     )
     second = await runner(
         "traffik.editorial.apply_steps",
-        state={"timeline": "t1"},
-        step_plan={"steps": [{"op": "insert"}]},
+        params={
+            "state": {"timeline": "t1"},
+            "step_plan": {"steps": [{"op": "insert"}]},
+        },
         project_id="project-104",
     )
 
@@ -175,8 +181,10 @@ async def test_build_operation_runner_defaults_receipt_path_after_key_derivation
     runner = build_operation_runner(registry=registry, receipt_dir=tmp_path)
     result = await runner(
         "traffik.editorial.apply_steps",
-        state={"timeline": "t1"},
-        step_plan={"steps": [{"op": "insert"}]},
+        params={
+            "state": {"timeline": "t1"},
+            "step_plan": {"steps": [{"op": "insert"}]},
+        },
         project_id="project-104",
     )
 

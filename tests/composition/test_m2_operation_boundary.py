@@ -14,7 +14,7 @@ from forge_bridge.composition.executor import GraphExecutor
 from forge_bridge.composition.graph_spec import Edge, GraphSpec, NodeSpec
 from forge_bridge.composition.node_result import NodeResult
 from forge_bridge.composition.operation_boundary import (
-    OPERATION_INPUT_ERROR,
+    OPERATION_EXCEPTION,
     OPERATION_UNAVAILABLE,
     OperationDispatchBoundary,
 )
@@ -120,8 +120,10 @@ async def test_operation_boundary_uses_edge_step_plan_and_preserves_success_pack
     assert result.resolved_class == RESOLVED_CLASS
     assert calls == [{
         "operation_type": "traffik.editorial.apply_steps",
-        "state": _state(),
-        "step_plan": _step_plan(),
+        "params": {
+            "state": _state(),
+            "step_plan": _step_plan(),
+        },
         "receipt_path": None,
         "idempotency_key": "idem-104",
         "project_id": "proj-104",
@@ -143,7 +145,7 @@ async def test_operation_boundary_uses_config_step_plan_when_no_edge():
     )
 
     assert result.status == "ok"
-    assert calls[0]["step_plan"] == _step_plan()
+    assert calls[0]["params"] == {"state": _state(), "step_plan": _step_plan()}
 
 
 @pytest.mark.asyncio
@@ -187,15 +189,20 @@ async def test_operation_boundary_maps_partial_to_partial_with_fidelity():
 
 
 @pytest.mark.asyncio
-async def test_operation_boundary_missing_input_is_deterministic_error_not_raise():
-    result = await OperationDispatchBoundary(run_operation=lambda *a, **k: None).dispatch(
-        _operation_node(arguments={"state": _state()}),
+async def test_operation_boundary_runner_input_exception_is_deterministic_error():
+    async def run_operation(operation_type: str, *, params: dict, **kwargs):
+        if not isinstance(params.get("state"), dict):
+            raise TypeError("state must be a mapping")
+        return {"status": "success", "data": _success_packet()}
+
+    result = await OperationDispatchBoundary(run_operation=run_operation).dispatch(
+        _operation_node(arguments={"state": "not-a-mapping", "step_plan": _step_plan()}),
         {},
     )
 
     assert result.status == "error"
-    assert result.reason_code == OPERATION_INPUT_ERROR
-    assert "step_plan" in (result.message or "")
+    assert result.reason_code == OPERATION_EXCEPTION
+    assert "state must be a mapping" in (result.message or "")
 
 
 @pytest.mark.asyncio
@@ -255,7 +262,7 @@ async def test_unified_dispatch_routes_operation_through_real_graph_executor():
     assert results["apply_steps"].status == "ok"
     assert results["apply_steps"].resolved_class == RESOLVED_CLASS
     assert calls[0]["operation_type"] == "traffik.editorial.apply_steps"
-    assert calls[0]["step_plan"] == _step_plan()
+    assert calls[0]["params"]["step_plan"] == _step_plan()
 
 
 def test_graph_executor_is_byte_stable_vs_main():
