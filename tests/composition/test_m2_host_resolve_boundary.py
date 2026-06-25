@@ -507,6 +507,57 @@ async def test_apply_editorial_delta_uses_mcp_discover_verify_and_apply(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_reapply_same_ratified_assent_fails_closed(monkeypatch):
+    async def operation_runner(operation_type: str, **kwargs):
+        return {"status": "success", "data": _operation_output()}
+
+    monkeypatch.setattr(
+        apply_delta_module,
+        "build_operation_runner",
+        lambda *args, **kwargs: operation_runner,
+    )
+
+    post_rename_manifest = _manifest_dict()
+    post_rename_manifest["resolved_plan"][0]["identity"]["seg_name"] = "new_name"
+
+    class _ReapplyMCP(_SegmentDeltaMCP):
+        def __init__(self):
+            super().__init__(fresh_manifest=_manifest_dict())
+            self._applied = False
+
+        async def call_tool(self, name: str, arguments: dict):
+            if arguments["mode"] == "verify" and self._applied:
+                self.calls.append((name, copy.deepcopy(arguments)))
+                return copy.deepcopy(post_rename_manifest)
+            result = await super().call_tool(name, arguments)
+            if arguments["mode"] == "apply":
+                self._applied = True
+            return result
+
+    mcp = _ReapplyMCP()
+    assent = _ratified_assent()
+
+    first_results = await apply_delta_module.apply_editorial_delta(
+        _three_node_graph(),
+        assent_record=assent,
+        mcp=mcp,
+    )
+    second_results = await apply_delta_module.apply_editorial_delta(
+        _three_node_graph(),
+        assent_record=assent,
+        mcp=mcp,
+    )
+
+    assert first_results[COMMIT_NODE_ID].status == "ok"
+    assert second_results[COMMIT_NODE_ID].status == "error"
+    assert second_results[COMMIT_NODE_ID].reason_code in {
+        CommitError.PLAN_STATE_DRIFT,
+        CommitError.MUTATION_MANIFEST_INVALID,
+    }
+    assert [args["mode"] for _name, args in mcp.calls].count("apply") == 1
+
+
+@pytest.mark.asyncio
 async def test_preview_editorial_delta_resolves_manifest_without_applying(monkeypatch):
     async def operation_runner(operation_type: str, **kwargs):
         return {"status": "success", "data": _operation_output()}
