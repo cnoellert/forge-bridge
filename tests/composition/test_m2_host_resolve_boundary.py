@@ -506,6 +506,145 @@ async def test_apply_editorial_delta_uses_mcp_discover_verify_and_apply(monkeypa
     assert mcp.calls[0][1]["entries"] == [_entry()]
 
 
+@pytest.mark.asyncio
+async def test_reapply_same_ratified_assent_fails_closed(monkeypatch):
+    async def operation_runner(operation_type: str, **kwargs):
+        return {"status": "success", "data": _operation_output()}
+
+    monkeypatch.setattr(
+        apply_delta_module,
+        "build_operation_runner",
+        lambda *args, **kwargs: operation_runner,
+    )
+
+    post_rename_manifest = _manifest_dict()
+    post_rename_manifest["resolved_plan"][0]["identity"]["seg_name"] = "new_name"
+
+    class _ReapplyMCP(_SegmentDeltaMCP):
+        def __init__(self):
+            super().__init__(fresh_manifest=_manifest_dict())
+            self._applied = False
+
+        async def call_tool(self, name: str, arguments: dict):
+            if arguments["mode"] == "verify" and self._applied:
+                self.calls.append((name, copy.deepcopy(arguments)))
+                return copy.deepcopy(post_rename_manifest)
+            result = await super().call_tool(name, arguments)
+            if arguments["mode"] == "apply":
+                self._applied = True
+            return result
+
+    mcp = _ReapplyMCP()
+    assent = _ratified_assent()
+
+    first_results = await apply_delta_module.apply_editorial_delta(
+        _three_node_graph(),
+        assent_record=assent,
+        mcp=mcp,
+    )
+    second_results = await apply_delta_module.apply_editorial_delta(
+        _three_node_graph(),
+        assent_record=assent,
+        mcp=mcp,
+    )
+
+    assert first_results[COMMIT_NODE_ID].status == "ok"
+    assert second_results[COMMIT_NODE_ID].status == "error"
+    assert second_results[COMMIT_NODE_ID].reason_code in {
+        CommitError.PLAN_STATE_DRIFT,
+        CommitError.MUTATION_MANIFEST_INVALID,
+    }
+    assert [args["mode"] for _name, args in mcp.calls].count("apply") == 1
+
+
+@pytest.mark.asyncio
+async def test_preview_editorial_delta_resolves_manifest_without_applying(monkeypatch):
+    async def operation_runner(operation_type: str, **kwargs):
+        return {"status": "success", "data": _operation_output()}
+
+    monkeypatch.setattr(
+        apply_delta_module,
+        "build_operation_runner",
+        lambda *args, **kwargs: operation_runner,
+    )
+    mcp = _SegmentDeltaMCP(fresh_manifest=_manifest_dict())
+
+    results = await apply_delta_module.preview_editorial_delta(
+        _three_node_graph(),
+        mcp=mcp,
+    )
+
+    # The resolve node is the operator preview: a real manifest.
+    assert results[RESOLVE_NODE_ID].status == "ok"
+    assert results[RESOLVE_NODE_ID].output["apply_counterpart"]["tool"] == (
+        "forge_apply_segment_delta"
+    )
+    # No assent -> commit verifies but fail-closes; the host is never mutated.
+    assert results[COMMIT_NODE_ID].status == "error"
+    assert "apply" not in [args["mode"] for _name, args in mcp.calls]
+
+
+@pytest.mark.asyncio
+async def test_apply_editorial_delta_writes_3layer_receipt(tmp_path, monkeypatch):
+    async def operation_runner(operation_type: str, **kwargs):
+        return {"status": "success", "data": _operation_output()}
+
+    monkeypatch.setattr(
+        apply_delta_module,
+        "build_operation_runner",
+        lambda *args, **kwargs: operation_runner,
+    )
+    mcp = _SegmentDeltaMCP(fresh_manifest=_manifest_dict())
+    assent = _ratified_assent()
+    spec = _three_node_graph()
+
+    results = await apply_delta_module.apply_editorial_delta(
+        spec,
+        assent_record=assent,
+        mcp=mcp,
+        receipt_dir=tmp_path,
+    )
+
+    assert results[COMMIT_NODE_ID].status == "ok"
+    receipt_path = tmp_path / f"{assent.id}.json"
+    assert receipt_path.exists()
+    import json as _json
+
+    receipt = _json.loads(receipt_path.read_text())
+    assert receipt["assent_record_id"] == str(assent.id)
+    assert receipt["graph_intent_id"] == "graph-intent-delta"
+    assert receipt["target_host"] == "flame"
+    assert receipt["target_sequence_id"] == "seq_001"
+    assert receipt["apply_result"]["renamed"] == 1
+    # captured, not asserted-as-literal: derived from the operation node's operator_id.
+    operation_operator_id = next(
+        node.operator_id for node in spec.nodes if node.node_id == OPERATION_NODE_ID
+    )
+    assert receipt["source_operation_type"] == operation_operator_id
+    assert receipt["manifest"]["apply_counterpart"]["tool"] == "forge_apply_segment_delta"
+
+
+@pytest.mark.asyncio
+async def test_preview_editorial_delta_writes_no_receipt(tmp_path, monkeypatch):
+    async def operation_runner(operation_type: str, **kwargs):
+        return {"status": "success", "data": _operation_output()}
+
+    monkeypatch.setattr(
+        apply_delta_module,
+        "build_operation_runner",
+        lambda *args, **kwargs: operation_runner,
+    )
+    mcp = _SegmentDeltaMCP(fresh_manifest=_manifest_dict())
+
+    await apply_delta_module.preview_editorial_delta(
+        _three_node_graph(),
+        mcp=mcp,
+        receipt_dir=tmp_path,
+    )
+
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_composition_imports_no_peer_host_packages():
     banned_roots = {"forge_core", "traffik", "flame"}
     violations: list[str] = []
