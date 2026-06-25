@@ -112,6 +112,15 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         idempotent_result=False,
     ),
     AdmissionRecord(
+        operator_id="traffik.flame_delta.host_resolve",
+        resolved_class="pipeline.traffik.flame_delta.host_resolve",
+        dispatch_kind="operation",
+        synchronous=True,
+        returns_reference=False,
+        no_state_mutation=True,
+        idempotent_result=True,
+    ),
+    AdmissionRecord(
         operator_id="delta_to_manifest",
         resolved_class="host.resolve.delta_to_manifest",
         dispatch_kind="host_resolve",

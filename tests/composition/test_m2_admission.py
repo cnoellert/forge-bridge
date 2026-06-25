@@ -37,6 +37,16 @@ def test_admission_accepts_slice_one_operator_ids():
     assert editorial.returns_reference is False
     assert editorial.no_state_mutation is False
     assert editorial.idempotent_result is False
+    host_resolve_operation = admit_operator("traffik.flame_delta.host_resolve")
+    assert (
+        host_resolve_operation.resolved_class
+        == "pipeline.traffik.flame_delta.host_resolve"
+    )
+    assert host_resolve_operation.dispatch_kind == "operation"
+    assert host_resolve_operation.synchronous is True
+    assert host_resolve_operation.returns_reference is False
+    assert host_resolve_operation.no_state_mutation is True
+    assert host_resolve_operation.idempotent_result is True
     delta = admit_operator("delta_to_manifest")
     assert delta.resolved_class == "host.resolve.delta_to_manifest"
     assert delta.dispatch_kind == "host_resolve"
@@ -73,6 +83,7 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "forge_assemble_deliverable_package",
         "flame_rename_shots",
         "traffik.editorial.apply_steps",
+        "traffik.flame_delta.host_resolve",
         "delta_to_manifest",
         "author_prompt",
         "filter",
