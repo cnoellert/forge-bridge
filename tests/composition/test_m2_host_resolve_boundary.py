@@ -42,7 +42,6 @@ def _entry(
     *,
     action: str = "updated",
     object_type: str = "segment",
-    executor: str = "forge_apply_segment_delta",
     sequence_name: str = "seq_001",
     after: dict | None = None,
 ) -> dict:
@@ -58,32 +57,45 @@ def _entry(
             "record_in": 100,
             "seg_name": "old_name",
             "source_name": "plate_001",
-            "executor": executor,
-            "host_resolve_schema_version": 3,
         },
     }
 
 
-def _timeline_delta(*entries: dict, sequence_id: str = "seq_001") -> dict:
+def _timeline_delta(
+    *entries: dict,
+    sequence_id: str = "seq_001",
+    executor: str = "forge_apply_segment_delta",
+) -> dict:
     return {
         "type": "timeline_delta",
         "sequence_id": sequence_id,
+        "metadata": {
+            "executor": executor,
+            "group_key": f"{executor}:updated_segment_name",
+            "host_resolve_schema_version": 3,
+            "sequence_id_policy": "flame_sequence_name",
+            "source_delta_sequence_id": "source-seq-001",
+        },
         "changes": list(entries or (_entry(),)),
     }
 
 
-def _operation_output(*entries: dict) -> dict:
+def _operation_output(*entries: dict, executor: str = "forge_apply_segment_delta") -> dict:
     return {
         "schema_version": 3,
+        "payload_kind": "traffik.flame_delta_host_resolve_payload",
         "plan": {
-            "reason_code": "flame_delta_host_resolve_ready",
+            "reason_code": "flame_delta_apply_plan_ready",
             "output": {
-                "summary": {"held_entry_count": 0},
+                "summary": {
+                    "held_entry_count": 0,
+                    "routed_entry_count": len(entries or (_entry(),)),
+                },
                 "held_entries": [],
             },
         },
         "step_plan_result": {"packet_type": "EditorialStepPlanResult"},
-        "deltas": list(entries or (_entry(),)),
+        "deltas": [_timeline_delta(*entries, executor=executor)],
     }
 
 
@@ -163,12 +175,16 @@ def _proposed_assent() -> AssentRecord:
     )
 
 
-def _upstream_result(*entries: dict, artifact_id: uuid.UUID | None = None) -> NodeResult:
+def _upstream_result(
+    *entries: dict,
+    artifact_id: uuid.UUID | None = None,
+    executor: str = "forge_apply_segment_delta",
+) -> NodeResult:
     return NodeResult(
         status="ok",
         run_id=uuid.uuid4(),
         artifact_id=artifact_id,
-        output=_operation_output(*entries),
+        output=_operation_output(*entries, executor=executor),
     )
 
 
@@ -216,18 +232,24 @@ async def test_host_resolve_builds_discover_request_and_forwards_manifest():
         "kwargs": {"project_id": "project-001"},
     }]
     assert "before" in calls[0]["request"]["entries"][0]
+    assert "action" in calls[0]["request"]["entries"][0]
+    assert "changes" not in calls[0]["request"]["entries"][0]
 
 
 @pytest.mark.asyncio
 async def test_host_resolve_rejects_heterogeneous_executors():
+    output = _operation_output(_entry())
+    output["deltas"].append(
+        _timeline_delta(
+            _entry(),
+            executor="forge_apply_segment_temporal_delta",
+        )
+    )
+    upstream = NodeResult(status="ok", run_id=uuid.uuid4(), output=output)
+
     result = await HostResolveBoundary(run_discover=lambda *a, **k: _manifest_dict()).dispatch(
         _delta_node(),
-        {
-            "deltas": _upstream_result(
-                _entry(),
-                _entry(executor="forge_apply_segment_temporal_delta"),
-            )
-        },
+        {"deltas": upstream},
     )
 
     assert result.status == "error"
@@ -236,13 +258,17 @@ async def test_host_resolve_rejects_heterogeneous_executors():
 
 @pytest.mark.asyncio
 async def test_host_resolve_rejects_multiple_sequence_ids_before_flattening():
+    output = _operation_output(_entry(sequence_name="seq_001"))
+    output["deltas"].append(
+        _timeline_delta(
+            _entry(sequence_name="seq_002"),
+            sequence_id="seq_002",
+        )
+    )
     upstream = NodeResult(
         status="ok",
         run_id=uuid.uuid4(),
-        output=_operation_output(
-            _entry(sequence_name="seq_001"),
-            _entry(sequence_name="seq_002"),
-        ),
+        output=output,
     )
 
     result = await HostResolveBoundary(run_discover=lambda *a, **k: _manifest_dict()).dispatch(
@@ -266,7 +292,8 @@ async def test_host_resolve_routes_temporal_executor():
         _delta_node(),
         {
             "deltas": _upstream_result(
-                _entry(executor="forge_apply_segment_temporal_delta")
+                _entry(after={"frame_out": 120}),
+                executor="forge_apply_segment_temporal_delta",
             )
         },
     )
@@ -276,6 +303,8 @@ async def test_host_resolve_routes_temporal_executor():
         "forge_apply_segment_temporal_delta"
     )
     assert calls[0]["tool_name"] == "forge_apply_segment_temporal_delta"
+    assert "action" in calls[0]["request"]["entries"][0]
+    assert "changes" not in calls[0]["request"]["entries"][0]
 
 
 @pytest.mark.asyncio
@@ -283,9 +312,7 @@ async def test_host_resolve_rejects_untrusted_executor():
     result = await HostResolveBoundary(run_discover=lambda *a, **k: _manifest_dict()).dispatch(
         _delta_node(),
         {
-            "deltas": _upstream_result(
-                _entry(executor="forge_unknown_delta_executor")
-            )
+            "deltas": _upstream_result(executor="forge_unknown_delta_executor")
         },
     )
 
@@ -301,7 +328,7 @@ async def test_host_resolve_reports_held_for_review_before_homogeneity():
     held_output = _operation_output()
     held_output["deltas"] = []
     held_output["plan"] = {
-        "reason_code": "segment_temporal_review_required",
+        "reason_code": "flame_delta_apply_plan_review_required",
         "output": {
             "summary": {"held_entry_count": 1},
             "held_entries": [

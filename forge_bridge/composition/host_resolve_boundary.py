@@ -82,9 +82,12 @@ class HostResolveBoundary:
 
         srcs = _source_artifact_ids(resolved_inputs)
         try:
-            host_output, sequence_name, entries = _host_output_sequence_and_entries(
-                resolved_inputs
-            )
+            (
+                host_output,
+                sequence_name,
+                executors,
+                entries,
+            ) = _host_output_sequence_executors_and_entries(resolved_inputs)
         except ValueError as exc:
             reason_code = (
                 HETEROGENEOUS_DELTA
@@ -122,11 +125,6 @@ class HostResolveBoundary:
                 control_signal="skip",
             )
 
-        executors = {
-            entry.get("metadata", {}).get("executor")
-            for entry in entries
-            if isinstance(entry.get("metadata"), Mapping)
-        }
         if len(executors) != 1:
             return self._error(
                 admission.resolved_class,
@@ -222,9 +220,9 @@ class HostResolveBoundary:
         )
 
 
-def _host_output_sequence_and_entries(
+def _host_output_sequence_executors_and_entries(
     resolved_inputs: dict[str, NodeResult],
-) -> tuple[Mapping[str, Any], str | None, list[dict[str, Any]]]:
+) -> tuple[Mapping[str, Any], str | None, set[Any], list[dict[str, Any]]]:
     for result in resolved_inputs.values():
         if not result.has_usable_output or not isinstance(result.output, Mapping):
             continue
@@ -238,6 +236,8 @@ def _host_output_sequence_and_entries(
         deltas = host_output.get("deltas")
         if not isinstance(deltas, list):
             continue
+        executors: set[Any] = set()
+        entries: list[dict[str, Any]] = []
         for delta in deltas:
             if not isinstance(delta, Mapping):
                 continue
@@ -249,6 +249,14 @@ def _host_output_sequence_and_entries(
                 raise ValueError(
                     "delta_to_manifest requires delta metadata "
                     "host_resolve_schema_version 3."
+                )
+            executors.add(metadata.get("executor"))
+            changes = delta.get("changes", delta.get("entries", []))
+            if isinstance(changes, list):
+                entries.extend(
+                    dict(entry)
+                    for entry in changes
+                    if isinstance(entry, Mapping)
                 )
 
         sequence_ids = {
@@ -262,9 +270,13 @@ def _host_output_sequence_and_entries(
         }
         if len(sequence_ids) > 1:
             raise ValueError("delta_to_manifest requires one sequence per envelope.")
-        entries = [dict(delta) for delta in deltas if isinstance(delta, Mapping)]
-        return host_output, (next(iter(sequence_ids)) if sequence_ids else None), entries
-    return {}, None, []
+        return (
+            host_output,
+            (next(iter(sequence_ids)) if sequence_ids else None),
+            executors,
+            entries,
+        )
+    return {}, None, set(), []
 
 
 def _held_for_review(host_output: Mapping[str, Any]) -> str | None:
