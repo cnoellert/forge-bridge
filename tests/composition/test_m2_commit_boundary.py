@@ -70,6 +70,15 @@ class _RenameMCP:
         }
 
 
+class _ApplyFailureMCP(_RenameMCP):
+    def __init__(self, *, fresh_manifest: dict, apply_payload: dict):
+        super().__init__(fresh_manifest=fresh_manifest)
+        self._apply_payload = copy.deepcopy(apply_payload)
+
+    def _apply(self, plan: list[dict]) -> dict:
+        return copy.deepcopy(self._apply_payload)
+
+
 def _identity_key(identity: dict) -> tuple:
     return (
         identity.get("sequence_name"),
@@ -180,6 +189,45 @@ async def test_commit_boundary_drift_aborts_before_apply_with_operator_message()
     assert result.message == DRIFT_OPERATOR_MESSAGE
     assert [(name, args["mode"]) for name, args in mcp.calls] == [
         ("flame_rename_shots", "verify"),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "apply_payload",
+    [
+        {
+            "error": {"code": "segment_temporal_delta_apply_failed"},
+            "results": [{"ok": False}],
+        },
+        {"error": {"code": "flame_bridge_unreachable"}},
+    ],
+)
+async def test_commit_boundary_apply_error_payload_fails_commit(apply_payload):
+    held = _held_manifest_dict()
+    mcp = _ApplyFailureMCP(fresh_manifest=held, apply_payload=apply_payload)
+    dispatch = UnifiedDispatch(
+        commit_boundary=CommitBoundary(mcp=mcp),
+        assent_record=_ratified_assent(),
+    )
+
+    results = await GraphExecutor(dispatch.dispatch).run(_commit_graph(held))
+    result = results["commit"]
+
+    assert result.status == "error"
+    assert result.reason_code == CommitError.APPLY_FAILED
+    assert result.output == {
+        "error": {
+            "type": CommitError.APPLY_FAILED,
+            "message": (
+                "could not apply — host reported "
+                f"{apply_payload['error']['code']}"
+            ),
+        }
+    }
+    assert [(name, args["mode"]) for name, args in mcp.calls] == [
+        ("flame_rename_shots", "verify"),
+        ("flame_rename_shots", "apply"),
     ]
 
 
