@@ -19,6 +19,7 @@ from forge_bridge.composition.executor import GraphExecutor
 from forge_bridge.composition.graph_spec import Edge, GraphSpec, NodeSpec
 from forge_bridge.composition.host_resolve_boundary import (
     HETEROGENEOUS_DELTA,
+    HELD_FOR_REVIEW,
     HOST_DISCOVER_FAILED,
     UNRESOLVED_TARGET,
     UNSUPPORTED_DELTA_ACTION,
@@ -41,6 +42,8 @@ def _entry(
     *,
     action: str = "updated",
     object_type: str = "segment",
+    executor: str = "forge_apply_segment_delta",
+    sequence_name: str = "seq_001",
     after: dict | None = None,
 ) -> dict:
     return {
@@ -50,11 +53,13 @@ def _entry(
         "before": {"name": "old_name"},
         "after": after or {"name": "new_name"},
         "metadata": {
-            "sequence_name": "seq_001",
+            "sequence_name": sequence_name,
             "track_idx": 1,
             "record_in": 100,
             "seg_name": "old_name",
             "source_name": "plate_001",
+            "executor": executor,
+            "host_resolve_schema_version": 3,
         },
     }
 
@@ -69,8 +74,16 @@ def _timeline_delta(*entries: dict, sequence_id: str = "seq_001") -> dict:
 
 def _operation_output(*entries: dict) -> dict:
     return {
+        "schema_version": 3,
+        "plan": {
+            "reason_code": "flame_delta_host_resolve_ready",
+            "output": {
+                "summary": {"held_entry_count": 0},
+                "held_entries": [],
+            },
+        },
         "step_plan_result": {"packet_type": "EditorialStepPlanResult"},
-        "deltas": [_timeline_delta(*entries)],
+        "deltas": list(entries or (_entry(),)),
     }
 
 
@@ -206,13 +219,13 @@ async def test_host_resolve_builds_discover_request_and_forwards_manifest():
 
 
 @pytest.mark.asyncio
-async def test_host_resolve_rejects_heterogeneous_delta_classes():
+async def test_host_resolve_rejects_heterogeneous_executors():
     result = await HostResolveBoundary(run_discover=lambda *a, **k: _manifest_dict()).dispatch(
         _delta_node(),
         {
             "deltas": _upstream_result(
                 _entry(),
-                _entry(action="inserted", object_type="segment"),
+                _entry(executor="forge_apply_segment_temporal_delta"),
             )
         },
     )
@@ -226,12 +239,10 @@ async def test_host_resolve_rejects_multiple_sequence_ids_before_flattening():
     upstream = NodeResult(
         status="ok",
         run_id=uuid.uuid4(),
-        output={
-            "deltas": [
-                _timeline_delta(_entry(), sequence_id="seq_001"),
-                _timeline_delta(_entry(), sequence_id="seq_002"),
-            ]
-        },
+        output=_operation_output(
+            _entry(sequence_name="seq_001"),
+            _entry(sequence_name="seq_002"),
+        ),
     )
 
     result = await HostResolveBoundary(run_discover=lambda *a, **k: _manifest_dict()).dispatch(
@@ -244,14 +255,89 @@ async def test_host_resolve_rejects_multiple_sequence_ids_before_flattening():
 
 
 @pytest.mark.asyncio
-async def test_host_resolve_rejects_unmapped_delta_action():
+async def test_host_resolve_routes_temporal_executor():
+    calls: list[dict] = []
+
+    async def run_discover(tool_name: str, *, request: dict):
+        calls.append({"tool_name": tool_name, "request": request})
+        return _manifest_dict(apply_tool="forge_apply_segment_temporal_delta")
+
+    result = await HostResolveBoundary(run_discover=run_discover).dispatch(
+        _delta_node(),
+        {
+            "deltas": _upstream_result(
+                _entry(executor="forge_apply_segment_temporal_delta")
+            )
+        },
+    )
+
+    assert result.status == "ok"
+    assert result.output["apply_counterpart"]["tool"] == (
+        "forge_apply_segment_temporal_delta"
+    )
+    assert calls[0]["tool_name"] == "forge_apply_segment_temporal_delta"
+
+
+@pytest.mark.asyncio
+async def test_host_resolve_rejects_untrusted_executor():
     result = await HostResolveBoundary(run_discover=lambda *a, **k: _manifest_dict()).dispatch(
         _delta_node(),
-        {"deltas": _upstream_result(_entry(action="inserted", object_type="segment"))},
+        {
+            "deltas": _upstream_result(
+                _entry(executor="forge_unknown_delta_executor")
+            )
+        },
     )
 
     assert result.status == "error"
-    assert result.reason_code == UNSUPPORTED_DELTA_ACTION
+    assert result.reason_code == HOST_DISCOVER_FAILED
+    assert "executor 'forge_unknown_delta_executor' not trusted" in (
+        result.message or ""
+    )
+
+
+@pytest.mark.asyncio
+async def test_host_resolve_reports_held_for_review_before_homogeneity():
+    held_output = _operation_output()
+    held_output["deltas"] = []
+    held_output["plan"] = {
+        "reason_code": "segment_temporal_review_required",
+        "output": {
+            "summary": {"held_entry_count": 1},
+            "held_entries": [
+                {
+                    "reason_code": "segment_temporal_review_required",
+                    "message": "duration change needs review",
+                }
+            ],
+        },
+    }
+    upstream = NodeResult(status="ok", run_id=uuid.uuid4(), output=held_output)
+
+    result = await HostResolveBoundary(run_discover=lambda *a, **k: _manifest_dict()).dispatch(
+        _delta_node(),
+        {"deltas": upstream},
+    )
+
+    assert result.status == "error"
+    assert result.reason_code == HELD_FOR_REVIEW
+    assert "duration change needs review" in (result.message or "")
+
+
+@pytest.mark.asyncio
+async def test_host_resolve_rejects_non_projected_schema_version():
+    output = _operation_output()
+    output["schema_version"] = 2
+    upstream = NodeResult(status="ok", run_id=uuid.uuid4(), output=output)
+
+    result = await HostResolveBoundary(run_discover=lambda *a, **k: _manifest_dict()).dispatch(
+        _delta_node(),
+        {"deltas": upstream},
+    )
+
+    assert result.status == "error"
+    assert result.reason_code == HOST_DISCOVER_FAILED
+    assert "schema_version 3" in (result.message or "")
 
 
 @pytest.mark.asyncio

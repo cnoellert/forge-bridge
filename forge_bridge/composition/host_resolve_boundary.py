@@ -23,10 +23,13 @@ HETEROGENEOUS_DELTA = "HETEROGENEOUS_DELTA"
 UNSUPPORTED_DELTA_ACTION = "UNSUPPORTED_DELTA_ACTION"
 UNRESOLVED_TARGET = "UNRESOLVED_TARGET"
 HOST_DISCOVER_FAILED = "HOST_DISCOVER_FAILED"
+HELD_FOR_REVIEW = "HELD_FOR_REVIEW"
 
-_APPLY_TOOL_BY_DELTA_CLASS: dict[tuple[str, str], str] = {
-    ("updated", "segment"): "forge_apply_segment_delta",
-}
+_TRUSTED_EXECUTORS = frozenset({
+    "forge_apply_segment_delta",
+    "forge_apply_segment_temporal_delta",
+})
+_HOST_RESOLVE_SCHEMA_VERSION = 3
 
 _UNRESOLVED_TARGET_CODES = frozenset({
     "missing_flame_identity",
@@ -78,30 +81,66 @@ class HostResolveBoundary:
             )
 
         srcs = _source_artifact_ids(resolved_inputs)
-        sequence_name, entries = _delta_sequence_and_entries(resolved_inputs)
-        delta_classes = {
-            (str(entry.get("action")), str(entry.get("object_type")))
+        try:
+            host_output, sequence_name, entries = _host_output_sequence_and_entries(
+                resolved_inputs
+            )
+        except ValueError as exc:
+            reason_code = (
+                HETEROGENEOUS_DELTA
+                if "one sequence" in str(exc)
+                else HOST_DISCOVER_FAILED
+            )
+            return self._error(
+                admission.resolved_class,
+                srcs,
+                reason_code=reason_code,
+                message=str(exc),
+            )
+
+        if not entries:
+            held_result = _held_for_review(host_output)
+            if held_result is not None:
+                return self._error(
+                    admission.resolved_class,
+                    srcs,
+                    reason_code=HELD_FOR_REVIEW,
+                    message=held_result,
+                )
+            return NodeResult(
+                status="ok",
+                run_id=self._run_id,
+                artifact_id=self._artifact_id_factory(),
+                output={
+                    "type": "host_resolve_empty",
+                    "message": "nothing to dispatch",
+                },
+                output_topology=PortTopology.manifest().to_dict(),
+                artifact_type="host_resolve_empty",
+                source_artifact_ids=srcs,
+                resolved_class=admission.resolved_class,
+                control_signal="skip",
+            )
+
+        executors = {
+            entry.get("metadata", {}).get("executor")
             for entry in entries
+            if isinstance(entry.get("metadata"), Mapping)
         }
-        if len(delta_classes) != 1:
+        if len(executors) != 1:
             return self._error(
                 admission.resolved_class,
                 srcs,
                 reason_code=HETEROGENEOUS_DELTA,
-                message="delta_to_manifest requires one homogeneous delta class.",
+                message="delta_to_manifest requires one homogeneous executor.",
             )
-
-        delta_class = next(iter(delta_classes))
-        apply_tool = _APPLY_TOOL_BY_DELTA_CLASS.get(delta_class)
-        if apply_tool is None:
+        apply_tool = next(iter(executors))
+        if apply_tool not in _TRUSTED_EXECUTORS:
             return self._error(
                 admission.resolved_class,
                 srcs,
-                reason_code=UNSUPPORTED_DELTA_ACTION,
-                message=(
-                    "delta_to_manifest does not support "
-                    f"action={delta_class[0]!r} object_type={delta_class[1]!r}."
-                ),
+                reason_code=HOST_DISCOVER_FAILED,
+                message=f"executor {apply_tool!r} not trusted",
             )
         if self._run_discover is None:
             return self._error(
@@ -183,35 +222,78 @@ class HostResolveBoundary:
         )
 
 
-def _delta_sequence_and_entries(
+def _host_output_sequence_and_entries(
     resolved_inputs: dict[str, NodeResult],
-) -> tuple[str | None, list[dict[str, Any]]]:
+) -> tuple[Mapping[str, Any], str | None, list[dict[str, Any]]]:
     for result in resolved_inputs.values():
         if not result.has_usable_output or not isinstance(result.output, Mapping):
             continue
-        deltas = result.output.get("deltas")
+        host_output = result.output
+        schema_version = host_output.get("schema_version")
+        if schema_version != _HOST_RESOLVE_SCHEMA_VERSION:
+            raise ValueError(
+                "delta_to_manifest requires projected host-resolve schema_version 3."
+            )
+
+        deltas = host_output.get("deltas")
         if not isinstance(deltas, list):
             continue
-        sequence_ids = {
-            str(delta.get("sequence_id"))
-            for delta in deltas
-            if isinstance(delta, Mapping) and delta.get("sequence_id") is not None
-        }
-        if len(sequence_ids) > 1:
-            return None, []
-        entries: list[dict[str, Any]] = []
         for delta in deltas:
             if not isinstance(delta, Mapping):
                 continue
-            changes = delta.get("changes", delta.get("entries", []))
-            if isinstance(changes, list):
-                entries.extend(
-                    dict(entry)
-                    for entry in changes
-                    if isinstance(entry, Mapping)
+            metadata = delta.get("metadata")
+            if not isinstance(metadata, Mapping):
+                raise ValueError("delta_to_manifest requires delta metadata.")
+            delta_schema = metadata.get("host_resolve_schema_version")
+            if delta_schema != _HOST_RESOLVE_SCHEMA_VERSION:
+                raise ValueError(
+                    "delta_to_manifest requires delta metadata "
+                    "host_resolve_schema_version 3."
                 )
-        return (next(iter(sequence_ids)) if sequence_ids else None), entries
-    return None, []
+
+        sequence_ids = {
+            str(delta.get("sequence_id") or delta.get("metadata", {}).get("sequence_name"))
+            for delta in deltas
+            if isinstance(delta, Mapping)
+            and (
+                delta.get("sequence_id") is not None
+                or delta.get("metadata", {}).get("sequence_name") is not None
+            )
+        }
+        if len(sequence_ids) > 1:
+            raise ValueError("delta_to_manifest requires one sequence per envelope.")
+        entries = [dict(delta) for delta in deltas if isinstance(delta, Mapping)]
+        return host_output, (next(iter(sequence_ids)) if sequence_ids else None), entries
+    return {}, None, []
+
+
+def _held_for_review(host_output: Mapping[str, Any]) -> str | None:
+    plan = host_output.get("plan") or {}
+    if not isinstance(plan, Mapping):
+        return None
+    plan_reason = str(plan.get("reason_code", ""))
+    plan_output = plan.get("output") or {}
+    if not isinstance(plan_output, Mapping):
+        plan_output = {}
+    summary = plan_output.get("summary") or {}
+    if not isinstance(summary, Mapping):
+        summary = {}
+    held = summary.get("held_entry_count", 0)
+    if not (plan_reason.endswith("review_required") or held):
+        return None
+
+    held_entries = plan_output.get("held_entries", [])
+    details: list[str] = []
+    if isinstance(held_entries, list):
+        for entry in held_entries:
+            if not isinstance(entry, Mapping):
+                continue
+            reason = str(entry.get("reason_code") or "review_required")
+            message = str(entry.get("message") or "held for review")
+            details.append(f"{reason}: {message}")
+    if details:
+        return "; ".join(details)
+    return "host-resolve entries held for review."
 
 
 def _manifest_dict(value: Any) -> dict[str, Any]:
@@ -284,6 +366,7 @@ def _source_artifact_ids(
 
 __all__ = [
     "HETEROGENEOUS_DELTA",
+    "HELD_FOR_REVIEW",
     "HOST_DISCOVER_FAILED",
     "HostResolveBoundary",
     "UNRESOLVED_TARGET",
