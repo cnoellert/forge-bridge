@@ -1,0 +1,124 @@
+{
+  "kind": "traffik.flame_delta.host_resolve.operation_fixtures",
+  "schema_version": 1,
+  "operation_type": "traffik.flame_delta.host_resolve",
+  "cases": [
+    {
+      "name": "ready_segment_name_delta",
+      "input": {
+        "delta": {
+          "type": "timeline_delta",
+          "sequence_id": "traffik-seq-id",
+          "metadata": {},
+          "changes": [
+            {
+              "action": "updated",
+              "object_type": "segment",
+              "object_id": "seg-a",
+              "before": {
+                "id": "seg-a",
+                "name": "old_seg"
+              },
+              "after": {
+                "id": "seg-a",
+                "name": "new_seg"
+              },
+              "metadata": {
+                "track_idx": 0,
+                "record_in": "00:00:00:00",
+                "record_in_frame": 0,
+                "seg_name": "old_seg",
+                "source_name": "A001",
+                "sequence_name": "cut"
+              }
+            }
+          ]
+        }
+      },
+      "expected": {
+        "operation_status": "succeeded",
+        "projection_status": "ok",
+        "projection_reason_code": "flame_delta_host_resolve_ready",
+        "payload_kind": "traffik.flame_delta_host_resolve_payload",
+        "payload_schema_version": 3,
+        "delta_count": 1,
+        "first_delta_sequence_id": "cut",
+        "first_delta_executor": "forge_apply_segment_delta",
+        "first_delta_group_key": "forge_apply_segment_delta:updated_segment_name",
+        "warnings": []
+      }
+    },
+    {
+      "name": "held_heterogeneous_name_and_frame_in_delta",
+      "input": {
+        "delta": {
+          "type": "timeline_delta",
+          "sequence_id": "traffik-seq-id",
+          "metadata": {},
+          "changes": [
+            {
+              "action": "updated",
+              "object_type": "segment",
+              "object_id": "seg-a",
+              "before": {
+                "id": "seg-a",
+                "name": "old_seg"
+              },
+              "after": {
+                "id": "seg-a",
+                "name": "new_seg"
+              },
+              "metadata": {
+                "track_idx": 0,
+                "record_in": "00:00:00:00",
+                "record_in_frame": 0,
+                "seg_name": "old_seg",
+                "source_name": "A001",
+                "sequence_name": "cut"
+              }
+            },
+            {
+              "action": "updated",
+              "object_type": "segment",
+              "object_id": "seg-b",
+              "before": {
+                "id": "seg-b",
+                "name": "seg_b",
+                "frame_in": {
+                  "number": 0
+                }
+              },
+              "after": {
+                "id": "seg-b",
+                "name": "seg_b",
+                "frame_in": {
+                  "number": 12
+                }
+              },
+              "metadata": {
+                "track_idx": 0,
+                "record_in": "00:00:00:00",
+                "record_in_frame": 0,
+                "seg_name": "seg_b",
+                "source_name": "A001",
+                "sequence_name": "cut"
+              }
+            }
+          ]
+        }
+      },
+      "expected": {
+        "operation_status": "succeeded",
+        "projection_status": "review_required",
+        "projection_reason_code": "flame_delta_host_resolve_review_required",
+        "payload_kind": "traffik.flame_delta_host_resolve_payload",
+        "payload_schema_version": 3,
+        "delta_count": 0,
+        "held_candidate_count": 2,
+        "warnings": [
+          "heterogeneous_delta_requires_review"
+        ]
+      }
+    }
+  ]
+}

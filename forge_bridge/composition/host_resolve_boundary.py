@@ -227,6 +227,18 @@ def _host_output_sequence_executors_and_entries(
         if not result.has_usable_output or not isinstance(result.output, Mapping):
             continue
         host_output = result.output
+        # The traffik.flame_delta.host_resolve operation surfaces OperationResult.data,
+        # which nests the projected envelope under this string key. HostResolveBoundary
+        # is already the projected-envelope consumer; promote to a visible extract node
+        # only if a graph later needs to route the projection separately.
+        if "flame_delta_host_resolve_payload" in host_output:
+            wrapped = host_output["flame_delta_host_resolve_payload"]
+            if not isinstance(wrapped, Mapping):
+                raise ValueError(
+                    "delta_to_manifest requires flame_delta_host_resolve_payload "
+                    "to contain a projected envelope."
+                )
+            host_output = wrapped
         schema_version = host_output.get("schema_version")
         if schema_version != _HOST_RESOLVE_SCHEMA_VERSION:
             raise ValueError(
