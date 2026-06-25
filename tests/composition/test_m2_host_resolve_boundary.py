@@ -80,7 +80,16 @@ def _timeline_delta(
     }
 
 
-def _operation_output(*entries: dict, executor: str = "forge_apply_segment_delta") -> dict:
+def _projected_host_resolve_payload(
+    *entries: dict,
+    executor: str = "forge_apply_segment_delta",
+) -> dict:
+    # No operation emits this shape today: apply_steps.to_data() is raw deltas,
+    # apply_plan.to_data() is the lowering plan, and the projector is a
+    # test/contract utility. This fixture is the projected host-resolve
+    # contract, hand-fed. The apply_steps -> projection -> host_resolve graph
+    # wiring is unbuilt (slice 5/6). These tests prove host_resolve -> commit
+    # over canonical projected input, not live apply_steps integration.
     return {
         "schema_version": 3,
         "payload_kind": "traffik.flame_delta_host_resolve_payload",
@@ -184,7 +193,7 @@ def _upstream_result(
         status="ok",
         run_id=uuid.uuid4(),
         artifact_id=artifact_id,
-        output=_operation_output(*entries, executor=executor),
+        output=_projected_host_resolve_payload(*entries, executor=executor),
     )
 
 
@@ -238,7 +247,7 @@ async def test_host_resolve_builds_discover_request_and_forwards_manifest():
 
 @pytest.mark.asyncio
 async def test_host_resolve_rejects_heterogeneous_executors():
-    output = _operation_output(_entry())
+    output = _projected_host_resolve_payload(_entry())
     output["deltas"].append(
         _timeline_delta(
             _entry(),
@@ -258,7 +267,7 @@ async def test_host_resolve_rejects_heterogeneous_executors():
 
 @pytest.mark.asyncio
 async def test_host_resolve_rejects_multiple_sequence_ids_before_flattening():
-    output = _operation_output(_entry(sequence_name="seq_001"))
+    output = _projected_host_resolve_payload(_entry(sequence_name="seq_001"))
     output["deltas"].append(
         _timeline_delta(
             _entry(sequence_name="seq_002"),
@@ -325,7 +334,7 @@ async def test_host_resolve_rejects_untrusted_executor():
 
 @pytest.mark.asyncio
 async def test_host_resolve_reports_held_for_review_before_homogeneity():
-    held_output = _operation_output()
+    held_output = _projected_host_resolve_payload()
     held_output["deltas"] = []
     held_output["plan"] = {
         "reason_code": "flame_delta_apply_plan_review_required",
@@ -353,7 +362,7 @@ async def test_host_resolve_reports_held_for_review_before_homogeneity():
 
 @pytest.mark.asyncio
 async def test_host_resolve_rejects_non_projected_schema_version():
-    output = _operation_output()
+    output = _projected_host_resolve_payload()
     output["schema_version"] = 2
     upstream = NodeResult(status="ok", run_id=uuid.uuid4(), output=output)
 
@@ -494,7 +503,7 @@ async def _run_three_node_graph(
 
     async def run_operation(operation_type: str, **kwargs):
         operation_calls.append({"operation_type": operation_type, **kwargs})
-        return {"status": "success", "data": _operation_output()}
+        return {"status": "success", "data": _projected_host_resolve_payload()}
 
     async def run_discover(tool_name: str, *, request: dict):
         discover_calls.append({"tool_name": tool_name, "request": request})
@@ -512,7 +521,7 @@ async def _run_three_node_graph(
 
 
 @pytest.mark.asyncio
-async def test_three_node_delta_apply_graph_commits_when_ratified():
+async def test_three_node_delta_apply_graph_over_projected_input_commits_when_ratified():
     results, operation_calls, discover_calls, mcp = await _run_three_node_graph(
         assent_record=_ratified_assent(),
         fresh_manifest=_manifest_dict(),
@@ -536,7 +545,7 @@ async def test_three_node_delta_apply_graph_commits_when_ratified():
 
 
 @pytest.mark.asyncio
-async def test_three_node_delta_apply_graph_requires_ratified_assent():
+async def test_three_node_delta_apply_graph_over_projected_input_requires_ratified_assent():
     results, _operation_calls, _discover_calls, mcp = await _run_three_node_graph(
         assent_record=_proposed_assent(),
         fresh_manifest=_manifest_dict(),
@@ -551,7 +560,7 @@ async def test_three_node_delta_apply_graph_requires_ratified_assent():
 
 
 @pytest.mark.asyncio
-async def test_three_node_delta_apply_graph_reports_plan_state_drift():
+async def test_three_node_delta_apply_graph_over_projected_input_reports_plan_state_drift():
     results, _operation_calls, _discover_calls, mcp = await _run_three_node_graph(
         assent_record=_ratified_assent(),
         fresh_manifest=_manifest_dict(payload_name="drifted_name"),
@@ -566,9 +575,9 @@ async def test_three_node_delta_apply_graph_reports_plan_state_drift():
 
 
 @pytest.mark.asyncio
-async def test_three_node_delta_apply_graph_reports_apply_drift_signal():
+async def test_three_node_delta_apply_graph_over_projected_input_reports_apply_drift_signal():
     async def run_operation(operation_type: str, **kwargs):
-        return {"status": "success", "data": _operation_output()}
+        return {"status": "success", "data": _projected_host_resolve_payload()}
 
     async def run_discover(tool_name: str, *, request: dict):
         return _manifest_dict()
@@ -592,9 +601,11 @@ async def test_three_node_delta_apply_graph_reports_apply_drift_signal():
 
 
 @pytest.mark.asyncio
-async def test_apply_editorial_delta_uses_mcp_discover_verify_and_apply(monkeypatch):
+async def test_apply_editorial_delta_over_projected_input_uses_discover_verify_apply(
+    monkeypatch,
+):
     async def operation_runner(operation_type: str, **kwargs):
-        return {"status": "success", "data": _operation_output()}
+        return {"status": "success", "data": _projected_host_resolve_payload()}
 
     monkeypatch.setattr(
         apply_delta_module,
@@ -620,9 +631,11 @@ async def test_apply_editorial_delta_uses_mcp_discover_verify_and_apply(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_reapply_same_ratified_assent_fails_closed(monkeypatch):
+async def test_reapply_same_ratified_assent_over_projected_input_fails_closed(
+    monkeypatch,
+):
     async def operation_runner(operation_type: str, **kwargs):
-        return {"status": "success", "data": _operation_output()}
+        return {"status": "success", "data": _projected_host_resolve_payload()}
 
     monkeypatch.setattr(
         apply_delta_module,
@@ -671,9 +684,11 @@ async def test_reapply_same_ratified_assent_fails_closed(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_preview_editorial_delta_resolves_manifest_without_applying(monkeypatch):
+async def test_preview_editorial_delta_over_projected_input_resolves_without_applying(
+    monkeypatch,
+):
     async def operation_runner(operation_type: str, **kwargs):
-        return {"status": "success", "data": _operation_output()}
+        return {"status": "success", "data": _projected_host_resolve_payload()}
 
     monkeypatch.setattr(
         apply_delta_module,
@@ -698,9 +713,12 @@ async def test_preview_editorial_delta_resolves_manifest_without_applying(monkey
 
 
 @pytest.mark.asyncio
-async def test_apply_editorial_delta_writes_3layer_receipt(tmp_path, monkeypatch):
+async def test_apply_editorial_delta_over_projected_input_writes_3layer_receipt(
+    tmp_path,
+    monkeypatch,
+):
     async def operation_runner(operation_type: str, **kwargs):
-        return {"status": "success", "data": _operation_output()}
+        return {"status": "success", "data": _projected_host_resolve_payload()}
 
     monkeypatch.setattr(
         apply_delta_module,
@@ -738,9 +756,12 @@ async def test_apply_editorial_delta_writes_3layer_receipt(tmp_path, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_preview_editorial_delta_writes_no_receipt(tmp_path, monkeypatch):
+async def test_preview_editorial_delta_over_projected_input_writes_no_receipt(
+    tmp_path,
+    monkeypatch,
+):
     async def operation_runner(operation_type: str, **kwargs):
-        return {"status": "success", "data": _operation_output()}
+        return {"status": "success", "data": _projected_host_resolve_payload()}
 
     monkeypatch.setattr(
         apply_delta_module,
