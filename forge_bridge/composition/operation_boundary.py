@@ -44,9 +44,9 @@ class OperationDispatchBoundary:
         artifact_id_factory: Callable[[], uuid.UUID] = uuid.uuid4,
     ) -> None:
         # Daemon-edge adapters must build the real forge_core OperationRequest:
-        # state/step_plan live under params, while bridge_asset_ids and
-        # idempotency_key are OperationRequest fields. Keep that mapping outside
-        # composition; this boundary only owns the injected call seam.
+        # graph params live under OperationRequest.params, while bridge_asset_ids
+        # and idempotency_key are OperationRequest fields. Keep that mapping
+        # outside composition; this boundary only owns the injected call seam.
         self._run_operation = run_operation
         self._run_id = run_id or uuid.uuid4()
         self._artifact_id_factory = artifact_id_factory
@@ -70,26 +70,7 @@ class OperationDispatchBoundary:
             )
 
         arguments = _node_arguments(node)
-        state = arguments.get("state")
-        step_plan = _step_plan(arguments, resolved_inputs)
         srcs = _source_artifact_ids(resolved_inputs)
-        if not isinstance(state, Mapping):
-            return self._error(
-                admission.resolved_class,
-                srcs,
-                reason_code=OPERATION_INPUT_ERROR,
-                message="Operation dispatch requires arguments.state.",
-            )
-        if not isinstance(step_plan, Mapping):
-            return self._error(
-                admission.resolved_class,
-                srcs,
-                reason_code=OPERATION_INPUT_ERROR,
-                message=(
-                    "Operation dispatch requires a step_plan from the "
-                    "step_plan edge or arguments.step_plan."
-                ),
-            )
         if self._run_operation is None:
             return self._error(
                 admission.resolved_class,
@@ -103,11 +84,17 @@ class OperationDispatchBoundary:
             for key in _OPTIONAL_METADATA_KEYS
             if key in arguments
         }
+        params = {
+            key: value
+            for key, value in arguments.items()
+            if key not in _OPTIONAL_METADATA_KEYS
+        }
+        for port, result in resolved_inputs.items():
+            params[port] = result.output
         try:
             result = self._run_operation(
                 node.operator_id,
-                state=dict(state),
-                step_plan=dict(step_plan),
+                params=params,
                 receipt_path=node.config.get("receipt_path"),
                 **metadata,
             )
@@ -192,16 +179,6 @@ def _node_arguments(node: NodeSpec) -> dict[str, Any]:
     if not isinstance(raw, Mapping):
         raise TypeError(f"node {node.node_id!r} arguments must be a mapping")
     return dict(raw)
-
-
-def _step_plan(
-    arguments: dict[str, Any],
-    resolved_inputs: dict[str, NodeResult],
-) -> Any:
-    edge = resolved_inputs.get("step_plan")
-    if edge is not None:
-        return edge.output
-    return arguments.get("step_plan")
 
 
 def _source_artifact_ids(

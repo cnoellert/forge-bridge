@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import ast
+import json
 import subprocess
 import uuid
 from pathlib import Path
@@ -36,6 +37,11 @@ import forge_bridge.orchestration.apply_editorial_delta as apply_delta_module
 OPERATION_NODE_ID = "apply_steps"
 RESOLVE_NODE_ID = "delta_to_manifest"
 COMMIT_NODE_ID = "commit"
+HOST_RESOLVE_OPERATION_FIXTURE = (
+    Path(__file__).parents[1]
+    / "fixtures"
+    / "traffik_flame_delta_host_resolve_operation_fixtures.json"
+)
 
 
 def _entry(
@@ -106,6 +112,22 @@ def _projected_host_resolve_payload(
         "step_plan_result": {"packet_type": "EditorialStepPlanResult"},
         "deltas": [_timeline_delta(*entries, executor=executor)],
     }
+
+
+def _operation_fixture_delta(case_name: str = "ready_segment_name_delta") -> dict:
+    fixture = json.loads(HOST_RESOLVE_OPERATION_FIXTURE.read_text())
+    cases = {case["name"]: case for case in fixture["cases"]}
+    return copy.deepcopy(cases[case_name]["input"]["delta"])
+
+
+def _operation_output_from_fixture_delta(delta: dict) -> dict:
+    entries = list(delta["changes"])
+    sequence_name = entries[0]["metadata"]["sequence_name"]
+    payload = _projected_host_resolve_payload(*entries)
+    payload["plan"]["reason_code"] = "flame_delta_host_resolve_ready"
+    payload["deltas"][0]["sequence_id"] = sequence_name
+    payload["deltas"][0]["metadata"]["source_delta_sequence_id"] = delta["sequence_id"]
+    return {"flame_delta_host_resolve_payload": payload}
 
 
 def _manifest_dict(
@@ -493,6 +515,42 @@ def _three_node_graph() -> GraphSpec:
     )
 
 
+def _host_resolve_operation_graph(delta: dict) -> GraphSpec:
+    return GraphSpec(
+        nodes=(
+            NodeSpec(
+                node_id=OPERATION_NODE_ID,
+                operator_id="traffik.flame_delta.host_resolve",
+                output_port=PortTopology.manifest(),
+                config={"arguments": {"delta": copy.deepcopy(delta)}},
+            ),
+            NodeSpec(
+                node_id=RESOLVE_NODE_ID,
+                operator_id="delta_to_manifest",
+                input_ports=HostResolveBoundary.input_ports,
+                output_port=HostResolveBoundary.output_port,
+            ),
+            NodeSpec(
+                node_id=COMMIT_NODE_ID,
+                operator_id="commit",
+                input_ports={"held": PortContract.manifest_gate()},
+            ),
+        ),
+        edges=(
+            Edge(
+                from_node=OPERATION_NODE_ID,
+                to_node=RESOLVE_NODE_ID,
+                to_port="deltas",
+            ),
+            Edge(
+                from_node=RESOLVE_NODE_ID,
+                to_node=COMMIT_NODE_ID,
+                to_port="held",
+            ),
+        ),
+    )
+
+
 async def _run_three_node_graph(
     *,
     assent_record: AssentRecord,
@@ -542,6 +600,53 @@ async def test_three_node_delta_apply_graph_over_projected_input_commits_when_ra
     assert results[COMMIT_NODE_ID].source_artifact_ids == (
         results[RESOLVE_NODE_ID].artifact_id,
     )
+
+
+@pytest.mark.asyncio
+async def test_host_resolve_operation_delta_param_graph_commits_when_ratified():
+    delta = _operation_fixture_delta()
+    operation_calls: list[dict] = []
+    discover_calls: list[dict] = []
+
+    async def run_operation(operation_type: str, *, params: dict, **kwargs):
+        operation_calls.append({
+            "operation_type": operation_type,
+            "params": copy.deepcopy(params),
+            "kwargs": kwargs,
+        })
+        return {
+            "status": "success",
+            "data": _operation_output_from_fixture_delta(params["delta"]),
+        }
+
+    async def run_discover(tool_name: str, *, request: dict):
+        discover_calls.append({"tool_name": tool_name, "request": request})
+        return _manifest_dict()
+
+    mcp = _SegmentDeltaMCP(fresh_manifest=_manifest_dict())
+    dispatch = UnifiedDispatch(
+        operation_boundary=OperationDispatchBoundary(run_operation=run_operation),
+        host_resolve_boundary=HostResolveBoundary(run_discover=run_discover),
+        commit_boundary=CommitBoundary(mcp=mcp),
+        assent_record=_ratified_assent(),
+    )
+    results = await GraphExecutor(dispatch.dispatch).run(
+        _host_resolve_operation_graph(delta)
+    )
+
+    assert operation_calls[0]["operation_type"] == "traffik.flame_delta.host_resolve"
+    assert operation_calls[0]["params"] == {"delta": delta}
+    assert results[RESOLVE_NODE_ID].status == "ok"
+    assert discover_calls[0]["tool_name"] == "forge_apply_segment_delta"
+    entry = discover_calls[0]["request"]["entries"][0]
+    assert entry["action"] == "updated"
+    assert "changes" not in entry
+    assert results[COMMIT_NODE_ID].status == "ok"
+    assert results[COMMIT_NODE_ID].output["type"] == "commit_applied"
+    assert [(name, args["mode"]) for name, args in mcp.calls] == [
+        ("forge_apply_segment_delta", "verify"),
+        ("forge_apply_segment_delta", "apply"),
+    ]
 
 
 @pytest.mark.asyncio
