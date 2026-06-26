@@ -1183,6 +1183,40 @@ def _commit_count(chain_body: Any) -> Any:
     return None
 
 
+def _graph_intent_display(assent_record: Any) -> dict | None:
+    if not isinstance(assent_record, dict):
+        return None
+    metadata = assent_record.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    replay = metadata.get("graph_replay")
+    if not isinstance(replay, dict):
+        return None
+    manifest = replay.get("held_manifest")
+    if not isinstance(manifest, dict):
+        manifest = {}
+    apply_counterpart = manifest.get("apply_counterpart") or {}
+    intent = manifest.get("intent_parameters") or {}
+    resolved_plan = manifest.get("resolved_plan") or []
+    return {
+        "label": f"Graph intent: {replay.get('display') or 'host mutation'}",
+        "manifest_summary": {
+            "type": manifest.get("type"),
+            "apply_tool": (
+                apply_counterpart.get("tool")
+                if isinstance(apply_counterpart, dict)
+                else None
+            ),
+            "sequence_name": (
+                intent.get("sequence_name") if isinstance(intent, dict) else None
+            ),
+            "resolved_count": (
+                len(resolved_plan) if isinstance(resolved_plan, list) else 0
+            ),
+        },
+    }
+
+
 def _apply_complete_body(outcome, transport: str) -> dict:
     body = {
         "kind": "apply_complete",
@@ -1195,6 +1229,9 @@ def _apply_complete_body(outcome, transport: str) -> dict:
     count = _commit_count(outcome.chain_body)
     if count is not None:
         body["count"] = count
+    graph_intent = _graph_intent_display(getattr(outcome, "assent_record", None))
+    if graph_intent is not None:
+        body["graph_intent"] = graph_intent
     return body
 
 

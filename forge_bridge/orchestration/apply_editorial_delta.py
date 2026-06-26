@@ -11,7 +11,6 @@ manifest before ratifying.
 from __future__ import annotations
 
 import json
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -19,13 +18,18 @@ from forge_bridge.composition.boundary import _extract_payload
 from forge_bridge.composition.commit_boundary import CommitBoundary
 from forge_bridge.composition.dispatch import UnifiedDispatch
 from forge_bridge.composition.executor import GraphExecutor
-from forge_bridge.composition.graph_spec import GraphSpec
+from forge_bridge.composition.graph_spec import GraphSpec, NodeSpec
 from forge_bridge.composition.host_resolve_boundary import HostResolveBoundary
 from forge_bridge.composition.node_result import NodeResult
 from forge_bridge.composition.operation_boundary import OperationDispatchBoundary
 from forge_bridge.orchestration.operation_runner import build_operation_runner
+from forge_bridge.store.assent_record_repo import AssentRecordRepo
 
 DEFAULT_APPLY_RECEIPT_DIR = Path.home() / ".forge-bridge" / "apply-receipts"
+GRAPH_REPLAY_METADATA_KEY = "graph_replay"
+GRAPH_REPLAY_KIND = "graph_host_mutation"
+GRAPH_REPLAY_SCHEMA_VERSION = 1
+GRAPH_REPLAY_DEFAULT_DISPLAY = "editorial delta apply"
 
 
 async def apply_editorial_delta(
@@ -80,6 +84,63 @@ async def preview_editorial_delta(
         receipt_dir=receipt_dir,
     )
     return await GraphExecutor(dispatch.dispatch).run(spec)
+
+
+async def preview_editorial_delta_for_ratification(
+    spec: GraphSpec,
+    *,
+    session_factory: Any,
+    registry: Any | None = None,
+    run_discover: Any | None = None,
+    mcp: Any | None = None,
+    receipt_dir: str | Path | None = None,
+    display: str = GRAPH_REPLAY_DEFAULT_DISPLAY,
+) -> dict[str, Any]:
+    """Resolve a graph preview and persist the held manifest for ratification.
+
+    ``chain_steps`` are retained as human-readable node/operator markers only.
+    When ``metadata.graph_replay`` is present, the held manifest in that metadata
+    is the replay source of truth.
+    """
+
+    results = await preview_editorial_delta(
+        spec,
+        registry=registry,
+        run_discover=run_discover,
+        mcp=mcp,
+        receipt_dir=receipt_dir,
+    )
+    held_manifest = _find_output(results, lambda o: "apply_counterpart" in o)
+    if held_manifest is None:
+        raise ValueError("preview did not resolve a mutation manifest")
+
+    graph_replay = build_graph_replay_metadata(
+        held_manifest=held_manifest,
+        display=display,
+    )
+    chain_steps = _chain_markers(spec)
+    async with session_factory() as session:
+        repo = AssentRecordRepo(session)
+        record = await repo.propose(
+            chain_steps,
+            metadata={GRAPH_REPLAY_METADATA_KEY: graph_replay},
+        )
+        await session.commit()
+
+    return {
+        "kind": "graph-intent-preview",
+        "graph_intent_id": record.graph_intent_id,
+        "assent_record_id": str(record.id),
+        "manifest": held_manifest,
+        "metadata": {GRAPH_REPLAY_METADATA_KEY: graph_replay},
+        "operator_display": _graph_replay_display(graph_replay),
+        "summary": {
+            "total_steps": len(chain_steps),
+            "mutating_steps": 1,
+            "requires_ratification": True,
+            "manifest": _manifest_summary(held_manifest),
+        },
+    }
 
 
 def _build_dispatch(
@@ -171,6 +232,70 @@ def _find_output(results: dict[str, NodeResult], pred) -> dict[str, Any] | None:
     return None
 
 
+def build_graph_replay_metadata(
+    *,
+    held_manifest: dict[str, Any],
+    display: str = GRAPH_REPLAY_DEFAULT_DISPLAY,
+) -> dict[str, Any]:
+    """Canonical metadata payload for graph-backed host mutation replay."""
+
+    return {
+        "kind": GRAPH_REPLAY_KIND,
+        "schema_version": GRAPH_REPLAY_SCHEMA_VERSION,
+        "held_manifest": dict(held_manifest),
+        "display": display,
+    }
+
+
+def _chain_markers(spec: GraphSpec) -> list[str]:
+    return [f"{node.node_id}:{node.operator_id}" for node in spec.nodes]
+
+
+def _graph_replay_display(graph_replay: dict[str, Any]) -> dict[str, Any]:
+    manifest = graph_replay.get("held_manifest")
+    return {
+        "label": f"Graph intent: {graph_replay.get('display') or 'host mutation'}",
+        "manifest_summary": (
+            _manifest_summary(manifest)
+            if isinstance(manifest, dict)
+            else {}
+        ),
+    }
+
+
+def _manifest_summary(manifest: dict[str, Any]) -> dict[str, Any]:
+    apply_counterpart = manifest.get("apply_counterpart") or {}
+    intent = manifest.get("intent_parameters") or {}
+    resolved_plan = manifest.get("resolved_plan") or []
+    return {
+        "type": manifest.get("type"),
+        "apply_tool": (
+            apply_counterpart.get("tool")
+            if isinstance(apply_counterpart, dict)
+            else None
+        ),
+        "sequence_name": (
+            intent.get("sequence_name") if isinstance(intent, dict) else None
+        ),
+        "resolved_count": len(resolved_plan) if isinstance(resolved_plan, list) else 0,
+    }
+
+
+def graph_replay_commit_spec(held_manifest: dict[str, Any]) -> GraphSpec:
+    """Build the commit-only replay graph from the persisted held manifest."""
+
+    return GraphSpec(
+        nodes=(
+            NodeSpec(
+                node_id="commit",
+                operator_id="commit",
+                config={"held": dict(held_manifest)},
+            ),
+        ),
+        edges=(),
+    )
+
+
 def _mcp_run_discover(mcp: Any):
     async def run_discover(tool_name: str, *, request: dict[str, Any]) -> Any:
         return _extract_payload(
@@ -189,4 +314,14 @@ def _default_mcp() -> Any:
     return mcp
 
 
-__all__ = ["apply_editorial_delta", "preview_editorial_delta"]
+__all__ = [
+    "GRAPH_REPLAY_DEFAULT_DISPLAY",
+    "GRAPH_REPLAY_KIND",
+    "GRAPH_REPLAY_METADATA_KEY",
+    "GRAPH_REPLAY_SCHEMA_VERSION",
+    "apply_editorial_delta",
+    "build_graph_replay_metadata",
+    "graph_replay_commit_spec",
+    "preview_editorial_delta",
+    "preview_editorial_delta_for_ratification",
+]

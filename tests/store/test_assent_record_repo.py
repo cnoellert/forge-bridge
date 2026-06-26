@@ -37,6 +37,53 @@ async def test_assent_record_repo_propose_is_content_addressed(session_factory):
 
 
 @pytest.mark.asyncio
+async def test_assent_record_repo_metadata_round_trips_in_content_body(session_factory):
+    graph_replay = {
+        "kind": "graph_host_mutation",
+        "schema_version": 1,
+        "held_manifest": {"type": "mutation_plan", "apply_counterpart": {"tool": "t"}},
+        "display": "editorial delta apply",
+    }
+    async with session_factory() as session:
+        repo = AssentRecordRepo(session)
+        first = await repo.propose(
+            ["delta_to_manifest", "commit"],
+            metadata={"graph_replay": graph_replay},
+        )
+        second = await repo.propose(
+            ["delta_to_manifest", "commit"],
+            metadata={"graph_replay": graph_replay},
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        repo = AssentRecordRepo(session)
+        loaded = await repo.get_by_graph_intent_id(first.graph_intent_id)
+
+    assert second.id == first.id
+    assert loaded is not None
+    assert loaded.id == first.id
+    assert loaded.chain_steps == ["delta_to_manifest", "commit"]
+    assert loaded.metadata == {"graph_replay": graph_replay}
+    assert set(loaded.to_dict()) == {
+        "id",
+        "entity_type",
+        "created_at",
+        "metadata",
+        "locations",
+        "relationships",
+        "graph_intent_id",
+        "chain_steps",
+        "status",
+        "decided_by",
+        "decided_at",
+        "applied_at",
+        "apply_result",
+        "apply_failure_reason",
+    }
+
+
+@pytest.mark.asyncio
 async def test_assent_record_repo_ratify_and_illegal_reratify(session_factory):
     async with session_factory() as session:
         repo = AssentRecordRepo(session)

@@ -49,6 +49,65 @@ class ApplyBranchOutcome:
     assent_record: Optional[dict] = None
 
 
+def _graph_replay(record: Any) -> dict[str, Any] | None:
+    metadata = getattr(record, "metadata", None)
+    if not isinstance(metadata, dict):
+        return None
+    replay = metadata.get("graph_replay")
+    return replay if isinstance(replay, dict) else None
+
+
+def _validate_graph_replay(replay: dict[str, Any]) -> dict[str, Any]:
+    from forge_bridge.orchestration.apply_editorial_delta import (
+        GRAPH_REPLAY_KIND,
+        GRAPH_REPLAY_SCHEMA_VERSION,
+    )
+
+    if replay.get("kind") != GRAPH_REPLAY_KIND:
+        raise ValueError("metadata.graph_replay has an unsupported kind")
+    if replay.get("schema_version") != GRAPH_REPLAY_SCHEMA_VERSION:
+        raise ValueError("metadata.graph_replay has an unsupported schema_version")
+    held_manifest = replay.get("held_manifest")
+    if not isinstance(held_manifest, dict):
+        raise ValueError("metadata.graph_replay.held_manifest is required")
+    return held_manifest
+
+
+def _graph_chain_body(result: Any) -> dict[str, Any]:
+    if getattr(result, "status", None) == "error":
+        original = {}
+        if isinstance(getattr(result, "output", None), dict):
+            original = dict(result.output.get("error") or {})
+        if not original:
+            original = {
+                "type": getattr(result, "reason_code", None),
+                "message": getattr(result, "message", None),
+            }
+        return {
+            "status": "error",
+            "error": {
+                "type": "chain_aborted",
+                "message": getattr(result, "message", None) or "Graph apply aborted.",
+                "original_error": original,
+            },
+            "chain": [{"step": "commit", "result": getattr(result, "output", None)}],
+        }
+    return {
+        "status": "success",
+        "chain": [{"step": "commit", "result": getattr(result, "output", None)}],
+        "result": getattr(result, "output", None),
+    }
+
+
+def _failure_reason_from_graph_result(result: Any) -> str:
+    reason_code = getattr(result, "reason_code", None)
+    if reason_code == "PLAN_STATE_DRIFT":
+        return "drift_invalid"
+    if reason_code == "ASSENT_INVALID":
+        return "assent_invalid"
+    return "chain_aborted"
+
+
 def _tool_name(tool: Any) -> str | None:
     if isinstance(tool, dict):
         value = tool.get("name")
@@ -389,6 +448,61 @@ async def run_apply_branch(
                     "graph_intent_id": graph_intent_id,
                 },
                 status_code=409,
+            )
+
+        replay = _graph_replay(record)
+        if replay is not None:
+            try:
+                held_manifest = _validate_graph_replay(replay)
+            except ValueError as exc:
+                return ApplyBranchOutcome(
+                    regime="error",
+                    graph_intent_id=graph_intent_id,
+                    error={
+                        "code": "assent_graph_replay_invalid",
+                        "message": str(exc),
+                        "graph_intent_id": graph_intent_id,
+                    },
+                    status_code=400,
+                )
+
+            from forge_bridge.composition.commit_boundary import CommitBoundary
+            from forge_bridge.composition.dispatch import UnifiedDispatch
+            from forge_bridge.composition.executor import GraphExecutor
+            from forge_bridge.orchestration.apply_editorial_delta import (
+                graph_replay_commit_spec,
+            )
+
+            graph = graph_replay_commit_spec(held_manifest)
+            dispatch = UnifiedDispatch(
+                commit_boundary=CommitBoundary(mcp=mcp),
+                assent_record=record,
+            )
+            results = await GraphExecutor(dispatch.dispatch).run(graph)
+            commit_result = results["commit"]
+            chain_body = _graph_chain_body(commit_result)
+            if commit_result.status == "error":
+                failed = await repo.mark_failed(
+                    graph_intent_id,
+                    reason=_failure_reason_from_graph_result(commit_result),
+                    result=chain_body,
+                )
+                await session.commit()
+                return ApplyBranchOutcome(
+                    regime="chain_aborted",
+                    graph_intent_id=graph_intent_id,
+                    chain_body=chain_body,
+                    status_code=400,
+                    assent_record=failed.to_dict(),
+                )
+
+            applied = await repo.mark_applied(graph_intent_id, result=chain_body)
+            await session.commit()
+            return ApplyBranchOutcome(
+                regime="apply_complete",
+                graph_intent_id=graph_intent_id,
+                chain_body=chain_body,
+                assent_record=applied.to_dict(),
             )
 
         chain_body = await run_chain_steps(
