@@ -157,6 +157,15 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         idempotent_result=True,
     ),
     AdmissionRecord(
+        operator_id="select_delta",
+        resolved_class="primitive.select_delta",
+        dispatch_kind="primitive",
+        synchronous=True,
+        returns_reference=False,
+        no_state_mutation=True,
+        idempotent_result=True,
+    ),
+    AdmissionRecord(
         operator_id="foreach",
         resolved_class="primitive.foreach",
         dispatch_kind="foreach",

@@ -63,6 +63,11 @@ def test_admission_accepts_slice_one_operator_ids():
     assert author.idempotent_result is False
     assert admit_operator("filter").resolved_class == "primitive.filter"
     assert admit_operator("if").resolved_class == "primitive.if_gate"
+    select_delta = admit_operator("select_delta")
+    assert select_delta.resolved_class == "primitive.select_delta"
+    assert select_delta.dispatch_kind == "primitive"
+    assert select_delta.no_state_mutation is True
+    assert select_delta.idempotent_result is True
     assert admit_operator("foreach").dispatch_kind == "foreach"
     commit = admit_operator("commit")
     assert commit.resolved_class == "mcp.host_mutation"
@@ -88,6 +93,7 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "author_prompt",
         "filter",
         "if",
+        "select_delta",
         "foreach",
         "commit",
     }
