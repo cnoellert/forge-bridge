@@ -8,6 +8,7 @@ configuration by the MCP boundary.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -22,7 +23,7 @@ from forge_bridge.graph.filter import (
     parse_filter_step,
 )
 from forge_bridge.graph.if_gate import IfGateNode, parse_if_step
-from forge_bridge.graph.ports import infer_topology
+from forge_bridge.graph.ports import PortTopology, infer_topology
 
 
 @dataclass
@@ -52,6 +53,13 @@ class PrimitiveBoundary:
             )
         if node.operator_id == "if":
             return _run_if_gate(
+                node,
+                resolved_inputs,
+                admission.resolved_class,
+                self.artifact_id_factory,
+            )
+        if node.operator_id == "select_delta":
+            return _run_select_delta(
                 node,
                 resolved_inputs,
                 admission.resolved_class,
@@ -152,6 +160,88 @@ def _run_if_gate(
         source_artifact_ids=_source_artifact_ids(resolved_inputs),
         resolved_class=resolved_class,
         control_signal="skip" if output.get("execution_state") == "skipped" else None,
+    )
+
+
+def _run_select_delta(
+    node: NodeSpec,
+    resolved_inputs: dict[str, NodeResult],
+    resolved_class: str,
+    artifact_id_factory: Callable[[], uuid.UUID],
+) -> NodeResult:
+    if len(resolved_inputs) != 1:
+        return _error(
+            "invalid_primitive_input",
+            "SelectDelta requires exactly one upstream input.",
+            resolved_class,
+        )
+    upstream = next(iter(resolved_inputs.values()))
+    srcs = _source_artifact_ids(resolved_inputs)
+    if not upstream.has_usable_output:
+        return _error(
+            "invalid_primitive_input",
+            "SelectDelta requires a usable upstream output.",
+            resolved_class,
+            source_artifact_ids=srcs,
+        )
+    if not isinstance(upstream.output, Mapping):
+        return _error(
+            "invalid_primitive_input",
+            "SelectDelta requires an upstream manifest output.",
+            resolved_class,
+            source_artifact_ids=srcs,
+        )
+
+    deltas = upstream.output.get("deltas")
+    if not isinstance(deltas, list):
+        return _error(
+            "missing_delta",
+            "SelectDelta requires upstream output.deltas to be a list.",
+            resolved_class,
+            source_artifact_ids=srcs,
+        )
+    if not deltas:
+        return _error(
+            "missing_delta",
+            "SelectDelta found no upstream deltas to select.",
+            resolved_class,
+            source_artifact_ids=srcs,
+        )
+
+    index = node.config.get("index", 0)
+    if isinstance(index, bool) or not isinstance(index, int):
+        return _error(
+            "invalid_delta_selection",
+            "SelectDelta index must be an integer.",
+            resolved_class,
+            source_artifact_ids=srcs,
+        )
+    if index < 0 or index >= len(deltas):
+        return _error(
+            "invalid_delta_selection",
+            f"SelectDelta index {index} is outside {len(deltas)} available delta(s).",
+            resolved_class,
+            source_artifact_ids=srcs,
+        )
+
+    delta = deltas[index]
+    if not isinstance(delta, Mapping):
+        return _error(
+            "invalid_delta_selection",
+            "SelectDelta selected delta must be a manifest object.",
+            resolved_class,
+            source_artifact_ids=srcs,
+        )
+
+    return NodeResult(
+        status="ok",
+        run_id=uuid.uuid4(),
+        artifact_id=artifact_id_factory(),
+        output=dict(delta),
+        output_topology=PortTopology.manifest().to_dict(),
+        artifact_type="manifest",
+        source_artifact_ids=srcs,
+        resolved_class=resolved_class,
     )
 
 
