@@ -5,6 +5,7 @@
 **Scope today:** steps 1–6 run on `v1.8.0`. Step 7 (idempotency) + operator-facing preview richness ride slice 1.6 — run a fuller pass then.
 
 > **LIVE UAT STATUS — GATES A + B PASSED (forge-bridge#109, 2026-06-24, Bridge `v1.8.1`).** Gate A (discover/host-resolve, non-mutating): host_resolve returned a `mutation_manifest` on a Pipeline-projected real delta; temporal deltas correctly stayed review-only (`host_payload_delta_count:0`). Gate B (commit/ratify apply): ratified commit performed a **real Flame segment rename** (`apply_result.results:[{ok:true,attribute:name,new_value:…}]`) and a ratified revert restored it cleanly; disposable sequence left residue-free. The Gate-B deadlock/false-positive fix (six inline-write tools + honest-result guard) is live-verified. **Gate C (temporal `frame_in`/`frame_out` executor) = future/Pipeline-side.** Contract note: Pipeline normalizes top-level `sequence_id`→Flame sequence *name* (Pipeline id preserved in `metadata.source_delta_sequence_id`).
+> **DISCOVERY-CLEAN STATUS — Pipeline `v2.1.1` unblocks `FORGE_PLUGINS=traffik`.** Bridge now carries an optional cross-repo proof that `build_operation_runner()` can dispatch `traffik.editorial.apply_steps` and `traffik.flame_delta.host_resolve` from the forge-core default registry without manual `registry.register(...)`. The deterministic test patches only the entry-point source while using the real Traffik plugin factory; the deployment test runs against installed `forge_core.plugins` metadata and skips unless a v2.1.1+ Pipeline distribution is present.
 
 ---
 
@@ -13,6 +14,7 @@
 - [ ] Live Flame workstation (portofino / flame-01) with the bridge hook serving on `:9999`.
 - [ ] Bridge daemon up (`:9996`); `fbridge doctor` green (Console, MCP, Flame probe, State WS, postgres, graph_store).
 - [ ] forge-core MCP tools sibling-attached — confirm **`forge_apply_segment_delta`** AND `rename_shots` are in the live registry (`forge_tools_read` / doctor).
+- [ ] Pipeline `v2.1.1+` installed in the Bridge runtime, with `FORGE_PLUGINS=traffik` so `traffik.editorial.apply_steps` and `traffik.flame_delta.host_resolve` register through forge-core plugin discovery.
 - [ ] A real Flame project + sequence with known segments; record the target `sequence_name` and the target segment's current name.
 - [ ] Pipeline can produce a real `TimelineDelta` for an `updated` segment-name change with `metadata` carrying the live Flame identity envelope (`track_idx/record_in/seg_name/source_name/sequence_name`). ← cross-repo dependency.
 - [ ] Baseline captured: `flame_get_sequence_segments(<sequence_name>)` → before-state.
