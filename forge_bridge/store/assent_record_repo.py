@@ -111,9 +111,12 @@ class AssentRecordRepo(ContentAddressedRepo[AssentRecord]):
         self,
         chain_steps: list[str],
         project_id: Optional[uuid.UUID] = None,
+        metadata: Optional[dict[str, Any]] = None,
     ) -> AssentRecord:
         """Create or return the proposed AssentRecord for chain_steps."""
         body = {"chain_steps": list(chain_steps)}
+        if metadata is not None:
+            body["metadata"] = dict(metadata)
         content_hash = self._canonical_hash(body)
         existing = await self.get_by_content_hash(content_hash)
         if existing is not None:
