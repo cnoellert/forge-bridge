@@ -89,6 +89,7 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "flame_rename_shots",
         "traffik.editorial.apply_steps",
         "traffik.flame_delta.host_resolve",
+        "traffik.flame_sequence.ingest_edit_state",
         "delta_to_manifest",
         "author_prompt",
         "filter",
