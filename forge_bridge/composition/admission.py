@@ -121,6 +121,16 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         idempotent_result=True,
     ),
     AdmissionRecord(
+        operator_id="traffik.flame_sequence.ingest_edit_state",
+        resolved_class="pipeline.traffik.flame_sequence.ingest_edit_state",
+        dispatch_kind="operation",
+        synchronous=True,
+        returns_reference=False,
+        # sibling-contractual: ingest reads live Flame -> EditState, writes nothing.
+        no_state_mutation=True,
+        idempotent_result=True,
+    ),
+    AdmissionRecord(
         operator_id="delta_to_manifest",
         resolved_class="host.resolve.delta_to_manifest",
         dispatch_kind="host_resolve",
