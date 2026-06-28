@@ -82,6 +82,48 @@ def test_discover_tool_detail_renders_known_tool(runner):
     assert "Check forge-bridge server connectivity." in result.stdout
 
 
+class _FakeTool:
+    def __init__(self, name, description, meta=None):
+        self.name = name
+        self.description = description
+        self.meta = meta or {}
+        self.annotations = None
+
+
+def test_discover_tools_derives_artist_description_from_docstring(runner, monkeypatch):
+    """The description seam: discover reads MCP-tool meta, a DIFFERENT source from
+    the canonical CapabilityDeclaration.summary → ToolRegistration.summary carry.
+    To avoid a competing second author, discover does NOT read a parallel
+    meta["summary"]; it resolves with summary=None → a clearly-subordinate derived
+    fallback (docstring first line). A stray peer meta["summary"] is ignored."""
+    from forge_bridge.cli import discover as discover_mod
+
+    async def fake_list():
+        return [
+            _FakeTool(
+                "forge_classify_shot",
+                "Bridge adapter docstring.\nmore",
+                # Not a canonical author here; intentionally not surfaced.
+                meta={"summary": "Should be ignored.", "_source": "user-taught"},
+            ),
+            _FakeTool(
+                "forge_derives",
+                "Derived from this first line.\nrest of docstring",
+                meta={"_source": "user-taught"},
+            ),
+        ]
+
+    monkeypatch.setattr(discover_mod, "_list_mcp_tools", fake_list)
+
+    result = runner.invoke(app, ["discover", "tools", "--json"])
+    assert result.exit_code == 0
+    rows = {r["name"]: r for r in json.loads(result.stdout)["data"]}
+    # No parallel meta["summary"] surfaced; description derived from docstring.
+    assert "summary" not in rows["forge_classify_shot"]
+    assert rows["forge_classify_shot"]["artist_description"] == "Bridge adapter docstring."
+    assert rows["forge_derives"]["artist_description"] == "Derived from this first line."
+
+
 def test_discover_tool_unknown_is_nonzero(runner):
     result = runner.invoke(app, ["discover", "tool", "not_a_tool"])
 

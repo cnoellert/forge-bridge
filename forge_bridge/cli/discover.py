@@ -93,11 +93,29 @@ def _annotation_value(annotations: Any, name: str) -> Any:
 
 
 def _tool_record(tool: Any) -> dict[str, Any]:
+    # Lazy — keeps `fbridge --help` off the forge_contracts import path. By the
+    # time records are built the heavy MCP-server import has already run.
+    from forge_bridge.orchestration.registration import artist_description
+
     meta = getattr(tool, "meta", None) or {}
     annotations = getattr(tool, "annotations", None)
+    description = _doc(getattr(tool, "description", ""))
+    name = getattr(tool, "name", "")
+    # Description seam: the ONE canonical artist description is the peer-authored
+    # CapabilityDeclaration.summary, which the registration path carries onto
+    # ToolRegistration.summary. discover reads MCP-tool *meta* — a DIFFERENT,
+    # structurally-disconnected source (nothing copies declaration.summary into
+    # tool meta). Reading a parallel meta["summary"] here would stand up a
+    # competing second author that can diverge from the declaration, so discover
+    # does NOT: it resolves with summary=None → a clearly-subordinate derived
+    # fallback (docstring first line / humanized name). discover will surface the
+    # canonical summary once it can read ToolRegistration.
     return {
-        "name": getattr(tool, "name", ""),
-        "description": _doc(getattr(tool, "description", "")),
+        "name": name,
+        "description": description,
+        "artist_description": artist_description(
+            summary=None, operator_id=name, fallback_doc=description
+        ),
         "annotations": {
             "title": _annotation_value(annotations, "title"),
             "readOnlyHint": _annotation_value(annotations, "readOnlyHint"),
@@ -208,13 +226,12 @@ def discover_tools_cmd(
     console = make_console(no_color=no_color)
     table = Table(box=TOOLS_BOX, header_style=HEADER_STYLE)
     table.add_column("Tool")
-    table.add_column("Title")
+    table.add_column("Description")
     table.add_column("Source")
     for row in rows:
-        annotations = row["annotations"]
         table.add_row(
             row["name"],
-            annotations.get("title") or "—",
+            row.get("artist_description") or "—",
             row.get("_source") or "—",
         )
     console.print(table)
@@ -251,6 +268,12 @@ def discover_tool_cmd(
         f"idempotentHint={annotations.get('idempotentHint')!r}"
     )
     console.print("")
+    # discover surfaces the derived ``artist_description`` (subordinate fallback);
+    # the canonical peer-authored summary lives on ToolRegistration.summary and is
+    # not yet reachable from this MCP-tool-meta surface (see _tool_record).
+    if detail.get("artist_description"):
+        console.print(f"description: {detail['artist_description']}")
+        console.print("")
     console.print(detail["description"] or "(no description)")
 
 
