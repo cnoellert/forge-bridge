@@ -72,6 +72,14 @@ class ToolRecord:
     # resolver returns a clearly-subordinate derived fallback. None until
     # ConsoleReadAPI.get_tools()/get_tool() annotates it.
     artist_description: Optional[str] = None
+    # Artist-facing SHORT NAME (computed at read time, never persisted). Same
+    # one-canonical-author rule as artist_description: the peer's
+    # CapabilityDeclaration.label, carried onto ToolRegistration.label and
+    # resolved via orchestration.registration.artist_label(); when no peer label
+    # exists the resolver returns a clearly-subordinate humanized fallback.
+    # Distinct from the machine `name` and from the longer `artist_description`
+    # line. None until ConsoleReadAPI.get_tools()/get_tool() annotates it.
+    artist_label: Optional[str] = None
 
     def __post_init__(self) -> None:
         # Fail fast on list/dict -- frozen dataclass silently accepts them

@@ -199,6 +199,69 @@ def test_discover_tools_no_registry_falls_back(runner, monkeypatch):
     assert rows["forge_x"]["artist_description"] == "Derived line."
 
 
+class _FakeLabelRegistration:
+    def __init__(self, label):
+        self.label = label
+
+
+def test_discover_tools_prefers_registration_label_over_fallback(runner, monkeypatch):
+    """The short-name carry: a peer's CapabilityDeclaration.label carried onto
+    ToolRegistration.label is correlated by name↔tool_id and surfaced as
+    artist_label; a tool with no matching registration falls back to the derived
+    humanized name. Mirrors the summary seam."""
+    from forge_bridge.cli import discover as discover_mod
+    from forge_bridge.mcp import server as mcp_server
+
+    async def fake_list():
+        return [
+            _FakeTool(
+                "forge_classify_shot",
+                "Bridge adapter docstring.\nmore",
+                meta={"_source": "user-taught"},
+            ),
+            _FakeTool(
+                "forge_no_registration",
+                "Derived from this first line.\nrest",
+                meta={"_source": "user-taught"},
+            ),
+        ]
+
+    monkeypatch.setattr(discover_mod, "_list_mcp_tools", fake_list)
+    monkeypatch.setattr(
+        mcp_server,
+        "_canonical_tool_registry",
+        _FakeRegistry(
+            {"forge_classify_shot": _FakeLabelRegistration("Classify Shot")}
+        ),
+    )
+
+    result = runner.invoke(app, ["discover", "tools", "--json"])
+    assert result.exit_code == 0
+    rows = {r["name"]: r for r in json.loads(result.stdout)["data"]}
+    # WITH registration label → canonical peer-authored short name wins.
+    assert rows["forge_classify_shot"]["artist_label"] == "Classify Shot"
+    # WITHOUT a registration → clearly-subordinate derived humanized fallback.
+    assert rows["forge_no_registration"]["artist_label"] == "Forge no registration"
+
+
+def test_discover_tools_label_no_registry_falls_back(runner, monkeypatch):
+    """No live daemon registry in-process (registry is None) → derived short-name
+    fallback for artist_label."""
+    from forge_bridge.cli import discover as discover_mod
+    from forge_bridge.mcp import server as mcp_server
+
+    async def fake_list():
+        return [_FakeTool("forge_x", "Derived line.\nmore", meta={"_source": "builtin"})]
+
+    monkeypatch.setattr(discover_mod, "_list_mcp_tools", fake_list)
+    monkeypatch.setattr(mcp_server, "_canonical_tool_registry", None)
+
+    result = runner.invoke(app, ["discover", "tools", "--json"])
+    assert result.exit_code == 0
+    rows = {r["name"]: r for r in json.loads(result.stdout)["data"]}
+    assert rows["forge_x"]["artist_label"] == "Forge x"
+
+
 def test_discover_tool_unknown_is_nonzero(runner):
     result = runner.invoke(app, ["discover", "tool", "not_a_tool"])
 

@@ -84,6 +84,37 @@ def _resolve_artist_description(name: str, description: str | None) -> str:
     )
 
 
+def _resolve_artist_label(name: str) -> str:
+    """Resolve the artist-facing SHORT NAME for a tool, daemon-side.
+
+    Mirrors :func:`_resolve_artist_description`: the ONE canonical author is the
+    peer's ``CapabilityDeclaration.label``, carried onto ``ToolRegistration.label``
+    at the discovery boundary. We read it back from the daemon lifespan's
+    ``_canonical_tool_registry`` by exact identity (MCP tool ``name`` ==
+    registration ``tool_id``) and feed it to ``artist_label``. The derived
+    humanized-name fallback stays strictly subordinate.
+
+    None-safe by construction: when the registry is ``None`` (no live daemon),
+    missing the tool, or anything raises, ``label=None`` flows through and the
+    resolver returns the derived fallback. Never reads a competing ``meta[...]``
+    peer hook; never raises (Console de-blank guard always non-empty).
+    """
+    label: str | None = None
+    try:
+        from forge_bridge.mcp import server as _mcp_server
+
+        registry = getattr(_mcp_server, "_canonical_tool_registry", None)
+        if registry is not None:
+            registration = registry.get(name)
+            label = getattr(registration, "label", None)
+    except Exception:  # noqa: BLE001 — a registry miss must never break reads
+        label = None
+
+    from forge_bridge.orchestration.registration import artist_label
+
+    return artist_label(label=label, operator_id=name)
+
+
 def register_canonical_singletons(
     execution_log: "ExecutionLog",
     manifest_service: "ManifestService",
@@ -215,9 +246,13 @@ class ConsoleReadAPI:
             artist_desc = _resolve_artist_description(
                 name, getattr(tool, "description", None)
             )
+            artist_lbl = _resolve_artist_label(name)
             out.append(
                 dataclasses.replace(
-                    record, available=available, artist_description=artist_desc
+                    record,
+                    available=available,
+                    artist_description=artist_desc,
+                    artist_label=artist_lbl,
                 )
             )
 
@@ -261,8 +296,12 @@ class ConsoleReadAPI:
         artist_desc = _resolve_artist_description(
             name, getattr(live_match, "description", None)
         )
+        artist_lbl = _resolve_artist_label(name)
         return dataclasses.replace(
-            record, available=available, artist_description=artist_desc
+            record,
+            available=available,
+            artist_description=artist_desc,
+            artist_label=artist_lbl,
         )
 
     # -- Executions ---------------------------------------------------------

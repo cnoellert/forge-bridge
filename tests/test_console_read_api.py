@@ -195,6 +195,68 @@ async def test_get_tool_resolves_peer_summary(monkeypatch):
     assert rec.artist_description == "List every shot in a sequence."
 
 
+def _patch_canonical_registry_labels(monkeypatch, labels: dict[str, str] | None) -> None:
+    """Stub the daemon registry returning registrations carrying ``label`` (mirrors
+    _patch_canonical_registry for the short-name seam)."""
+    import forge_bridge.mcp.server as real_server
+
+    if labels is None:
+        monkeypatch.setattr(real_server, "_canonical_tool_registry", None, raising=False)
+        return
+
+    class _Reg:
+        def get(self, name):
+            return SimpleNamespace(label=labels.get(name)) if name in labels else None
+
+    monkeypatch.setattr(real_server, "_canonical_tool_registry", _Reg(), raising=False)
+
+
+async def test_get_tools_resolves_peer_label_as_artist_label(monkeypatch):
+    """The peer-authored CapabilityDeclaration.label (carried onto
+    ToolRegistration.label) is the canonical short name and wins; a tool with no
+    registration falls back to the derived humanized label (never blank)."""
+    ms = ManifestService()
+    _patch_mcp_and_reachability(
+        monkeypatch, tool_names=["forge_list_shots", "flame_ping"], flame_ok=True,
+    )
+    _patch_canonical_registry_labels(monkeypatch, {"forge_list_shots": "List Shots"})
+    api = ConsoleReadAPI(execution_log=MagicMock(), manifest_service=ms)
+
+    by_name = {t.name: t for t in await api.get_tools()}
+    # Canonical peer label surfaces verbatim — distinct from the machine name.
+    assert by_name["forge_list_shots"].artist_label == "List Shots"
+    assert by_name["forge_list_shots"].name == "forge_list_shots"
+    # No registration → derived humanized fallback, never blank.
+    assert by_name["flame_ping"].artist_label == "Flame ping"
+    # to_dict carries the additive field for JSON/template surfaces.
+    assert by_name["forge_list_shots"].to_dict()["artist_label"] == "List Shots"
+
+
+async def test_get_tools_label_registry_none_all_fallback(monkeypatch):
+    """No live daemon registry → every tool resolves to the derived short-name
+    fallback (the Console de-blank guard never yields a blank label)."""
+    ms = ManifestService()
+    _patch_mcp_and_reachability(
+        monkeypatch, tool_names=["forge_list_shots"], flame_ok=True,
+    )
+    _patch_canonical_registry_labels(monkeypatch, None)
+    api = ConsoleReadAPI(execution_log=MagicMock(), manifest_service=ms)
+
+    (rec,) = await api.get_tools()
+    assert rec.artist_label == "Forge list shots"
+
+
+async def test_get_tool_resolves_peer_label(monkeypatch):
+    ms = ManifestService()
+    _patch_mcp_and_reachability(monkeypatch, tool_names=["forge_list_shots"])
+    _patch_canonical_registry_labels(monkeypatch, {"forge_list_shots": "List Shots"})
+    api = ConsoleReadAPI(execution_log=MagicMock(), manifest_service=ms)
+
+    rec = await api.get_tool("forge_list_shots")
+    assert rec is not None
+    assert rec.artist_label == "List Shots"
+
+
 async def test_get_tool_surfaces_builtin_with_availability(monkeypatch):
     ms = ManifestService()
     await ms.register(_make_record("synth_a"))

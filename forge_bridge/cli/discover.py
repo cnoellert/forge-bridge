@@ -114,6 +114,27 @@ def _registration_summary(operator_id: str) -> str | None:
         return None
 
 
+def _registration_label(operator_id: str) -> str | None:
+    """Look up the peer-authored SHORT NAME carried onto ``ToolRegistration.label``.
+
+    Mirrors :func:`_registration_summary` for ``CapabilityDeclaration.label``: same
+    canonical single source, same name↔tool_id correlation, same ``None`` →
+    derived-fallback miss semantics. Inert on a standalone CLI invocation (the
+    registry is ``None`` with no live daemon in-process) — every tool then resolves
+    to its derived humanized fallback.
+    """
+    try:
+        from forge_bridge.mcp import server as _server
+
+        registry = getattr(_server, "_canonical_tool_registry", None)
+        if registry is None:
+            return None
+        registration = registry.get(operator_id)
+        return getattr(registration, "label", None)
+    except Exception:  # noqa: BLE001 - a registry miss must never break discover
+        return None
+
+
 def _annotation_value(annotations: Any, name: str) -> Any:
     if annotations is None:
         return None
@@ -123,7 +144,7 @@ def _annotation_value(annotations: Any, name: str) -> Any:
 def _tool_record(tool: Any) -> dict[str, Any]:
     # Lazy — keeps `fbridge --help` off the forge_contracts import path. By the
     # time records are built the heavy MCP-server import has already run.
-    from forge_bridge.orchestration.registration import artist_description
+    from forge_bridge.orchestration.registration import artist_description, artist_label
 
     meta = getattr(tool, "meta", None) or {}
     annotations = getattr(tool, "annotations", None)
@@ -145,6 +166,13 @@ def _tool_record(tool: Any) -> dict[str, Any]:
             summary=_registration_summary(name),
             operator_id=name,
             fallback_doc=description,
+        ),
+        # Short-name seam: same one-canonical-author rule as artist_description —
+        # the peer's CapabilityDeclaration.label carried onto ToolRegistration.label,
+        # resolved by name↔tool_id identity; derived humanized fallback when absent.
+        "artist_label": artist_label(
+            label=_registration_label(name),
+            operator_id=name,
         ),
         "annotations": {
             "title": _annotation_value(annotations, "title"),
@@ -290,6 +318,8 @@ def discover_tool_cmd(
     annotations = detail["annotations"]
     console = make_console(no_color=no_color)
     console.print(f"tool: {detail['name']}")
+    if detail.get("artist_label"):
+        console.print(f"label: {detail['artist_label']}")
     console.print(f"_source: {detail.get('_source') or '—'}")
     console.print(
         "annotations: "

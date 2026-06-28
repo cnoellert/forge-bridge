@@ -16,6 +16,9 @@
           hx-swap="innerHTML"
           hx-push-url="true">
         <td class="tool-name-cell">
+          {% if tool.artist_label %}
+          <div class="tool-name-label">{{ tool.artist_label }}</div>
+          {% endif %}
           <div class="tool-name-primary mono">{{ tool.name }}</div>
           {% if tool.artist_description %}
           <div class="tool-name-desc">{{ tool.artist_description }}</div>

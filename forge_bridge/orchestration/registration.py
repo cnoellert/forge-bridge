@@ -47,6 +47,13 @@ class ToolRegistration:
     # clearly-DERIVED fallback. Routing/trust stay on AdmissionRecord; the
     # description never goes there.
     summary: str | None = None
+    # The peer-authored artist-facing SHORT NAME (CapabilityDeclaration.label).
+    # Same ONE-canonical-author rule as ``summary``: a peer operator's short name
+    # lives in the peer's declaration and bridge CONSUMES it for display, never
+    # re-authoring it. ``None`` when the peer omitted it — resolve via
+    # :func:`artist_label` for a clearly-DERIVED humanized fallback. Distinct from
+    # ``summary`` (the longer prose line) and from the machine ``tool_id``.
+    label: str | None = None
 
 
 def tool_registration_from_capability(
@@ -69,6 +76,7 @@ def tool_registration_from_capability(
         schema=dict(declaration.input_schema or {}),
         capabilities=dict(declaration.metadata or {}),
         summary=declaration.summary,
+        label=declaration.label,
     )
 
 
@@ -103,6 +111,26 @@ def artist_description(
         lines = inspect.cleandoc(fallback_doc).splitlines()
         if lines and lines[0].strip():
             return lines[0].strip()
+    return _humanize_operator_id(operator_id)
+
+
+def artist_label(
+    *,
+    label: str | None,
+    operator_id: str,
+) -> str:
+    """Resolve the artist-facing SHORT NAME of an operator/capability.
+
+    Mirrors :func:`artist_description` (subordinate-fallback shape) but for the
+    short ``CapabilityDeclaration.label`` rather than the longer ``summary``. ONE
+    canonical author: a PEER operator's short name lives in its declaration's
+    ``label`` (peer-authored); bridge CONSUMES it here and never re-authors it.
+    When ``label`` is absent (a Bridge-internal operator, or a peer that omitted
+    it), return a clearly-DERIVED humanized ``operator_id``. The fallback is a
+    fallback, NOT a competing canonical source. Always returns non-empty (Console
+    de-blank guard); never placed on AdmissionRecord."""
+    if label and label.strip():
+        return label.strip()
     return _humanize_operator_id(operator_id)
 
 
