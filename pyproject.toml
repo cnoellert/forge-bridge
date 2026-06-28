@@ -20,7 +20,7 @@ dependencies = [
     "jinja2>=3.1",
     "rich>=13.9.4",
     "starlette",
-    "forge-contracts @ git+https://github.com/cnoellert/forge-contracts.git@v0.6",
+    "forge-contracts @ git+https://github.com/cnoellert/forge-contracts.git@v0.7",
 ]
 
 [project.scripts]
