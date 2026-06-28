@@ -1,0 +1,28 @@
+{# htmx fragment: the live segment picker + typed value + Preview button.
+   Posts to /ui/actions/{verb}/preview (no apply). #}
+<form class="card actions-step" id="actions-exec-form">
+  <input type="hidden" name="sequence" value="{{ sequence }}">
+
+  <label class="actions-field">
+    <span class="actions-field__label">Segment on <strong>{{ sequence }}</strong></span>
+    <select name="segment_index" class="actions-input">
+      {% for s in segments %}
+      <option value="{{ s.index }}">
+        {{ s.index }}. {{ s.seg_name }} (track {{ s.track_idx }}) — {{ verb.value_label|lower }}: {{ s.current }}
+      </option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label class="actions-field">
+    <span class="actions-field__label">{{ verb.value_label }}</span>
+    <input type="{{ verb.input_type }}" name="value" class="actions-input"
+           autocomplete="off"{% if verb.value_kind == "int" %} min="0" step="1"{% endif %}>
+  </label>
+
+  <button class="btn"
+          hx-post="/ui/actions/{{ verb.name }}/preview"
+          hx-include="closest form"
+          hx-target="#actions-result"
+          hx-swap="innerHTML">Preview</button>
+</form>

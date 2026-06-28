@@ -276,3 +276,18 @@ main#view-main{background:var(--color-bg);padding:64px 24px}
   color:var(--color-text-muted);
   font-size:var(--text-label)
 }
+
+/* Actions view — exec verb registry, web renderer #2 (amber-on-dark contract) */
+.actions-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:var(--space-md);margin-top:var(--space-md)}
+.actions-card{display:block;text-decoration:none;color:inherit;padding:var(--space-md);border:1px solid var(--color-border);background:var(--color-surface)}
+.actions-card:hover{border-color:var(--color-accent)}
+.actions-card__label{margin:0 0 var(--space-sm);font-size:var(--text-heading);color:var(--color-text-bright)}
+.actions-card__summary{margin:0;color:var(--color-text-muted);font-size:var(--text-body)}
+.actions-step{display:flex;flex-direction:column;gap:var(--space-md);padding:var(--space-md);margin-top:var(--space-md)}
+.actions-field{display:flex;flex-direction:column;gap:var(--space-xs)}
+.actions-field__label{font-size:var(--text-label);color:var(--color-text-muted);text-transform:uppercase;letter-spacing:.05em}
+.actions-input{width:100%;font-family:var(--font-mono);background:var(--color-surface-deep);border:1px solid var(--color-border-md);padding:var(--space-sm) var(--space-md);color:var(--color-text)}
+.actions-input:focus{outline:none;border-color:var(--color-accent)}
+.actions-preview__line{margin:var(--space-sm) 0;color:var(--color-text-bright)}
+.actions-handoff{margin:var(--space-sm) 0 0;padding-left:var(--space-lg);color:var(--color-text)}
+.actions-back{margin-top:var(--space-lg)}
