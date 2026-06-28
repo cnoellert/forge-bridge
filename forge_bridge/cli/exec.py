@@ -106,7 +106,9 @@ def exec_cmd(
     """Run the shared chain engine via the console daemon (POST /api/v1/exec).
 
     With no command, drops into the interactive verb shell — pick an action,
-    fill a couple of values, preview, ratify, apply — on the host-mutation rail.
+    fill a couple of values, preview, then choose: [y] apply now, [s] stage the
+    intent for later ``fbridge ratify <id>``, or [n] cancel — on the
+    host-mutation rail. ([s] proposes only; it never self-ratifies or applies.)
     Power users can inline the args: ``/rename <sequence> #<n> <new name>``.
     With ``--verb`` runs a single verb non-interactively (preview by default).
     """

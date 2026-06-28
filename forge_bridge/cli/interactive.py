@@ -3,9 +3,12 @@
 Bootstraps the engine once, then runs a small REPL: pick a verb (slash-command
 or name), fill a couple of plain-language values (segments are PICKED from the
 live timeline, not typed — identity is resolved behind the glass), see a
-domain-language preview, confirm, apply. Confirmation IS the ratification act:
-preview runs with no assent (fail-closed), [y] runs the same graph with a
-ratified AssentRecord. Mutations never bypass the preview->ratify->apply rail.
+domain-language preview, then choose: [y] apply now, [s] stage for later
+ratification, or [n] cancel. Confirmation IS the ratification act: preview runs
+with no assent (fail-closed), [y] runs the same graph with a ratified
+AssentRecord, and [s] persists the previewed intent as a *proposed* graph-intent
+that `fbridge ratify <id>` applies later. Mutations never bypass the
+preview->ratify->apply rail; [s] never self-ratifies.
 
 The legacy ``fbridge exec "<chain string>"`` lane is untouched; this is the
 no-argument lane. ponytail: in-process bootstrap (one cost at launch) beats a
@@ -19,7 +22,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from rich.prompt import Prompt, IntPrompt, Confirm
+from rich.prompt import Prompt, IntPrompt
 
 from forge_bridge.cli import verbs as _verbs
 from forge_bridge.cli.render import make_console
@@ -69,6 +72,19 @@ def _ratified_assent() -> Any:
     )
 
 
+def _build_mutation_spec(
+    verb: Any, sequence: str, seg: dict[str, Any], values: dict[str, Any]
+) -> Any:
+    """The single canonical author of a verb's host-mutation GraphSpec.
+
+    Both the no-assent preview and the stage-for-ratification persist build their
+    spec HERE — one representation, never two (the staged intent IS the previewed
+    intent). ponytail: same call surface `run_oneshot` builds inline.
+    """
+    delta = verb.build_delta({"sequence_name": sequence, "segment": seg, **values})
+    return _verbs.build_host_mutation_spec(delta, _verbs.host_resolve_operator())
+
+
 async def _preview_mutation(
     verb: Any, sequence: str, seg: dict[str, Any], values: dict[str, Any]
 ) -> tuple[dict[str, Any] | None, tuple[str, str] | None]:
@@ -78,10 +94,7 @@ async def _preview_mutation(
     fail-closed reason (e.g. UNRESOLVED_TARGET).
     """
     from forge_bridge.orchestration.apply_editorial_delta import preview_editorial_delta
-    delta = verb.build_delta(
-        {"sequence_name": sequence, "segment": seg, **values}
-    )
-    spec = _verbs.build_host_mutation_spec(delta, _verbs.host_resolve_operator())
+    spec = _build_mutation_spec(verb, sequence, seg, values)
     results = await preview_editorial_delta(spec)
     err = _node_error(results)
     if err is not None:
@@ -112,6 +125,28 @@ async def _apply_held(held: dict[str, Any]) -> tuple[bool, str]:
             return False, _humanize(getattr(r, "reason_code", None) or nested
                                     or getattr(r, "message", None))
     return False, "apply did not complete"
+
+
+async def _stage_mutation(
+    verb: Any, sequence: str, seg: dict[str, Any], values: dict[str, Any], *, display: str
+) -> str:
+    """Persist the previewed mutation as a *proposed* graph-intent for later ratify.
+
+    Reuses the SAME canonical spec author as the preview, then hands it to the
+    proven in-process producer (writes the DB directly via the session factory —
+    no daemon for the stage step; only the later `fbridge ratify` needs it). NO
+    apply, NO assent — assent stays the ratifier's act. Returns the
+    ``graph_intent_id`` that `fbridge ratify <id>` consumes.
+    """
+    from forge_bridge.orchestration.apply_editorial_delta import (
+        preview_editorial_delta_for_ratification,
+    )
+    from forge_bridge.store.session import get_async_session_factory
+    spec = _build_mutation_spec(verb, sequence, seg, values)
+    staged = await preview_editorial_delta_for_ratification(
+        spec, session_factory=get_async_session_factory(), display=display,
+    )
+    return staged.get("graph_intent_id")
 
 
 _REQUIRED_PLUGINS = ("flame", "traffik")  # verbs need flame (host) + traffik (op)
@@ -222,11 +257,27 @@ async def _run_verb(
     con.print(f"    {seg.get('seg_name')}:  {current}  →  {value}")
     con.print("    [dim]reversible · nothing else touched[/dim]\n")
 
-    if not Confirm.ask("  Apply this change?", default=False):
+    # apply now [y] / stage for later ratification [s] / cancel [n]
+    choice = Prompt.ask(
+        "  [y] apply now · [s] stage for ratify · [n] cancel",
+        choices=["y", "s", "n"], default="n",
+    ).lower()
+    if choice == "n":
         con.print("  not applied.")
         return
+    if choice == "s":
+        # persist the previewed intent; ratification stays a separate operator act.
+        # ponytail: in-process DB write — infra failures bubble to the REPL's outer
+        # handler (clean message, no traceback), so no daemon-reachability guard here.
+        gid = await _stage_mutation(
+            verb, sequence, seg, {verb.value_field: value},
+            display=f"{verb.name} {seg.get('seg_name')} -> {value}",
+        )
+        con.print("  [amber]staged — nothing applied yet.[/amber] Ratify later with:")
+        con.print(f"    [bold]fbridge ratify {gid}[/bold]")
+        return
 
-    # confirmation IS the ratification act
+    # [y]: confirmation IS the ratification act (apply-now rail, unchanged)
     ok, msg = await _apply_held(held)
     if ok:
         con.print(f"  [green]✓ enacted in Flame[/green] — {msg}.")

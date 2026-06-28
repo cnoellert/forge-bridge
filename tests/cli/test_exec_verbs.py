@@ -339,3 +339,126 @@ async def test_apply_held_success(monkeypatch):
     monkeypatch.setattr(interactive, "_ratified_assent", lambda: object())
     ok, msg = await interactive._apply_held({})
     assert ok and "applied" in msg
+
+
+# -- stage-for-ratification (the [s] path) ------------------------------------
+
+
+def test_build_mutation_spec_is_canonical_author():
+    # the one spec author both preview and stage use — proves single representation
+    spec = interactive._build_mutation_spec(
+        verbs.REGISTRY["rename"], "CUT", _fake_seg(), {"new_name": "shot_010_v2"})
+    assert [n.node_id for n in spec.nodes] == ["op", "delta_to_manifest"]
+    delta = spec.nodes[0].config["arguments"]["delta"]
+    assert (delta.get("changes") or delta.get("entries"))[0]["after"]["name"] == "shot_010_v2"
+
+
+@pytest.mark.asyncio
+async def test_stage_mutation_persists_canonical_spec(monkeypatch):
+    import forge_bridge.orchestration.apply_editorial_delta as mod
+    import forge_bridge.store.session as sess
+
+    captured = {}
+
+    async def fake_producer(spec, *, session_factory, display):
+        captured["spec"] = spec
+        captured["display"] = display
+        captured["session_factory"] = session_factory
+        return {"graph_intent_id": "deadbeef1234"}
+    monkeypatch.setattr(mod, "preview_editorial_delta_for_ratification", fake_producer)
+    monkeypatch.setattr(sess, "get_async_session_factory", lambda: "SF")
+
+    gid = await interactive._stage_mutation(
+        verbs.REGISTRY["rename"], "CUT", _fake_seg(), {"new_name": "shot_010_v2"},
+        display="rename shot_010 -> shot_010_v2")
+    assert gid == "deadbeef1234"
+    assert captured["session_factory"] == "SF"
+    # persisted spec is the SAME canonical author the preview uses (one representation)
+    spec = captured["spec"]
+    assert [n.node_id for n in spec.nodes] == ["op", "delta_to_manifest"]
+    delta = spec.nodes[0].config["arguments"]["delta"]
+    assert (delta.get("changes") or delta.get("entries"))[0]["after"]["name"] == "shot_010_v2"
+
+
+# -- interactive y/s/n branching (mocked; no daemon/Flame/DB) -----------------
+
+
+class _FakeCon:
+    def __init__(self):
+        self.lines: list[str] = []
+
+    def print(self, *a, **k):
+        self.lines.append(" ".join(str(x) for x in a))
+
+
+def _wire_run_verb(monkeypatch, *, choice):
+    """Stub _segments/_preview_mutation and the y/s/n prompt for _run_verb tests."""
+    async def segs(_seq):
+        return [{"seg_name": "shot_010", "track_idx": 0, "record_in": "r",
+                 "record_in_frame": 100, "source_name": "shot_010"}]
+
+    async def prev(_verb, _seq, _seg, _values):
+        return ({"apply_counterpart": {}, "resolved_plan": [1]}, None)
+    monkeypatch.setattr(interactive, "_segments", segs)
+    monkeypatch.setattr(interactive, "_preview_mutation", prev)
+    monkeypatch.setattr(interactive.Prompt, "ask", lambda *a, **k: choice)
+
+
+@pytest.mark.asyncio
+async def test_run_verb_stage_branch(monkeypatch):
+    con = _FakeCon()
+    _wire_run_verb(monkeypatch, choice="s")
+    staged = {}
+
+    async def stage(verb, sequence, seg, values, *, display):
+        staged["args"] = (verb.name, sequence, seg["seg_name"], values, display)
+        return "abc123def456"
+
+    async def apply_boom(_held):
+        raise AssertionError("apply must not run on [s]")
+    monkeypatch.setattr(interactive, "_stage_mutation", stage)
+    monkeypatch.setattr(interactive, "_apply_held", apply_boom)
+
+    await interactive._run_verb(con, verb=verbs.REGISTRY["rename"],
+                                sequence="CUT", seg_index=1, value_raw="shot_010_v2")
+    assert staged["args"][0] == "rename"
+    assert staged["args"][3] == {"new_name": "shot_010_v2"}
+    blob = "\n".join(con.lines)
+    assert "abc123def456" in blob and "fbridge ratify" in blob
+    assert "nothing applied yet" in blob
+
+
+@pytest.mark.asyncio
+async def test_run_verb_apply_branch(monkeypatch):
+    con = _FakeCon()
+    _wire_run_verb(monkeypatch, choice="y")
+    applied = {}
+
+    async def apply(held):
+        applied["held"] = held
+        return True, "1 applied"
+
+    async def stage_boom(*a, **k):
+        raise AssertionError("stage must not run on [y]")
+    monkeypatch.setattr(interactive, "_apply_held", apply)
+    monkeypatch.setattr(interactive, "_stage_mutation", stage_boom)
+
+    await interactive._run_verb(con, verb=verbs.REGISTRY["rename"],
+                                sequence="CUT", seg_index=1, value_raw="shot_010_v2")
+    assert applied["held"] is not None
+    assert any("enacted in Flame" in line for line in con.lines)
+
+
+@pytest.mark.asyncio
+async def test_run_verb_cancel_branch(monkeypatch):
+    con = _FakeCon()
+    _wire_run_verb(monkeypatch, choice="n")
+
+    async def boom(*a, **k):
+        raise AssertionError("neither apply nor stage may run on [n]")
+    monkeypatch.setattr(interactive, "_apply_held", boom)
+    monkeypatch.setattr(interactive, "_stage_mutation", boom)
+
+    await interactive._run_verb(con, verb=verbs.REGISTRY["rename"],
+                                sequence="CUT", seg_index=1, value_raw="shot_010_v2")
+    assert any("not applied" in line for line in con.lines)
