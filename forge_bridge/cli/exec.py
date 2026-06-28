@@ -78,15 +78,24 @@ def _exec_http(text: str, *, client=None) -> dict:
 
 def exec_cmd(
     command: Annotated[
-        str,
-        typer.Argument(help="Command string (PR30 ``->`` chains, macro expand)."),
-    ],
+        str | None,
+        typer.Argument(help="Command string (PR30 ``->`` chains). Omit for interactive mode."),
+    ] = None,
     as_json: Annotated[
         bool,
         typer.Option("--json", help="Emit the PR31 response dict to stdout."),
     ] = False,
 ) -> None:
-    """Run the shared chain engine via the console daemon (POST /api/v1/exec)."""
+    """Run the shared chain engine via the console daemon (POST /api/v1/exec).
+
+    With no command, drops into the interactive verb shell — pick an action,
+    fill a couple of values, preview, ratify, apply — on the host-mutation rail.
+    """
+    if command is None:
+        import asyncio
+        from forge_bridge.cli.interactive import run_interactive
+        asyncio.run(run_interactive())
+        return
     try:
         result = _exec_http(command)
     except ExecTransportError as e:
