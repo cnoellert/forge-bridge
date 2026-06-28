@@ -86,6 +86,55 @@ async def _list_mcp_tools() -> list[Any]:
     return await _server.mcp.list_tools()
 
 
+def _registration_summary(operator_id: str) -> str | None:
+    """Look up the peer-authored summary carried onto ``ToolRegistration``.
+
+    Canonical single source: a peer's ``CapabilityDeclaration.summary`` is carried
+    onto ``ToolRegistration.summary`` (see ``tool_registration_from_capability``).
+    Correlation is by exact identity — the MCP tool ``name`` equals the
+    registration ``tool_id`` (== ``declaration.capability_id``). A name that does
+    not match (a Bridge-internal builtin, or a peer that named its MCP tool
+    differently from its capability_id) simply misses → ``None`` → derived
+    fallback. No mis-attribution, never raises.
+
+    The registry is the daemon lifespan's ``_canonical_tool_registry`` (populated
+    by ``register_all_siblings`` at bootstrap Step 5). It is ``None`` on a
+    standalone CLI invocation with no live daemon in-process, in which case every
+    tool resolves to its derived fallback.
+    """
+    try:
+        from forge_bridge.mcp import server as _server
+
+        registry = getattr(_server, "_canonical_tool_registry", None)
+        if registry is None:
+            return None
+        registration = registry.get(operator_id)
+        return getattr(registration, "summary", None)
+    except Exception:  # noqa: BLE001 - a registry miss must never break discover
+        return None
+
+
+def _registration_label(operator_id: str) -> str | None:
+    """Look up the peer-authored SHORT NAME carried onto ``ToolRegistration.label``.
+
+    Mirrors :func:`_registration_summary` for ``CapabilityDeclaration.label``: same
+    canonical single source, same name↔tool_id correlation, same ``None`` →
+    derived-fallback miss semantics. Inert on a standalone CLI invocation (the
+    registry is ``None`` with no live daemon in-process) — every tool then resolves
+    to its derived humanized fallback.
+    """
+    try:
+        from forge_bridge.mcp import server as _server
+
+        registry = getattr(_server, "_canonical_tool_registry", None)
+        if registry is None:
+            return None
+        registration = registry.get(operator_id)
+        return getattr(registration, "label", None)
+    except Exception:  # noqa: BLE001 - a registry miss must never break discover
+        return None
+
+
 def _annotation_value(annotations: Any, name: str) -> Any:
     if annotations is None:
         return None
@@ -93,11 +142,38 @@ def _annotation_value(annotations: Any, name: str) -> Any:
 
 
 def _tool_record(tool: Any) -> dict[str, Any]:
+    # Lazy — keeps `fbridge --help` off the forge_contracts import path. By the
+    # time records are built the heavy MCP-server import has already run.
+    from forge_bridge.orchestration.registration import artist_description, artist_label
+
     meta = getattr(tool, "meta", None) or {}
     annotations = getattr(tool, "annotations", None)
+    description = _doc(getattr(tool, "description", ""))
+    name = getattr(tool, "name", "")
+    # Description seam: the ONE canonical artist description is the peer-authored
+    # CapabilityDeclaration.summary, carried onto ToolRegistration.summary. discover
+    # reads it back from the canonical ToolRegistry by exact name↔tool_id identity
+    # (_registration_summary) and feeds it to artist_description as the preferred
+    # source. It deliberately does NOT read MCP-tool meta["summary"] — that would
+    # stand up a competing second author that can diverge from the declaration. When
+    # no registration carries a summary (a Bridge-internal builtin, or no live
+    # daemon registry in-process) the resolver returns a clearly-subordinate derived
+    # fallback (docstring first line / humanized name).
     return {
-        "name": getattr(tool, "name", ""),
-        "description": _doc(getattr(tool, "description", "")),
+        "name": name,
+        "description": description,
+        "artist_description": artist_description(
+            summary=_registration_summary(name),
+            operator_id=name,
+            fallback_doc=description,
+        ),
+        # Short-name seam: same one-canonical-author rule as artist_description —
+        # the peer's CapabilityDeclaration.label carried onto ToolRegistration.label,
+        # resolved by name↔tool_id identity; derived humanized fallback when absent.
+        "artist_label": artist_label(
+            label=_registration_label(name),
+            operator_id=name,
+        ),
         "annotations": {
             "title": _annotation_value(annotations, "title"),
             "readOnlyHint": _annotation_value(annotations, "readOnlyHint"),
@@ -208,13 +284,12 @@ def discover_tools_cmd(
     console = make_console(no_color=no_color)
     table = Table(box=TOOLS_BOX, header_style=HEADER_STYLE)
     table.add_column("Tool")
-    table.add_column("Title")
+    table.add_column("Description")
     table.add_column("Source")
     for row in rows:
-        annotations = row["annotations"]
         table.add_row(
             row["name"],
-            annotations.get("title") or "—",
+            row.get("artist_description") or "—",
             row.get("_source") or "—",
         )
     console.print(table)
@@ -243,6 +318,8 @@ def discover_tool_cmd(
     annotations = detail["annotations"]
     console = make_console(no_color=no_color)
     console.print(f"tool: {detail['name']}")
+    if detail.get("artist_label"):
+        console.print(f"label: {detail['artist_label']}")
     console.print(f"_source: {detail.get('_source') or '—'}")
     console.print(
         "annotations: "
@@ -251,6 +328,12 @@ def discover_tool_cmd(
         f"idempotentHint={annotations.get('idempotentHint')!r}"
     )
     console.print("")
+    # ``artist_description`` prefers the canonical peer-authored
+    # ToolRegistration.summary and falls back to the derived first-line/name when
+    # no registration summary exists (see _tool_record / _registration_summary).
+    if detail.get("artist_description"):
+        console.print(f"description: {detail['artist_description']}")
+        console.print("")
     console.print(detail["description"] or "(no description)")
 
 

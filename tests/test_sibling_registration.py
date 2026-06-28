@@ -31,6 +31,9 @@ from forge_bridge.orchestration.registration import (
     RegisterToolCallable,
     ToolRegistration,
     ToolRegistry,
+    artist_description,
+    artist_label,
+    tool_registration_from_capability,
 )
 from forge_bridge.store.repo import EventRepo
 
@@ -99,6 +102,103 @@ async def _memory_event_appender(events: list[tuple[str, dict]]):
         events.append((event_type, payload))
 
     return append
+
+
+# ── description seam: summary carry + resolver ────────────────────────────────
+
+
+def test_tool_registration_carries_peer_summary() -> None:
+    """The peer-authored CapabilityDeclaration.summary survives the discovery
+    boundary onto the bridge-internal ToolRegistration (was dropped pre-seam)."""
+    reg = CapabilityRegistration(
+        declaration=CapabilityDeclaration(
+            capability_id="vision.classify_shot",
+            family="validation",
+            owner="forge_vision",
+            summary="Classify a shot's framing and motion.",
+            input_schema={"type": "object"},
+        ),
+    )
+    tool = tool_registration_from_capability(reg)
+    assert tool.summary == "Classify a shot's framing and motion."
+
+
+def test_tool_registration_summary_absent_is_none() -> None:
+    tool = tool_registration_from_capability(_cap("vision.no_summary"))
+    assert tool.summary is None
+
+
+def test_artist_description_prefers_peer_summary() -> None:
+    assert (
+        artist_description(
+            summary="Canonical peer line.",
+            operator_id="vision.classify_shot",
+            fallback_doc="Some local docstring first line.\nrest",
+        )
+        == "Canonical peer line."
+    )
+
+
+def test_artist_description_falls_back_to_docstring_first_line() -> None:
+    assert (
+        artist_description(
+            summary=None,
+            operator_id="vision.classify_shot",
+            fallback_doc="Derived from the docstring.\nmore detail",
+        )
+        == "Derived from the docstring."
+    )
+
+
+def test_artist_description_falls_back_to_humanized_id() -> None:
+    # No summary, no docstring → clearly-derived humanized operator_id.
+    assert (
+        artist_description(summary="  ", operator_id="traffik.flame_delta.host_resolve")
+        == "Host resolve"
+    )
+
+
+# ── label seam: short-name carry + resolver ───────────────────────────────────
+
+
+def test_tool_registration_carries_peer_label() -> None:
+    """The peer-authored CapabilityDeclaration.label survives the discovery
+    boundary onto the bridge-internal ToolRegistration (mirrors the summary carry)."""
+    reg = CapabilityRegistration(
+        declaration=CapabilityDeclaration(
+            capability_id="vision.classify_shot",
+            family="validation",
+            owner="forge_vision",
+            label="Classify Shot",
+            input_schema={"type": "object"},
+        ),
+    )
+    tool = tool_registration_from_capability(reg)
+    assert tool.label == "Classify Shot"
+
+
+def test_tool_registration_label_absent_is_none() -> None:
+    tool = tool_registration_from_capability(_cap("vision.no_label"))
+    assert tool.label is None
+
+
+def test_artist_label_prefers_peer_label() -> None:
+    assert (
+        artist_label(label="Classify Shot", operator_id="vision.classify_shot")
+        == "Classify Shot"
+    )
+
+
+def test_artist_label_falls_back_to_humanized_id() -> None:
+    # No label → clearly-derived humanized operator_id (subordinate, never blank).
+    assert (
+        artist_label(label="  ", operator_id="traffik.flame_delta.host_resolve")
+        == "Host resolve"
+    )
+    assert (
+        artist_label(label=None, operator_id="vision.classify_shot")
+        == "Classify shot"
+    )
 
 
 # ── ToolRegistry ──────────────────────────────────────────────────────────────

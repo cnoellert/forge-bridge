@@ -167,6 +167,11 @@ def build_host_mutation_spec(delta_dict: dict[str, Any], operator_id: str) -> An
 
 _HOST_RESOLVE_OP = "traffik.flame_delta.host_resolve"
 
+# ponytail: these verbs are Bridge-INTERNAL operators (host_resolve /
+# delta_to_manifest are AdmissionRecord entries, NOT peer CapabilityDeclarations),
+# so their ``summary`` here IS the canonical author — the derived-fallback path of
+# the description seam (orchestration.registration.artist_description). They are not
+# routed through that resolver because there is no peer summary to prefer.
 REGISTRY: dict[str, Verb] = {
     "rename": Verb(
         name="rename",

@@ -40,6 +40,20 @@ class ToolRegistration:
     payload_family: str
     schema: dict
     capabilities: Any
+    # The peer-authored artist-facing description (CapabilityDeclaration.summary).
+    # ONE canonical author: the description of a PEER operator lives in the peer's
+    # declaration; bridge CONSUMES it for display and never re-authors it. ``None``
+    # when the peer omitted it — resolve via :func:`artist_description` for a
+    # clearly-DERIVED fallback. Routing/trust stay on AdmissionRecord; the
+    # description never goes there.
+    summary: str | None = None
+    # The peer-authored artist-facing SHORT NAME (CapabilityDeclaration.label).
+    # Same ONE-canonical-author rule as ``summary``: a peer operator's short name
+    # lives in the peer's declaration and bridge CONSUMES it for display, never
+    # re-authoring it. ``None`` when the peer omitted it — resolve via
+    # :func:`artist_label` for a clearly-DERIVED humanized fallback. Distinct from
+    # ``summary`` (the longer prose line) and from the machine ``tool_id``.
+    label: str | None = None
 
 
 def tool_registration_from_capability(
@@ -49,7 +63,11 @@ def tool_registration_from_capability(
     ``ToolRegistration`` consumed by ToolRegistry + the planner. Declaration-first:
     the family/id come from the serializable ``CapabilityDeclaration``. The
     ``registration.handler`` is the optional, opaque invocation binding — it is NOT
-    placed on the record; ``ToolRegistry.register`` routes it to its binding home."""
+    placed on the record; ``ToolRegistry.register`` routes it to its binding home.
+
+    Carries the peer-authored ``summary`` across the discovery boundary (Phase 6A
+    Option B previously dropped it) so the canonical artist description survives to
+    the display surfaces — one canonical author, consumed not re-authored."""
     declaration: CapabilityDeclaration = registration.declaration
     return ToolRegistration(
         tool_id=declaration.capability_id,
@@ -57,7 +75,63 @@ def tool_registration_from_capability(
         payload_family=declaration.payload_family or "",
         schema=dict(declaration.input_schema or {}),
         capabilities=dict(declaration.metadata or {}),
+        summary=declaration.summary,
+        label=declaration.label,
     )
+
+
+def _humanize_operator_id(operator_id: str) -> str:
+    """Derive a human label from an operator_id (last dotted segment, words)."""
+    tail = (operator_id or "").rsplit(".", 1)[-1]
+    words = tail.replace("_", " ").strip()
+    return (words[:1].upper() + words[1:]) if words else (operator_id or "")
+
+
+def artist_description(
+    *,
+    summary: str | None,
+    operator_id: str,
+    fallback_doc: str | None = None,
+) -> str:
+    """Resolve the artist-facing description of an operator/capability.
+
+    ONE canonical author: a PEER operator's description lives in its
+    ``CapabilityDeclaration.summary`` (peer-authored). Bridge CONSUMES that summary
+    here and never re-authors it. When ``summary`` is absent (a Bridge-internal
+    operator, or a peer that omitted it), return a clearly-DERIVED fallback — the
+    first line of a supplied local docstring if any, else a humanized
+    ``operator_id``. The fallback is a fallback, NOT a competing canonical source.
+
+    Renderer-neutral: callers in any surface pass the data they hold. This does NOT
+    live on a renderer and the description is never placed on AdmissionRecord
+    (routing/trust only)."""
+    if summary and summary.strip():
+        return summary.strip()
+    if fallback_doc:
+        lines = inspect.cleandoc(fallback_doc).splitlines()
+        if lines and lines[0].strip():
+            return lines[0].strip()
+    return _humanize_operator_id(operator_id)
+
+
+def artist_label(
+    *,
+    label: str | None,
+    operator_id: str,
+) -> str:
+    """Resolve the artist-facing SHORT NAME of an operator/capability.
+
+    Mirrors :func:`artist_description` (subordinate-fallback shape) but for the
+    short ``CapabilityDeclaration.label`` rather than the longer ``summary``. ONE
+    canonical author: a PEER operator's short name lives in its declaration's
+    ``label`` (peer-authored); bridge CONSUMES it here and never re-authors it.
+    When ``label`` is absent (a Bridge-internal operator, or a peer that omitted
+    it), return a clearly-DERIVED humanized ``operator_id``. The fallback is a
+    fallback, NOT a competing canonical source. Always returns non-empty (Console
+    de-blank guard); never placed on AdmissionRecord."""
+    if label and label.strip():
+        return label.strip()
+    return _humanize_operator_id(operator_id)
 
 
 def _validate_generation_handler(tool_id: str, handler: Any) -> None:
