@@ -160,6 +160,12 @@ _REASON_HUMAN = {
     "PLAN_STATE_DRIFT": "the timeline changed since the preview — re-run it",
     "ASSENT_INVALID": "not approved",
     "APPLY_FAILED": "Flame rejected the change",
+    # host temporal-trim contract codes (forge_apply_segment_temporal_delta) —
+    # surfaced for legibility when a trim slips past the CLI-side range guard.
+    "insufficient_handles": "not enough handle to extend the trim that far",
+    "unsupported_delta": "that trim isn't supported (it may collapse the segment)",
+    "identity_unresolved": "couldn't find that segment in the live timeline",
+    "unsupported_live_segment": "the live segment is missing the frame data to trim",
 }
 
 
@@ -231,10 +237,12 @@ async def _run_verb(
         return
     seg = segs[idx - 1]
     current = seg.get(verb.current_key)
-    # one edited value, typed per the verb (str vs int) — IntPrompt keeps the
-    # interactive lane numeric; parse_value is the shared trust-boundary gate.
+    # one edited value, typed per the verb — IntPrompt keeps the numeric lanes
+    # numeric; an offset (relative trim) defaults to 0, never an absolute frame.
     if value_raw is not None:
         raw = value_raw
+    elif verb.value_kind == "offset":
+        raw = str(IntPrompt.ask(f"[amber]{verb.value_label}[/amber]", default=0))
     elif verb.value_kind == "int":
         raw = str(IntPrompt.ask(f"[amber]{verb.value_label}[/amber]", default=current))
     else:
@@ -246,6 +254,12 @@ async def _run_verb(
     if _verbs.is_unchanged(verb, value, current):
         con.print("  cancelled — value unchanged")
         return
+    # CLI-side range guard: reject an impossible trim with a legible message
+    # before it reaches the host (no-op for non-trim verbs).
+    rerr = _verbs.validate_trim(verb, value, seg)
+    if rerr is not None:
+        con.print(f"  [red]can't do that[/red] — {rerr}")
+        return
 
     con.print("\n  [dim]checking the live timeline…[/dim]")
     held, err = await _preview_mutation(verb, sequence, seg, {verb.value_field: value})
@@ -254,7 +268,7 @@ async def _run_verb(
         return
     plan = held.get("resolved_plan") or []
     con.print(f"\n  [bold]Preview[/bold] — {verb.label}, {len(plan)} segment in Flame:")
-    con.print(f"    {seg.get('seg_name')}:  {current}  →  {value}")
+    con.print(f"    {seg.get('seg_name')}:  {_verbs.describe_change(verb, current, value)}")
     con.print("    [dim]reversible · nothing else touched[/dim]\n")
 
     # apply now [y] / stage for later ratification [s] / cancel [n]
@@ -291,7 +305,8 @@ async def run_interactive() -> None:
     await _bootstrap()
 
     con.print("\n[bold amber]forge exec[/bold amber] — type [bold]/help[/bold], or a verb. [dim]/quit to leave.[/dim]")
-    con.print("[dim]power users: /rename <sequence> #<n> <new name> · /trim <sequence> #<n> <frame>[/dim]")
+    con.print("[dim]power users: /rename <sequence> #<n> <new name> · "
+              "/trim_head <sequence> #<n> <±frames> · /trim_tail <sequence> #<n> <±frames>[/dim]")
     # verbs are data — one registry lookup, zero per-verb code in the loop
     verbs_by_cmd = {v.name: v for v in _verbs.list_verbs()}
     while True:
@@ -394,6 +409,12 @@ async def run_oneshot(
         _emit(con, as_json, {"ok": False, "where": "input", "why": "value unchanged"},
               "[yellow]value unchanged — nothing to do[/yellow]")
         return 1
+    # CLI-side range guard: a legible reject before the host (no-op for non-trim).
+    rerr = _verbs.validate_trim(spec_verb, value, seg)
+    if rerr is not None:
+        _emit(con, as_json, {"ok": False, "where": "input", "why": rerr},
+              f"[red]can't do that[/red] — {rerr}")
+        return 1
 
     held, err = await _preview_mutation(spec_verb, sequence, seg, {spec_verb.value_field: value})
     if err is not None:
@@ -405,7 +426,8 @@ async def run_oneshot(
     if not do_apply:
         _emit(con, as_json, {"ok": True, "preview": True, "manifest": held},
               f"Preview — would {verb} {len(plan)} segment: {segment_name} "
-              f"{current} → {value} (not applied; pass --apply to stage for ratification)")
+              f"({_verbs.describe_change(spec_verb, current, value)}) "
+              "(not applied; pass --apply to stage for ratification)")
         return 0
 
     # --apply STAGES (persists a proposed graph_intent); it does not self-ratify.

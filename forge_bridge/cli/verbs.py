@@ -9,14 +9,15 @@ later renderer of the same data. Verbs are DATA; surfaces are interchangeable.
 ``forge_core``/composition imports are lazy so ``fbridge --help`` stays fast and
 this module imports cleanly without the pipeline plugin installed.
 
-ponytail: with verb #2 (trim) here, the n=1->n=2 generalization landed. The two
-verbs (rename + trim) differ only in their single edited value (a name STRING vs
-an in-point frame INT) and which segment field holds its current value --
-captured by the ``value_*``/``current_key`` fields below + ``parse_value`` (the
-trust-boundary typed parse), so the renderers carry zero per-verb branching. Both
-share one renderer-agnostic path. Still deferred to verb #3: multi-field verbs,
-segment_picker/sequence_picker as declared field kinds, and value kinds beyond
-str/int -- not invented before something needs them.
+ponytail: the verbs differ only in their single edited value and which side of
+the segment it touches -- captured by the ``value_*``/``current_key``/
+``trim_side`` fields below + ``parse_value`` (the trust-boundary typed parse), so
+the renderers carry zero per-verb branching. Editorial trim is ALWAYS relative:
+``trim_head``/``trim_tail`` take a SIGNED FRAME COUNT (``value_kind="offset"``;
+positive trims OFF / shortens, negative extends ON), never an absolute frame --
+the artist never sees or types a timeline frame number. Still deferred: multi-
+field verbs, segment_picker/sequence_picker as declared field kinds, and value
+kinds beyond str/int/offset -- not invented before something needs them.
 """
 from __future__ import annotations
 
@@ -36,9 +37,12 @@ class Verb:
     # the single artist-edited value: how to prompt, its type, and the segment
     # dict key that holds its CURRENT value (prompt default + unchanged check).
     value_field: str        # key the renderer puts the new value under in ``values``
-    value_kind: str         # "str" | "int"
-    value_label: str        # prompt label, e.g. "New name" / "New start frame"
+    value_kind: str         # "str" | "int" | "offset" (signed relative count)
+    value_label: str        # prompt label, e.g. "New name" / "Frames to trim..."
     current_key: str        # segment dict key holding the current value
+    # "head" | "tail" for a relative trim verb; None for non-trim verbs. Drives
+    # the CLI-side range guard (``validate_trim``) + the offset display.
+    trim_side: str | None = None
     # identity fields the verb needs resolved from the live host before build
     needs_segment: bool = True
 
@@ -49,11 +53,16 @@ def parse_value(verb: Verb, raw: str) -> tuple[Any, str | None]:
     Returns ``(value, None)`` on success or ``(None, reason)`` for a rejected input.
     """
     raw = (raw or "").strip()
-    if verb.value_kind == "int":
+    if verb.value_kind in ("int", "offset"):
         try:
             n = int(raw)
         except (TypeError, ValueError):
             return None, f"{verb.value_label} must be a whole number"
+        if verb.value_kind == "offset":
+            # a relative trim count: negatives extend; 0 is a no-op, not a frame.
+            if n == 0:
+                return None, "nothing to trim — enter a non-zero number of frames"
+            return n, None
         if n < 0:
             return None, f"{verb.value_label} must be 0 or greater"
         return n, None
@@ -63,13 +72,56 @@ def parse_value(verb: Verb, raw: str) -> tuple[Any, str | None]:
 
 
 def is_unchanged(verb: Verb, value: Any, current: Any) -> bool:
-    """True when the new value equals the segment's current value (nothing to do)."""
+    """True when the verb's value is a no-op (nothing to do)."""
+    if verb.value_kind == "offset":
+        # an offset has no absolute "current": 0 is the no-op (parse_value already
+        # rejects it; this is the belt-and-suspenders gate the renderers call).
+        try:
+            return int(value) == 0
+        except (TypeError, ValueError):
+            return False
     if verb.value_kind == "int":
         try:
             return current is not None and int(value) == int(current)
         except (TypeError, ValueError):
             return False
     return str(value) == str(current)
+
+
+def validate_trim(verb: Verb, n: int, seg: dict[str, Any]) -> str | None:
+    """CLI-side range guard for a relative trim — the legible-error UX fix.
+
+    Rejects an impossible trim BEFORE it reaches the host (whose only signal for
+    the common mistake is an opaque ``HOST_DISCOVER_FAILED`` -> "couldn't resolve
+    the target"). Returns a plain-language reason, or ``None`` when in range / not
+    a trim verb. Checks (mirrors ``_expected_temporal_post_state`` on the host):
+    trimming off >= the segment duration collapses it; extending (negative ``n``)
+    beyond the available head/tail handle is impossible.
+    """
+    if verb.trim_side is None:
+        return None
+    duration = seg.get("duration")
+    if isinstance(duration, int) and n >= duration:
+        return f"can't trim {n} off a {duration}-frame segment"
+    if n < 0:  # extend — consumes the handle on this side
+        handle = seg.get("head" if verb.trim_side == "head" else "tail")
+        if isinstance(handle, int) and -n > handle:
+            return (f"can't extend the {verb.trim_side} by {-n} — only {handle} "
+                    f"frame{'' if handle == 1 else 's'} of handle available")
+    return None
+
+
+def describe_change(verb: Verb, current: Any, value: Any) -> str:
+    """One-line, artist-legible summary of a verb's change for the preview.
+
+    Offset verbs never leak an absolute frame ("trim 10 off the head"); other
+    verbs show the before->after of their single edited value.
+    """
+    if verb.value_kind == "offset":
+        n = int(value)
+        return (f"trim {abs(n)} frame{'' if abs(n) == 1 else 's'} "
+                f"{'off' if n > 0 else 'onto'} the {verb.trim_side}")
+    return f"{current}  →  {value}"
 
 
 def build_rename_delta(values: dict[str, Any]) -> dict[str, Any]:
@@ -104,33 +156,32 @@ def build_rename_delta(values: dict[str, Any]) -> dict[str, Any]:
     return delta.to_dict()
 
 
-def build_trim_delta(values: dict[str, Any]) -> dict[str, Any]:
-    """Build a host-neutral head-trim TimelineDelta dict from collected values.
+def _build_trim_delta(
+    values: dict[str, Any], *, field: str, before: int, after: int
+) -> dict[str, Any]:
+    """Build a host-neutral relative-trim TimelineDelta dict (one temporal field).
 
-    A head-trim rides the temporal-delta rail: a single-field ``frame_in`` update
-    (the segment's timeline in-point) lowered by the host_resolve operation to
+    A trim rides the temporal-delta rail: a single-field ``frame_in`` (head) or
+    ``frame_out`` (tail) update lowered by the host_resolve operation to
     ``forge_apply_segment_temporal_delta`` (the only protocol-compliant temporal
-    executor — ``updated_segment_trim``; shifting frame_in moves the in-point and
-    so the start frame / head / duration together). There is no pure metadata
-    start-frame *renumber* executor on the rail. ``values`` must carry:
-    ``sequence_name``, ``segment`` (the full segment dict from
-    ``flame_get_sequence_segments`` — supplies track_idx/record_in/
-    record_in_frame/source_name/seg_name), and ``new_frame`` (the new in-point).
+    executor). The host derives the OFFSET internally from ``after - before``
+    (head) / ``before - after`` (tail) and applies it as a relative trim, so the
+    artist-facing value is a relative count and the absolute frame stays internal.
+    ``values`` must carry ``sequence_name`` + ``segment`` (the full segment dict
+    from ``flame_get_sequence_segments`` — supplies the identity metadata).
     """
     from forge_core.traffik.editing import DeltaEntry, TimelineDelta  # lazy
 
     seg = values["segment"]
-    before = int(seg["record_in_frame"])
-    after = int(values["new_frame"])
     delta = TimelineDelta(
-        sequence_id="fbridge-exec-start-frames",
+        sequence_id="fbridge-exec-trim",
         entries=[DeltaEntry(
             action="updated",
             object_type="segment",
-            object_id="exec-start-frames",
+            object_id="exec-trim",
             # single changed field -> classified as a supported temporal trim
-            before={"id": "exec-start-frames", "frame_in": before},
-            after={"id": "exec-start-frames", "frame_in": after},
+            before={"id": "exec-trim", field: before},
+            after={"id": "exec-trim", field: after},
             metadata={
                 "track_idx": int(seg["track_idx"]),
                 "record_in": str(seg["record_in"]),
@@ -141,6 +192,34 @@ def build_trim_delta(values: dict[str, Any]) -> dict[str, Any]:
         )],
     )
     return delta.to_dict()
+
+
+def build_trim_head_delta(values: dict[str, Any]) -> dict[str, Any]:
+    """Head-trim: positive ``count`` trims off (in-point later), negative extends.
+
+    ``after_frame_in = record_in_frame + count`` so the host's offset
+    (``after - before``) equals ``count`` (positive moves the in-point later /
+    shortens; negative extends, consuming a head handle).
+    """
+    seg = values["segment"]
+    before = int(seg["record_in_frame"])
+    return _build_trim_delta(
+        values, field="frame_in", before=before, after=before + int(values["count"])
+    )
+
+
+def build_trim_tail_delta(values: dict[str, Any]) -> dict[str, Any]:
+    """Tail-trim: positive ``count`` trims off (out-point earlier), negative extends.
+
+    ``after_frame_out = record_out_frame - count`` so the host's offset
+    (``before - after``) equals ``count`` (positive moves the out-point earlier /
+    shortens; negative extends, consuming a tail handle).
+    """
+    seg = values["segment"]
+    before = int(seg["record_out_frame"])
+    return _build_trim_delta(
+        values, field="frame_out", before=before, after=before - int(values["count"])
+    )
 
 
 def build_host_mutation_spec(delta_dict: dict[str, Any], operator_id: str) -> Any:
@@ -183,16 +262,29 @@ REGISTRY: dict[str, Verb] = {
         value_label="New name",
         current_key="seg_name",
     ),
-    "trim": Verb(
-        name="trim",
+    "trim_head": Verb(
+        name="trim_head",
         label="Trim a segment's head",
-        summary="Move a segment's in-point in the open Flame sequence — head-trim; "
-                "shifts start frame/duration (reversible, ratified).",
-        build_delta=build_trim_delta,
-        value_field="new_frame",
-        value_kind="int",
-        value_label="New in-point frame",
+        summary="Trim frames off (or onto) a segment's head in the open Flame "
+                "sequence — positive shortens, negative extends (reversible, ratified).",
+        build_delta=build_trim_head_delta,
+        value_field="count",
+        value_kind="offset",
+        value_label="Frames to trim off the head (negative = extend)",
         current_key="record_in_frame",
+        trim_side="head",
+    ),
+    "trim_tail": Verb(
+        name="trim_tail",
+        label="Trim a segment's tail",
+        summary="Trim frames off (or onto) a segment's tail in the open Flame "
+                "sequence — positive shortens, negative extends (reversible, ratified).",
+        build_delta=build_trim_tail_delta,
+        value_field="count",
+        value_kind="offset",
+        value_label="Frames to trim off the tail (negative = extend)",
+        current_key="record_out_frame",
+        trim_side="tail",
     ),
 }
 

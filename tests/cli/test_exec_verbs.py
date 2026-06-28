@@ -18,6 +18,10 @@ def _fake_seg(name: str = "shot_010") -> dict:
         "track_idx": 0,
         "record_in": "'01:00:00+00'",
         "record_in_frame": 86400,
+        "record_out_frame": 86500,
+        "duration": 100,
+        "head": 8,
+        "tail": 8,
         "seg_name": name,
         "source_name": name,
     }
@@ -59,28 +63,31 @@ def test_build_host_mutation_spec_is_preview_shape():
     assert spec.nodes[0].config["arguments"]["delta"] is delta
 
 
-# -- verb #2: trim / head-trim (temporal-delta rail) --------------------------
+# -- verbs: relative head/tail trim (temporal-delta rail) ---------------------
 
 
-def test_registry_exposes_trim():
-    assert "trim" in verbs.REGISTRY
-    v = verbs.REGISTRY["trim"]
-    assert v.label and v.summary
-    assert v.value_kind == "int"
-    assert v.value_field == "new_frame"
-    assert v.current_key == "record_in_frame"
+def test_registry_exposes_trim_head_and_tail_not_trim():
+    assert "trim" not in verbs.REGISTRY  # the absolute-frame verb is gone
+    for name, side, ckey in (("trim_head", "head", "record_in_frame"),
+                             ("trim_tail", "tail", "record_out_frame")):
+        v = verbs.REGISTRY[name]
+        assert v.label and v.summary
+        assert v.value_kind == "offset"
+        assert v.value_field == "count"
+        assert v.current_key == ckey
+        assert v.trim_side == side
 
 
-def test_build_trim_delta_envelope():
-    delta = verbs.build_trim_delta(
-        {"sequence_name": "CUT", "segment": _fake_seg(), "new_frame": 86412}
+def test_build_trim_head_delta_offset_added_to_record_in():
+    # positive count trims OFF the head: after_frame_in = record_in_frame + count
+    delta = verbs.build_trim_head_delta(
+        {"sequence_name": "CUT", "segment": _fake_seg(), "count": 12}
     )
     entry = (delta.get("changes") or delta.get("entries"))[0]
     assert entry["action"] == "updated"
     assert entry["object_type"] == "segment"
-    # single changed temporal field frame_in -> supported temporal trim
     assert entry["before"]["frame_in"] == 86400
-    assert entry["after"]["frame_in"] == 86412
+    assert entry["after"]["frame_in"] == 86412  # +12 off the head
     assert entry["before"]["id"] == entry["after"]["id"]  # only frame_in changes
     md = entry["metadata"]
     assert md["track_idx"] == 0
@@ -89,28 +96,93 @@ def test_build_trim_delta_envelope():
     assert md["record_in"] == "'01:00:00+00'"
 
 
+def test_build_trim_head_delta_negative_extends():
+    delta = verbs.build_trim_head_delta(
+        {"sequence_name": "CUT", "segment": _fake_seg(), "count": -5}
+    )
+    entry = (delta.get("changes") or delta.get("entries"))[0]
+    assert entry["before"]["frame_in"] == 86400
+    assert entry["after"]["frame_in"] == 86395  # -5 extends the head earlier
+
+
+def test_build_trim_tail_delta_offset_subtracted_from_record_out():
+    # positive count trims OFF the tail: after_frame_out = record_out_frame - count
+    delta = verbs.build_trim_tail_delta(
+        {"sequence_name": "CUT", "segment": _fake_seg(), "count": 12}
+    )
+    entry = (delta.get("changes") or delta.get("entries"))[0]
+    assert "frame_out" in entry["before"] and "frame_in" not in entry["before"]
+    assert entry["before"]["frame_out"] == 86500
+    assert entry["after"]["frame_out"] == 86488  # -12 off the tail (out earlier)
+
+
+def test_build_trim_tail_delta_negative_extends():
+    delta = verbs.build_trim_tail_delta(
+        {"sequence_name": "CUT", "segment": _fake_seg(), "count": -5}
+    )
+    entry = (delta.get("changes") or delta.get("entries"))[0]
+    assert entry["before"]["frame_out"] == 86500
+    assert entry["after"]["frame_out"] == 86505  # -5 extends the tail later
+
+
 def test_build_trim_delta_spec_wiring():
-    delta = verbs.build_trim_delta(
-        {"sequence_name": "CUT", "segment": _fake_seg(), "new_frame": 1}
+    delta = verbs.build_trim_head_delta(
+        {"sequence_name": "CUT", "segment": _fake_seg(), "count": 1}
     )
     spec = verbs.build_host_mutation_spec(delta, verbs.host_resolve_operator())
     assert [n.node_id for n in spec.nodes] == ["op", "delta_to_manifest"]
     assert spec.nodes[0].config["arguments"]["delta"] is delta
 
 
+# -- CLI-side range validation (the legible-error UX fix) ---------------------
+
+
+def test_validate_trim_rejects_over_trim_with_legible_message():
+    v = verbs.REGISTRY["trim_head"]
+    msg = verbs.validate_trim(v, 800, {"duration": 780, "head": 8, "tail": 8})
+    assert msg is not None
+    assert "can't trim 800 off a 780-frame segment" in msg
+
+
+def test_validate_trim_rejects_over_extend_beyond_handle():
+    head = verbs.validate_trim(verbs.REGISTRY["trim_head"], -20,
+                               {"duration": 100, "head": 8, "tail": 8})
+    assert head is not None and "head" in head and "8 frames" in head
+    tail = verbs.validate_trim(verbs.REGISTRY["trim_tail"], -20,
+                               {"duration": 100, "head": 8, "tail": 8})
+    assert tail is not None and "tail" in tail and "8 frames" in tail
+
+
+def test_validate_trim_accepts_in_range_and_ignores_non_trim_verbs():
+    seg = {"duration": 100, "head": 8, "tail": 8}
+    assert verbs.validate_trim(verbs.REGISTRY["trim_head"], 12, seg) is None
+    assert verbs.validate_trim(verbs.REGISTRY["trim_head"], -8, seg) is None  # exactly the handle
+    # non-trim verb -> always None (guard is a no-op)
+    assert verbs.validate_trim(verbs.REGISTRY["rename"], 999, seg) is None
+
+
+def test_describe_change_offset_never_leaks_absolute_frame():
+    off = verbs.describe_change(verbs.REGISTRY["trim_head"], 86400, 12)
+    assert off == "trim 12 frames off the head"
+    assert "86400" not in off
+    onto = verbs.describe_change(verbs.REGISTRY["trim_tail"], 86500, -5)
+    assert onto == "trim 5 frames onto the tail"
+
+
 # -- shared trust-boundary parse/validation -----------------------------------
 
 
-def test_parse_value_int_accepts_and_rejects():
-    v = verbs.REGISTRY["trim"]
-    assert verbs.parse_value(v, "1015") == (1015, None)
-    assert verbs.parse_value(v, "  42 ") == (42, None)
+def test_parse_value_offset_accepts_signed_and_rejects_zero():
+    v = verbs.REGISTRY["trim_head"]
+    # positive trims off, negative extends — both accepted
+    assert verbs.parse_value(v, "12") == (12, None)
+    assert verbs.parse_value(v, "  -5 ") == (-5, None)
     # non-integer rejected
     val, err = verbs.parse_value(v, "ten")
     assert val is None and "whole number" in err
-    # negative frame rejected
-    val, err = verbs.parse_value(v, "-3")
-    assert val is None and "0 or greater" in err
+    # zero is a no-op, not a frame -> rejected
+    val, err = verbs.parse_value(v, "0")
+    assert val is None and "nothing to trim" in err
 
 
 def test_parse_value_str_rejects_empty():
@@ -122,12 +194,13 @@ def test_parse_value_str_rejects_empty():
 
 def test_is_unchanged():
     rn = verbs.REGISTRY["rename"]
-    sf = verbs.REGISTRY["trim"]
+    th = verbs.REGISTRY["trim_head"]
     assert verbs.is_unchanged(rn, "shot_010", "shot_010") is True
     assert verbs.is_unchanged(rn, "shot_011", "shot_010") is False
-    assert verbs.is_unchanged(sf, 86400, 86400) is True
-    assert verbs.is_unchanged(sf, 86412, 86400) is False
-    assert verbs.is_unchanged(sf, 5, None) is False
+    # offset: 0 is the only no-op; the absolute "current" is irrelevant
+    assert verbs.is_unchanged(th, 0, 86400) is True
+    assert verbs.is_unchanged(th, 12, 86400) is False
+    assert verbs.is_unchanged(th, -5, None) is False
 
 
 # -- inline slash-arg parser (power-user fast path) ---------------------------
@@ -141,10 +214,10 @@ def test_parse_inline_full_args_both_verbs():
     assert err is None
     assert (seq, idx) == ("myseq", 3)
     assert val == "New Shot Name"
-    # trim: single int token as value (still rest-of-line; parse_value types it)
-    seq, idx, val, err = interactive._parse_inline("CUT #5 1015")
+    # trim: single signed int token as value (rest-of-line; parse_value types it)
+    seq, idx, val, err = interactive._parse_inline("CUT #5 -12")
     assert err is None
-    assert (seq, idx, val) == ("CUT", 5, "1015")
+    assert (seq, idx, val) == ("CUT", 5, "-12")
 
 
 def test_parse_inline_partial_falls_back_to_none():
@@ -169,13 +242,13 @@ def test_parse_inline_value_typed_via_parse_value():
     # the parser stays raw; parse_value (the one trust boundary) types it.
     _, _, val, err = interactive._parse_inline("CUT #5 not-a-frame")
     assert err is None and val == "not-a-frame"
-    # trim is int-kind -> parse_value rejects the non-integer value
-    typed, perr = verbs.parse_value(verbs.REGISTRY["trim"], val)
+    # trim_head is offset-kind -> parse_value rejects the non-integer value
+    typed, perr = verbs.parse_value(verbs.REGISTRY["trim_head"], val)
     assert typed is None and "whole number" in perr
     # trailing junk after a valid int is rejected whole (no partial parse)
-    _, _, junk, err = interactive._parse_inline("CUT #5 1015 extra")
-    assert err is None and junk == "1015 extra"
-    typed, perr = verbs.parse_value(verbs.REGISTRY["trim"], junk)
+    _, _, junk, err = interactive._parse_inline("CUT #5 -12 extra")
+    assert err is None and junk == "-12 extra"
+    typed, perr = verbs.parse_value(verbs.REGISTRY["trim_head"], junk)
     assert typed is None and "whole number" in perr
     # rename accepts the rest-of-line string with spaces
     _, _, name, _ = interactive._parse_inline("myseq #1 New Shot Name")
@@ -265,13 +338,37 @@ async def test_oneshot_trim_rejects_non_integer(monkeypatch, capsys):
 
     async def segs(_seq):
         return [{"seg_name": "x", "track_idx": 0, "record_in": "r",
-                 "record_in_frame": 100, "source_name": "x"}]
+                 "record_in_frame": 100, "record_out_frame": 200, "duration": 100,
+                 "head": 8, "tail": 8, "source_name": "x"}]
     monkeypatch.setattr(interactive, "_segments", segs)
-    rc = await interactive.run_oneshot(verb="trim", sequence="S", segment_name="x",
+    rc = await interactive.run_oneshot(verb="trim_head", sequence="S", segment_name="x",
                                        new_name="not-a-frame", do_apply=False, as_json=True)
     assert rc == 1
     out = _json.loads(capsys.readouterr().out)
     assert out["ok"] is False and out["where"] == "input"
+
+
+@pytest.mark.asyncio
+async def test_oneshot_trim_over_range_is_legible(monkeypatch, capsys):
+    # the UX fix: an impossible trim is rejected with a plain message, NOT the
+    # opaque host "couldn't resolve the target" — and never reaches preview.
+    monkeypatch.setattr(interactive, "_bootstrap", _noop)
+
+    async def segs(_seq):
+        return [{"seg_name": "x", "track_idx": 0, "record_in": "r",
+                 "record_in_frame": 100, "record_out_frame": 200, "duration": 100,
+                 "head": 8, "tail": 8, "source_name": "x"}]
+
+    async def prev_boom(*a, **k):
+        raise AssertionError("range guard must reject before preview")
+    monkeypatch.setattr(interactive, "_segments", segs)
+    monkeypatch.setattr(interactive, "_preview_mutation", prev_boom)
+    rc = await interactive.run_oneshot(verb="trim_head", sequence="S", segment_name="x",
+                                       new_name="800", do_apply=False, as_json=True)
+    assert rc == 1
+    out = _json.loads(capsys.readouterr().out)
+    assert out["ok"] is False and out["where"] == "input"
+    assert "can't trim 800 off a 100-frame segment" in out["why"]
 
 
 @pytest.mark.asyncio
