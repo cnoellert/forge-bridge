@@ -107,6 +107,7 @@ def exec_cmd(
 
     With no command, drops into the interactive verb shell — pick an action,
     fill a couple of values, preview, ratify, apply — on the host-mutation rail.
+    Power users can inline the args: ``/rename <sequence> #<n> <new name>``.
     With ``--verb`` runs a single verb non-interactively (preview by default).
     """
     if verb is not None:

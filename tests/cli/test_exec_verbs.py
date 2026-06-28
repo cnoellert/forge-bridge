@@ -130,9 +130,60 @@ def test_is_unchanged():
     assert verbs.is_unchanged(sf, 5, None) is False
 
 
-# -- result-parsing helpers (interactive/one-shot rely on these) --------------
+# -- inline slash-arg parser (power-user fast path) ---------------------------
 
 from forge_bridge.cli import interactive  # noqa: E402
+
+
+def test_parse_inline_full_args_both_verbs():
+    # rename: rest-of-line value may contain spaces
+    seq, idx, val, err = interactive._parse_inline("myseq #3 New Shot Name")
+    assert err is None
+    assert (seq, idx) == ("myseq", 3)
+    assert val == "New Shot Name"
+    # trim: single int token as value (still rest-of-line; parse_value types it)
+    seq, idx, val, err = interactive._parse_inline("CUT #5 1015")
+    assert err is None
+    assert (seq, idx, val) == ("CUT", 5, "1015")
+
+
+def test_parse_inline_partial_falls_back_to_none():
+    # bare command -> prompt for everything
+    assert interactive._parse_inline("") == (None, None, None, None)
+    assert interactive._parse_inline("   ") == (None, None, None, None)
+    # sequence only -> still prompt for index + value
+    assert interactive._parse_inline("myseq") == ("myseq", None, None, None)
+    # sequence + index -> still prompt for value
+    assert interactive._parse_inline("myseq #2") == ("myseq", 2, None, None)
+
+
+def test_parse_inline_rejects_bad_index():
+    # second token must look like #N
+    seq, idx, val, err = interactive._parse_inline("myseq 3 newname")
+    assert seq is None and idx is None and err is not None and "#N" in err
+    seq, idx, val, err = interactive._parse_inline("myseq #abc rest")
+    assert idx is None and err is not None and "#N" in err
+
+
+def test_parse_inline_value_typed_via_parse_value():
+    # the parser stays raw; parse_value (the one trust boundary) types it.
+    _, _, val, err = interactive._parse_inline("CUT #5 not-a-frame")
+    assert err is None and val == "not-a-frame"
+    # trim is int-kind -> parse_value rejects the non-integer value
+    typed, perr = verbs.parse_value(verbs.REGISTRY["trim"], val)
+    assert typed is None and "whole number" in perr
+    # trailing junk after a valid int is rejected whole (no partial parse)
+    _, _, junk, err = interactive._parse_inline("CUT #5 1015 extra")
+    assert err is None and junk == "1015 extra"
+    typed, perr = verbs.parse_value(verbs.REGISTRY["trim"], junk)
+    assert typed is None and "whole number" in perr
+    # rename accepts the rest-of-line string with spaces
+    _, _, name, _ = interactive._parse_inline("myseq #1 New Shot Name")
+    typed, perr = verbs.parse_value(verbs.REGISTRY["rename"], name)
+    assert typed == "New Shot Name" and perr is None
+
+
+# -- result-parsing helpers (interactive/one-shot rely on these) --------------
 
 
 def _res(output=None, status="ok", reason_code=None, message=None):
