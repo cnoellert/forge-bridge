@@ -61,212 +61,139 @@ def test_discover_primitive_unknown_is_nonzero(runner):
     assert "primitive not found: missing" in result.stderr
 
 
-def test_discover_tools_json_envelope_lists_known_tool(runner):
-    result = runner.invoke(app, ["discover", "tools", "--json"])
+# discover's tool listing/detail are now read-API consumers (:9996 /api/v1/tools),
+# where artist_description / artist_label are resolved daemon-side from the
+# peer-authored CapabilityDeclaration carry. Tests mock the httpx read-API call
+# (forge_bridge.cli.discover.fetch / fetch_raw_envelope) — NO live daemon.
 
+_SAMPLE_TOOLS = [
+    {
+        "name": "forge_classify_shot",
+        "origin": "builtin",
+        "namespace": "forge",
+        "available": True,
+        "artist_description": "Peer-authored summary.",
+        "artist_label": "Classify Shot",
+    },
+    {
+        "name": "forge_ping",
+        "origin": "builtin",
+        "namespace": "forge",
+        "available": True,
+        "artist_description": "Check forge-bridge server connectivity.",
+        "artist_label": "Forge ping",
+    },
+]
+
+
+def _envelope(rows):
+    return {"data": rows, "meta": {"total": len(rows)}}
+
+
+def test_discover_tools_json_passes_through_read_api_envelope(runner, monkeypatch):
+    """--json emits the read-API payload byte-faithfully (artist fields included)."""
+    from forge_bridge.cli import discover as discover_mod
+
+    envelope = _envelope(_SAMPLE_TOOLS)
+    monkeypatch.setattr(discover_mod, "fetch_raw_envelope", lambda path: envelope)
+
+    result = runner.invoke(app, ["discover", "tools", "--json"])
     assert result.exit_code == 0
     body = json.loads(result.stdout)
-    assert "data" in body
-    tools = {row["name"]: row for row in body["data"]}
-    assert "forge_ping" in tools
-    assert tools["forge_ping"]["annotations"]["title"] == "Check forge-bridge connection"
-    assert tools["forge_ping"]["_source"] == "builtin"
-
-
-def test_discover_tool_detail_renders_known_tool(runner):
-    result = runner.invoke(app, ["discover", "tool", "forge_ping", "--no-color"])
-
-    assert result.exit_code == 0
-    assert "tool: forge_ping" in result.stdout
-    assert "_source: builtin" in result.stdout
-    assert "Check forge-bridge server connectivity." in result.stdout
-
-
-class _FakeTool:
-    def __init__(self, name, description, meta=None):
-        self.name = name
-        self.description = description
-        self.meta = meta or {}
-        self.annotations = None
-
-
-def test_discover_tools_derives_artist_description_from_docstring(runner, monkeypatch):
-    """The description seam: discover reads MCP-tool meta, a DIFFERENT source from
-    the canonical CapabilityDeclaration.summary → ToolRegistration.summary carry.
-    To avoid a competing second author, discover does NOT read a parallel
-    meta["summary"]; it resolves with summary=None → a clearly-subordinate derived
-    fallback (docstring first line). A stray peer meta["summary"] is ignored."""
-    from forge_bridge.cli import discover as discover_mod
-
-    async def fake_list():
-        return [
-            _FakeTool(
-                "forge_classify_shot",
-                "Bridge adapter docstring.\nmore",
-                # Not a canonical author here; intentionally not surfaced.
-                meta={"summary": "Should be ignored.", "_source": "user-taught"},
-            ),
-            _FakeTool(
-                "forge_derives",
-                "Derived from this first line.\nrest of docstring",
-                meta={"_source": "user-taught"},
-            ),
-        ]
-
-    monkeypatch.setattr(discover_mod, "_list_mcp_tools", fake_list)
-
-    result = runner.invoke(app, ["discover", "tools", "--json"])
-    assert result.exit_code == 0
-    rows = {r["name"]: r for r in json.loads(result.stdout)["data"]}
-    # No parallel meta["summary"] surfaced; description derived from docstring.
-    assert "summary" not in rows["forge_classify_shot"]
-    assert rows["forge_classify_shot"]["artist_description"] == "Bridge adapter docstring."
-    assert rows["forge_derives"]["artist_description"] == "Derived from this first line."
-
-
-class _FakeRegistration:
-    def __init__(self, summary):
-        self.summary = summary
-
-
-class _FakeRegistry:
-    """Stand-in for the canonical ToolRegistry — get(tool_id) → registration."""
-
-    def __init__(self, by_id):
-        self._by_id = by_id
-
-    def get(self, tool_id):
-        return self._by_id.get(tool_id)
-
-
-def test_discover_tools_prefers_registration_summary_over_fallback(runner, monkeypatch):
-    """The canonical carry: when a peer's CapabilityDeclaration.summary has been
-    carried onto ToolRegistration.summary, discover correlates the MCP tool name to
-    that registration (name == tool_id) and displays the summary. A tool with no
-    matching registration falls back to the derived docstring first line."""
-    from forge_bridge.cli import discover as discover_mod
-    from forge_bridge.mcp import server as mcp_server
-
-    async def fake_list():
-        return [
-            _FakeTool(
-                "forge_classify_shot",
-                "Bridge adapter docstring.\nmore",
-                meta={"_source": "user-taught"},
-            ),
-            _FakeTool(
-                "forge_no_registration",
-                "Derived from this first line.\nrest",
-                meta={"_source": "user-taught"},
-            ),
-        ]
-
-    monkeypatch.setattr(discover_mod, "_list_mcp_tools", fake_list)
-    monkeypatch.setattr(
-        mcp_server,
-        "_canonical_tool_registry",
-        _FakeRegistry(
-            {"forge_classify_shot": _FakeRegistration("Peer-authored summary.")}
-        ),
-    )
-
-    result = runner.invoke(app, ["discover", "tools", "--json"])
-    assert result.exit_code == 0
-    rows = {r["name"]: r for r in json.loads(result.stdout)["data"]}
-    # WITH registration summary → canonical peer-authored text wins.
+    assert body == envelope
+    rows = {r["name"]: r for r in body["data"]}
     assert rows["forge_classify_shot"]["artist_description"] == "Peer-authored summary."
-    # WITHOUT a registration → clearly-subordinate derived fallback.
-    assert (
-        rows["forge_no_registration"]["artist_description"]
-        == "Derived from this first line."
-    )
-
-
-def test_discover_tools_no_registry_falls_back(runner, monkeypatch):
-    """No live daemon registry in-process (registry is None) → derived fallback."""
-    from forge_bridge.cli import discover as discover_mod
-    from forge_bridge.mcp import server as mcp_server
-
-    async def fake_list():
-        return [_FakeTool("forge_x", "Derived line.\nmore", meta={"_source": "builtin"})]
-
-    monkeypatch.setattr(discover_mod, "_list_mcp_tools", fake_list)
-    monkeypatch.setattr(mcp_server, "_canonical_tool_registry", None)
-
-    result = runner.invoke(app, ["discover", "tools", "--json"])
-    assert result.exit_code == 0
-    rows = {r["name"]: r for r in json.loads(result.stdout)["data"]}
-    assert rows["forge_x"]["artist_description"] == "Derived line."
-
-
-class _FakeLabelRegistration:
-    def __init__(self, label):
-        self.label = label
-
-
-def test_discover_tools_prefers_registration_label_over_fallback(runner, monkeypatch):
-    """The short-name carry: a peer's CapabilityDeclaration.label carried onto
-    ToolRegistration.label is correlated by name↔tool_id and surfaced as
-    artist_label; a tool with no matching registration falls back to the derived
-    humanized name. Mirrors the summary seam."""
-    from forge_bridge.cli import discover as discover_mod
-    from forge_bridge.mcp import server as mcp_server
-
-    async def fake_list():
-        return [
-            _FakeTool(
-                "forge_classify_shot",
-                "Bridge adapter docstring.\nmore",
-                meta={"_source": "user-taught"},
-            ),
-            _FakeTool(
-                "forge_no_registration",
-                "Derived from this first line.\nrest",
-                meta={"_source": "user-taught"},
-            ),
-        ]
-
-    monkeypatch.setattr(discover_mod, "_list_mcp_tools", fake_list)
-    monkeypatch.setattr(
-        mcp_server,
-        "_canonical_tool_registry",
-        _FakeRegistry(
-            {"forge_classify_shot": _FakeLabelRegistration("Classify Shot")}
-        ),
-    )
-
-    result = runner.invoke(app, ["discover", "tools", "--json"])
-    assert result.exit_code == 0
-    rows = {r["name"]: r for r in json.loads(result.stdout)["data"]}
-    # WITH registration label → canonical peer-authored short name wins.
     assert rows["forge_classify_shot"]["artist_label"] == "Classify Shot"
-    # WITHOUT a registration → clearly-subordinate derived humanized fallback.
-    assert rows["forge_no_registration"]["artist_label"] == "Forge no registration"
 
 
-def test_discover_tools_label_no_registry_falls_back(runner, monkeypatch):
-    """No live daemon registry in-process (registry is None) → derived short-name
-    fallback for artist_label."""
+def test_discover_tools_human_displays_artist_description(runner, monkeypatch):
     from forge_bridge.cli import discover as discover_mod
-    from forge_bridge.mcp import server as mcp_server
 
-    async def fake_list():
-        return [_FakeTool("forge_x", "Derived line.\nmore", meta={"_source": "builtin"})]
+    monkeypatch.setattr(discover_mod, "fetch", lambda path: list(_SAMPLE_TOOLS))
 
-    monkeypatch.setattr(discover_mod, "_list_mcp_tools", fake_list)
-    monkeypatch.setattr(mcp_server, "_canonical_tool_registry", None)
-
-    result = runner.invoke(app, ["discover", "tools", "--json"])
+    result = runner.invoke(app, ["discover", "tools", "--no-color"])
     assert result.exit_code == 0
-    rows = {r["name"]: r for r in json.loads(result.stdout)["data"]}
-    assert rows["forge_x"]["artist_label"] == "Forge x"
+    assert "forge_classify_shot" in result.stdout
+    assert "Peer-authored summary." in result.stdout
 
 
-def test_discover_tool_unknown_is_nonzero(runner):
+def test_discover_tools_unreachable_daemon_exits_2(runner, monkeypatch):
+    from forge_bridge.cli import discover as discover_mod
+    from forge_bridge.cli.client import ServerUnreachableError
+
+    def _raise(path):
+        raise ServerUnreachableError("ConnectError")
+
+    monkeypatch.setattr(discover_mod, "fetch", _raise)
+    result = runner.invoke(app, ["discover", "tools", "--no-color"])
+    assert result.exit_code == 2
+
+
+def test_discover_tools_unreachable_daemon_json_exits_2(runner, monkeypatch):
+    from forge_bridge.cli import discover as discover_mod
+    from forge_bridge.cli.client import ServerUnreachableError
+
+    def _raise(path):
+        raise ServerUnreachableError("ConnectError")
+
+    monkeypatch.setattr(discover_mod, "fetch_raw_envelope", _raise)
+    result = runner.invoke(app, ["discover", "tools", "--json"])
+    assert result.exit_code == 2
+    body = json.loads(result.stdout)
+    assert body["error"]["code"] == "server_unreachable"
+
+
+def test_discover_tool_detail_displays_artist_fields(runner, monkeypatch):
+    from forge_bridge.cli import discover as discover_mod
+
+    monkeypatch.setattr(discover_mod, "fetch", lambda path: dict(_SAMPLE_TOOLS[0]))
+
+    result = runner.invoke(
+        app, ["discover", "tool", "forge_classify_shot", "--no-color"]
+    )
+    assert result.exit_code == 0
+    assert "tool: forge_classify_shot" in result.stdout
+    assert "label: Classify Shot" in result.stdout
+    assert "origin: builtin" in result.stdout
+    assert "Peer-authored summary." in result.stdout
+
+
+def test_discover_tool_detail_json_passes_through(runner, monkeypatch):
+    from forge_bridge.cli import discover as discover_mod
+
+    envelope = {"data": dict(_SAMPLE_TOOLS[0]), "meta": {}}
+    monkeypatch.setattr(discover_mod, "fetch_raw_envelope", lambda path: envelope)
+
+    result = runner.invoke(
+        app, ["discover", "tool", "forge_classify_shot", "--json"]
+    )
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == envelope
+
+
+def test_discover_tool_unknown_is_nonzero(runner, monkeypatch):
+    """A 404 from the read API (tool not registered) → exit 1."""
+    from forge_bridge.cli import discover as discover_mod
+    from forge_bridge.cli.client import ServerError
+
+    def _raise(path):
+        raise ServerError("tool_not_found", "no tool named 'not_a_tool'", 404)
+
+    monkeypatch.setattr(discover_mod, "fetch", _raise)
     result = runner.invoke(app, ["discover", "tool", "not_a_tool"])
-
     assert result.exit_code == 1
-    assert "tool not found: not_a_tool" in result.stderr
+
+
+def test_discover_tool_unreachable_daemon_exits_2(runner, monkeypatch):
+    from forge_bridge.cli import discover as discover_mod
+    from forge_bridge.cli.client import ServerUnreachableError
+
+    def _raise(path):
+        raise ServerUnreachableError("ConnectError")
+
+    monkeypatch.setattr(discover_mod, "fetch", _raise)
+    result = runner.invoke(app, ["discover", "tool", "forge_ping"])
+    assert result.exit_code == 2
 
 
 def test_discover_macros_empty_registry_is_clean_exit(runner, monkeypatch):
