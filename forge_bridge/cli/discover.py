@@ -7,7 +7,6 @@ macro registry, and chain parser module documentation.
 """
 from __future__ import annotations
 
-import asyncio
 import importlib
 import inspect
 import json
@@ -18,10 +17,24 @@ from typing import Annotated, Any
 import typer
 from rich.table import Table
 
+from forge_bridge.cli.client import (
+    ServerError,
+    ServerUnreachableError,
+    fetch,
+    fetch_raw_envelope,
+)
 from forge_bridge.cli.render import HEADER_STYLE, TOOLS_BOX, make_console
 
 
 _PRIMITIVE_RE = re.compile(r"^is_(?P<name>.+)_step$")
+
+_UNREACHABLE_STDERR = (
+    "fbridge discover: daemon read API is not running on :9996.\n"
+    "Start it with: fbridge up"
+)
+_UNREACHABLE_JSON = {
+    "error": {"code": "server_unreachable", "message": _UNREACHABLE_STDERR}
+}
 
 
 def _first_line(text: str | None) -> str:
@@ -76,116 +89,6 @@ def _primitive_detail(name: str) -> dict[str, str] | None:
         "module_docstring": _doc(module.__doc__),
         "parse_docstring": _doc(getattr(parser, "__doc__", None)),
     }
-
-
-async def _list_mcp_tools() -> list[Any]:
-    # Lazy import — importing the MCP server registers builtins and pulls in
-    # Flame/tool modules. Keep `fbridge --help` and unrelated commands quick.
-    from forge_bridge.mcp import server as _server
-
-    return await _server.mcp.list_tools()
-
-
-def _registration_summary(operator_id: str) -> str | None:
-    """Look up the peer-authored summary carried onto ``ToolRegistration``.
-
-    Canonical single source: a peer's ``CapabilityDeclaration.summary`` is carried
-    onto ``ToolRegistration.summary`` (see ``tool_registration_from_capability``).
-    Correlation is by exact identity — the MCP tool ``name`` equals the
-    registration ``tool_id`` (== ``declaration.capability_id``). A name that does
-    not match (a Bridge-internal builtin, or a peer that named its MCP tool
-    differently from its capability_id) simply misses → ``None`` → derived
-    fallback. No mis-attribution, never raises.
-
-    The registry is the daemon lifespan's ``_canonical_tool_registry`` (populated
-    by ``register_all_siblings`` at bootstrap Step 5). It is ``None`` on a
-    standalone CLI invocation with no live daemon in-process, in which case every
-    tool resolves to its derived fallback.
-    """
-    try:
-        from forge_bridge.mcp import server as _server
-
-        registry = getattr(_server, "_canonical_tool_registry", None)
-        if registry is None:
-            return None
-        registration = registry.get(operator_id)
-        return getattr(registration, "summary", None)
-    except Exception:  # noqa: BLE001 - a registry miss must never break discover
-        return None
-
-
-def _registration_label(operator_id: str) -> str | None:
-    """Look up the peer-authored SHORT NAME carried onto ``ToolRegistration.label``.
-
-    Mirrors :func:`_registration_summary` for ``CapabilityDeclaration.label``: same
-    canonical single source, same name↔tool_id correlation, same ``None`` →
-    derived-fallback miss semantics. Inert on a standalone CLI invocation (the
-    registry is ``None`` with no live daemon in-process) — every tool then resolves
-    to its derived humanized fallback.
-    """
-    try:
-        from forge_bridge.mcp import server as _server
-
-        registry = getattr(_server, "_canonical_tool_registry", None)
-        if registry is None:
-            return None
-        registration = registry.get(operator_id)
-        return getattr(registration, "label", None)
-    except Exception:  # noqa: BLE001 - a registry miss must never break discover
-        return None
-
-
-def _annotation_value(annotations: Any, name: str) -> Any:
-    if annotations is None:
-        return None
-    return getattr(annotations, name, None)
-
-
-def _tool_record(tool: Any) -> dict[str, Any]:
-    # Lazy — keeps `fbridge --help` off the forge_contracts import path. By the
-    # time records are built the heavy MCP-server import has already run.
-    from forge_bridge.orchestration.registration import artist_description, artist_label
-
-    meta = getattr(tool, "meta", None) or {}
-    annotations = getattr(tool, "annotations", None)
-    description = _doc(getattr(tool, "description", ""))
-    name = getattr(tool, "name", "")
-    # Description seam: the ONE canonical artist description is the peer-authored
-    # CapabilityDeclaration.summary, carried onto ToolRegistration.summary. discover
-    # reads it back from the canonical ToolRegistry by exact name↔tool_id identity
-    # (_registration_summary) and feeds it to artist_description as the preferred
-    # source. It deliberately does NOT read MCP-tool meta["summary"] — that would
-    # stand up a competing second author that can diverge from the declaration. When
-    # no registration carries a summary (a Bridge-internal builtin, or no live
-    # daemon registry in-process) the resolver returns a clearly-subordinate derived
-    # fallback (docstring first line / humanized name).
-    return {
-        "name": name,
-        "description": description,
-        "artist_description": artist_description(
-            summary=_registration_summary(name),
-            operator_id=name,
-            fallback_doc=description,
-        ),
-        # Short-name seam: same one-canonical-author rule as artist_description —
-        # the peer's CapabilityDeclaration.label carried onto ToolRegistration.label,
-        # resolved by name↔tool_id identity; derived humanized fallback when absent.
-        "artist_label": artist_label(
-            label=_registration_label(name),
-            operator_id=name,
-        ),
-        "annotations": {
-            "title": _annotation_value(annotations, "title"),
-            "readOnlyHint": _annotation_value(annotations, "readOnlyHint"),
-            "idempotentHint": _annotation_value(annotations, "idempotentHint"),
-        },
-        "_source": meta.get("_source", ""),
-    }
-
-
-def _tool_records() -> list[dict[str, Any]]:
-    tools = asyncio.run(_list_mcp_tools())
-    return sorted((_tool_record(tool) for tool in tools), key=lambda row: row["name"])
 
 
 def _macro_records() -> list[dict[str, str]]:
@@ -275,22 +178,49 @@ def discover_tools_cmd(
         typer.Option("--no-color", help="Disable color output."),
     ] = False,
 ) -> None:
-    """List MCP tools from the in-process FastMCP registry."""
-    rows = _tool_records()
+    """List MCP tools from the daemon read API (:9996 /api/v1/tools).
+
+    The displayed artist_description / artist_label are resolved daemon-side
+    from the peer-authored CapabilityDeclaration carry (real summaries/labels
+    where present, derived fallback otherwise). discover is a read-API consumer,
+    same as the other read commands — a daemon that is not running exits 2.
+    """
+    # P-01 GUARD — must be FIRST, before any Console() instantiation.
     if as_json:
-        _emit_json(rows)
+        try:
+            envelope = fetch_raw_envelope("/api/v1/tools")
+        except ServerUnreachableError:
+            sys.stdout.write(json.dumps(_UNREACHABLE_JSON) + "\n")
+            raise typer.Exit(code=2)
+        except ServerError as e:
+            sys.stdout.write(
+                json.dumps({"error": {"code": e.code, "message": e.message}}) + "\n"
+            )
+            raise typer.Exit(code=1)
+        sys.stdout.write(json.dumps(envelope) + "\n")
         return
 
     console = make_console(no_color=no_color)
+    stderr_console = make_console(no_color=no_color, stderr=True)
+    try:
+        rows = fetch("/api/v1/tools")
+    except ServerUnreachableError:
+        stderr_console.print(_UNREACHABLE_STDERR)
+        raise typer.Exit(code=2)
+    except ServerError as e:
+        stderr_console.print(f"error: {e.code}: {e.message}")
+        raise typer.Exit(code=1)
+
+    rows = sorted(rows, key=lambda row: row.get("name", ""))
     table = Table(box=TOOLS_BOX, header_style=HEADER_STYLE)
     table.add_column("Tool")
     table.add_column("Description")
     table.add_column("Source")
     for row in rows:
         table.add_row(
-            row["name"],
+            row.get("name", ""),
             row.get("artist_description") or "—",
-            row.get("_source") or "—",
+            row.get("origin") or "—",
         )
     console.print(table)
 
@@ -306,35 +236,47 @@ def discover_tool_cmd(
         typer.Option("--no-color", help="Disable color output."),
     ] = False,
 ) -> None:
-    """Show one MCP tool's description, annotations, and provenance."""
-    rows = {row["name"]: row for row in _tool_records()}
-    detail = rows.get(name)
-    if detail is None:
-        _not_found("tool", name, as_json)
+    """Show one MCP tool's artist description, label, and provenance.
+
+    Reads /api/v1/tools/<name> from the daemon read API. An unknown tool name
+    is a 404 → exit 1; a daemon that is not running → exit 2.
+    """
+    # P-01 GUARD — must be FIRST, before any Console() instantiation.
     if as_json:
-        _emit_json(detail)
+        try:
+            envelope = fetch_raw_envelope(f"/api/v1/tools/{name}")
+        except ServerUnreachableError:
+            sys.stdout.write(json.dumps(_UNREACHABLE_JSON) + "\n")
+            raise typer.Exit(code=2)
+        except ServerError as e:
+            sys.stdout.write(
+                json.dumps({"error": {"code": e.code, "message": e.message}}) + "\n"
+            )
+            raise typer.Exit(code=1)
+        sys.stdout.write(json.dumps(envelope) + "\n")
         return
 
-    annotations = detail["annotations"]
     console = make_console(no_color=no_color)
-    console.print(f"tool: {detail['name']}")
+    stderr_console = make_console(no_color=no_color, stderr=True)
+    try:
+        detail = fetch(f"/api/v1/tools/{name}")
+    except ServerUnreachableError:
+        stderr_console.print(_UNREACHABLE_STDERR)
+        raise typer.Exit(code=2)
+    except ServerError as e:
+        stderr_console.print(f"error: {e.code}: {e.message}")
+        raise typer.Exit(code=1)
+
+    console.print(f"tool: {detail.get('name', name)}")
     if detail.get("artist_label"):
         console.print(f"label: {detail['artist_label']}")
-    console.print(f"_source: {detail.get('_source') or '—'}")
-    console.print(
-        "annotations: "
-        f"title={annotations.get('title')!r}, "
-        f"readOnlyHint={annotations.get('readOnlyHint')!r}, "
-        f"idempotentHint={annotations.get('idempotentHint')!r}"
-    )
+    console.print(f"origin: {detail.get('origin') or '—'}")
+    console.print(f"namespace: {detail.get('namespace') or '—'}")
+    console.print(f"available: {detail.get('available')!r}")
     console.print("")
-    # ``artist_description`` prefers the canonical peer-authored
-    # ToolRegistration.summary and falls back to the derived first-line/name when
-    # no registration summary exists (see _tool_record / _registration_summary).
-    if detail.get("artist_description"):
-        console.print(f"description: {detail['artist_description']}")
-        console.print("")
-    console.print(detail["description"] or "(no description)")
+    # artist_description is resolved daemon-side, preferring the canonical
+    # peer-authored CapabilityDeclaration.summary carry, derived fallback otherwise.
+    console.print(detail.get("artist_description") or "(no description)")
 
 
 def discover_macros_cmd(
