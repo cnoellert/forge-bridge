@@ -78,7 +78,7 @@ def _collect_segments(seq):
     '''Return all non-gap segments with full metadata, grouped by track.
     Each entry: {
         track_idx, track_name, seg_name, shot_name, role, head,
-        record_in, record_out, source_name, file_path, start_frame
+        record_in, record_in_frame, record_out, source_name, file_path, start_frame
     }
     '''
     result = []
@@ -110,6 +110,13 @@ def _collect_segments(seq):
                 head = int(seg.head)
             except Exception:
                 pass
+            record_in_frame = None
+            try:
+                # frame-number of the timeline in-point; the temporal-delta rail
+                # (forge_apply_segment_temporal_delta) matches frame_in against this.
+                record_in_frame = int(seg.record_in.frame)
+            except Exception:
+                pass
             result.append({
                 'track_idx':   ti,
                 'track_name':  track_name,
@@ -121,6 +128,7 @@ def _collect_segments(seq):
                 'role':        _detect_role(fp) or 'source',
                 'head':        head,
                 'record_in':   str(seg.record_in),
+                'record_in_frame': record_in_frame,
                 'record_out':  str(seg.record_out),
                 'start_frame': int(seg.start_frame) if seg.start_frame else None,
             })

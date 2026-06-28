@@ -87,7 +87,7 @@ def exec_cmd(
     ] = False,
     verb: Annotated[
         str | None,
-        typer.Option("--verb", help="One-shot verb (e.g. rename). Needs --sequence/--segment/--new-name."),
+        typer.Option("--verb", help="One-shot verb (rename | trim). Needs --sequence/--segment/--new-name."),
     ] = None,
     sequence: Annotated[
         str | None, typer.Option("--sequence", help="One-shot: target sequence name.")
@@ -96,7 +96,7 @@ def exec_cmd(
         str | None, typer.Option("--segment", help="One-shot: exact current segment name.")
     ] = None,
     new_name: Annotated[
-        str | None, typer.Option("--new-name", help="One-shot: new segment name.")
+        str | None, typer.Option("--new-name", help="One-shot: new value (segment name, or in-point frame number for trim).")
     ] = None,
     do_apply: Annotated[
         bool,

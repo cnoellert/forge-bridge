@@ -17,6 +17,7 @@ def _fake_seg(name: str = "shot_010") -> dict:
     return {
         "track_idx": 0,
         "record_in": "'01:00:00+00'",
+        "record_in_frame": 86400,
         "seg_name": name,
         "source_name": name,
     }
@@ -56,6 +57,77 @@ def test_build_host_mutation_spec_is_preview_shape():
     assert len(spec.edges) == 1
     assert spec.edges[0].to_port == "deltas"
     assert spec.nodes[0].config["arguments"]["delta"] is delta
+
+
+# -- verb #2: trim / head-trim (temporal-delta rail) --------------------------
+
+
+def test_registry_exposes_trim():
+    assert "trim" in verbs.REGISTRY
+    v = verbs.REGISTRY["trim"]
+    assert v.label and v.summary
+    assert v.value_kind == "int"
+    assert v.value_field == "new_frame"
+    assert v.current_key == "record_in_frame"
+
+
+def test_build_trim_delta_envelope():
+    delta = verbs.build_trim_delta(
+        {"sequence_name": "CUT", "segment": _fake_seg(), "new_frame": 86412}
+    )
+    entry = (delta.get("changes") or delta.get("entries"))[0]
+    assert entry["action"] == "updated"
+    assert entry["object_type"] == "segment"
+    # single changed temporal field frame_in -> supported temporal trim
+    assert entry["before"]["frame_in"] == 86400
+    assert entry["after"]["frame_in"] == 86412
+    assert entry["before"]["id"] == entry["after"]["id"]  # only frame_in changes
+    md = entry["metadata"]
+    assert md["track_idx"] == 0
+    assert md["sequence_name"] == "CUT"
+    assert md["seg_name"] == "shot_010"
+    assert md["record_in"] == "'01:00:00+00'"
+
+
+def test_build_trim_delta_spec_wiring():
+    delta = verbs.build_trim_delta(
+        {"sequence_name": "CUT", "segment": _fake_seg(), "new_frame": 1}
+    )
+    spec = verbs.build_host_mutation_spec(delta, verbs.host_resolve_operator())
+    assert [n.node_id for n in spec.nodes] == ["op", "delta_to_manifest"]
+    assert spec.nodes[0].config["arguments"]["delta"] is delta
+
+
+# -- shared trust-boundary parse/validation -----------------------------------
+
+
+def test_parse_value_int_accepts_and_rejects():
+    v = verbs.REGISTRY["trim"]
+    assert verbs.parse_value(v, "1015") == (1015, None)
+    assert verbs.parse_value(v, "  42 ") == (42, None)
+    # non-integer rejected
+    val, err = verbs.parse_value(v, "ten")
+    assert val is None and "whole number" in err
+    # negative frame rejected
+    val, err = verbs.parse_value(v, "-3")
+    assert val is None and "0 or greater" in err
+
+
+def test_parse_value_str_rejects_empty():
+    v = verbs.REGISTRY["rename"]
+    assert verbs.parse_value(v, " shot_v2 ") == ("shot_v2", None)
+    val, err = verbs.parse_value(v, "   ")
+    assert val is None and "empty" in err
+
+
+def test_is_unchanged():
+    rn = verbs.REGISTRY["rename"]
+    sf = verbs.REGISTRY["trim"]
+    assert verbs.is_unchanged(rn, "shot_010", "shot_010") is True
+    assert verbs.is_unchanged(rn, "shot_011", "shot_010") is False
+    assert verbs.is_unchanged(sf, 86400, 86400) is True
+    assert verbs.is_unchanged(sf, 86412, 86400) is False
+    assert verbs.is_unchanged(sf, 5, None) is False
 
 
 # -- result-parsing helpers (interactive/one-shot rely on these) --------------
@@ -125,10 +197,30 @@ async def test_oneshot_bad_verb_is_json_and_skips_bootstrap(monkeypatch, capsys)
 @pytest.mark.asyncio
 async def test_oneshot_same_name_json(monkeypatch, capsys):
     monkeypatch.setattr(interactive, "_bootstrap", _noop)
+
+    async def segs(_seq):
+        return [{"seg_name": "x", "track_idx": 0, "record_in": "r", "source_name": "x"}]
+    monkeypatch.setattr(interactive, "_segments", segs)
+    # unchanged is now checked against the segment's current value (post-fetch)
     rc = await interactive.run_oneshot(verb="rename", sequence="S", segment_name="x",
                                        new_name="x", do_apply=False, as_json=True)
     assert rc == 1
     assert _json.loads(capsys.readouterr().out)["where"] == "input"
+
+
+@pytest.mark.asyncio
+async def test_oneshot_trim_rejects_non_integer(monkeypatch, capsys):
+    monkeypatch.setattr(interactive, "_bootstrap", _noop)
+
+    async def segs(_seq):
+        return [{"seg_name": "x", "track_idx": 0, "record_in": "r",
+                 "record_in_frame": 100, "source_name": "x"}]
+    monkeypatch.setattr(interactive, "_segments", segs)
+    rc = await interactive.run_oneshot(verb="trim", sequence="S", segment_name="x",
+                                       new_name="not-a-frame", do_apply=False, as_json=True)
+    assert rc == 1
+    out = _json.loads(capsys.readouterr().out)
+    assert out["ok"] is False and out["where"] == "input"
 
 
 @pytest.mark.asyncio
@@ -159,11 +251,11 @@ async def test_oneshot_preview_json_pure(monkeypatch, capsys):
     async def segs(_seq):
         return [{"seg_name": "x", "track_idx": 0, "record_in": "r", "source_name": "x"}]
 
-    async def prev(_sequence, _seg, _new):
+    async def prev(_verb, _sequence, _seg, _values):
         return ({"apply_counterpart": {"tool": "forge_apply_segment_delta"},
                  "resolved_plan": [1]}, None)
     monkeypatch.setattr(interactive, "_segments", segs)
-    monkeypatch.setattr(interactive, "_preview_rename", prev)
+    monkeypatch.setattr(interactive, "_preview_mutation", prev)
     rc = await interactive.run_oneshot(verb="rename", sequence="S", segment_name="x",
                                        new_name="y", do_apply=False, as_json=True)
     assert rc == 0
@@ -195,4 +287,4 @@ async def test_apply_held_success(monkeypatch):
     monkeypatch.setattr(mod, "graph_replay_commit_spec", lambda h: None)
     monkeypatch.setattr(interactive, "_ratified_assent", lambda: object())
     ok, msg = await interactive._apply_held({})
-    assert ok and "renamed" in msg
+    assert ok and "applied" in msg

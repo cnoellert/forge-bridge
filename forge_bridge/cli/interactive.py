@@ -69,17 +69,17 @@ def _ratified_assent() -> Any:
     )
 
 
-async def _preview_rename(
-    sequence: str, seg: dict[str, Any], new_name: str
+async def _preview_mutation(
+    verb: Any, sequence: str, seg: dict[str, Any], values: dict[str, Any]
 ) -> tuple[dict[str, Any] | None, tuple[str, str] | None]:
-    """Resolve the held mutation manifest for a rename (NO assent, no mutation).
+    """Resolve the held mutation manifest for a verb (NO assent, no mutation).
 
     Returns (held_manifest, None) on success, or (None, (where, why)) for a
     fail-closed reason (e.g. UNRESOLVED_TARGET).
     """
     from forge_bridge.orchestration.apply_editorial_delta import preview_editorial_delta
-    delta = _verbs.build_rename_delta(
-        {"sequence_name": sequence, "segment": seg, "new_name": new_name}
+    delta = verb.build_delta(
+        {"sequence_name": sequence, "segment": seg, **values}
     )
     spec = _verbs.build_host_mutation_spec(delta, _verbs.host_resolve_operator())
     results = await preview_editorial_delta(spec)
@@ -102,7 +102,7 @@ async def _apply_held(held: dict[str, Any]) -> tuple[bool, str]:
     )
     commit = _commit_applied(applied)
     if commit and commit.get("applied"):
-        return True, f"{commit.get('count')} renamed"
+        return True, f"{commit.get('count')} applied"
     # apply-path error: the failing node IS commit, so read every node (unlike
     # _node_error, which intentionally skips commit for the *preview* phase).
     for r in applied.values():
@@ -114,7 +114,7 @@ async def _apply_held(held: dict[str, Any]) -> tuple[bool, str]:
     return False, "apply did not complete"
 
 
-_REQUIRED_PLUGINS = ("flame", "traffik")  # rename needs flame (host) + traffik (op)
+_REQUIRED_PLUGINS = ("flame", "traffik")  # verbs need flame (host) + traffik (op)
 
 _REASON_HUMAN = {
     "UNRESOLVED_TARGET": "couldn't find that segment in the live timeline",
@@ -142,7 +142,7 @@ async def _bootstrap() -> None:
     await bootstrap_daemon(mcp)
 
 
-async def _run_rename(con) -> None:
+async def _run_verb(con, *, verb: Any) -> None:
     sequence = Prompt.ask("[amber]Sequence[/amber]").strip()
     if not sequence:
         con.print("  cancelled — no sequence")
@@ -159,20 +159,29 @@ async def _run_rename(con) -> None:
         con.print("  cancelled — out of range")
         return
     seg = segs[idx - 1]
-    new_name = Prompt.ask("[amber]New name[/amber]", default=str(seg.get("seg_name"))).strip()
-    if not new_name or new_name == seg.get("seg_name"):
-        con.print("  cancelled — name unchanged")
+    current = seg.get(verb.current_key)
+    # one edited value, typed per the verb (str vs int) — IntPrompt keeps the
+    # interactive lane numeric; parse_value is the shared trust-boundary gate.
+    if verb.value_kind == "int":
+        raw = str(IntPrompt.ask(f"[amber]{verb.value_label}[/amber]", default=current))
+    else:
+        raw = Prompt.ask(f"[amber]{verb.value_label}[/amber]", default=str(current))
+    value, perr = _verbs.parse_value(verb, raw)
+    if perr is not None:
+        con.print(f"  cancelled — {perr}")
+        return
+    if _verbs.is_unchanged(verb, value, current):
+        con.print("  cancelled — value unchanged")
         return
 
     con.print("\n  [dim]checking the live timeline…[/dim]")
-    held, err = await _preview_rename(sequence, seg, new_name)
+    held, err = await _preview_mutation(verb, sequence, seg, {verb.value_field: value})
     if err is not None:
         con.print(f"  [red]can't do that[/red] — {_humanize(err[1])}")
         return
     plan = held.get("resolved_plan") or []
-    con.print(f"\n  [bold]Preview[/bold] — will rename {len(plan)} segment in Flame:")
-    con.print(f"    {seg.get('seg_name')}")
-    con.print(f"      →  {new_name}")
+    con.print(f"\n  [bold]Preview[/bold] — {verb.label}, {len(plan)} segment in Flame:")
+    con.print(f"    {seg.get('seg_name')}:  {current}  →  {value}")
     con.print("    [dim]reversible · nothing else touched[/dim]\n")
 
     if not Confirm.ask("  Apply this change?", default=False):
@@ -193,7 +202,11 @@ async def run_interactive() -> None:
     await _bootstrap()
 
     con.print("\n[bold amber]forge exec[/bold amber] — type [bold]/help[/bold], or a verb. [dim]/quit to leave.[/dim]")
-    handlers = {"rename": _run_rename}
+    # one handler per registered verb — zero per-verb code (verbs are data)
+    handlers = {
+        v.name: (lambda con, _v=v: _run_verb(con, verb=_v))
+        for v in _verbs.list_verbs()
+    }
     while True:
         try:
             line = Prompt.ask("\n[bold]forge[/bold]").strip()
@@ -242,23 +255,23 @@ async def run_oneshot(
 ) -> int:
     """Non-interactive one-shot: preview a verb, or STAGE it for ratification.
 
-    Segment is matched by exact ``seg_name``. Preview-only by default. With
-    ``do_apply`` it does NOT self-apply — it persists a proposed ``graph_intent``
-    and prints the ``fbridge ratify <id>`` command, so ratification stays a
-    separate, audited operator act (assent is never self-signed here).
+    Segment is matched by exact ``seg_name``. ``new_name`` carries the raw new
+    value as a string (ponytail: one CLI slot serves every verb; it is parsed per
+    the verb's ``value_kind`` at the trust boundary). Preview-only by default.
+    With ``do_apply`` it does NOT self-apply — it persists a proposed
+    ``graph_intent`` and prints the ``fbridge ratify <id>`` command, so
+    ratification stays a separate, audited operator act (assent is never
+    self-signed here).
     """
     con = make_console()
 
-    if verb != "rename":
+    spec_verb = _verbs.REGISTRY.get(verb)
+    if spec_verb is None:
         _emit(con, as_json, {"ok": False, "where": "verb", "why": f"unsupported verb {verb!r}"},
               f"[red]unsupported verb[/red]: {verb}")
         return 1
 
     await _bootstrap()
-    if new_name.strip() == segment_name:
-        _emit(con, as_json, {"ok": False, "where": "input", "why": "name unchanged"},
-              "[yellow]name unchanged — nothing to do[/yellow]")
-        return 1
 
     segs = await _segments(sequence)
     if not segs:
@@ -274,7 +287,18 @@ async def run_oneshot(
         return 1
     seg = matches[0]
 
-    held, err = await _preview_rename(sequence, seg, new_name)
+    value, perr = _verbs.parse_value(spec_verb, new_name)
+    if perr is not None:
+        _emit(con, as_json, {"ok": False, "where": "input", "why": perr},
+              f"[yellow]{perr}[/yellow]")
+        return 1
+    current = seg.get(spec_verb.current_key)
+    if _verbs.is_unchanged(spec_verb, value, current):
+        _emit(con, as_json, {"ok": False, "where": "input", "why": "value unchanged"},
+              "[yellow]value unchanged — nothing to do[/yellow]")
+        return 1
+
+    held, err = await _preview_mutation(spec_verb, sequence, seg, {spec_verb.value_field: value})
     if err is not None:
         _emit(con, as_json, {"ok": False, "where": err[0], "why": _humanize(err[1])},
               f"[red]can't do that[/red] — {_humanize(err[1])}")
@@ -283,8 +307,8 @@ async def run_oneshot(
     plan = held.get("resolved_plan") or []
     if not do_apply:
         _emit(con, as_json, {"ok": True, "preview": True, "manifest": held},
-              f"Preview — would rename {len(plan)} segment: {segment_name} → {new_name} "
-              "(not applied; pass --apply to stage for ratification)")
+              f"Preview — would {verb} {len(plan)} segment: {segment_name} "
+              f"{current} → {value} (not applied; pass --apply to stage for ratification)")
         return 0
 
     # --apply STAGES (persists a proposed graph_intent); it does not self-ratify.
@@ -293,13 +317,13 @@ async def run_oneshot(
     )
     from forge_bridge.store.session import get_async_session_factory
     spec = _verbs.build_host_mutation_spec(
-        _verbs.build_rename_delta(
-            {"sequence_name": sequence, "segment": seg, "new_name": new_name}),
+        spec_verb.build_delta(
+            {"sequence_name": sequence, "segment": seg, spec_verb.value_field: value}),
         _verbs.host_resolve_operator(),
     )
     staged = await preview_editorial_delta_for_ratification(
         spec, session_factory=get_async_session_factory(),
-        display=f"rename {segment_name} -> {new_name}",
+        display=f"{verb} {segment_name} -> {value}",
     )
     gid = staged.get("graph_intent_id")
     _emit(con, as_json,
