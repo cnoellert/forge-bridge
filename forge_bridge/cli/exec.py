@@ -100,7 +100,7 @@ def exec_cmd(
     ] = None,
     do_apply: Annotated[
         bool,
-        typer.Option("--apply", help="One-shot: actually apply (default previews only)."),
+        typer.Option("--apply", help="One-shot: stage for ratification (prints `fbridge ratify <id>`); default previews only."),
     ] = False,
 ) -> None:
     """Run the shared chain engine via the console daemon (POST /api/v1/exec).
@@ -112,8 +112,13 @@ def exec_cmd(
     if verb is not None:
         import asyncio
         from forge_bridge.cli.interactive import run_oneshot
-        if not (sequence and segment and new_name):
-            sys.stderr.write("Error: --verb requires --sequence, --segment, and --new-name\n")
+        missing = [n for n, v in (("--sequence", sequence), ("--segment", segment),
+                                  ("--new-name", new_name)) if v is None]
+        if missing:
+            sys.stderr.write(f"Error: --verb requires {', '.join(missing)}\n")
+            raise typer.Exit(code=_EXIT_USAGE)
+        if not (sequence.strip() and segment.strip() and new_name.strip()):
+            sys.stderr.write("Error: --sequence, --segment, --new-name must not be empty\n")
             raise typer.Exit(code=_EXIT_USAGE)
         code = asyncio.run(run_oneshot(
             verb=verb, sequence=sequence, segment_name=segment,

@@ -92,7 +92,7 @@ _HOST_RESOLVE_OP = "traffik.flame_delta.host_resolve"
 REGISTRY: dict[str, Verb] = {
     "rename": Verb(
         name="rename",
-        label="Rename a shot",
+        label="Rename a segment",
         summary="Rename a segment in the open Flame sequence (reversible, ratified).",
         build_delta=build_rename_delta,
     ),
@@ -106,30 +106,4 @@ def host_resolve_operator() -> str:
 def list_verbs() -> list[Verb]:
     return list(REGISTRY.values())
 
-
-def _selfcheck() -> None:
-    # Build a rename delta from a fake live-segment dict and assert the shape +
-    # the GraphSpec wiring. Catches drift in the delta identity envelope / edges.
-    seg = {
-        "track_idx": 0, "record_in": "'01:00:00+00'",
-        "seg_name": "shot_010", "source_name": "shot_010",
-    }
-    delta = build_rename_delta(
-        {"sequence_name": "CUT", "segment": seg, "new_name": "shot_010_v2"}
-    )
-    entry = delta["changes"][0] if "changes" in delta else delta["entries"][0]
-    assert entry["action"] == "updated"
-    assert entry["after"]["name"] == "shot_010_v2"
-    md = entry["metadata"]
-    assert md["track_idx"] == 0 and md["sequence_name"] == "CUT"
-    assert md["seg_name"] == "shot_010" and md["source_name"] == "shot_010"
-
-    spec = build_host_mutation_spec(delta, _HOST_RESOLVE_OP)
-    assert [n.node_id for n in spec.nodes] == ["op", "delta_to_manifest"]
-    assert len(spec.edges) == 1 and spec.edges[0].to_port == "deltas"
-    assert "rename" in REGISTRY
-    print("verbs selfcheck OK")  # noqa: T201 — __main__ self-check
-
-
-if __name__ == "__main__":
-    _selfcheck()
+# Coverage: tests/cli/test_exec_verbs.py (delta envelope, spec wiring, registry).

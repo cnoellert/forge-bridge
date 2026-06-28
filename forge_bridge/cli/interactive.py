@@ -103,12 +103,41 @@ async def _apply_held(held: dict[str, Any]) -> tuple[bool, str]:
     commit = _commit_applied(applied)
     if commit and commit.get("applied"):
         return True, f"{commit.get('count')} renamed"
-    cerr = _node_error(applied) or ("commit", "apply did not complete")
-    return False, cerr[1]
+    # apply-path error: the failing node IS commit, so read every node (unlike
+    # _node_error, which intentionally skips commit for the *preview* phase).
+    for r in applied.values():
+        if str(getattr(r.status, "value", r.status)) == "error":
+            out = getattr(r, "output", None)
+            nested = out.get("error", {}).get("type") if isinstance(out, dict) else None
+            return False, _humanize(getattr(r, "reason_code", None) or nested
+                                    or getattr(r, "message", None))
+    return False, "apply did not complete"
+
+
+_REQUIRED_PLUGINS = ("flame", "traffik")  # rename needs flame (host) + traffik (op)
+
+_REASON_HUMAN = {
+    "UNRESOLVED_TARGET": "couldn't find that segment in the live timeline",
+    "HELD_FOR_REVIEW": "this change needs human review before it can apply",
+    "UNSUPPORTED_DELTA_ACTION": "that kind of change isn't supported yet",
+    "HETEROGENEOUS_DELTA": "mixed change types can't be applied together yet",
+    "HOST_DISCOVER_FAILED": "Flame couldn't resolve the target",
+    "PLAN_STATE_DRIFT": "the timeline changed since the preview — re-run it",
+    "ASSENT_INVALID": "not approved",
+    "APPLY_FAILED": "Flame rejected the change",
+}
+
+
+def _humanize(reason: str | None) -> str:
+    if not reason:
+        return "could not complete"
+    return _REASON_HUMAN.get(reason, reason)
 
 
 async def _bootstrap() -> None:
-    os.environ.setdefault("FORGE_PLUGINS", "flame,traffik")
+    # union (not setdefault): rename needs traffik even if the shell preset flame only
+    have = {p.strip() for p in os.environ.get("FORGE_PLUGINS", "").split(",") if p.strip()}
+    os.environ["FORGE_PLUGINS"] = ",".join(sorted(have | set(_REQUIRED_PLUGINS)))
     from forge_bridge.mcp.server import mcp, bootstrap_daemon
     await bootstrap_daemon(mcp)
 
@@ -138,7 +167,7 @@ async def _run_rename(con) -> None:
     con.print("\n  [dim]checking the live timeline…[/dim]")
     held, err = await _preview_rename(sequence, seg, new_name)
     if err is not None:
-        con.print(f"  [red]can't do that[/red] — {err[1]} ([dim]{err[0]}[/dim])")
+        con.print(f"  [red]can't do that[/red] — {_humanize(err[1])}")
         return
     plan = held.get("resolved_plan") or []
     con.print(f"\n  [bold]Preview[/bold] — will rename {len(plan)} segment in Flame:")
@@ -189,8 +218,17 @@ async def run_interactive() -> None:
             continue
         try:
             await handler(con)
+        except (KeyboardInterrupt, EOFError):
+            con.print("  cancelled.")
         except Exception as exc:  # noqa: BLE001 — REPL must survive one bad verb
             con.print(f"  [red]error[/red]: {type(exc).__name__}: {exc}")
+
+
+def _emit(con, as_json: bool, payload: dict[str, Any], human: str) -> None:
+    if as_json:
+        print(json.dumps(payload, default=str))  # noqa: T201
+    else:
+        con.print(human)
 
 
 async def run_oneshot(
@@ -202,51 +240,69 @@ async def run_oneshot(
     do_apply: bool,
     as_json: bool = False,
 ) -> int:
-    """Non-interactive one-shot: preview a verb (and optionally apply).
+    """Non-interactive one-shot: preview a verb, or STAGE it for ratification.
 
-    Scriptable + testable sibling of the REPL. Segment is matched by exact
-    ``seg_name`` (no interactive picker). Preview-only by default; ``do_apply``
-    runs the ratified commit replay. Returns a process exit code.
+    Segment is matched by exact ``seg_name``. Preview-only by default. With
+    ``do_apply`` it does NOT self-apply — it persists a proposed ``graph_intent``
+    and prints the ``fbridge ratify <id>`` command, so ratification stays a
+    separate, audited operator act (assent is never self-signed here).
     """
     con = make_console()
-    await _bootstrap()
 
     if verb != "rename":
-        con.print(f"[red]unsupported verb[/red]: {verb}")
+        _emit(con, as_json, {"ok": False, "where": "verb", "why": f"unsupported verb {verb!r}"},
+              f"[red]unsupported verb[/red]: {verb}")
+        return 1
+
+    await _bootstrap()
+    if new_name.strip() == segment_name:
+        _emit(con, as_json, {"ok": False, "where": "input", "why": "name unchanged"},
+              "[yellow]name unchanged — nothing to do[/yellow]")
         return 1
 
     segs = await _segments(sequence)
+    if not segs:
+        _emit(con, as_json, {"ok": False, "where": "sequence",
+                             "why": f"no segments on {sequence!r} — is it open in Flame?"},
+              f"[red]no segments on {sequence!r}[/red] — is it open in Flame?")
+        return 1
     matches = [s for s in segs if str(s.get("seg_name")) == segment_name]
     if len(matches) != 1:
-        why = ("no segment" if not matches
-               else f"{len(matches)} segments") + f" named {segment_name!r} on {sequence}"
-        if as_json:
-            print(json.dumps({"ok": False, "where": "select", "why": why}))  # noqa: T201
-        else:
-            con.print(f"[red]{why}[/red]")
+        why = (f"no segment named {segment_name!r}" if not matches
+               else f"{len(matches)} segments named {segment_name!r} (ambiguous)")
+        _emit(con, as_json, {"ok": False, "where": "select", "why": why}, f"[red]{why}[/red]")
         return 1
     seg = matches[0]
 
     held, err = await _preview_rename(sequence, seg, new_name)
     if err is not None:
-        if as_json:
-            print(json.dumps({"ok": False, "where": err[0], "why": err[1]}))  # noqa: T201
-        else:
-            con.print(f"[red]can't do that[/red] — {err[1]} ([dim]{err[0]}[/dim])")
+        _emit(con, as_json, {"ok": False, "where": err[0], "why": _humanize(err[1])},
+              f"[red]can't do that[/red] — {_humanize(err[1])}")
         return 1
 
+    plan = held.get("resolved_plan") or []
     if not do_apply:
-        if as_json:
-            print(json.dumps({"ok": True, "preview": True, "manifest": held}, default=str))  # noqa: T201
-        else:
-            plan = held.get("resolved_plan") or []
-            con.print(f"Preview — would rename {len(plan)} segment: "
-                      f"{segment_name} → {new_name} (not applied; pass --apply)")
+        _emit(con, as_json, {"ok": True, "preview": True, "manifest": held},
+              f"Preview — would rename {len(plan)} segment: {segment_name} → {new_name} "
+              "(not applied; pass --apply to stage for ratification)")
         return 0
 
-    ok, msg = await _apply_held(held)
-    if as_json:
-        print(json.dumps({"ok": ok, "applied": ok, "detail": msg}))  # noqa: T201
-    else:
-        con.print(f"{'✓ enacted in Flame — ' + msg if ok else '[red]not applied[/red] — ' + msg}")
-    return 0 if ok else 4
+    # --apply STAGES (persists a proposed graph_intent); it does not self-ratify.
+    from forge_bridge.orchestration.apply_editorial_delta import (
+        preview_editorial_delta_for_ratification,
+    )
+    from forge_bridge.store.session import get_async_session_factory
+    spec = _verbs.build_host_mutation_spec(
+        _verbs.build_rename_delta(
+            {"sequence_name": sequence, "segment": seg, "new_name": new_name}),
+        _verbs.host_resolve_operator(),
+    )
+    staged = await preview_editorial_delta_for_ratification(
+        spec, session_factory=get_async_session_factory(),
+        display=f"rename {segment_name} -> {new_name}",
+    )
+    gid = staged.get("graph_intent_id")
+    _emit(con, as_json,
+          {"ok": True, "staged": True, "graph_intent_id": gid},
+          f"staged — review then apply with:  [bold]fbridge ratify {gid}[/bold]")
+    return 0
