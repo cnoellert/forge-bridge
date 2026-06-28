@@ -87,7 +87,7 @@ def exec_cmd(
     ] = False,
     verb: Annotated[
         str | None,
-        typer.Option("--verb", help="One-shot verb (e.g. rename). Needs --sequence/--segment/--new-name."),
+        typer.Option("--verb", help="One-shot verb (rename | trim). Needs --sequence/--segment/--new-name."),
     ] = None,
     sequence: Annotated[
         str | None, typer.Option("--sequence", help="One-shot: target sequence name.")
@@ -96,7 +96,7 @@ def exec_cmd(
         str | None, typer.Option("--segment", help="One-shot: exact current segment name.")
     ] = None,
     new_name: Annotated[
-        str | None, typer.Option("--new-name", help="One-shot: new segment name.")
+        str | None, typer.Option("--new-name", help="One-shot: new value (segment name, or in-point frame number for trim).")
     ] = None,
     do_apply: Annotated[
         bool,
@@ -106,7 +106,10 @@ def exec_cmd(
     """Run the shared chain engine via the console daemon (POST /api/v1/exec).
 
     With no command, drops into the interactive verb shell — pick an action,
-    fill a couple of values, preview, ratify, apply — on the host-mutation rail.
+    fill a couple of values, preview, then choose: [y] apply now, [s] stage the
+    intent for later ``fbridge ratify <id>``, or [n] cancel — on the
+    host-mutation rail. ([s] proposes only; it never self-ratifies or applies.)
+    Power users can inline the args: ``/rename <sequence> #<n> <new name>``.
     With ``--verb`` runs a single verb non-interactively (preview by default).
     """
     if verb is not None:
