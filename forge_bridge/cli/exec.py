@@ -78,15 +78,58 @@ def _exec_http(text: str, *, client=None) -> dict:
 
 def exec_cmd(
     command: Annotated[
-        str,
-        typer.Argument(help="Command string (PR30 ``->`` chains, macro expand)."),
-    ],
+        str | None,
+        typer.Argument(help="Command string (PR30 ``->`` chains). Omit for interactive mode."),
+    ] = None,
     as_json: Annotated[
         bool,
         typer.Option("--json", help="Emit the PR31 response dict to stdout."),
     ] = False,
+    verb: Annotated[
+        str | None,
+        typer.Option("--verb", help="One-shot verb (e.g. rename). Needs --sequence/--segment/--new-name."),
+    ] = None,
+    sequence: Annotated[
+        str | None, typer.Option("--sequence", help="One-shot: target sequence name.")
+    ] = None,
+    segment: Annotated[
+        str | None, typer.Option("--segment", help="One-shot: exact current segment name.")
+    ] = None,
+    new_name: Annotated[
+        str | None, typer.Option("--new-name", help="One-shot: new segment name.")
+    ] = None,
+    do_apply: Annotated[
+        bool,
+        typer.Option("--apply", help="One-shot: stage for ratification (prints `fbridge ratify <id>`); default previews only."),
+    ] = False,
 ) -> None:
-    """Run the shared chain engine via the console daemon (POST /api/v1/exec)."""
+    """Run the shared chain engine via the console daemon (POST /api/v1/exec).
+
+    With no command, drops into the interactive verb shell — pick an action,
+    fill a couple of values, preview, ratify, apply — on the host-mutation rail.
+    With ``--verb`` runs a single verb non-interactively (preview by default).
+    """
+    if verb is not None:
+        import asyncio
+        from forge_bridge.cli.interactive import run_oneshot
+        missing = [n for n, v in (("--sequence", sequence), ("--segment", segment),
+                                  ("--new-name", new_name)) if v is None]
+        if missing:
+            sys.stderr.write(f"Error: --verb requires {', '.join(missing)}\n")
+            raise typer.Exit(code=_EXIT_USAGE)
+        if not (sequence.strip() and segment.strip() and new_name.strip()):
+            sys.stderr.write("Error: --sequence, --segment, --new-name must not be empty\n")
+            raise typer.Exit(code=_EXIT_USAGE)
+        code = asyncio.run(run_oneshot(
+            verb=verb, sequence=sequence, segment_name=segment,
+            new_name=new_name, do_apply=do_apply, as_json=as_json,
+        ))
+        raise typer.Exit(code=code)
+    if command is None:
+        import asyncio
+        from forge_bridge.cli.interactive import run_interactive
+        asyncio.run(run_interactive())
+        return
     try:
         result = _exec_http(command)
     except ExecTransportError as e:
