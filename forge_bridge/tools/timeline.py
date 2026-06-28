@@ -77,8 +77,9 @@ def _find_seq(name):
 def _collect_segments(seq):
     '''Return all non-gap segments with full metadata, grouped by track.
     Each entry: {
-        track_idx, track_name, seg_name, shot_name, role, head,
-        record_in, record_in_frame, record_out, source_name, file_path, start_frame
+        track_idx, track_name, seg_name, shot_name, role, head, tail,
+        record_in, record_in_frame, record_out, record_out_frame,
+        source_name, file_path, start_frame
     }
     '''
     result = []
@@ -110,11 +111,25 @@ def _collect_segments(seq):
                 head = int(seg.head)
             except Exception:
                 pass
+            tail = 0
+            try:
+                # tail handle frames — mirrors head; the relative-trim range guard
+                # uses it to reject a tail-extend beyond the available handle.
+                tail = int(seg.tail)
+            except Exception:
+                pass
             record_in_frame = None
             try:
                 # frame-number of the timeline in-point; the temporal-delta rail
                 # (forge_apply_segment_temporal_delta) matches frame_in against this.
                 record_in_frame = int(seg.record_in.frame)
+            except Exception:
+                pass
+            record_out_frame = None
+            try:
+                # frame-number of the timeline out-point; the tail-trim builds
+                # frame_out deltas against this (mirrors record_in_frame).
+                record_out_frame = int(seg.record_out.frame)
             except Exception:
                 pass
             result.append({
@@ -127,9 +142,11 @@ def _collect_segments(seq):
                 'file_path':   fp,
                 'role':        _detect_role(fp) or 'source',
                 'head':        head,
+                'tail':        tail,
                 'record_in':   str(seg.record_in),
                 'record_in_frame': record_in_frame,
                 'record_out':  str(seg.record_out),
+                'record_out_frame': record_out_frame,
                 'start_frame': int(seg.start_frame) if seg.start_frame else None,
             })
     return result
