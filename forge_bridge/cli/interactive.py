@@ -285,13 +285,148 @@ async def _run_verb(
         con.print(f"  [red]not applied[/red] — {msg}")
 
 
+# ---------------------------------------------------------------------------
+# NL composer: free text -> (verb, field values), handed to the SAME _run_verb.
+#
+# NL is a COMPOSER/form-filler, NOT an executor. It only chooses a registered
+# verb and extracts a few field values; the artist still sees the (pre-filled)
+# form, the domain preview, and the y/s/n confirm gate before anything is
+# previewed/ratified/applied. NL never confirms, ratifies, or applies — it rides
+# Rail B as just another SOURCE of the kwargs `_run_verb` already accepts.
+# ---------------------------------------------------------------------------
+
+# ponytail: module-level lazy singleton so importing the CLI never constructs an
+# LLMRouter (no Ollama probe at `fbridge --help` time); built on first free-text.
+_NL_ROUTER: list[Any] = []
+
+
+def _nl_router() -> Any:
+    if not _NL_ROUTER:
+        from forge_bridge.llm.router import LLMRouter  # lazy
+        _NL_ROUTER.append(LLMRouter())
+    return _NL_ROUTER[0]
+
+
+def _nl_system_prompt() -> str:
+    """Build the extraction system prompt FROM the verb registry (not hardcoded).
+
+    A 3rd verb in ``verbs.REGISTRY`` automatically extends NL — the verb names,
+    labels, and value labels are all derived here, never duplicated.
+    """
+    catalog = "\n".join(
+        f'- "{v.name}": {v.label} (its value is "{v.value_label}")'
+        for v in _verbs.list_verbs()
+    )
+    names = ", ".join(f'"{v.name}"' for v in _verbs.list_verbs())
+    return (
+        "You map a film editor's plain-language request to ONE timeline verb and "
+        "extract its fields. Available verbs:\n" + catalog + "\n\n"
+        "Respond with ONLY strict JSON of this shape:\n"
+        '{"verb": <one of ' + names + ' or null>, '
+        '"sequence": <sequence/cut name or null>, '
+        '"segment_index": <1-based segment number as an integer or null>, '
+        '"value": <the new value as a string or null>}\n\n'
+        "Use null for ANY field you cannot determine from the request — never "
+        "invent a sequence name, a segment number, or a value. If the request "
+        "does not clearly match one of the verbs above, set verb to null. "
+        "Output the JSON object only, with no prose or code fences."
+    )
+
+
+def _parse_json_object(raw: str) -> dict[str, Any]:
+    """Defensively extract a JSON object from a model reply.
+
+    ponytail: mirror ``console._operation_front``'s small fence-strip + brace-cut
+    pattern rather than import that module (it would pull the chat/assent stack
+    into the CLI). Same robustness, no heavy dependency.
+    """
+    text = (raw or "").strip()
+    if "```" in text:
+        text = text.split("```")[1] if text.count("```") >= 2 else text
+        if text.startswith("json"):
+            text = text[4:]
+    try:
+        obj = json.loads(text)
+    except Exception:  # noqa: BLE001
+        left, right = text.find("{"), text.rfind("}")
+        if left == -1 or right == -1:
+            return {}
+        try:
+            obj = json.loads(text[left:right + 1])
+        except Exception:  # noqa: BLE001
+            return {}
+    return obj if isinstance(obj, dict) else {}
+
+
+async def _nl_compose(
+    text: str, *, router: Any,
+) -> tuple[Any, str | None, int | None, str | None, str | None]:
+    """Free text -> ``(verb, sequence, seg_index, value_raw, error)``.
+
+    ``verb`` is a resolved ``Verb`` (or ``None`` with a clean ``error`` message);
+    the other three are the form fields NL could fill, any left ``None`` so
+    ``_run_verb``'s existing prompts collect them. NEVER guesses a verb: an
+    unmappable request, junk JSON, or a model failure all return ``error`` and a
+    ``None`` verb so the caller bails back to the REPL without running anything.
+    """
+    try:
+        raw = await router.acomplete(
+            text, sensitive=True, system=_nl_system_prompt(), temperature=0.1,
+        )
+    except Exception as exc:  # noqa: BLE001 - model failure must not kill the REPL
+        return None, None, None, None, (
+            f"couldn't reach the language model ({type(exc).__name__}) — "
+            "try /rename or /trim instead"
+        )
+
+    parsed = _parse_json_object(raw)
+    verb = _verbs.REGISTRY.get(parsed.get("verb")) if isinstance(parsed.get("verb"), str) else None
+    if verb is None:
+        return None, None, None, None, (
+            "I couldn't map that to a verb — try [bold]/rename[/bold] or "
+            "[bold]/trim[/bold], or rephrase"
+        )
+
+    seq = parsed.get("sequence")
+    sequence = seq.strip() if isinstance(seq, str) and seq.strip() else None
+    raw_idx = parsed.get("segment_index")
+    # bool is an int subclass — exclude it so true/false never becomes #1/#0
+    seg_index = raw_idx if isinstance(raw_idx, int) and not isinstance(raw_idx, bool) else None
+    raw_val = parsed.get("value")
+    value_raw = str(raw_val) if raw_val is not None and str(raw_val).strip() else None
+    return verb, sequence, seg_index, value_raw, None
+
+
+async def _nl_dispatch(con, text: str) -> None:
+    """Compose free text into a verb form, then hand it to the SAME ``_run_verb``.
+
+    No new preview/apply path: NL fills whatever it can, echoes it (transparent,
+    not magic), and ``_run_verb`` shows the pre-filled form + domain preview +
+    y/s/n confirm gate. NL stops at form-fill — it never previews, ratifies, or
+    applies. Unmappable input prints a clean hint and returns to the REPL.
+    """
+    con.print("  [dim]reading your request…[/dim]")
+    verb, sequence, seg_index, value_raw, err = await _nl_compose(text, router=_nl_router())
+    if err is not None:
+        con.print(f"  {err}")
+        return
+    # show what NL extracted; blanks ('?') are prompted for by _run_verb
+    con.print(
+        f"  [dim]understood →[/dim] [bold]/{verb.name}[/bold]  "
+        f"sequence={sequence or '?'}  segment=#{seg_index if seg_index is not None else '?'}  "
+        f"{verb.value_label.lower()}={value_raw or '?'}"
+    )
+    await _run_verb(con, verb=verb, sequence=sequence,
+                    seg_index=seg_index, value_raw=value_raw)
+
+
 async def run_interactive() -> None:
     con = make_console()
     con.print("[dim]starting engine…[/dim]")
     await _bootstrap()
 
-    con.print("\n[bold amber]forge exec[/bold amber] — type [bold]/help[/bold], or a verb. [dim]/quit to leave.[/dim]")
-    con.print("[dim]power users: /rename <sequence> #<n> <new name> · /trim <sequence> #<n> <frame>[/dim]")
+    con.print("\n[bold amber]forge exec[/bold amber] — say what you want, or type [bold]/help[/bold]. [dim]/quit to leave.[/dim]")
+    con.print("[dim]e.g. \"rename the 3rd shot on MyCut to BG_010\" · power users: /rename <sequence> #<n> <new name>[/dim]")
     # verbs are data — one registry lookup, zero per-verb code in the loop
     verbs_by_cmd = {v.name: v for v in _verbs.list_verbs()}
     while True:
@@ -301,6 +436,17 @@ async def run_interactive() -> None:
             con.print("\nbye.")
             return
         if not line:
+            continue
+        # Routing: slash-prefixed input (and the bare meta words) are COMMANDS,
+        # exactly as before; everything else is free text -> the NL composer.
+        # NL never bypasses the form/confirm gate — it only fills _run_verb's args.
+        if not (line.startswith("/") or line.lower() in ("quit", "exit", "q", "help", "?")):
+            try:
+                await _nl_dispatch(con, line)
+            except (KeyboardInterrupt, EOFError):
+                con.print("  cancelled.")
+            except Exception as exc:  # noqa: BLE001 — REPL must survive one bad turn
+                con.print(f"  [red]error[/red]: {type(exc).__name__}: {exc}")
             continue
         toks = line.lstrip("/").split(None, 1)
         if not toks:  # bare "/" etc.

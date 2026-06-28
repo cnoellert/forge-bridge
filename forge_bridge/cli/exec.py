@@ -109,6 +109,10 @@ def exec_cmd(
     fill a couple of values, preview, then choose: [y] apply now, [s] stage the
     intent for later ``fbridge ratify <id>``, or [n] cancel — on the
     host-mutation rail. ([s] proposes only; it never self-ratifies or applies.)
+    You can also just say what you want in plain language (e.g. "rename the 3rd
+    shot on MyCut to BG_010"): the language model fills the verb form, echoes
+    what it understood, and hands you the SAME preview + confirm gate — it never
+    confirms, ratifies, or applies on its own.
     Power users can inline the args: ``/rename <sequence> #<n> <new name>``.
     With ``--verb`` runs a single verb non-interactively (preview by default).
     """
