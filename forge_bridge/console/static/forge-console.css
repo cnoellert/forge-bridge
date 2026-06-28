@@ -64,6 +64,7 @@ main#view-main{background:var(--color-bg);padding:64px 24px}
 .status-chip--quarantined{background:rgba(102,78,0,.2);color:var(--color-accent);border-color:var(--color-accent)}
 .chip-caption{color:var(--color-text-muted);font-size:12px;margin:0 0 8px 0}
 .tool-name-cell .tool-name-primary{font-weight:400}
+.tool-name-cell .tool-name-desc{color:var(--color-text);font-size:13px;margin-top:2px}
 .tool-name-cell .tool-name-secondary{color:var(--color-text-muted);font-size:12px;margin-top:2px}
 .tool-name-cell .tool-name-secondary .sep{margin:0 4px;opacity:.6}
 .tool-name-cell .tool-name-secondary .ns{font-weight:600}

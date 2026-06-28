@@ -119,6 +119,82 @@ async def test_get_tools_marks_unreachable_but_never_drops(monkeypatch):
     assert len(got) == 4
 
 
+def _patch_canonical_registry(monkeypatch, summaries: dict[str, str] | None) -> None:
+    """Stub the daemon lifespan's _canonical_tool_registry.
+
+    ``summaries=None`` simulates a standalone process (no live daemon) where the
+    registry is None — every tool then resolves to its derived fallback. A dict
+    installs a registry whose .get(name) returns a registration carrying the
+    given summary (or None when the name is absent).
+    """
+    import forge_bridge.mcp.server as real_server
+
+    if summaries is None:
+        monkeypatch.setattr(real_server, "_canonical_tool_registry", None, raising=False)
+        return
+
+    class _Reg:
+        def get(self, name):
+            s = summaries.get(name)
+            return SimpleNamespace(summary=s) if name in summaries else None
+
+    monkeypatch.setattr(
+        real_server, "_canonical_tool_registry", _Reg(), raising=False,
+    )
+
+
+async def test_get_tools_resolves_peer_summary_as_artist_description(monkeypatch):
+    """The peer-authored CapabilityDeclaration.summary (carried onto
+    ToolRegistration.summary) is the canonical artist description and wins."""
+    ms = ManifestService()
+    _patch_mcp_and_reachability(
+        monkeypatch, tool_names=["forge_list_shots", "flame_ping"], flame_ok=True,
+    )
+    _patch_canonical_registry(
+        monkeypatch, {"forge_list_shots": "List every shot in a sequence."},
+    )
+    api = ConsoleReadAPI(execution_log=MagicMock(), manifest_service=ms)
+
+    by_name = {t.name: t for t in await api.get_tools()}
+    # Canonical peer summary surfaces verbatim.
+    assert by_name["forge_list_shots"].artist_description == "List every shot in a sequence."
+    # A tool with no registration falls back to the derived (humanized) label —
+    # subordinate, never blank.
+    assert by_name["flame_ping"].artist_description == "Flame ping"
+    # to_dict carries the new field for the JSON/template surfaces.
+    assert by_name["forge_list_shots"].to_dict()["artist_description"] == (
+        "List every shot in a sequence."
+    )
+
+
+async def test_get_tools_registry_none_all_fallback(monkeypatch):
+    """No live daemon registry in-process → every tool resolves to the derived
+    fallback (the Console de-blank guard never yields a blank description)."""
+    ms = ManifestService()
+    _patch_mcp_and_reachability(
+        monkeypatch, tool_names=["forge_list_shots"], flame_ok=True,
+    )
+    _patch_canonical_registry(monkeypatch, None)
+    api = ConsoleReadAPI(execution_log=MagicMock(), manifest_service=ms)
+
+    (rec,) = await api.get_tools()
+    # humanized from tool_id, never blank
+    assert rec.artist_description == "Forge list shots"
+
+
+async def test_get_tool_resolves_peer_summary(monkeypatch):
+    ms = ManifestService()
+    _patch_mcp_and_reachability(monkeypatch, tool_names=["forge_list_shots"])
+    _patch_canonical_registry(
+        monkeypatch, {"forge_list_shots": "List every shot in a sequence."},
+    )
+    api = ConsoleReadAPI(execution_log=MagicMock(), manifest_service=ms)
+
+    rec = await api.get_tool("forge_list_shots")
+    assert rec is not None
+    assert rec.artist_description == "List every shot in a sequence."
+
+
 async def test_get_tool_surfaces_builtin_with_availability(monkeypatch):
     ms = ManifestService()
     await ms.register(_make_record("synth_a"))

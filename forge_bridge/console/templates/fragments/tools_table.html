@@ -17,6 +17,9 @@
           hx-push-url="true">
         <td class="tool-name-cell">
           <div class="tool-name-primary mono">{{ tool.name }}</div>
+          {% if tool.artist_description %}
+          <div class="tool-name-desc">{{ tool.artist_description }}</div>
+          {% endif %}
           <div class="tool-name-secondary">
             <span class="ns">{{ tool.namespace }}</span>
             {% if tool.code_hash %}

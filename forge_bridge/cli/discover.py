@@ -86,6 +86,34 @@ async def _list_mcp_tools() -> list[Any]:
     return await _server.mcp.list_tools()
 
 
+def _registration_summary(operator_id: str) -> str | None:
+    """Look up the peer-authored summary carried onto ``ToolRegistration``.
+
+    Canonical single source: a peer's ``CapabilityDeclaration.summary`` is carried
+    onto ``ToolRegistration.summary`` (see ``tool_registration_from_capability``).
+    Correlation is by exact identity — the MCP tool ``name`` equals the
+    registration ``tool_id`` (== ``declaration.capability_id``). A name that does
+    not match (a Bridge-internal builtin, or a peer that named its MCP tool
+    differently from its capability_id) simply misses → ``None`` → derived
+    fallback. No mis-attribution, never raises.
+
+    The registry is the daemon lifespan's ``_canonical_tool_registry`` (populated
+    by ``register_all_siblings`` at bootstrap Step 5). It is ``None`` on a
+    standalone CLI invocation with no live daemon in-process, in which case every
+    tool resolves to its derived fallback.
+    """
+    try:
+        from forge_bridge.mcp import server as _server
+
+        registry = getattr(_server, "_canonical_tool_registry", None)
+        if registry is None:
+            return None
+        registration = registry.get(operator_id)
+        return getattr(registration, "summary", None)
+    except Exception:  # noqa: BLE001 - a registry miss must never break discover
+        return None
+
+
 def _annotation_value(annotations: Any, name: str) -> Any:
     if annotations is None:
         return None
@@ -102,19 +130,21 @@ def _tool_record(tool: Any) -> dict[str, Any]:
     description = _doc(getattr(tool, "description", ""))
     name = getattr(tool, "name", "")
     # Description seam: the ONE canonical artist description is the peer-authored
-    # CapabilityDeclaration.summary, which the registration path carries onto
-    # ToolRegistration.summary. discover reads MCP-tool *meta* — a DIFFERENT,
-    # structurally-disconnected source (nothing copies declaration.summary into
-    # tool meta). Reading a parallel meta["summary"] here would stand up a
-    # competing second author that can diverge from the declaration, so discover
-    # does NOT: it resolves with summary=None → a clearly-subordinate derived
-    # fallback (docstring first line / humanized name). discover will surface the
-    # canonical summary once it can read ToolRegistration.
+    # CapabilityDeclaration.summary, carried onto ToolRegistration.summary. discover
+    # reads it back from the canonical ToolRegistry by exact name↔tool_id identity
+    # (_registration_summary) and feeds it to artist_description as the preferred
+    # source. It deliberately does NOT read MCP-tool meta["summary"] — that would
+    # stand up a competing second author that can diverge from the declaration. When
+    # no registration carries a summary (a Bridge-internal builtin, or no live
+    # daemon registry in-process) the resolver returns a clearly-subordinate derived
+    # fallback (docstring first line / humanized name).
     return {
         "name": name,
         "description": description,
         "artist_description": artist_description(
-            summary=None, operator_id=name, fallback_doc=description
+            summary=_registration_summary(name),
+            operator_id=name,
+            fallback_doc=description,
         ),
         "annotations": {
             "title": _annotation_value(annotations, "title"),
@@ -268,9 +298,9 @@ def discover_tool_cmd(
         f"idempotentHint={annotations.get('idempotentHint')!r}"
     )
     console.print("")
-    # discover surfaces the derived ``artist_description`` (subordinate fallback);
-    # the canonical peer-authored summary lives on ToolRegistration.summary and is
-    # not yet reachable from this MCP-tool-meta surface (see _tool_record).
+    # ``artist_description`` prefers the canonical peer-authored
+    # ToolRegistration.summary and falls back to the derived first-line/name when
+    # no registration summary exists (see _tool_record / _registration_summary).
     if detail.get("artist_description"):
         console.print(f"description: {detail['artist_description']}")
         console.print("")

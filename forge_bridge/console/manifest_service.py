@@ -64,6 +64,14 @@ class ToolRecord:
     # _tool_filter probe. ManifestService writers leave this at None and
     # callers compute the value from live backend state.
     available: Optional[bool] = None
+    # Artist-facing description (computed at read time, never persisted). The ONE
+    # canonical author is the peer's CapabilityDeclaration.summary, carried onto
+    # ToolRegistration.summary and resolved here via
+    # orchestration.registration.artist_description(); when no peer summary exists
+    # (a Bridge-internal builtin, or no live daemon registry in-process) the
+    # resolver returns a clearly-subordinate derived fallback. None until
+    # ConsoleReadAPI.get_tools()/get_tool() annotates it.
+    artist_description: Optional[str] = None
 
     def __post_init__(self) -> None:
         # Fail fast on list/dict -- frozen dataclass silently accepts them

@@ -124,6 +124,81 @@ def test_discover_tools_derives_artist_description_from_docstring(runner, monkey
     assert rows["forge_derives"]["artist_description"] == "Derived from this first line."
 
 
+class _FakeRegistration:
+    def __init__(self, summary):
+        self.summary = summary
+
+
+class _FakeRegistry:
+    """Stand-in for the canonical ToolRegistry — get(tool_id) → registration."""
+
+    def __init__(self, by_id):
+        self._by_id = by_id
+
+    def get(self, tool_id):
+        return self._by_id.get(tool_id)
+
+
+def test_discover_tools_prefers_registration_summary_over_fallback(runner, monkeypatch):
+    """The canonical carry: when a peer's CapabilityDeclaration.summary has been
+    carried onto ToolRegistration.summary, discover correlates the MCP tool name to
+    that registration (name == tool_id) and displays the summary. A tool with no
+    matching registration falls back to the derived docstring first line."""
+    from forge_bridge.cli import discover as discover_mod
+    from forge_bridge.mcp import server as mcp_server
+
+    async def fake_list():
+        return [
+            _FakeTool(
+                "forge_classify_shot",
+                "Bridge adapter docstring.\nmore",
+                meta={"_source": "user-taught"},
+            ),
+            _FakeTool(
+                "forge_no_registration",
+                "Derived from this first line.\nrest",
+                meta={"_source": "user-taught"},
+            ),
+        ]
+
+    monkeypatch.setattr(discover_mod, "_list_mcp_tools", fake_list)
+    monkeypatch.setattr(
+        mcp_server,
+        "_canonical_tool_registry",
+        _FakeRegistry(
+            {"forge_classify_shot": _FakeRegistration("Peer-authored summary.")}
+        ),
+    )
+
+    result = runner.invoke(app, ["discover", "tools", "--json"])
+    assert result.exit_code == 0
+    rows = {r["name"]: r for r in json.loads(result.stdout)["data"]}
+    # WITH registration summary → canonical peer-authored text wins.
+    assert rows["forge_classify_shot"]["artist_description"] == "Peer-authored summary."
+    # WITHOUT a registration → clearly-subordinate derived fallback.
+    assert (
+        rows["forge_no_registration"]["artist_description"]
+        == "Derived from this first line."
+    )
+
+
+def test_discover_tools_no_registry_falls_back(runner, monkeypatch):
+    """No live daemon registry in-process (registry is None) → derived fallback."""
+    from forge_bridge.cli import discover as discover_mod
+    from forge_bridge.mcp import server as mcp_server
+
+    async def fake_list():
+        return [_FakeTool("forge_x", "Derived line.\nmore", meta={"_source": "builtin"})]
+
+    monkeypatch.setattr(discover_mod, "_list_mcp_tools", fake_list)
+    monkeypatch.setattr(mcp_server, "_canonical_tool_registry", None)
+
+    result = runner.invoke(app, ["discover", "tools", "--json"])
+    assert result.exit_code == 0
+    rows = {r["name"]: r for r in json.loads(result.stdout)["data"]}
+    assert rows["forge_x"]["artist_description"] == "Derived line."
+
+
 def test_discover_tool_unknown_is_nonzero(runner):
     result = runner.invoke(app, ["discover", "tool", "not_a_tool"])
 

@@ -46,6 +46,44 @@ _canonical_execution_log_id: Optional[int] = None
 _canonical_manifest_service_id: Optional[int] = None
 
 
+def _resolve_artist_description(name: str, description: str | None) -> str:
+    """Resolve the artist-facing description for a tool, daemon-side.
+
+    The ONE canonical author is the peer's ``CapabilityDeclaration.summary``,
+    carried onto ``ToolRegistration.summary`` at the discovery boundary (see
+    ``tool_registration_from_capability``). We read it back from the daemon
+    lifespan's ``_canonical_tool_registry`` by exact identity — the MCP tool
+    ``name`` equals the registration ``tool_id`` (== ``declaration.capability_id``)
+    — and feed it to ``artist_description`` as the preferred source. The derived
+    first-line/humanized-name fallback stays strictly subordinate.
+
+    None-safe by construction: when the registry is ``None`` (no live daemon
+    in-process — e.g. the CLI's separate process), missing the tool (a
+    Bridge-internal builtin or a peer that named its MCP tool differently from
+    its capability_id), or anything raises, ``summary=None`` flows through and
+    the resolver returns the derived fallback. Never reads a competing
+    ``meta["summary"]`` peer hook; never raises (Console de-blank guard).
+    """
+    summary: str | None = None
+    try:
+        from forge_bridge.mcp import server as _mcp_server
+
+        registry = getattr(_mcp_server, "_canonical_tool_registry", None)
+        if registry is not None:
+            registration = registry.get(name)
+            summary = getattr(registration, "summary", None)
+    except Exception:  # noqa: BLE001 — a registry miss must never break reads
+        summary = None
+
+    from forge_bridge.orchestration.registration import artist_description
+
+    return artist_description(
+        summary=summary,
+        operator_id=name,
+        fallback_doc=description,
+    )
+
+
 def register_canonical_singletons(
     execution_log: "ExecutionLog",
     manifest_service: "ManifestService",
@@ -174,7 +212,14 @@ class ConsoleReadAPI:
                 # three known prefixes, so this branch should be unreachable.
                 available = True
 
-            out.append(dataclasses.replace(record, available=available))
+            artist_desc = _resolve_artist_description(
+                name, getattr(tool, "description", None)
+            )
+            out.append(
+                dataclasses.replace(
+                    record, available=available, artist_description=artist_desc
+                )
+            )
 
         return out
 
@@ -213,7 +258,12 @@ class ConsoleReadAPI:
         else:
             available = True
 
-        return dataclasses.replace(record, available=available)
+        artist_desc = _resolve_artist_description(
+            name, getattr(live_match, "description", None)
+        )
+        return dataclasses.replace(
+            record, available=available, artist_description=artist_desc
+        )
 
     # -- Executions ---------------------------------------------------------
 
