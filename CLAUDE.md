@@ -53,7 +53,7 @@ Shipped at tag `v1.5.1` (2026-05-31); `pyproject.toml` version is `1.5.1`. The 1
 
 3. **Artist Console / Web UI** (`forge_bridge/console/app.py`) — Phase 10/10.1
    - Mount: `http://localhost:9996/ui/`
-   - Five views: tools, execs, manifest, health, chat
+   - Six views: tools, execs, manifest, health, actions, chat
    - Jinja2 + vendored htmx + Alpine.js with SRI; zero JS build step
    - LOGIK-PROJEKT amber-on-dark palette (UI-SPEC.md design contract)
    - Co-hosted with the MCP server on `:9996` via lifespan (NOT FastMCP `custom_route`)

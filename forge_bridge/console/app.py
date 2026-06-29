@@ -33,6 +33,13 @@ from forge_bridge.console.ui_fragments import (
     manifest_table_fragment,
     tools_table_fragment,
 )
+from forge_bridge.console.ui_actions_handlers import (  # NEW — exec verb renderer #2
+    ui_actions_form_handler,
+    ui_actions_index_handler,
+    ui_actions_preview_handler,
+    ui_actions_segments_fragment,
+    ui_actions_stage_handler,
+)
 from forge_bridge.console.ui_handlers import (
     ui_chat_handler,                    # NEW (Phase 16 / FB-D — replaces v1.3 stub handler)
     ui_exec_detail_handler,
@@ -96,12 +103,19 @@ def build_console_app(
         Route("/ui/manifest", ui_manifest_handler, methods=["GET"]),
         Route("/ui/health", ui_health_view_handler, methods=["GET"]),
         Route("/ui/chat", ui_chat_handler, methods=["GET"]),
+        # Actions view — renderer #2 of the fbridge exec verb registry (STAGE-ONLY:
+        # previews + stages a proposed graph-intent; ratify stays the CA.1 Chat act).
+        Route("/ui/actions", ui_actions_index_handler, methods=["GET"]),
+        Route("/ui/actions/{verb}", ui_actions_form_handler, methods=["GET"]),
+        Route("/ui/actions/{verb}/preview", ui_actions_preview_handler, methods=["POST"]),
+        Route("/ui/actions/{verb}/stage", ui_actions_stage_handler, methods=["POST"]),
         # Phase 10 — fragment /ui/fragments/* routes (htmx partial swaps)
         Route("/ui/fragments/health-strip", health_strip_fragment, methods=["GET"]),
         Route("/ui/fragments/tools-table", tools_table_fragment, methods=["GET"]),
         Route("/ui/fragments/execs-table", execs_table_fragment, methods=["GET"]),
         Route("/ui/fragments/manifest-table", manifest_table_fragment, methods=["GET"]),
         Route("/ui/fragments/health-view", health_view_fragment, methods=["GET"]),
+        Route("/ui/fragments/actions-segments", ui_actions_segments_fragment, methods=["GET"]),
         # Phase 10 — static assets served from forge_bridge/console/static/
         Mount("/ui/static", StaticFiles(directory=str(_CONSOLE_DIR / "static")), name="static"),
         # Phase 14 (FB-B) — staged operations
