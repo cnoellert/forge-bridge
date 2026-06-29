@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from rich.prompt import Prompt, IntPrompt
@@ -328,6 +329,41 @@ def _did_you_mean(cmd: str) -> list[str]:
     return [c for c in _command_completions(cmd) if c != self_cmd]
 
 
+# persistent REPL command history (stdlib readline; up-arrow recalls across
+# sessions). Path follows the per-machine ``~/.forge-bridge/`` convention every
+# other runtime artifact uses (executions.jsonl, graphs/, corpus/ …) — there is no
+# shared home-dir helper, each call site composes it inline, so we do the same.
+def _history_path() -> Path:
+    return Path.home() / ".forge-bridge" / "exec_history"
+
+
+def _load_history(readline: Any) -> None:
+    """Read persisted command history; guarded — missing/locked file is a no-op.
+
+    ``readline`` may be ``None`` on a platform without it (history simply disabled,
+    the REPL still runs).
+    """
+    if readline is None:
+        return
+    try:
+        readline.read_history_file(str(_history_path()))
+    except (FileNotFoundError, OSError):  # no history yet / unreadable — fine
+        pass
+    readline.set_history_length(1000)
+
+
+def _save_history(readline: Any) -> None:
+    """Persist command history on REPL exit; guarded — an unwritable file never crashes."""
+    if readline is None:
+        return
+    try:
+        path = _history_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        readline.write_history_file(str(path))
+    except OSError:  # locked / read-only home — drop history, don't crash the REPL
+        pass
+
+
 async def run_interactive() -> None:
     con = make_console()
     con.print("[dim]starting engine…[/dim]")
@@ -357,54 +393,62 @@ async def run_interactive() -> None:
             readline.parse_and_bind("bind ^I rl_complete")
         else:
             readline.parse_and_bind("tab: complete")
+        # up-arrow recalls prior commands across sessions (stdlib; guarded no-op
+        # when the history file is missing/locked).
+        _load_history(readline)
 
     con.print("\n[bold amber]forge exec[/bold amber] — type [bold]/help[/bold], or a verb. [dim]/quit to leave.[/dim]")
     con.print("[dim]power users: /rename <sequence> #<n> <new name> · "
               "/trim_head <sequence> #<n> <±frames> · /trim_tail <sequence> #<n> <±frames>[/dim]")
     # verbs are data — one registry lookup, zero per-verb code in the loop
     verbs_by_cmd = {v.name: v for v in _verbs.list_verbs()}
-    while True:
-        try:
-            line = Prompt.ask("\n[bold]forge[/bold]").strip()
-        except (EOFError, KeyboardInterrupt):
-            con.print("\nbye.")
-            return
-        if not line:
-            continue
-        toks = line.lstrip("/").split(None, 1)
-        if not toks:  # bare "/" etc.
-            continue
-        cmd = toks[0].lower()
-        rest = toks[1] if len(toks) > 1 else ""
-        if cmd in ("quit", "exit", "q"):
-            con.print("bye.")
-            return
-        if cmd in ("help", "?"):
-            con.print("\n  What you can do:")
-            for v in _verbs.list_verbs():
-                con.print(f"    [bold]/{v.name}[/bold]  —  {v.summary}")
-            con.print("    [bold]/quit[/bold]  —  leave")
-            continue
-        verb = verbs_by_cmd.get(cmd)
-        if verb is None:
-            hints = _did_you_mean(cmd)
-            if hints:
-                con.print(f"  did you mean: [bold]{', '.join(hints)}[/bold]?")
-            else:
-                con.print(f"  unknown: [bold]{cmd}[/bold].  try [bold]/help[/bold].")
-            continue
-        # inline args skip the prompts; anything omitted falls back to prompting
-        sequence, seg_index, value_raw, ierr = _parse_inline(rest)
-        if ierr is not None:
-            con.print(f"  cancelled — {ierr}")
-            continue
-        try:
-            await _run_verb(con, verb=verb, sequence=sequence,
-                            seg_index=seg_index, value_raw=value_raw)
-        except (KeyboardInterrupt, EOFError):
-            con.print("  cancelled.")
-        except Exception as exc:  # noqa: BLE001 — REPL must survive one bad verb
-            con.print(f"  [red]error[/red]: {type(exc).__name__}: {exc}")
+    # try/finally so the history file is persisted on EVERY exit path (normal
+    # /quit, Ctrl-D/Ctrl-C, or an unexpected error escaping the per-verb guard).
+    try:
+        while True:
+            try:
+                line = Prompt.ask("\n[bold]forge[/bold]").strip()
+            except (EOFError, KeyboardInterrupt):
+                con.print("\nbye.")
+                return
+            if not line:
+                continue
+            toks = line.lstrip("/").split(None, 1)
+            if not toks:  # bare "/" etc.
+                continue
+            cmd = toks[0].lower()
+            rest = toks[1] if len(toks) > 1 else ""
+            if cmd in ("quit", "exit", "q"):
+                con.print("bye.")
+                return
+            if cmd in ("help", "?"):
+                con.print("\n  What you can do:")
+                for v in _verbs.list_verbs():
+                    con.print(f"    [bold]/{v.name}[/bold]  —  {v.summary}")
+                con.print("    [bold]/quit[/bold]  —  leave")
+                continue
+            verb = verbs_by_cmd.get(cmd)
+            if verb is None:
+                hints = _did_you_mean(cmd)
+                if hints:
+                    con.print(f"  did you mean: [bold]{', '.join(hints)}[/bold]?")
+                else:
+                    con.print(f"  unknown: [bold]{cmd}[/bold].  try [bold]/help[/bold].")
+                continue
+            # inline args skip the prompts; anything omitted falls back to prompting
+            sequence, seg_index, value_raw, ierr = _parse_inline(rest)
+            if ierr is not None:
+                con.print(f"  cancelled — {ierr}")
+                continue
+            try:
+                await _run_verb(con, verb=verb, sequence=sequence,
+                                seg_index=seg_index, value_raw=value_raw)
+            except (KeyboardInterrupt, EOFError):
+                con.print("  cancelled.")
+            except Exception as exc:  # noqa: BLE001 — REPL must survive one bad verb
+                con.print(f"  [red]error[/red]: {type(exc).__name__}: {exc}")
+    finally:
+        _save_history(readline)
 
 
 def _emit(con, as_json: bool, payload: dict[str, Any], human: str) -> None:
