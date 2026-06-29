@@ -6,6 +6,7 @@ result-parsing helpers the interactive/one-shot renderers rely on.
 from __future__ import annotations
 
 import json as _json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -605,3 +606,119 @@ def test_did_you_mean_fires_on_near_miss_not_exact():
     assert interactive._did_you_mean("rename") == []
     # a true miss yields nothing -> caller falls back to the bland unknown line
     assert interactive._did_you_mean("xyz") == []
+
+
+# -- inline-arg END-TO-END through _run_verb for the trim verbs ----------------
+# (the parser is tested above; these prove the *dispatch* path: a signed inline
+#  offset survives into the verb, and the range guard fires on the inline route.)
+
+
+def _trim_seg() -> dict:
+    return {"seg_name": "shot_010", "track_idx": 0, "record_in": "r",
+            "record_in_frame": 100, "record_out_frame": 200, "duration": 100,
+            "head": 8, "tail": 8, "source_name": "shot_010"}
+
+
+@pytest.mark.asyncio
+async def test_run_verb_inline_signed_offset_reaches_verb(monkeypatch):
+    # /trim_head CUT #1 -5 : the negative offset must survive inline -> parse_value
+    # -> preview with {"count": -5} (it is NOT mangled into a positive / absolute).
+    con = _FakeCon()
+    captured = {}
+
+    async def segs(_seq):
+        return [_trim_seg()]
+
+    async def prev(_verb, _seq, _seg, values):
+        captured["values"] = values
+        return ({"apply_counterpart": {}, "resolved_plan": [1]}, None)
+
+    async def apply(_held):
+        return True, "1 applied"
+    monkeypatch.setattr(interactive, "_segments", segs)
+    monkeypatch.setattr(interactive, "_preview_mutation", prev)
+    monkeypatch.setattr(interactive, "_apply_held", apply)
+    monkeypatch.setattr(interactive.Prompt, "ask", lambda *a, **k: "y")
+
+    await interactive._run_verb(con, verb=verbs.REGISTRY["trim_head"],
+                                sequence="CUT", seg_index=1, value_raw="-5")
+    assert captured["values"] == {"count": -5}  # signed, intact
+    assert any("enacted in Flame" in line for line in con.lines)
+
+
+@pytest.mark.asyncio
+async def test_run_verb_inline_trim_range_guard_fires(monkeypatch):
+    # /trim_head CUT #1 800 : the CLI-side range guard (validate_trim) must reject
+    # an impossible trim on the INLINE path too — legible message, never reaches preview.
+    con = _FakeCon()
+
+    async def segs(_seq):
+        return [_trim_seg()]
+
+    async def prev_boom(*a, **k):
+        raise AssertionError("range guard must reject before preview on the inline path")
+    monkeypatch.setattr(interactive, "_segments", segs)
+    monkeypatch.setattr(interactive, "_preview_mutation", prev_boom)
+
+    await interactive._run_verb(con, verb=verbs.REGISTRY["trim_head"],
+                                sequence="CUT", seg_index=1, value_raw="800")
+    blob = "\n".join(con.lines)
+    assert "can't trim 800 off a 100-frame segment" in blob
+
+
+# -- persistent REPL command history (stdlib readline; guarded, no-dep) --------
+
+
+def test_history_path_under_forge_bridge_home():
+    # reuses the per-machine ~/.forge-bridge/ runtime convention
+    assert interactive._history_path() == Path.home() / ".forge-bridge" / "exec_history"
+
+
+def test_load_history_noop_without_readline():
+    interactive._load_history(None)  # readline unavailable -> silent no-op
+
+
+def test_load_history_missing_file_is_clean_noop(tmp_path, monkeypatch):
+    # no history file yet -> read raises FileNotFoundError -> swallowed; length still set.
+    monkeypatch.setattr(interactive, "_history_path",
+                        lambda: tmp_path / "nope" / "exec_history")
+    seen = {}
+
+    class _RL:
+        def read_history_file(self, p):
+            raise FileNotFoundError(p)
+
+        def set_history_length(self, n):
+            seen["len"] = n
+
+    interactive._load_history(_RL())  # must not raise
+    assert seen["len"] == 1000
+
+
+def test_save_history_noop_without_readline():
+    interactive._save_history(None)  # silent no-op
+
+
+def test_save_history_writes_and_creates_dir(tmp_path, monkeypatch):
+    hist = tmp_path / "sub" / "exec_history"  # parent does NOT exist yet
+    monkeypatch.setattr(interactive, "_history_path", lambda: hist)
+    written = {}
+
+    class _RL:
+        def write_history_file(self, p):
+            written["path"] = p
+
+    interactive._save_history(_RL())
+    assert written["path"] == str(hist)
+    assert hist.parent.is_dir()  # the ~/.forge-bridge/ dir is created on demand
+
+
+def test_save_history_swallows_oserror(tmp_path, monkeypatch):
+    # a locked / read-only home must never crash the REPL on exit
+    monkeypatch.setattr(interactive, "_history_path", lambda: tmp_path / "h")
+
+    class _RL:
+        def write_history_file(self, p):
+            raise OSError("read-only filesystem")
+
+    interactive._save_history(_RL())  # must not raise
