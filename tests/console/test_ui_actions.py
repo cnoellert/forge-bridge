@@ -32,23 +32,30 @@ def client():
     return TestClient(app)
 
 
-# Wire-shape segment dict mirrors flame_get_sequence_segments output: the verb's
-# current_key for rename is "seg_name" and for trim "record_in_frame".
+# Wire-shape segment dict mirrors flame_get_sequence_segments output: rename's
+# current_key is "seg_name"; trim_head/trim_tail are value_kind="offset" (a SIGNED
+# relative frame count) and key off record_in_frame/record_out_frame. validate_trim
+# reads duration + the head/tail handle to range-guard a relative trim.
 _SEG = {
     "seg_name": "shot_010",
     "track_idx": 1,
     "record_in": "01:00:00:00",
     "record_in_frame": 100,
+    "record_out_frame": 148,
     "source_name": "src_010",
+    "duration": 48,
+    "head": 5,
+    "tail": 5,
 }
 
 
 def test_actions_list_renders_registry_verbs(client):
     r = client.get("/ui/actions")
     assert r.status_code == 200
-    # both registered verbs surface as cards
+    # all registered verbs surface as cards (rename + the two relative-trim verbs)
     assert "/ui/actions/rename" in r.text
-    assert "/ui/actions/trim" in r.text
+    assert "/ui/actions/trim_head" in r.text
+    assert "/ui/actions/trim_tail" in r.text
     assert "Rename a segment" in r.text
 
 
@@ -109,15 +116,31 @@ def test_preview_returns_domain_language(client):
     assert "nothing applied" in r.text.lower()
 
 
-def test_preview_rejects_bad_int_for_trim(client):
-    # trim is value_kind=int — a non-int must be rejected at the trust boundary,
-    # before any preview/mutation call.
+@pytest.mark.parametrize("verb_name", ["trim_head", "trim_tail"])
+def test_trim_verbs_render_as_number_inputs(client, verb_name):
+    # offset verbs (trim_head/trim_tail) must render a number input — and must NOT
+    # be floored at min=0, because a negative offset is a valid "extend".
+    with patch("forge_bridge.cli.interactive._segments",
+               new=AsyncMock(return_value=[_SEG])):
+        r = client.get(
+            f"/ui/fragments/actions-segments?verb={verb_name}&sequence=seq01"
+        )
+    assert r.status_code == 200
+    assert 'type="number"' in r.text
+    assert 'step="1"' in r.text
+    # negatives allowed (extend) → never a min floor for an offset verb
+    assert 'min="0"' not in r.text
+
+
+def test_preview_rejects_non_numeric_offset(client):
+    # offset is numeric — a non-number is rejected at the trust boundary, before
+    # any preview/mutation call.
     preview = AsyncMock()
     with patch("forge_bridge.cli.interactive._segments",
                new=AsyncMock(return_value=[_SEG])), \
          patch("forge_bridge.cli.interactive._preview_mutation", new=preview):
         r = client.post(
-            "/ui/actions/trim/preview",
+            "/ui/actions/trim_head/preview",
             data={"sequence": "seq01", "segment_index": "1", "value": "notanumber"},
         )
     assert r.status_code == 400
@@ -125,18 +148,61 @@ def test_preview_rejects_bad_int_for_trim(client):
     preview.assert_not_awaited()
 
 
-def test_preview_rejects_negative_for_trim(client):
+def test_preview_rejects_out_of_range_trim(client):
+    # validate_trim guard: trimming >= the segment duration collapses it. The
+    # legible reason must surface (not the opaque host failure) and the preview
+    # mutation must never be reached.
     preview = AsyncMock()
     with patch("forge_bridge.cli.interactive._segments",
                new=AsyncMock(return_value=[_SEG])), \
          patch("forge_bridge.cli.interactive._preview_mutation", new=preview):
         r = client.post(
-            "/ui/actions/trim/preview",
-            data={"sequence": "seq01", "segment_index": "1", "value": "-5"},
+            "/ui/actions/trim_head/preview",
+            data={"sequence": "seq01", "segment_index": "1", "value": "50"},
         )
     assert r.status_code == 400
-    assert "0 or greater" in r.text
+    # _SEG duration is 48 → trimming 50 is impossible (apostrophe is HTML-escaped)
+    assert "trim 50 off a 48-frame segment" in r.text
     preview.assert_not_awaited()
+
+
+def test_preview_rejects_over_extend_trim(client):
+    # validate_trim guard: extending (negative offset) beyond the available handle
+    # is impossible. _SEG head handle is 5; extending by 10 must be rejected.
+    preview = AsyncMock()
+    with patch("forge_bridge.cli.interactive._segments",
+               new=AsyncMock(return_value=[_SEG])), \
+         patch("forge_bridge.cli.interactive._preview_mutation", new=preview):
+        r = client.post(
+            "/ui/actions/trim_head/preview",
+            data={"sequence": "seq01", "segment_index": "1", "value": "-10"},
+        )
+    assert r.status_code == 400
+    # apostrophe is HTML-escaped in the rendered fragment
+    assert "extend the head by 10" in r.text
+    assert "only 5 frames of handle available" in r.text
+    preview.assert_not_awaited()
+
+
+def test_preview_valid_offset_trim_uses_describe_change(client):
+    # a valid in-range offset trim previews with the artist-legible describe_change
+    # wording — and NEVER leaks an absolute timeline frame (the in-point 100 nor
+    # the resulting after-frame 110).
+    held = {"resolved_plan": [{"x": 1}]}
+    with patch("forge_bridge.cli.interactive._segments",
+               new=AsyncMock(return_value=[_SEG])), \
+         patch("forge_bridge.cli.interactive._preview_mutation",
+               new=AsyncMock(return_value=(held, None))):
+        r = client.post(
+            "/ui/actions/trim_head/preview",
+            data={"sequence": "seq01", "segment_index": "1", "value": "10"},
+        )
+    assert r.status_code == 200
+    assert "trim 10 frames off the head" in r.text
+    assert "Stage for ratification" in r.text
+    # no absolute frame leaks into the preview
+    assert "100" not in r.text
+    assert "110" not in r.text
 
 
 def test_stage_calls_producer_and_returns_graph_intent_id(client):

@@ -16,8 +16,10 @@
 
   <label class="actions-field">
     <span class="actions-field__label">{{ verb.value_label }}</span>
+    {# whole-number stepping for numeric verbs; min=0 ONLY for int — an offset
+       (trim) is signed, negatives extend, so it must NOT be floored at 0. #}
     <input type="{{ verb.input_type }}" name="value" class="actions-input"
-           autocomplete="off"{% if verb.value_kind == "int" %} min="0" step="1"{% endif %}>
+           autocomplete="off"{% if verb.value_kind == "int" %} min="0" step="1"{% elif verb.value_kind == "offset" %} step="1"{% endif %}>
   </label>
 
   <button class="btn"

@@ -47,8 +47,10 @@ def _verb_view(verb: Any) -> dict[str, Any]:
         "summary": verb.summary,
         "value_label": verb.value_label,
         "value_kind": verb.value_kind,
-        # number input for int verbs (e.g. trim), text otherwise (e.g. rename)
-        "input_type": "number" if verb.value_kind == "int" else "text",
+        # number input for numeric verbs — int AND offset (trim is a SIGNED
+        # relative count: negatives extend, so NO min=0 for offset); text
+        # otherwise (e.g. rename).
+        "input_type": "number" if verb.value_kind in ("int", "offset") else "text",
     }
 
 
@@ -192,6 +194,12 @@ async def _resolve_target(
     current = seg.get(verb.current_key)
     if _verbs.is_unchanged(verb, value, current):
         return None, _fragment_error(request, "Value unchanged — nothing to do.", status=400)
+    # Trim verbs: host-side range guard AFTER the value parses and the segment is
+    # resolved, BEFORE staging anything. Surfaces the plain-language reason exactly
+    # like a parse error (no-op for non-trim verbs — validate_trim returns None).
+    trim_reason = _verbs.validate_trim(verb, value, seg)
+    if trim_reason is not None:
+        return None, _fragment_error(request, trim_reason, status=400)
     return (
         {"sequence": sequence, "seg": seg, "index": idx, "value": value, "current": current},
         None,
@@ -225,6 +233,8 @@ async def ui_actions_preview_handler(request: Request) -> HTMLResponse:
     if perr is not None:
         return _fragment_error(request, f"Can't do that — {_humanize(perr[1])}", status=400)
     plan = held.get("resolved_plan") or []
+    # artist-legible one-liner; offset verbs never leak an absolute frame.
+    change_summary = _verbs.describe_change(verb, payload["current"], payload["value"])
     return request.app.state.templates.TemplateResponse(
         request,
         "actions/preview.html",
@@ -235,6 +245,7 @@ async def ui_actions_preview_handler(request: Request) -> HTMLResponse:
             "seg_name": payload["seg"].get("seg_name"),
             "current": payload["current"],
             "new_value": payload["value"],
+            "change_summary": change_summary,
             "plan_count": len(plan),
             # raw value carried verbatim so Stage re-runs the exact same path
             "value_raw": form.get("value") or "",
@@ -284,6 +295,7 @@ async def ui_actions_stage_handler(request: Request) -> HTMLResponse:
             type(exc).__name__, exc_info=True,
         )
         return _fragment_error(request, "Staging failed — nothing was applied.")
+    change_summary = _verbs.describe_change(verb, payload["current"], payload["value"])
     return request.app.state.templates.TemplateResponse(
         request,
         "actions/staged.html",
@@ -293,5 +305,6 @@ async def ui_actions_stage_handler(request: Request) -> HTMLResponse:
             "seg_name": seg_name,
             "current": payload["current"],
             "new_value": payload["value"],
+            "change_summary": change_summary,
         },
     )
