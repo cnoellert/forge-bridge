@@ -124,74 +124,138 @@ def describe_change(verb: Verb, current: Any, value: Any) -> str:
     return f"{current}  →  {value}"
 
 
-def build_rename_delta(values: dict[str, Any]) -> dict[str, Any]:
-    """Build a host-neutral rename TimelineDelta dict from collected values.
+# -- multi-segment fan-out (Approach A: ONE multi-entry TimelineDelta) ---------
+# A selection of N segments rides the SAME rail as one: a single TimelineDelta
+# carrying N DeltaEntry rows (host_resolve resolves each, commit applies all).
+# The builders accept ``values["segments"]`` (a list) and treat the legacy
+# ``values["segment"]`` as the one-element case, so a single-segment build stays
+# byte-identical to before (a 1-element list -> exactly the old 1-entry delta).
 
-    ``values`` must carry: ``sequence_name``, ``segment`` (the full segment dict
-    from ``flame_get_sequence_segments`` — supplies track_idx/record_in/
-    source_name/seg_name so the artist never types Flame identity), ``new_name``.
+_COUNTER_TOKENS = ("$nnn", "$nn", "$n", "$iteration")
+
+
+def has_counter(template: str) -> bool:
+    """True when ``template`` carries a per-segment counter token (see ``expand_counter``)."""
+    return any(tok in template for tok in _COUNTER_TOKENS)
+
+
+def expand_counter(template: str, index: int, count: int) -> str:
+    """Expand a per-iteration counter token in a rename ``template``.
+
+    ``$n``/``$iteration`` -> bare 1-based ``index`` (1, 2, …); ``$nn`` -> width-2
+    zero-pad (01, 02, …); ``$nnn`` -> width-3. ``index`` is the segment's position
+    in TIMELINE order (see ``timeline_sorted``) so the numbering runs left-to-right
+    as the eye expects. ``count`` (the batch size) is accepted for the caller's
+    symmetry; the token widths are explicit, so it is not consulted here. Longest
+    token first so ``$nnn`` is never eaten by ``$n``.
+    """
+    out = template.replace("$iteration", str(index))
+    out = out.replace("$nnn", f"{index:03d}")
+    out = out.replace("$nn", f"{index:02d}")
+    out = out.replace("$n", str(index))
+    return out
+
+
+def timeline_sorted(segs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Order segments left-to-right on the timeline: ``(track_idx, in-point)`` asc.
+
+    Prefers the numeric ``record_in_frame`` for a correct chronological order,
+    falling back to the ``record_in`` timecode string when the frame is absent
+    (the kind-flag in the key keeps int/str frames from being compared). Stable +
+    idempotent, so a caller may pre-sort and the builder re-sort harmlessly.
+    """
+    def key(s: dict[str, Any]) -> tuple:
+        ti = int(s.get("track_idx", 0) or 0)
+        rif = s.get("record_in_frame")
+        if isinstance(rif, int):
+            return (ti, 0, rif, "")
+        return (ti, 1, 0, str(s.get("record_in", "")))
+    return sorted(segs, key=key)
+
+
+def _segments_of(values: dict[str, Any]) -> list[dict[str, Any]]:
+    """The timeline-sorted segment list for a build — ``segments`` or legacy ``segment``."""
+    segs = values.get("segments")
+    if segs is None:
+        segs = [values["segment"]]
+    return timeline_sorted(segs)
+
+
+def _entry_metadata(seg: dict[str, Any], sequence_name: Any) -> dict[str, Any]:
+    """The shared host-identity metadata block for one DeltaEntry."""
+    return {
+        "track_idx": int(seg["track_idx"]),
+        "record_in": str(seg["record_in"]),
+        "seg_name": str(seg["seg_name"]),
+        "source_name": str(seg["source_name"]),
+        "sequence_name": str(sequence_name),
+    }
+
+
+def build_rename_delta(values: dict[str, Any]) -> dict[str, Any]:
+    """Build a host-neutral rename TimelineDelta dict (1..N segments).
+
+    ``values`` carries ``sequence_name``, the segment(s) (``segments`` list, or
+    the legacy single ``segment`` — the full dict(s) from
+    ``flame_get_sequence_segments``, supplying track_idx/record_in/source_name/
+    seg_name so the artist never types Flame identity), and ``new_name``. A
+    single-segment rename takes ``new_name`` LITERALLY (byte-identical to before);
+    a multi-segment rename treats it as a counter TEMPLATE and expands the token
+    (``$n``/``$nn``/``$nnn``/``$iteration``) per timeline-ordered index.
     """
     from forge_core.traffik.editing import DeltaEntry, TimelineDelta  # lazy
 
-    seg = values["segment"]
-    before = str(seg["seg_name"])
-    after = str(values["new_name"])
-    delta = TimelineDelta(
-        sequence_id="fbridge-exec-rename",
-        entries=[DeltaEntry(
+    segs = _segments_of(values)
+    template = str(values["new_name"])
+    count = len(segs)
+    entries = [
+        DeltaEntry(
             action="updated",
             object_type="segment",
             object_id="exec-rename",
-            before={"id": "exec-rename", "name": before},
-            after={"id": "exec-rename", "name": after},
-            metadata={
-                "track_idx": int(seg["track_idx"]),
-                "record_in": str(seg["record_in"]),
-                "seg_name": before,
-                "source_name": str(seg["source_name"]),
-                "sequence_name": str(values["sequence_name"]),
-            },
-        )],
-    )
-    return delta.to_dict()
+            before={"id": "exec-rename", "name": str(seg["seg_name"])},
+            # a counter only makes sense across a batch; a lone rename is literal
+            after={"id": "exec-rename",
+                   "name": expand_counter(template, i, count) if count > 1 else template},
+            metadata=_entry_metadata(seg, values["sequence_name"]),
+        )
+        for i, seg in enumerate(segs, 1)
+    ]
+    return TimelineDelta(sequence_id="fbridge-exec-rename", entries=entries).to_dict()
 
 
 def _build_trim_delta(
-    values: dict[str, Any], *, field: str, before: int, after: int
+    values: dict[str, Any], *, field: str, frame_key: str, sign: int
 ) -> dict[str, Any]:
-    """Build a host-neutral relative-trim TimelineDelta dict (one temporal field).
+    """Build a host-neutral relative-trim TimelineDelta dict (1..N segments, one field).
 
-    A trim rides the temporal-delta rail: a single-field ``frame_in`` (head) or
-    ``frame_out`` (tail) update lowered by the host_resolve operation to
-    ``forge_apply_segment_temporal_delta`` (the only protocol-compliant temporal
-    executor). The host derives the OFFSET internally from ``after - before``
-    (head) / ``before - after`` (tail) and applies it as a relative trim, so the
-    artist-facing value is a relative count and the absolute frame stays internal.
-    ``values`` must carry ``sequence_name`` + ``segment`` (the full segment dict
-    from ``flame_get_sequence_segments`` — supplies the identity metadata).
+    A trim rides the temporal-delta rail: each entry's single changed field
+    (``frame_in`` head / ``frame_out`` tail) is lowered by the host_resolve
+    operation to ``forge_apply_segment_temporal_delta`` (the only protocol-
+    compliant temporal executor). The host derives the OFFSET internally from
+    ``after - before``, so the SAME artist-facing ``count`` applies to every
+    selected segment and the absolute frame stays internal. ``sign`` is +1 for a
+    head trim (in-point later) and -1 for a tail trim (out-point earlier).
+    ``values`` carries ``sequence_name`` + the segment(s) (``segments`` / legacy
+    ``segment``) supplying the identity metadata + per-segment ``frame_key``.
     """
     from forge_core.traffik.editing import DeltaEntry, TimelineDelta  # lazy
 
-    seg = values["segment"]
-    delta = TimelineDelta(
-        sequence_id="fbridge-exec-trim",
-        entries=[DeltaEntry(
+    segs = _segments_of(values)
+    count = int(values["count"])
+    entries = [
+        DeltaEntry(
             action="updated",
             object_type="segment",
             object_id="exec-trim",
             # single changed field -> classified as a supported temporal trim
-            before={"id": "exec-trim", field: before},
-            after={"id": "exec-trim", field: after},
-            metadata={
-                "track_idx": int(seg["track_idx"]),
-                "record_in": str(seg["record_in"]),
-                "seg_name": str(seg["seg_name"]),
-                "source_name": str(seg["source_name"]),
-                "sequence_name": str(values["sequence_name"]),
-            },
-        )],
-    )
-    return delta.to_dict()
+            before={"id": "exec-trim", field: int(seg[frame_key])},
+            after={"id": "exec-trim", field: int(seg[frame_key]) + sign * count},
+            metadata=_entry_metadata(seg, values["sequence_name"]),
+        )
+        for seg in segs
+    ]
+    return TimelineDelta(sequence_id="fbridge-exec-trim", entries=entries).to_dict()
 
 
 def build_trim_head_delta(values: dict[str, Any]) -> dict[str, Any]:
@@ -201,11 +265,7 @@ def build_trim_head_delta(values: dict[str, Any]) -> dict[str, Any]:
     (``after - before``) equals ``count`` (positive moves the in-point later /
     shortens; negative extends, consuming a head handle).
     """
-    seg = values["segment"]
-    before = int(seg["record_in_frame"])
-    return _build_trim_delta(
-        values, field="frame_in", before=before, after=before + int(values["count"])
-    )
+    return _build_trim_delta(values, field="frame_in", frame_key="record_in_frame", sign=1)
 
 
 def build_trim_tail_delta(values: dict[str, Any]) -> dict[str, Any]:
@@ -215,11 +275,7 @@ def build_trim_tail_delta(values: dict[str, Any]) -> dict[str, Any]:
     (``before - after``) equals ``count`` (positive moves the out-point earlier /
     shortens; negative extends, consuming a tail handle).
     """
-    seg = values["segment"]
-    before = int(seg["record_out_frame"])
-    return _build_trim_delta(
-        values, field="frame_out", before=before, after=before - int(values["count"])
-    )
+    return _build_trim_delta(values, field="frame_out", frame_key="record_out_frame", sign=-1)
 
 
 def build_host_mutation_spec(delta_dict: dict[str, Any], operator_id: str) -> Any:

@@ -206,29 +206,38 @@ def _ratified_assent() -> Any:
     )
 
 
-def _build_mutation_spec(
-    verb: Any, sequence: str, seg: dict[str, Any], values: dict[str, Any]
+def _build_mutation_spec_multi(
+    verb: Any, sequence: str, segs: list[dict[str, Any]], values: dict[str, Any]
 ) -> Any:
-    """The single canonical author of a verb's host-mutation GraphSpec.
+    """The single canonical author of a verb's host-mutation GraphSpec (1..N segs).
 
     Both the no-assent preview and the stage-for-ratification persist build their
     spec HERE — one representation, never two (the staged intent IS the previewed
-    intent). ponytail: same call surface `run_oneshot` builds inline.
+    intent). The builder folds ``segs`` into ONE multi-entry TimelineDelta riding
+    the same preview->ratify->commit rail (Approach A). ponytail: same call
+    surface `run_oneshot` builds inline.
     """
-    delta = verb.build_delta({"sequence_name": sequence, "segment": seg, **values})
+    delta = verb.build_delta({"sequence_name": sequence, "segments": segs, **values})
     return _verbs.build_host_mutation_spec(delta, _verbs.host_resolve_operator())
 
 
-async def _preview_mutation(
+def _build_mutation_spec(
     verb: Any, sequence: str, seg: dict[str, Any], values: dict[str, Any]
+) -> Any:
+    """Single-segment spec author — the 1-element case of ``_build_mutation_spec_multi``."""
+    return _build_mutation_spec_multi(verb, sequence, [seg], values)
+
+
+async def _preview_mutation_multi(
+    verb: Any, sequence: str, segs: list[dict[str, Any]], values: dict[str, Any]
 ) -> tuple[dict[str, Any] | None, tuple[str, str] | None]:
-    """Resolve the held mutation manifest for a verb (NO assent, no mutation).
+    """Resolve the held mutation manifest for a verb over N segments (NO assent).
 
     Returns (held_manifest, None) on success, or (None, (where, why)) for a
     fail-closed reason (e.g. UNRESOLVED_TARGET).
     """
     from forge_bridge.orchestration.apply_editorial_delta import preview_editorial_delta
-    spec = _build_mutation_spec(verb, sequence, seg, values)
+    spec = _build_mutation_spec_multi(verb, sequence, segs, values)
     results = await preview_editorial_delta(spec)
     err = _node_error(results)
     if err is not None:
@@ -237,6 +246,13 @@ async def _preview_mutation(
     if held is None:
         return None, ("preview", "no mutation manifest")
     return held, None
+
+
+async def _preview_mutation(
+    verb: Any, sequence: str, seg: dict[str, Any], values: dict[str, Any]
+) -> tuple[dict[str, Any] | None, tuple[str, str] | None]:
+    """Single-segment preview — the 1-element case of ``_preview_mutation_multi``."""
+    return await _preview_mutation_multi(verb, sequence, [seg], values)
 
 
 async def _apply_held(held: dict[str, Any]) -> tuple[bool, str]:
@@ -261,10 +277,11 @@ async def _apply_held(held: dict[str, Any]) -> tuple[bool, str]:
     return False, "apply did not complete"
 
 
-async def _stage_mutation(
-    verb: Any, sequence: str, seg: dict[str, Any], values: dict[str, Any], *, display: str
+async def _stage_mutation_multi(
+    verb: Any, sequence: str, segs: list[dict[str, Any]], values: dict[str, Any],
+    *, display: str,
 ) -> str:
-    """Persist the previewed mutation as a *proposed* graph-intent for later ratify.
+    """Persist the previewed N-segment mutation as a *proposed* graph-intent.
 
     Reuses the SAME canonical spec author as the preview, then hands it to the
     proven in-process producer (writes the DB directly via the session factory —
@@ -276,11 +293,18 @@ async def _stage_mutation(
         preview_editorial_delta_for_ratification,
     )
     from forge_bridge.store.session import get_async_session_factory
-    spec = _build_mutation_spec(verb, sequence, seg, values)
+    spec = _build_mutation_spec_multi(verb, sequence, segs, values)
     staged = await preview_editorial_delta_for_ratification(
         spec, session_factory=get_async_session_factory(), display=display,
     )
     return staged.get("graph_intent_id")
+
+
+async def _stage_mutation(
+    verb: Any, sequence: str, seg: dict[str, Any], values: dict[str, Any], *, display: str
+) -> str:
+    """Single-segment stage — the 1-element case of ``_stage_mutation_multi``."""
+    return await _stage_mutation_multi(verb, sequence, [seg], values, display=display)
 
 
 _REQUIRED_PLUGINS = ("flame", "traffik")  # verbs need flame (host) + traffik (op)
@@ -380,6 +404,95 @@ async def _resolve_sequence(con) -> str | None:
     return seqs[idx - 1]
 
 
+async def _run_fanout(
+    con, *, verb: Any, sequence: str, segs: list[dict[str, Any]]
+) -> None:
+    """Apply ``verb`` to ALL selected ``segs`` in ONE preview->ratify->commit.
+
+    Approach A: the value is collected ONCE (one offset for a trim, one name
+    TEMPLATE for a rename), then every timeline-sorted segment becomes one entry
+    of a single multi-entry TimelineDelta riding the same rail as a lone edit.
+    The preview lists each segment's concrete change (rename shows the expanded
+    per-segment name). ``segs`` arrives timeline-sorted, so the counter numbering
+    and the preview rows agree with the builder's entry order.
+    """
+    con.print(f"\n  [bold]{len(segs)}[/bold] segments selected on [bold]{sequence}[/bold]:")
+    for i, s in enumerate(segs, 1):
+        con.print(f"    {i:>3}  {s.get('seg_name')}  [dim](track {s.get('track_idx')})[/dim]")
+
+    # one value for the whole batch: offset (trim) defaults to 0; a rename takes a
+    # counter TEMPLATE so each segment gets a distinct expanded name (see #guard).
+    if verb.value_kind == "offset":
+        raw = str(IntPrompt.ask(f"[amber]{verb.value_label}[/amber]", default=0))
+    elif verb.value_kind == "int":
+        raw = str(IntPrompt.ask(f"[amber]{verb.value_label}[/amber]"))
+    else:
+        raw = Prompt.ask(
+            f"[amber]{verb.value_label} — use $n for a per-segment counter "
+            f"(e.g. shot_$n)[/amber]")
+    value, perr = _verbs.parse_value(verb, raw)
+    if perr is not None:
+        con.print(f"  cancelled — {perr}")
+        return
+
+    # multi-rename without a counter would collide every segment onto one name
+    if verb.value_kind == "str" and not _verbs.has_counter(value):
+        con.print(f"  [red]can't do that[/red] — renaming {len(segs)} segments "
+                  f"needs a counter, e.g. shot_$n")
+        return
+    # per-segment range guard for trims: reject naming EACH offender, never
+    # silently apply to the rest of the batch.
+    if verb.trim_side is not None:
+        fails = [(s, _verbs.validate_trim(verb, value, s)) for s in segs]
+        fails = [(s, why) for s, why in fails if why is not None]
+        if fails:
+            detail = "; ".join(f"{s.get('seg_name')}: {why}" for s, why in fails)
+            con.print(f"  [red]can't do that[/red] — {detail}")
+            return
+
+    con.print("\n  [dim]checking the live timeline…[/dim]")
+    held, err = await _preview_mutation_multi(verb, sequence, segs, {verb.value_field: value})
+    if err is not None:
+        con.print(f"  [red]can't do that[/red] — {_humanize(err[1])}")
+        return
+    plan = held.get("resolved_plan") or []
+    con.print(f"\n  [bold]Preview[/bold] — {verb.label}, {len(plan)} segments in Flame:")
+    for i, s in enumerate(segs, 1):
+        if verb.value_kind == "str":
+            con.print(f"    {s.get('seg_name')}  →  "
+                      f"{_verbs.expand_counter(value, i, len(segs))}")
+        else:
+            con.print(f"    {s.get('seg_name')}:  "
+                      f"{_verbs.describe_change(verb, s.get(verb.current_key), value)}")
+    con.print("    [dim]reversible · nothing else touched[/dim]\n")
+
+    # same y/s/n gate as the single path; confirmation IS the ratification act.
+    con.print("  How do you want to proceed?")
+    con.print("    [bold]y[/bold] — apply now: make the changes in Flame (reversible — re-run to undo)")
+    con.print("    [bold]s[/bold] — stage it: save for approval, apply later with [dim]fbridge ratify <id>[/dim]")
+    con.print("    [bold]n[/bold] — cancel: do nothing")
+    choice = Prompt.ask(
+        "  [amber]y / s / n[/amber]",
+        choices=["y", "s", "n"], default="n",
+    ).lower()
+    if choice == "n":
+        con.print("  not applied.")
+        return
+    if choice == "s":
+        gid = await _stage_mutation_multi(
+            verb, sequence, segs, {verb.value_field: value},
+            display=f"{verb.name} ×{len(segs)} -> {value}",
+        )
+        con.print("  [amber]staged — nothing applied yet.[/amber] Ratify later with:")
+        con.print(f"    [bold]fbridge ratify {gid}[/bold]")
+        return
+    ok, msg = await _apply_held(held)
+    if ok:
+        con.print(f"  [green]✓ enacted in Flame[/green] — {msg}.")
+    else:
+        con.print(f"  [red]not applied[/red] — {msg}")
+
+
 async def _run_verb(
     con, *, verb: Any,
     sequence: str | None = None,
@@ -403,17 +516,11 @@ async def _run_verb(
                     con.print(f"  using your selected segment: "
                               f"[bold]{seg.get('seg_name')}[/bold] on [bold]{sequence}[/bold]")
                 elif len(chosen) > 1:
-                    sequence = sel_seq
-                    con.print(f"\n  [bold]{len(chosen)}[/bold] segments selected on "
-                              f"[bold]{sequence}[/bold]:")
-                    for i, s in enumerate(chosen, 1):
-                        con.print(f"    {i:>3}  {s.get('seg_name')}  "
-                                  f"[dim](track {s.get('track_idx')})[/dim]")
-                    idx = IntPrompt.ask("[amber]Which segment #[/amber]")
-                    if not (1 <= idx <= len(chosen)):
-                        con.print("  cancelled — out of range")
-                        return
-                    seg = chosen[idx - 1]
+                    # FAN-OUT (Approach A): apply the verb to ALL selected segments
+                    # in one preview->ratify->commit via a single multi-entry delta.
+                    await _run_fanout(con, verb=verb, sequence=sel_seq,
+                                      segs=_verbs.timeline_sorted(chosen))
+                    return
                 # chosen empty (selection matched no live segment) -> fall through
 
     # any arg left None is prompted for — bare /verb auto-resolves the sequence

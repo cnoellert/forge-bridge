@@ -133,6 +133,24 @@ def _wire_downstream(monkeypatch, *, segs, captured=None):
     monkeypatch.setattr(interactive, "_apply_held", apply)
 
 
+def _wire_fanout(monkeypatch, *, segs, captured=None):
+    """Stub the MULTI preview/apply path so the FAN-OUT branch is the only live
+    logic. Records the segment list handed to the multi preview via `captured`."""
+    async def _segs(_seq):
+        return segs
+    monkeypatch.setattr(interactive, "_segments", _segs)
+
+    async def prev_multi(_verb, _seq, segs_in, _values):
+        if captured is not None:
+            captured["segs"] = segs_in
+        return ({"apply_counterpart": {}, "resolved_plan": [1, 1]}, None)
+    monkeypatch.setattr(interactive, "_preview_mutation_multi", prev_multi)
+
+    async def apply(_held):
+        return True, f"{len(_held.get('resolved_plan', []))} applied"
+    monkeypatch.setattr(interactive, "_apply_held", apply)
+
+
 @pytest.mark.asyncio
 async def test_a_single_selection_skips_both_prompts(monkeypatch):
     con = _FakeCon()
@@ -162,28 +180,36 @@ async def test_a_single_selection_skips_both_prompts(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_b_multi_selection_scoped_list_and_pick(monkeypatch):
+async def test_b_multi_selection_fans_out_to_all(monkeypatch):
+    # >1 selected -> FAN-OUT (Approach A): one value collected once, applied to
+    # ALL selected segments via a single multi-entry delta — NOT a pick-one.
     con = _FakeCon()
     s1 = _full_seg("sel_one")
     s2 = _full_seg("not_sel", track_idx=1)
     s3 = _full_seg("sel_two", track_idx=2)
     captured: dict = {}
-    _wire_downstream(monkeypatch, segs=[s1, s2, s3], captured=captured)
+    _wire_fanout(monkeypatch, segs=[s1, s2, s3], captured=captured)
 
     async def sel():
         return ("SEQ", [_id_of(s1), _id_of(s3)])  # 2 of 3 selected
     monkeypatch.setattr(interactive, "_selected_segments", sel)
-    # the scoped picker chooses the 2nd of the SELECTED list -> s3
-    monkeypatch.setattr(interactive.IntPrompt, "ask", lambda *a, **k: 2)
+    # one rename TEMPLATE for the whole batch (no per-segment IntPrompt pick)
+    monkeypatch.setattr(interactive.IntPrompt, "ask",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no pick prompt")))
     monkeypatch.setattr(interactive.Prompt, "ask",
-                        lambda p="", *a, **k: "y" if "y / s / n" in str(p) else "x_v2")
+                        lambda p="", *a, **k: "y" if "y / s / n" in str(p) else "shot_$n")
 
     await interactive._run_verb(con, verb=verbs.REGISTRY["rename"])
     blob = "\n".join(con.lines)
     assert "segments selected" in blob and "2[/bold] segments selected" in blob
     assert "sel_one" in blob and "sel_two" in blob
     assert "not_sel" not in blob  # only the selected segs are listed
-    assert captured["seg"]["seg_name"] == "sel_two"  # the IntPrompt pick (s3)
+    # the multi preview ran over BOTH selected segments (in timeline order)
+    names = [s["seg_name"] for s in captured["segs"]]
+    assert names == ["sel_one", "sel_two"]
+    # the preview shows each expanded per-segment name
+    assert "sel_one  →  shot_1" in blob and "sel_two  →  shot_2" in blob
+    assert any("enacted in Flame" in line for line in con.lines)
 
 
 @pytest.mark.asyncio
