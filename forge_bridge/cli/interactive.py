@@ -460,10 +460,12 @@ async def _run_fanout(
         return
     plan = held.get("resolved_plan") or []
     con.print(f"\n  [bold]Preview[/bold] — {verb.label}, {len(plan)} segments in Flame:")
-    for i, s in enumerate(segs, 1):
+    # iterate the SAME timeline-sorted order + 0-based index the delta builder
+    # uses, so the previewed name matches exactly what gets applied.
+    for i, s in enumerate(_verbs.timeline_sorted(segs)):
         if verb.value_kind == "str":
             con.print(f"    {s.get('seg_name')}  →  "
-                      f"{_verbs.expand_counter(value, i, len(segs))}")
+                      f"{_verbs.expand_counter(value, i)}")
         else:
             con.print(f"    {s.get('seg_name')}:  "
                       f"{_verbs.describe_change(verb, s.get(verb.current_key), value)}")

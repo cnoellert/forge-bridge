@@ -49,15 +49,20 @@ def test_has_counter_detects_every_token():
 
 
 def test_expand_counter_bare_and_padded_and_alias():
-    assert verbs.expand_counter("shot_$n", 1, 2) == "shot_1"
-    assert verbs.expand_counter("shot_$n", 12, 99) == "shot_12"
-    assert verbs.expand_counter("s_$nn", 1, 2) == "s_01"
-    assert verbs.expand_counter("s_$nn", 12, 12) == "s_12"
-    assert verbs.expand_counter("s_$nnn", 2, 2) == "s_002"
+    # position is 0-based; bare $n -> start 1, step 1
+    assert verbs.expand_counter("shot_$n", 0) == "shot_1"
+    assert verbs.expand_counter("shot_$n", 11) == "shot_12"
+    # $n{width} zero-pads
+    assert verbs.expand_counter("s_$n{2}", 0) == "s_01"
+    assert verbs.expand_counter("s_$n{2}", 11) == "s_12"
+    assert verbs.expand_counter("s_$n{3}", 1) == "s_002"
+    # $n{width,start,step} -> the sh### convention
+    assert verbs.expand_counter("sh$n{3,10,10}", 0) == "sh010"
+    assert verbs.expand_counter("sh$n{3,10,10}", 2) == "sh030"
     # $iteration is an alias for $n
-    assert verbs.expand_counter("sh_$iteration", 3, 4) == "sh_3"
-    # longest token first: $nnn is not eaten by $n
-    assert verbs.expand_counter("$nnn", 5, 9) == "005"
+    assert verbs.expand_counter("sh_$iteration", 2) == "sh_3"
+    # no token -> returned unchanged (literal)
+    assert verbs.expand_counter("HERO", 0) == "HERO"
 
 
 def test_timeline_sorted_orders_by_track_then_in_point():
@@ -90,9 +95,20 @@ def test_build_rename_delta_multi_zero_padded():
     s1 = _seg("one", record_in_frame=100)
     s2 = _seg("two", record_in_frame=200)
     delta = verbs.build_rename_delta(
-        {"sequence_name": "CUT", "segments": [s1, s2], "new_name": "s_$nn"})
+        {"sequence_name": "CUT", "segments": [s1, s2], "new_name": "s_$n{2}"})
     names = [e["after"]["name"] for e in _entries(delta)]
     assert names == ["s_01", "s_02"]
+
+
+def test_build_rename_delta_multi_start_step():
+    # $n{width,start,step} -> the sh### shot-numbering convention
+    s1 = _seg("one", record_in_frame=100)
+    s2 = _seg("two", record_in_frame=200)
+    s3 = _seg("three", record_in_frame=300)
+    delta = verbs.build_rename_delta(
+        {"sequence_name": "CUT", "segments": [s1, s2, s3], "new_name": "sh$n{3,10,10}"})
+    names = [e["after"]["name"] for e in _entries(delta)]
+    assert names == ["sh010", "sh020", "sh030"]
 
 
 def test_build_trim_head_delta_multi_shared_offset():
@@ -127,10 +143,11 @@ def test_single_segment_segments_list_equals_legacy_segment():
     multi_rn = verbs.build_rename_delta(
         {"sequence_name": "CUT", "segments": [seg], "new_name": "shot_010_v2"})
     assert legacy_rn == multi_rn
-    # a lone rename is taken LITERALLY even if it contains a token (byte-identical)
+    # a counter token now expands even for a lone rename (0-based position 0 -> 1);
+    # byte-identity is only promised for a TOKEN-FREE literal (asserted above).
     lit = verbs.build_rename_delta(
         {"sequence_name": "CUT", "segment": seg, "new_name": "shot_$n"})
-    assert _entries(lit)[0]["after"]["name"] == "shot_$n"
+    assert _entries(lit)[0]["after"]["name"] == "shot_1"
     # trim: same equivalence
     legacy_th = verbs.build_trim_head_delta(
         {"sequence_name": "CUT", "segment": seg, "count": 12})
@@ -187,21 +204,32 @@ async def test_fanout_trim_multi_previews_and_applies(monkeypatch):
     assert "2 segments in Flame" in blob and "enacted in Flame" in blob
 
 
+def test_build_rename_multi_bare_name_applies_literally_to_all():
+    # no counter token -> Flame allows duplicate names; every segment gets the
+    # literal name, no reject (the old "needs a counter" guard is gone).
+    s1 = _seg("one", record_in_frame=100)
+    s2 = _seg("two", record_in_frame=200)
+    delta = verbs.build_rename_delta(
+        {"sequence_name": "CUT", "segments": [s1, s2], "new_name": "plain_name"})
+    names = [e["after"]["name"] for e in _entries(delta)]
+    assert names == ["plain_name", "plain_name"]
+
+
 @pytest.mark.asyncio
-async def test_fanout_rename_without_counter_is_rejected(monkeypatch):
+async def test_fanout_rename_malformed_counter_is_rejected(monkeypatch):
     con = _FakeCon()
     s1 = _seg("one")
     s2 = _seg("two", track_idx=1)
 
     async def prev_boom(*a, **k):
-        raise AssertionError("must reject before preview")
+        raise AssertionError("must reject a malformed counter before preview")
     monkeypatch.setattr(interactive, "_preview_mutation_multi", prev_boom)
-    monkeypatch.setattr(interactive.Prompt, "ask", _value_then_choice("plain_name"))
+    monkeypatch.setattr(interactive.Prompt, "ask", _value_then_choice("x_$n{q}"))
 
     await interactive._run_fanout(con, verb=verbs.REGISTRY["rename"],
                                   sequence="CUT", segs=[s1, s2])
     blob = "\n".join(con.lines)
-    assert "renaming 2 segments needs a counter" in blob and "shot_$n" in blob
+    assert "bad counter format" in blob and "$n{q}" in blob
 
 
 @pytest.mark.asyncio
