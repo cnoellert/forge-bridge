@@ -559,3 +559,49 @@ async def test_run_verb_cancel_branch(monkeypatch):
     await interactive._run_verb(con, verb=verbs.REGISTRY["rename"],
                                 sequence="CUT", seg_index=1, value_raw="shot_010_v2")
     assert any("not applied" in line for line in con.lines)
+
+
+# -- slash-command completion + did-you-mean (pure, registry-driven) ----------
+
+
+def test_command_completions_prefix_matches():
+    # the orphaned "/trim" (post-#128) now resolves to both trim verbs
+    assert interactive._command_completions("/tr") == ["/trim_head", "/trim_tail"]
+    assert interactive._command_completions("/re") == ["/rename"]
+    # leading slash optional; case-insensitive
+    assert interactive._command_completions("RE") == ["/rename"]
+
+
+def test_command_completions_bare_slash_returns_all():
+    allcmds = interactive._command_completions("/")
+    # every registry verb + the meta-commands, all slash-prefixed and sorted
+    for v in verbs.list_verbs():
+        assert f"/{v.name}" in allcmds
+    for meta in interactive._META_COMMANDS:
+        assert f"/{meta}" in allcmds
+    assert allcmds == sorted(allcmds)
+    assert interactive._command_completions("") == allcmds  # empty == bare slash
+
+
+def test_command_completions_unknown_is_empty():
+    assert interactive._command_completions("/xyz") == []
+
+
+def test_command_completions_is_registry_driven(monkeypatch):
+    # a hypothetical newly-registered verb auto-appears (no hard-coded list)
+    extra = verbs.Verb(
+        name="zaprooni", label="Zap", summary="hypothetical verb",
+        build_delta=lambda values: {}, value_field="v", value_kind="str",
+        value_label="V", current_key="seg_name",
+    )
+    monkeypatch.setitem(verbs.REGISTRY, "zaprooni", extra)
+    assert interactive._command_completions("/za") == ["/zaprooni"]
+
+
+def test_did_you_mean_fires_on_near_miss_not_exact():
+    # /trim is a prefix of two verbs -> a legible hint
+    assert interactive._did_you_mean("trim") == ["/trim_head", "/trim_tail"]
+    # an exact command is excluded (it would be dispatched, never hinted)
+    assert interactive._did_you_mean("rename") == []
+    # a true miss yields nothing -> caller falls back to the bland unknown line
+    assert interactive._did_you_mean("xyz") == []
