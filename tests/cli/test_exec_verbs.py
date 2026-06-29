@@ -722,3 +722,178 @@ def test_save_history_swallows_oserror(tmp_path, monkeypatch):
             raise OSError("read-only filesystem")
 
     interactive._save_history(_RL())  # must not raise
+
+
+# -- bare /verb sequence auto-resolution off the live desktop ------------------
+# (the typed-identity usability fix: no Prompt.ask("Sequence") when the desktop
+#  can resolve it; falls back cleanly on a read failure so nothing regresses.)
+
+
+def _wire_resolve(monkeypatch, *, desktop):
+    """Stub _desktop_sequences + the rest of _run_verb so the SEQUENCE-resolution
+    branch is the only live logic. Records whether Prompt.ask ever fired."""
+    async def desk():
+        return desktop
+    monkeypatch.setattr(interactive, "_desktop_sequences", desk)
+
+    async def segs(_seq):
+        return [{"seg_name": "shot_010", "track_idx": 0, "record_in": "r",
+                 "record_in_frame": 100, "source_name": "shot_010"}]
+
+    async def prev(_verb, _seq, _seg, _values):
+        return ({"apply_counterpart": {}, "resolved_plan": [1]}, None)
+    monkeypatch.setattr(interactive, "_segments", segs)
+    monkeypatch.setattr(interactive, "_preview_mutation", prev)
+
+
+@pytest.mark.asyncio
+async def test_run_verb_resolve_single_sequence_no_prompt(monkeypatch):
+    # exactly 1 open sequence -> used silently, the "Sequence" prompt NEVER fires.
+    con = _FakeCon()
+    _wire_resolve(monkeypatch, desktop=["the_only_seq"])
+    used = {}
+
+    async def segs(seq):
+        used["seq"] = seq
+        return [{"seg_name": "shot_010", "track_idx": 0, "record_in": "r",
+                 "record_in_frame": 100, "source_name": "shot_010"}]
+    monkeypatch.setattr(interactive, "_segments", segs)
+
+    def boom(*a, **k):
+        raise AssertionError("must not prompt for a sequence when exactly one is open")
+    monkeypatch.setattr(interactive.Prompt, "ask", boom)
+    # auto-decline at the y/s/n gate via IntPrompt-free path: stub apply/stage off
+    async def apply(_held):
+        return True, "1 applied"
+    monkeypatch.setattr(interactive, "_apply_held", apply)
+    # the only Prompt.ask in the happy path after resolution is the y/s/n choice;
+    # we replaced Prompt.ask wholesale with boom, so feed the choice via IntPrompt?
+    # Instead, cancel cleanly: stub the y/s/n by re-permitting Prompt only for it.
+    # Simplest: seg_index + value supplied, choice forced through a narrow stub.
+    monkeypatch.setattr(interactive, "_stage_mutation",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no stage")))
+
+    # Provide seg_index + value so only the y/s/n Prompt remains — but Prompt is
+    # boom. Re-stub Prompt.ask to answer ONLY the choice and assert no Sequence ask.
+    asked = []
+
+    def choice_only(prompt="", *a, **k):
+        asked.append(str(prompt))
+        return "y"
+    monkeypatch.setattr(interactive.Prompt, "ask", choice_only)
+
+    await interactive._run_verb(con, verb=verbs.REGISTRY["rename"],
+                                seg_index=1, value_raw="shot_010_v2")
+    assert used["seq"] == "the_only_seq"
+    # the only Prompt.ask was the y/s/n gate, never a "Sequence" prompt
+    assert not any("Sequence" in p for p in asked)
+    assert any("using the open sequence" in line for line in con.lines)
+
+
+@pytest.mark.asyncio
+async def test_run_verb_resolve_multi_sequence_int_pick(monkeypatch):
+    # >1 open -> list names + IntPrompt pick (2nd one chosen here).
+    con = _FakeCon()
+    _wire_resolve(monkeypatch, desktop=["seq_a", "seq_b", "seq_c"])
+    used = {}
+
+    async def segs(seq):
+        used["seq"] = seq
+        return [{"seg_name": "shot_010", "track_idx": 0, "record_in": "r",
+                 "record_in_frame": 100, "source_name": "shot_010"}]
+    monkeypatch.setattr(interactive, "_segments", segs)
+    monkeypatch.setattr(interactive.IntPrompt, "ask", lambda *a, **k: 2)
+    monkeypatch.setattr(interactive.Prompt, "ask", lambda *a, **k: "n")  # cancel at gate
+
+    await interactive._run_verb(con, verb=verbs.REGISTRY["rename"],
+                                seg_index=1, value_raw="shot_010_v2")
+    assert used["seq"] == "seq_b"
+    blob = "\n".join(con.lines)
+    assert "Open sequences" in blob and "seq_a" in blob and "seq_c" in blob
+
+
+@pytest.mark.asyncio
+async def test_run_verb_resolve_zero_sequence_early_return(monkeypatch):
+    # 0 open -> "no sequence open" message + early return (no segment read).
+    con = _FakeCon()
+
+    async def desk():
+        return []
+    monkeypatch.setattr(interactive, "_desktop_sequences", desk)
+
+    async def segs_boom(_seq):
+        raise AssertionError("must not read segments when no sequence is open")
+    monkeypatch.setattr(interactive, "_segments", segs_boom)
+
+    await interactive._run_verb(con, verb=verbs.REGISTRY["rename"], seg_index=1,
+                                value_raw="x")
+    assert any("no sequence open" in line for line in con.lines)
+
+
+@pytest.mark.asyncio
+async def test_run_verb_resolve_read_failure_falls_back_to_prompt(monkeypatch):
+    # _desktop_sequences -> None (Flame unreachable) -> original typed prompt.
+    con = _FakeCon()
+
+    async def desk():
+        return None
+    monkeypatch.setattr(interactive, "_desktop_sequences", desk)
+    used = {}
+
+    async def segs(seq):
+        used["seq"] = seq
+        return [{"seg_name": "shot_010", "track_idx": 0, "record_in": "r",
+                 "record_in_frame": 100, "source_name": "shot_010"}]
+    monkeypatch.setattr(interactive, "_segments", segs)
+
+    asked = []
+
+    def prompt(p="", *a, **k):
+        asked.append(str(p))
+        # first ask is the Sequence fallback; then the y/s/n gate -> cancel
+        return "typed_seq" if "Sequence" in str(p) else "n"
+    monkeypatch.setattr(interactive.Prompt, "ask", prompt)
+
+    async def prev(_verb, _seq, _seg, _values):
+        return ({"apply_counterpart": {}, "resolved_plan": [1]}, None)
+    monkeypatch.setattr(interactive, "_preview_mutation", prev)
+
+    await interactive._run_verb(con, verb=verbs.REGISTRY["rename"], seg_index=1,
+                                value_raw="shot_010_v2")
+    assert used["seq"] == "typed_seq"  # fell back to the typed prompt
+    assert any("Sequence" in p for p in asked)
+
+
+@pytest.mark.asyncio
+async def test_run_verb_explicit_sequence_skips_resolution(monkeypatch):
+    # an explicit sequence= (inline-args path) must NEVER hit _desktop_sequences.
+    con = _FakeCon()
+
+    async def desk_boom():
+        raise AssertionError("explicit sequence must not trigger desktop resolution")
+    monkeypatch.setattr(interactive, "_desktop_sequences", desk_boom)
+    _wire_run_verb(monkeypatch, choice="n")
+
+    await interactive._run_verb(con, verb=verbs.REGISTRY["rename"],
+                                sequence="EXPLICIT", seg_index=1, value_raw="shot_010_v2")
+    assert any("not applied" in line for line in con.lines)
+
+
+@pytest.mark.asyncio
+async def test_desktop_sequences_distinguishes_empty_from_failure(monkeypatch):
+    import forge_bridge.bridge as br
+    # success-but-zero -> [] ; read failure (raises) -> None
+    async def ok_empty(_code, **k):
+        return []
+    monkeypatch.setattr(br, "execute_json", ok_empty)
+    assert await interactive._desktop_sequences() == []
+
+    async def ok_names(_code, **k):
+        return ["a", "b"]
+    monkeypatch.setattr(br, "execute_json", ok_names)
+    assert await interactive._desktop_sequences() == ["a", "b"]
+
+    async def boom(_code, **k):
+        raise br.BridgeConnectionError("Flame down")
+    monkeypatch.setattr(br, "execute_json", boom)
+    assert await interactive._desktop_sequences() is None

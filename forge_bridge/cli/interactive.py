@@ -61,6 +61,38 @@ async def _segments(sequence_name: str) -> list[dict[str, Any]]:
     return segs if isinstance(segs, list) else []
 
 
+async def _desktop_sequences() -> list[str] | None:
+    """Names of every sequence on the live Flame desktop (read-only).
+
+    Mirrors the desktop walk ``_find_seq`` uses in ``tools.timeline`` (reel
+    groups -> reels -> sequences), but collects names only — cheaper than the
+    full segment read, and ``flame_list_desktop`` only returns sequence *counts*.
+    ``main_thread`` stays at its safe default (False): this never mutates Flame.
+
+    The return value distinguishes the two cases the caller collapses on:
+    ``[]`` is a SUCCESSFUL read of an empty desktop (no sequence open); ``None``
+    is a READ FAILURE (Flame unreachable / hook error) — the caller falls back
+    to the typed prompt on ``None`` so nothing regresses.
+    """
+    from forge_bridge import bridge
+    try:
+        data = await bridge.execute_json("""
+import flame, json
+ws = flame.project.current_project.current_workspace
+desk = ws.desktop
+names = []
+for rg in desk.reel_groups:
+    for reel in rg.reels:
+        for seq in (reel.sequences or []):
+            n = seq.name.get_value() if hasattr(seq.name, 'get_value') else str(seq.name)
+            names.append(str(n))
+print(json.dumps(names))
+""")
+    except Exception:  # noqa: BLE001 — any read failure => fall back to the prompt
+        return None
+    return [str(n) for n in data] if isinstance(data, list) else None
+
+
 def _ratified_assent() -> Any:
     from forge_bridge.core.assent import AssentRecord
     return AssentRecord(
@@ -210,18 +242,60 @@ def _parse_inline(rest: str) -> tuple[str | None, int | None, str | None, str | 
     return sequence, int(tok[1:]), value_raw, None
 
 
+async def _resolve_sequence(con) -> str | None:
+    """Auto-resolve the sequence for a bare ``/verb`` (no typed identity).
+
+    Collapses on the live Flame desktop so the artist never types a sequence
+    name: exactly one open sequence is used silently; several are listed for a
+    numeric pick (mirroring how ``_run_verb`` lists segments); none yields a
+    plain "open one" message. A *read failure* (``_desktop_sequences`` -> None,
+    Flame unreachable) falls back to the original typed prompt so nothing
+    regresses. Returns the chosen sequence name, or ``None`` to abort the verb.
+
+    Renderer-neutral by design (prints + prompts through ``con``/Rich) so a later
+    surface can lift the collapse rule; the explicit ``sequence=...`` paths
+    (one-shot, slash inline-args, NL composer) never reach here.
+    """
+    seqs = await _desktop_sequences()
+    if seqs is None:  # read failed — preserve the original typed-prompt behavior
+        typed = Prompt.ask("[amber]Sequence[/amber]").strip()
+        if not typed:
+            con.print("  cancelled — no sequence")
+            return None
+        return typed
+    if not seqs:
+        con.print("  no sequence open — open one in Flame")
+        return None
+    if len(seqs) == 1:
+        con.print(f"  using the open sequence: [bold]{seqs[0]}[/bold]")
+        return seqs[0]
+    con.print("\n  Open sequences:")
+    for i, name in enumerate(seqs, 1):
+        con.print(f"    {i:>3}  {name}")
+    idx = IntPrompt.ask("[amber]Which sequence #[/amber]")
+    if not (1 <= idx <= len(seqs)):
+        con.print("  cancelled — out of range")
+        return None
+    return seqs[idx - 1]
+
+
 async def _run_verb(
     con, *, verb: Any,
     sequence: str | None = None,
     seg_index: int | None = None,
     value_raw: str | None = None,
 ) -> None:
-    # any arg left None is prompted for — bare /verb prompts for all three.
-    sequence = (sequence if sequence is not None
-                else Prompt.ask("[amber]Sequence[/amber]")).strip()
-    if not sequence:
-        con.print("  cancelled — no sequence")
-        return
+    # any arg left None is prompted for — bare /verb auto-resolves the sequence
+    # off the live desktop (zero typing), then prompts for index + value.
+    if sequence is None:
+        sequence = await _resolve_sequence(con)
+        if sequence is None:
+            return
+    else:
+        sequence = sequence.strip()
+        if not sequence:
+            con.print("  cancelled — no sequence")
+            return
     segs = await _segments(sequence)
     if not segs:
         con.print(f"  no segments found on [bold]{sequence}[/bold] (open it in Flame?)")
