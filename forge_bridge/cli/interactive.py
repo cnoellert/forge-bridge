@@ -93,6 +93,107 @@ print(json.dumps(names))
     return [str(n) for n in data] if isinstance(data, list) else None
 
 
+async def _selected_segments() -> tuple[str, list[dict[str, Any]]] | None:
+    """Identity of the segment(s) highlighted in the live Flame timeline (read-only).
+
+    Reads ``flame.timeline.clip`` — the sequence open in the timeline viewer —
+    and walks ``clip.versions -> tracks -> segments`` enumerating ``track_idx``
+    the SAME way ``_collect_segments`` (``tools.timeline``) does, emitting an
+    identity dict ``{track_idx, record_in, seg_name, source_name}`` for each
+    segment whose ``selected`` PyAttribute is True. That tuple is the drop-in key
+    ``_selected_key_tuple`` / ``_seg_key_tuple`` already use, so the identities
+    match the full dicts ``_segments`` returns (see ``_match_selected``).
+    ``main_thread`` stays at its safe default (False): this never mutates Flame.
+
+    Guarded to the timeline: ``flame.get_current_tab() == "Timeline"`` AND a real
+    open sequence. The return value is tri-state, mirroring ``_desktop_sequences``:
+
+      ``None``            -> read FAILURE / not on the Timeline tab / no open clip
+                            (the caller falls back to the normal sequence flow).
+      ``(name, [])``      -> a SUCCESSFUL read with NOTHING highlighted (the
+                            caller also falls back — empty selection picks nothing).
+      ``(name, [ids…])``  -> the highlighted segments' identities on ``name``.
+    """
+    from forge_bridge import bridge
+    try:
+        data = await bridge.execute_json("""
+import flame, json
+try:
+    _tab = flame.get_current_tab()
+except Exception:
+    _tab = None
+_clip = getattr(flame.timeline, 'clip', None)
+if _tab != 'Timeline' or _clip is None or not hasattr(_clip, 'versions'):
+    print(json.dumps(None))
+else:
+    _name = _clip.name.get_value() if hasattr(_clip.name, 'get_value') else str(_clip.name)
+    _tracks = []
+    for _ver in _clip.versions:
+        for _track in _ver.tracks:
+            _tracks.append(_track)
+    _selected = []
+    for _ti, _track in enumerate(_tracks):
+        for _seg in _track.segments:
+            _src = str(_seg.source_name) if _seg.source_name else ''
+            if not _src:
+                continue  # gap / filler — never a real selectable segment
+            try:
+                _sel = _seg.selected.get_value() if hasattr(_seg.selected, 'get_value') else bool(_seg.selected)
+            except Exception:
+                _sel = False
+            if _sel is not True:
+                continue
+            try:
+                _sn = _seg.name.get_value() if hasattr(_seg.name, 'get_value') else str(_seg.name)
+            except Exception:
+                _sn = ''
+            _selected.append({
+                'track_idx': _ti,
+                'record_in': str(_seg.record_in),
+                'seg_name': _sn,
+                'source_name': _src,
+            })
+    print(json.dumps({'sequence': str(_name), 'selected': _selected}))
+""")
+    except Exception:  # noqa: BLE001 — any read failure => caller falls back
+        return None
+    if not isinstance(data, dict):  # None (guard tripped) or malformed read
+        return None
+    name = data.get("sequence")
+    sel = data.get("selected")
+    if not isinstance(name, str) or not isinstance(sel, list):
+        return None
+    return name, [s for s in sel if isinstance(s, dict)]
+
+
+def _selection_key(item: dict[str, Any]) -> tuple[int, str, str, str]:
+    """The 4-tuple identity shared by selection identities AND ``_segments`` dicts.
+
+    Mirrors ``_selected_key_tuple`` / ``_seg_key_tuple`` in ``tools.timeline`` so
+    a selection identity matches the full segment dict for the SAME live segment.
+    """
+    return (
+        int(item.get("track_idx", 0)),
+        str(item.get("record_in", "")),
+        str(item.get("seg_name") or item.get("name") or ""),
+        str(item.get("source_name", "")),
+    )
+
+
+def _match_selected(
+    segs: list[dict[str, Any]], identities: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Filter the full ``_segments`` dicts down to the selected identities.
+
+    Selection gives only identity; trim verbs need the full dict
+    (``record_in_frame`` / ``record_out_frame`` / ``head`` / ``tail`` / …). So we
+    keep the ``_segments``-shaped dicts whose key matches a selected identity —
+    never hand-build a dict from the (thin) selection walk.
+    """
+    keys = {_selection_key(i) for i in identities}
+    return [s for s in segs if _selection_key(s) in keys]
+
+
 def _ratified_assent() -> Any:
     from forge_bridge.core.assent import AssentRecord
     return AssentRecord(
@@ -285,6 +386,36 @@ async def _run_verb(
     seg_index: int | None = None,
     value_raw: str | None = None,
 ) -> None:
+    # Fully-interactive bare /verb (no typed identity): try the LIVE timeline
+    # selection first so the artist's highlight auto-targets the segment(s) —
+    # collapsing both the sequence prompt AND the segment-index prompt. Explicit
+    # sequence=/seg_index= paths (one-shot, slash inline-args, NL composer) never
+    # reach here, so they stay byte-identical.
+    seg: dict[str, Any] | None = None
+    if sequence is None and seg_index is None:
+        picked = await _selected_segments()
+        if picked is not None:
+            sel_seq, identities = picked
+            if identities:  # something highlighted -> scope to just those segments
+                chosen = _match_selected(await _segments(sel_seq), identities)
+                if len(chosen) == 1:
+                    sequence, seg = sel_seq, chosen[0]
+                    con.print(f"  using your selected segment: "
+                              f"[bold]{seg.get('seg_name')}[/bold] on [bold]{sequence}[/bold]")
+                elif len(chosen) > 1:
+                    sequence = sel_seq
+                    con.print(f"\n  [bold]{len(chosen)}[/bold] segments selected on "
+                              f"[bold]{sequence}[/bold]:")
+                    for i, s in enumerate(chosen, 1):
+                        con.print(f"    {i:>3}  {s.get('seg_name')}  "
+                                  f"[dim](track {s.get('track_idx')})[/dim]")
+                    idx = IntPrompt.ask("[amber]Which segment #[/amber]")
+                    if not (1 <= idx <= len(chosen)):
+                        con.print("  cancelled — out of range")
+                        return
+                    seg = chosen[idx - 1]
+                # chosen empty (selection matched no live segment) -> fall through
+
     # any arg left None is prompted for — bare /verb auto-resolves the sequence
     # off the live desktop (zero typing), then prompts for index + value.
     if sequence is None:
@@ -296,21 +427,23 @@ async def _run_verb(
         if not sequence:
             con.print("  cancelled — no sequence")
             return
-    segs = await _segments(sequence)
-    if not segs:
-        con.print(f"  no segments found on [bold]{sequence}[/bold] (open it in Flame?)")
-        return
-    if seg_index is None:
-        con.print(f"\n  Segments on [bold]{sequence}[/bold]:")
-        for i, s in enumerate(segs, 1):
-            con.print(f"    {i:>3}  {s.get('seg_name')}  [dim](track {s.get('track_idx')})[/dim]")
-        idx = IntPrompt.ask("[amber]Which segment #[/amber]")
-    else:
-        idx = seg_index
-    if not (1 <= idx <= len(segs)):
-        con.print("  cancelled — out of range")
-        return
-    seg = segs[idx - 1]
+    # skip the segment list entirely when the live selection already resolved one
+    if seg is None:
+        segs = await _segments(sequence)
+        if not segs:
+            con.print(f"  no segments found on [bold]{sequence}[/bold] (open it in Flame?)")
+            return
+        if seg_index is None:
+            con.print(f"\n  Segments on [bold]{sequence}[/bold]:")
+            for i, s in enumerate(segs, 1):
+                con.print(f"    {i:>3}  {s.get('seg_name')}  [dim](track {s.get('track_idx')})[/dim]")
+            idx = IntPrompt.ask("[amber]Which segment #[/amber]")
+        else:
+            idx = seg_index
+        if not (1 <= idx <= len(segs)):
+            con.print("  cancelled — out of range")
+            return
+        seg = segs[idx - 1]
     current = seg.get(verb.current_key)
     # one edited value, typed per the verb — IntPrompt keeps the numeric lanes
     # numeric; an offset (relative trim) defaults to 0, never an absolute frame.
