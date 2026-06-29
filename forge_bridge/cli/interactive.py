@@ -435,11 +435,14 @@ async def _run_fanout(
         con.print(f"  cancelled — {perr}")
         return
 
-    # multi-rename without a counter would collide every segment onto one name
-    if verb.value_kind == "str" and not _verbs.has_counter(value):
-        con.print(f"  [red]can't do that[/red] — renaming {len(segs)} segments "
-                  f"needs a counter, e.g. shot_$n")
-        return
+    # a counter is OPTIONAL — Flame allows duplicate segment names, so a bare
+    # name applies literally to every selected segment. Only a MALFORMED counter
+    # spec ($n{x}, $n{}) is rejected, before it silently mangles a name.
+    if verb.value_kind == "str":
+        cerr = _verbs.validate_counter(value)
+        if cerr is not None:
+            con.print(f"  [red]can't do that[/red] — {cerr}")
+            return
     # per-segment range guard for trims: reject naming EACH offender, never
     # silently apply to the rest of the batch.
     if verb.trim_side is not None:
