@@ -347,8 +347,12 @@ async def _run_verb(
     con.print("    [dim]reversible · nothing else touched[/dim]\n")
 
     # apply now [y] / stage for later ratification [s] / cancel [n]
+    con.print("  How do you want to proceed?")
+    con.print("    [bold]y[/bold] — apply now: make the change in Flame (reversible — re-run to undo)")
+    con.print("    [bold]s[/bold] — stage it: save for approval, apply later with [dim]fbridge ratify <id>[/dim]")
+    con.print("    [bold]n[/bold] — cancel: do nothing")
     choice = Prompt.ask(
-        "  [y] apply now · [s] stage for ratify · [n] cancel",
+        "  [amber]y / s / n[/amber]",
         choices=["y", "s", "n"], default="n",
     ).lower()
     if choice == "n":
