@@ -334,6 +334,13 @@ def _humanize(reason: str | None) -> str:
 
 
 async def _bootstrap() -> None:
+    # Quiet library INFO chatter (plugin discovery, dispatch, synth-tool watcher)
+    # so the interactive REPL stays legible — the REPL speaks via Rich, not the
+    # logging module, so WARNING+ still surfaces real problems. forge_core is the
+    # peer plugin loader; composition/learning are ours.
+    import logging
+    for _name in ("forge_core", "forge_bridge.composition", "forge_bridge.learning"):
+        logging.getLogger(_name).setLevel(logging.WARNING)
     # union (not setdefault): rename needs traffik even if the shell preset flame only
     have = {p.strip() for p in os.environ.get("FORGE_PLUGINS", "").split(",") if p.strip()}
     os.environ["FORGE_PLUGINS"] = ",".join(sorted(have | set(_REQUIRED_PLUGINS)))
