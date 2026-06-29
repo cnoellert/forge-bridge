@@ -299,10 +299,64 @@ async def _run_verb(
         con.print(f"  [red]not applied[/red] — {msg}")
 
 
+# meta-commands the REPL loop recognizes (besides the registry verbs); these
+# join the verb names as completion + did-you-mean candidates.
+_META_COMMANDS = ("help", "quit", "exit")
+
+
+def _command_completions(prefix: str) -> list[str]:
+    """Slash-commands matching ``prefix`` — registry-driven, pure, terminal-free.
+
+    Candidates are ``/`` + each verb name (from ``list_verbs()``, so a newly
+    registered verb auto-completes) + the meta-commands. ``prefix`` may carry a
+    leading ``/``; a bare ``/`` (or empty) returns every command. Sorted so the
+    completer + the did-you-mean hint share one stable order.
+    """
+    stub = prefix.lstrip("/").lower()
+    names = [v.name for v in _verbs.list_verbs()] + list(_META_COMMANDS)
+    return sorted(f"/{n}" for n in names if n.startswith(stub))
+
+
+def _did_you_mean(cmd: str) -> list[str]:
+    """Commands ``cmd`` is a NON-exact prefix of — for the unknown-command hint.
+
+    Excludes an exact self-match (an exact command never reaches the miss branch;
+    this also keeps the hint empty for an exact hit, so it fires only on a real
+    near-miss like the orphaned ``/trim`` -> ``/trim_head``, ``/trim_tail``).
+    """
+    self_cmd = f"/{cmd.lstrip('/').lower()}"
+    return [c for c in _command_completions(cmd) if c != self_cmd]
+
+
 async def run_interactive() -> None:
     con = make_console()
     con.print("[dim]starting engine…[/dim]")
     await _bootstrap()
+
+    # readline gives the existing Prompt.ask() input() real as-you-type slash
+    # completion (stdlib; graceful no-op where unavailable). Completes only the
+    # first token (the command) — args come from the live host, out of scope.
+    try:
+        import readline
+    except ImportError:  # pragma: no cover - platform without readline
+        readline = None
+    if readline is not None:
+        # whitespace-only delimiters so the leading '/' stays part of the word
+        # readline replaces (default delims include '/').
+        readline.set_completer_delims(" \t\n")
+
+        def _completer(text: str, state: int) -> str | None:
+            if " " in readline.get_line_buffer().lstrip():
+                return None  # past the command — don't complete args
+            matches = _command_completions(text)
+            return matches[state] if state < len(matches) else None
+
+        readline.set_completer(_completer)
+        # macOS often ships libedit, which binds completion differently than GNU.
+        if "libedit" in (readline.__doc__ or ""):
+            readline.parse_and_bind("bind ^I rl_complete")
+        else:
+            readline.parse_and_bind("tab: complete")
 
     con.print("\n[bold amber]forge exec[/bold amber] — type [bold]/help[/bold], or a verb. [dim]/quit to leave.[/dim]")
     con.print("[dim]power users: /rename <sequence> #<n> <new name> · "
@@ -333,7 +387,11 @@ async def run_interactive() -> None:
             continue
         verb = verbs_by_cmd.get(cmd)
         if verb is None:
-            con.print(f"  unknown: [bold]{cmd}[/bold].  try [bold]/help[/bold].")
+            hints = _did_you_mean(cmd)
+            if hints:
+                con.print(f"  did you mean: [bold]{', '.join(hints)}[/bold]?")
+            else:
+                con.print(f"  unknown: [bold]{cmd}[/bold].  try [bold]/help[/bold].")
             continue
         # inline args skip the prompts; anything omitted falls back to prompting
         sequence, seg_index, value_raw, ierr = _parse_inline(rest)
