@@ -50,6 +50,28 @@ _TRIPLE = {
 _BACKEND_ID = "test.faithful_backend"
 
 
+async def _ratified_grant_id(
+    session_factory,
+    *,
+    operator_id: str = "generate_video_from_image",
+    triple: dict | None = None,
+) -> str:
+    """Mint + auto-ratify a grant for the spend-gate (#146); return grant_id."""
+    from forge_bridge.store.generation_grant_repo import GenerationGrantRepo
+
+    async with session_factory() as session:
+        repo = GenerationGrantRepo(session)
+        grant = await repo.propose(
+            operator_id=operator_id,
+            backend_identity_triple=dict(triple or _TRIPLE),
+            estimated_cost={"currency": "USD", "amount": 1.0},
+            run_kind="generation",
+        )
+        await repo.ratify(grant.grant_id, actor="test-operator")
+        await session.commit()
+        return grant.grant_id
+
+
 class FaithfulLifecycleDriver:
     backend_id = _BACKEND_ID
     backend_identity_triple = _TRIPLE
@@ -227,11 +249,13 @@ async def test_generation_lifecycle_round_trip_discover_plan_dispatch_poll_termi
 
     assert plan.operator_sequence[0]["backend_id"] == _BACKEND_ID
 
+    grant_id = await _ratified_grant_id(session_factory)
     result = await dispatch_plan(
         plan,
         driver_registry=driver_registry,
         session_factory=session_factory,
         event_appender=append,
+        grant_id=grant_id,
     )
     assert result == DispatchResult(status="submitted", artifact_id=result.artifact_id)
     assert result.artifact_id is not None
@@ -290,12 +314,14 @@ async def test_dispatch_envelope_plan_free_direct_call_reaches_same_lifecycle(
     # plan). ``planned_output_artifact_id`` is optional provenance.
     provenance = {"planned_output_artifact_id": None}
 
+    grant_id = await _ratified_grant_id(session_factory)
     result = await dispatch_envelope(
         envelope,
         provenance=provenance,
         driver_registry=driver_registry,
         session_factory=session_factory,
         event_appender=append,
+        grant_id=grant_id,
     )
 
     assert result == DispatchResult(status="submitted", artifact_id=result.artifact_id)
@@ -461,11 +487,13 @@ async def test_dispatch_generation_runtime_bound_reaches_same_lifecycle(
         backend_identity_triple=dict(_TRIPLE),
     )
 
+    grant_id = await _ratified_grant_id(session_factory)
     result = await generation_entry.dispatch_generation(
         envelope,
         provenance={"planned_output_artifact_id": None},
         # idempotency_key accepted now; dedup is a reserved seam, not enforced.
         idempotency_key="idem-key-not-enforced-yet",
+        grant_id=grant_id,
     )
 
     assert result == DispatchResult(status="submitted", artifact_id=result.artifact_id)

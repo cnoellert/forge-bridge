@@ -29,6 +29,7 @@ from tests.test_phase7_generation_vertical import (
     _BACKEND_ID,
     _TRIPLE,
     FaithfulLifecycleDriver,
+    _ratified_grant_id,
 )
 
 
@@ -191,12 +192,14 @@ async def test_mixed_generation_and_perception_partition_advances_together(
         [_generation_step(), _perception_step()],
     )
 
+    grant_id = await _ratified_grant_id(session_factory)
     dispatch = await dispatch_plan(
         plan,
         driver_registry=registry,
         session_factory=session_factory,
         event_appender=_db_event_appender(session_factory),
         run_id=run_id,
+        grant_id=grant_id,
     )
     assert dispatch.status == "submitted"
     assert dispatch.artifact_id is not None

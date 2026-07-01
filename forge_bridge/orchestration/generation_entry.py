@@ -27,6 +27,7 @@ from forge_bridge.orchestration.discovery import make_db_event_appender
 from forge_bridge.orchestration.dispatcher import (
     DispatchResult,
     InvocationEnvelope,
+    _advisory_grant_check,
     dispatch_envelope,
 )
 from forge_bridge.orchestration.drivers import GenerationDriverRegistry
@@ -77,6 +78,7 @@ async def dispatch_generation(
     provenance: dict[str, Any],
     idempotency_key: str | None = None,
     run_id: uuid.UUID | None = None,
+    grant_id: str | None = None,
 ) -> DispatchResult:
     """Runtime-bound entry onto the plan-free ``dispatch_envelope`` core.
 
@@ -104,12 +106,18 @@ async def dispatch_generation(
     # accepted in the signature now; the dedup logic is a SEPARATE slice and is
     # intentionally NOT enforced yet.
     #
-    # ── SEAM (#31 D6 GenerationGrant authority guard) ──────────────────────
-    # The authority guard that gates spend for a direct (plan-free) caller sits
-    # HERE, above ``dispatch_envelope`` — mirroring where the grant seam is
-    # already reserved inside ``dispatch_envelope`` at the ``driver.submit()``
-    # chokepoint. Assent/ratify stays in the tool layer ABOVE this entry. The
-    # grant mechanism is design-stage and intentionally NOT built here.
+    # ── GenerationGrant authority guard (#146) — direct-door advisory ──────
+    # Early, NON-consuming fail-fast for the direct (plan-free) caller: peek the
+    # resolved grant and refuse before doing envelope work if it is not a
+    # ratified, unspent grant. This is ADVISORY only — the single atomic consume
+    # stays at the mandatory chokepoint inside ``dispatch_envelope`` (calling the
+    # consuming helper here would double-spend). Assent/ratify stays in the tool
+    # layer ABOVE this entry.
+    grant_ok, refusal_code = await _advisory_grant_check(
+        session_factory, grant_id=grant_id, run_id=run_id,
+    )
+    if not grant_ok:
+        return DispatchResult(status="refused", refusal_code=refusal_code)
 
     return await dispatch_envelope(
         envelope,
@@ -118,4 +126,5 @@ async def dispatch_generation(
         session_factory=session_factory,
         event_appender=event_appender,
         run_id=run_id,
+        grant_id=grant_id,
     )

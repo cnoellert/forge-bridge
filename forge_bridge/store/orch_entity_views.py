@@ -112,6 +112,16 @@ class DBOrchPipelineRun(_OrchEntityViewBase):
         return self._attr("source_run_id")
 
     @property
+    def grant_id(self) -> Any:
+        """The GenerationGrant handle authorizing this run's spend (#146).
+
+        JSONB key on the run's terms body — the durable home for a run's
+        spend authority (a plain accessor, zero column migration). Absent
+        (None) on runs minted before the spend-gate or that carry no grant.
+        """
+        return self._attr("grant_id")
+
+    @property
     def effective_pinning_policy(self) -> Any:
         return self._attr("effective_pinning_policy")
 

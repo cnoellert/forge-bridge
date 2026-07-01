@@ -39,6 +39,7 @@ from forge_bridge.store.orch_locked_intent_repo import LockedIntentRepo
 from forge_bridge.store.orch_partial_fidelity_snapshot_repo import (
     PartialFidelitySnapshotRepo,
 )
+from forge_bridge.store.generation_grant_repo import GenerationGrantRepo
 from forge_bridge.store.orch_pipeline_run_repo import PipelineRunRepo
 from forge_bridge.store.orch_rule_snapshot_repo import RuleSnapshotRepo
 from forge_bridge.store.orch_spec_convergence_trace_repo import (
@@ -131,14 +132,27 @@ async def start_author(
                 "lock_event": {"kind": "manual_qc_author"},
             }
         )
-        # D6: origin-run GenerationGrant inheritance point; when grant_id lands,
-        # this run mint threads the new grant.
+        # Origin-run GenerationGrant mint (#146): author-QC is bridge's OWN
+        # authority (a free local ollama draft), so bridge mints AND auto-
+        # ratifies a fresh grant here and threads its handle onto run.grant_id.
+        # The chokepoint resolves run.grant_id via run_id and consumes it once,
+        # keeping the live author flow green while still gated. This is a fresh
+        # per-run grant, NOT grant inheritance (that stays reserved for #142).
+        grant_repo = GenerationGrantRepo(session)
+        grant = await grant_repo.propose(
+            operator_id=AUTHOR_OPERATOR_ID,
+            backend_identity_triple=triple,
+            estimated_cost={"currency": "USD", "amount": 0.0},
+            run_kind="manual_qc_author",
+        )
+        await grant_repo.ratify(grant.grant_id, actor="bridge:manual_qc")
         run = await PipelineRunRepo(session).insert_if_absent(
             {
                 "run_kind": "manual_qc_author",
                 "intent_id": str(intent_row.id),
                 "spec_convergence_trace_id": str(trace.id),
                 "authored_at": datetime.now(timezone.utc).isoformat(),
+                "grant_id": grant.grant_id,
             }
         )
         plan = await ExecutionPlanRepo(session).insert_if_absent(
@@ -243,12 +257,28 @@ async def revise(
             plan_id=revised_plan.id,
             event_payload={"manual_qc": "qc_correction_attached"},
         )
+        # Derived-run GenerationGrant mint (#146): each remediation attempt
+        # mints AND auto-ratifies its OWN fresh grant (author-QC authority),
+        # passed explicitly to the chokepoint. This is deliberately NOT grant
+        # inheritance from the source run (a single-use grant, inherited, would
+        # already be consumed) — inheritance stays reserved for #142.
+        _backend_id, triple = _select_author_backend(runtime.driver_registry)
+        grant_repo = GenerationGrantRepo(session)
+        grant = await grant_repo.propose(
+            operator_id=AUTHOR_OPERATOR_ID,
+            backend_identity_triple=triple,
+            estimated_cost={"currency": "USD", "amount": 0.0},
+            run_kind="manual_qc_remediation",
+        )
+        await grant_repo.ratify(grant.grant_id, actor="bridge:manual_qc")
+        derived_grant_id = grant.grant_id
         await session.commit()
 
     return await _dispatch_poll_and_pause(
         runtime,
         run_id=lifecycle.run_id,
         plan_id=revised_plan.id,
+        grant_id=derived_grant_id,
     )
 
 
@@ -304,18 +334,22 @@ async def _dispatch_poll_and_pause(
     *,
     run_id: uuid.UUID,
     plan_id: uuid.UUID,
+    grant_id: str | None = None,
 ) -> ManualQCResult:
     async with runtime.session_factory() as session:
         plan = await ExecutionPlanRepo(session).get_by_id(plan_id)
         if plan is None:
             raise PlannerRefusalError("source_run_incomplete", f"plan {plan_id} missing")
 
+    # grant_id is None for the origin run (the chokepoint resolves run.grant_id
+    # from run_id); the remediation path passes its fresh grant explicitly.
     dispatch = await dispatch_plan(
         plan,
         driver_registry=runtime.driver_registry,
         session_factory=runtime.session_factory,
         event_appender=runtime.event_appender,
         run_id=run_id,
+        grant_id=grant_id,
     )
     if dispatch.status != "submitted" or dispatch.artifact_id is None:
         raise RuntimeError(f"author dispatch failed: {dispatch.refusal_code}")

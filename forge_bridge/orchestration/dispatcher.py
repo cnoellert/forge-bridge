@@ -20,9 +20,11 @@ from forge_bridge.orchestration.drivers import (
     GenerationDriverRegistry,
     backend_id_from_identity_triple,
 )
+from forge_bridge.store.generation_grant_repo import GenerationGrantRepo
 from forge_bridge.store.orch_entity_views import DBOrchExecutionPlan
 from forge_bridge.store.orch_execution_result_repo import ExecutionResultRepo
 from forge_bridge.store.orch_generation_artifact_repo import GenerationArtifactRepo
+from forge_bridge.store.orch_pipeline_run_repo import PipelineRunRepo
 
 
 @dataclass(frozen=True)
@@ -111,6 +113,103 @@ def _dump_artifact_ref(ref: ArtifactRef) -> dict[str, Any]:
     return ref.model_dump(mode="json", exclude_none=True)
 
 
+# ─────────────────────────────────────────────────────────────
+# GenerationGrant spend-gate (#146)
+# ─────────────────────────────────────────────────────────────
+# The grant authority is resolved and consumed HERE, at the shared dispatch
+# core, so BOTH doors — the planner (`dispatch_plan`) and the direct
+# `forge_generate_*` tool (`dispatch_generation`) — are gated at one point.
+# The grant handle is resolved from an explicit `grant_id` kwarg, or from the
+# run's durable `run.grant_id` when only a `run_id` is supplied. A caller-
+# supplied id is a LOOKUP KEY only — never trusted as authority; the persisted
+# `status` is the authority. Fail-closed: no resolvable ratified grant → refuse.
+
+
+async def _resolve_grant_id(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    grant_id: str | None,
+    run_id: uuid.UUID | None,
+) -> str | None:
+    """Resolve the grant handle: explicit kwarg first, else run.grant_id.
+
+    Single source of resolution shared by the mandatory chokepoint consume and
+    the direct-door advisory peek (never a second copy of the logic).
+    """
+    if grant_id is not None:
+        return grant_id
+    if run_id is not None:
+        async with session_factory() as session:
+            run = await PipelineRunRepo(session).get_by_id(run_id)
+            if run is not None:
+                resolved = run.grant_id
+                if resolved:
+                    return str(resolved)
+    return None
+
+
+async def _resolve_and_consume_grant(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    grant_id: str | None,
+    run_id: uuid.UUID | None,
+) -> tuple[bool, str | None]:
+    """Mandatory chokepoint gate: resolve the grant and atomically consume it.
+
+    Returns ``(True, None)`` when a ratified grant was consumed exactly once;
+    ``(False, refusal_code)`` otherwise. ``refusal_code`` is ``grant_consumed``
+    for the already-spent (replay) case and ``grant_not_ratified`` for every
+    other refusal (no anchor, unknown id, still-proposed, revoked/failed).
+    Fail-closed by construction — ``run_id=None`` AND ``grant_id=None`` refuses.
+    """
+    resolved = await _resolve_grant_id(
+        session_factory, grant_id=grant_id, run_id=run_id,
+    )
+    if resolved is None:
+        return False, "grant_not_ratified"
+    async with session_factory() as session:
+        repo = GenerationGrantRepo(session)
+        consumed = await repo.consume_atomic(resolved)
+        if consumed is not None:
+            await session.commit()
+            return True, None
+        # CAS lost / no ratified row — classify without mutating.
+        existing = await repo.get_by_grant_id(resolved)
+    if existing is not None and existing.status == "consumed":
+        return False, "grant_consumed"
+    return False, "grant_not_ratified"
+
+
+async def _advisory_grant_check(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    grant_id: str | None,
+    run_id: uuid.UUID | None,
+) -> tuple[bool, str | None]:
+    """Direct-door advisory peek — NON-consuming fail-fast.
+
+    Shares ``_resolve_grant_id`` with the chokepoint (no second copy of the
+    resolution logic) but deliberately does NOT consume: the single atomic
+    consume stays at the mandatory chokepoint. This lets the direct
+    ``forge_generate_*`` door refuse early before doing envelope work; the
+    chokepoint remains the authoritative gate.
+    """
+    resolved = await _resolve_grant_id(
+        session_factory, grant_id=grant_id, run_id=run_id,
+    )
+    if resolved is None:
+        return False, "grant_not_ratified"
+    async with session_factory() as session:
+        existing = await GenerationGrantRepo(session).get_by_grant_id(resolved)
+    if existing is None:
+        return False, "grant_not_ratified"
+    if existing.status == "consumed":
+        return False, "grant_consumed"
+    if existing.status != "ratified":
+        return False, "grant_not_ratified"
+    return True, None
+
+
 async def dispatch_plan(
     plan: DBOrchExecutionPlan,
     *,
@@ -118,8 +217,16 @@ async def dispatch_plan(
     session_factory: async_sessionmaker[AsyncSession],
     event_appender: Callable[[str, dict], Awaitable[None]],
     run_id: uuid.UUID | None = None,
+    grant_id: str | None = None,
 ) -> DispatchResult:
-    """Dispatch plan execution through family-specific evidence lanes."""
+    """Dispatch plan execution through family-specific evidence lanes.
+
+    The planner door is spend-gated at the shared chokepoint: ``grant_id`` (an
+    explicit handle) or the run's durable ``run.grant_id`` (resolved from
+    ``run_id`` inside ``dispatch_envelope``) must name a ratified grant, else
+    the generation submit is refused. Perception-only plans never reach the
+    chokepoint, so they are unaffected.
+    """
 
     execution_result_ids: list[uuid.UUID] = []
     sync_steps = _sync_perception_steps(plan)
@@ -219,6 +326,7 @@ async def dispatch_plan(
         session_factory=session_factory,
         event_appender=event_appender,
         run_id=run_id,
+        grant_id=grant_id,
     )
 
 
@@ -230,6 +338,7 @@ async def dispatch_envelope(
     session_factory: async_sessionmaker[AsyncSession],
     event_appender: Callable[[str, dict], Awaitable[None]],
     run_id: uuid.UUID | None = None,
+    grant_id: str | None = None,
 ) -> DispatchResult:
     """Plan-free submit-and-persist core for a single generation invocation.
 
@@ -272,11 +381,29 @@ async def dispatch_envelope(
     inputs = list(envelope.inputs)
 
     # --- single driver.submit() chokepoint --------------------------------
-    # SEAM (Rung-C / #31 D6): the future GenerationGrant CAS authority guard
-    # gates spend HERE so both the planner door and a direct forge_generate_*
-    # tool are gated at one point. Assent/ratify stays ABOVE this core in the
-    # tool layer; never submit above this line. The grant mechanism is
-    # design-stage and intentionally NOT built in HALF 1.
+    # GenerationGrant CAS authority guard (#146): gate spend HERE so both the
+    # planner door and a direct forge_generate_* tool are gated at one point.
+    # Consume-then-submit — the atomic ratified->consumed flip MUST succeed
+    # before driver.submit() runs; a refusal never submits. Assent/ratify stays
+    # ABOVE this core in the tool layer; never submit above this line.
+    grant_ok, refusal_code = await _resolve_and_consume_grant(
+        session_factory, grant_id=grant_id, run_id=run_id,
+    )
+    if not grant_ok:
+        refuse_payload: dict[str, Any] = {
+            "operator_id": envelope.operator_id,
+            "backend_id": backend_id,
+            "refusal_code": refusal_code,
+            "run_id": str(run_id) if run_id is not None else None,
+        }
+        if plan_id is not None:
+            refuse_payload = {"plan_id": plan_id, **refuse_payload}
+        await event_appender("dispatch_grant_refused", refuse_payload)
+        return DispatchResult(
+            status="refused",
+            refusal_code=refusal_code,
+            execution_result_ids=execution_result_ids,
+        )
     handle = await driver.submit(envelope)
     # ----------------------------------------------------------------------
 
