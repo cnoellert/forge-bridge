@@ -659,7 +659,7 @@ async def _maybe_execute_foreach_step(
         sequence = prior.get("sequence") or prior.get("sequence_name")
     iterations = []
     for iteration_index, item in enumerate(items):
-        iteration_payload = node.iteration_payload(prior, item)
+        iteration_payload = node.iteration_payload(prior, item, index=iteration_index)
         item_topology = infer_iteration_item_topology(
             item=item,
             collection_topology=collection_topology,

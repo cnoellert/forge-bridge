@@ -29,8 +29,12 @@ Proven at n AND n+1 segments (a parity oracle can coincide at one size) for a
 ``$n`` counter template AND a token-free literal.
 
 OFFLINE-ONLY: this is NOT wired into the live ``_run_fanout`` / interactive path;
-live cutover is a separate slice. See the module-final notes on the #86 per-item
-position gap that this test bridges by pre-annotating timeline positions.
+live cutover is a separate slice. The #86 per-item position gap is now closed at
+its root: ``ForEachNode`` authors each item's iteration index (under the reserved
+``_foreach`` namespace), so the body reads a REAL ordinal — no pre-stamped scaffold.
+The ordinal→timeline-position identity still rests on feeding the collection in
+timeline order (see ``test_counter_derives_from_real_iteration_index`` for the
+guard that the counter follows arrival order, not any injected value).
 """
 from __future__ import annotations
 
@@ -48,7 +52,7 @@ from forge_bridge.composition.host_resolve_boundary import HostResolveBoundary
 from forge_bridge.composition.node_result import NodeResult
 from forge_bridge.composition.operation_boundary import OperationDispatchBoundary
 from forge_bridge.composition.primitive_boundary import PrimitiveBoundary
-from forge_bridge.graph.editorial_delta import POSITION_KEY, RENAME_SEQUENCE_ID
+from forge_bridge.graph.editorial_delta import RENAME_SEQUENCE_ID
 from forge_bridge.graph.ports import PortContract, PortTopology
 
 _APPLY_TOOL = "forge_apply_segment_delta"
@@ -70,21 +74,20 @@ def _seg(name: str, *, track_idx: int = 0, record_in_frame: int = 100) -> dict:
     }
 
 
-def _annotated_collection(n: int) -> tuple[dict, list[dict]]:
-    """A timeline-sorted, position-annotated segment collection for ``n`` segments.
+def _segment_collection(n: int) -> tuple[dict, list[dict]]:
+    """A timeline-sorted segment collection for ``n`` segments — fed PLAIN.
 
-    Positions are baked under ``_position`` because a foreach body is not handed
-    its iteration index (the #86 per-item-derivation gap); the per-item node reads
-    the position to expand a counter template. The same sorted list is fed to the
-    CLI build so both paths number identically.
+    The foreach boundary now authors each item's iteration index for real (under
+    the reserved ``_foreach`` namespace), so the source items are no longer
+    pre-stamped with a position. The list is fed in timeline order so the graph's
+    arrival index matches the CLI's timeline position; the same sorted list is fed
+    to the CLI build so both paths number identically.
     """
     segs = [
         _seg(f"orig_{i:02d}", track_idx=0, record_in_frame=100 + i * 100)
         for i in range(n)
     ]
     ordered = verbs.timeline_sorted(segs)
-    for position, seg in enumerate(ordered):
-        seg[POSITION_KEY] = position
     return {"segments": ordered, "count": n}, ordered
 
 
@@ -283,7 +286,7 @@ def _legacy_runner(values: dict, dispatch, *, stage_count: int):
 @pytest.mark.parametrize("template", ["sh_$n{3,10,10}", "HERO"])
 @pytest.mark.parametrize("n", [3, 4])
 async def test_graph_authors_multi_entry_rename_delta_equals_cli(template, n):
-    collection, ordered = _annotated_collection(n)
+    collection, ordered = _segment_collection(n)
     values = {
         "sequence_name": _SEQUENCE_NAME,
         "segments": ordered,
@@ -325,7 +328,7 @@ async def test_counter_expansion_is_authored_by_the_graph_node():
     # The $n{3,10,10} counter is expanded by the per-item graph node, not baked
     # upstream: names run sh010, sh020, sh030 in timeline order.
     n = 3
-    collection, ordered = _annotated_collection(n)
+    collection, ordered = _segment_collection(n)
     graph = _fanout_graph(template="sh_$n{3,10,10}", collection=collection)
     results = await GraphExecutor(_dispatch()).run(graph)
 
@@ -339,7 +342,7 @@ async def test_counter_expansion_is_authored_by_the_graph_node():
 @pytest.mark.asyncio
 async def test_literal_name_applies_to_every_segment_without_a_counter():
     n = 4
-    collection, _ordered = _annotated_collection(n)
+    collection, _ordered = _segment_collection(n)
     graph = _fanout_graph(template="HERO", collection=collection)
     results = await GraphExecutor(_dispatch()).run(graph)
 
@@ -348,3 +351,38 @@ async def test_literal_name_applies_to_every_segment_without_a_counter():
     delta = TimelineDelta.from_dict(results["collect"].output).to_dict()
     names = [change["after"]["name"] for change in delta["changes"]]
     assert names == ["HERO"] * n
+
+
+@pytest.mark.asyncio
+async def test_counter_derives_from_real_iteration_index_not_injected_value():
+    # NEGATIVE / anti-scaffold guard: the counter must derive from the REAL foreach
+    # iteration (arrival) index, NOT from any position value pre-injected onto the
+    # source items. Each source segment carries a DELIBERATELY WRONG position under
+    # BOTH the retired ``_position`` scaffold key AND the reserved ``_foreach``
+    # namespace, reversed against arrival order. foreach is the SOLE author of
+    # ``_foreach.index`` and overwrites the injected value with the true index, so
+    # the emitted numbers follow arrival order (sh_010, sh_020, sh_030).
+    #
+    # Under the retired ``_position`` scaffold, ``_item_position`` read the injected
+    # position directly, so this graph would have numbered sh_030, sh_020, sh_010 —
+    # this assertion would FAIL. That it passes proves the ordinal is real.
+    n = 3
+    segs = [
+        _seg(f"orig_{i:02d}", track_idx=0, record_in_frame=100 + i * 100)
+        for i in range(n)
+    ]
+    ordered = verbs.timeline_sorted(segs)
+    for arrival, seg in enumerate(ordered):
+        reversed_position = n - 1 - arrival
+        seg["_position"] = reversed_position                       # retired scaffold key
+        seg["_foreach"] = {"index": reversed_position}             # reserved key, injected wrong
+    collection = {"segments": ordered, "count": n}
+
+    graph = _fanout_graph(template="sh_$n{3,10,10}", collection=collection)
+    results = await GraphExecutor(_dispatch()).run(graph)
+
+    from forge_core.traffik.editing import TimelineDelta
+
+    delta = TimelineDelta.from_dict(results["collect"].output).to_dict()
+    names = [change["after"]["name"] for change in delta["changes"]]
+    assert names == ["sh_010", "sh_020", "sh_030"]

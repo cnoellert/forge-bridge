@@ -14,6 +14,13 @@ from forge_bridge.graph.ports import PortContract, PortTopology
 
 _FOREACH_INTENT_RE = re.compile(r"^\s*foreach\s*\(", re.IGNORECASE)
 
+# Reserved namespace ``ForEachNode`` stamps onto each per-iteration payload so a
+# body can read its iteration index. ``foreach`` is the SOLE author of this key.
+# A sub-dict (not a flat key) so future per-iteration context (total/is_first/…)
+# lands as additive keys with no new ports or payload renegotiation.
+FOREACH_META_KEY = "_foreach"
+FOREACH_INDEX_KEY = "index"
+
 
 class ForeachParseError(ValueError):
     """Raised when a foreach step cannot be parsed within Phase N scope."""
@@ -114,19 +121,39 @@ class ForEachNode:
         _key, items = _extract_collection(data)
         return items
 
-    def iteration_payload(self, data: Any, item: dict[str, Any]) -> Any:
+    def iteration_payload(self, data: Any, item: dict[str, Any], *, index: int) -> Any:
+        """Build the throwaway per-iteration payload handed to the foreach body.
+
+        The payload is a fresh copy of ``item`` (the SOURCE items are never
+        mutated — this stamps a throwaway). ``foreach`` stamps its iteration index
+        onto that copy under the reserved :data:`FOREACH_META_KEY` namespace, so a
+        body reads a REAL per-iteration index. ``foreach`` is the SOLE author of
+        this key. The stamp rides on the ITEM copy (not only a wrapping dict)
+        because a keyed source is wrapped as ``{key: [item], ...}`` and the body's
+        boundary unwraps back to that single item before it runs
+        (``primitive_boundary._extract_single_segment``); stamping only the outer
+        wrapper would never reach the body.
+
+        ``index`` is the ORDINAL iteration index (arrival order over the input
+        collection), NOT a timeline position. A position-consuming body (e.g. a
+        ``$n`` counter that renders this index as a shot number) is correct ONLY
+        under an upstream timeline-ordering guarantee on the collection fed to
+        ``foreach`` — nothing here enforces that order.
+        """
         key, _items = _extract_collection(data)
+        stamped = dict(item)
+        stamped[FOREACH_META_KEY] = {FOREACH_INDEX_KEY: index}
         if _looks_like_manifest(item):
-            return dict(item)
+            return stamped
         if key is None:
-            return [dict(item)]
+            return [stamped]
         if isinstance(data, dict):
             payload = dict(data)
-            payload[key] = [dict(item)]
+            payload[key] = [stamped]
             if isinstance(payload.get("count"), int):
                 payload["count"] = 1
             return payload
-        return [dict(item)]
+        return [stamped]
 
     def wrap_result(
         self,

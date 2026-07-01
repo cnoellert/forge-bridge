@@ -65,7 +65,7 @@ class ForeachBoundary:
         iterations = []
         body_port = _body_input_port(body_node)
         for index, item in enumerate(items):
-            payload = foreach.iteration_payload(upstream.output, item)
+            payload = foreach.iteration_payload(upstream.output, item, index=index)
             item_topology = infer_topology(payload)
             item_input = NodeResult(
                 status="ok",
