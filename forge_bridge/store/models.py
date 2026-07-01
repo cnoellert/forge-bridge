@@ -210,6 +210,9 @@ ENTITY_TYPES = frozenset({
     "sequence", "shot", "asset", "version", "media", "layer", "stack",
     "staged_operation",
     "assent_record",
+    # Generation spend-gate (#146) — one row in the shared entities table,
+    # ratified authority consumed atomically at the driver.submit() chokepoint.
+    "generation_grant",
     # Phase 4B orchestration discriminators — PHASE-4B-ORCHESTRATION-DESIGN.md §4
     "orch_pipeline_run",
     "orch_inputs_catalog",
