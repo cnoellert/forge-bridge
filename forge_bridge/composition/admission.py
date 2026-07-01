@@ -149,6 +149,20 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         idempotent_result=False,
     ),
     AdmissionRecord(
+        operator_id="literal_source",
+        resolved_class="primitive.literal_source",
+        dispatch_kind="primitive",
+        synchronous=True,
+        returns_reference=False,
+        # A source node: emits a config-authored literal collection as its output
+        # (the graph analog of the CLI hand-build feeding segments in). It reads no
+        # host/canonical state and holds a fixed payload, so it is a pure read-only
+        # value emitter — no_state_mutation + idempotent, same character as the
+        # other value-transform primitives.
+        no_state_mutation=True,
+        idempotent_result=True,
+    ),
+    AdmissionRecord(
         operator_id="filter",
         resolved_class="primitive.filter",
         dispatch_kind="primitive",
