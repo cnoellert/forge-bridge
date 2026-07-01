@@ -11,6 +11,7 @@ from forge_bridge.orchestration.discovery import (
 from forge_bridge.orchestration.dispatcher import (
     DispatchResult,
     InvocationEnvelope,
+    dispatch_envelope,
     dispatch_plan,
 )
 from forge_bridge.orchestration.dispatch_consumer import (
@@ -101,6 +102,7 @@ __all__ = [
     "PollPassResult",
     "InvocationEnvelope",
     "DispatchResult",
+    "dispatch_envelope",
     "dispatch_plan",
     "DispatchOnExecutionEntryConsumer",
     "GenerationDriverProtocol",

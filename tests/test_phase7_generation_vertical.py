@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from forge_contracts import CapabilityDeclaration, CapabilityRegistration
+from forge_contracts.references import ArtifactRef
 from sqlalchemy import select
 
 from forge_bridge.orchestration import (
@@ -20,6 +21,7 @@ from forge_bridge.orchestration import (
     InvocationEnvelope,
     Planner,
     ToolRegistry,
+    dispatch_envelope,
     dispatch_plan,
     register_all_siblings,
     resolve_backend_id,
@@ -257,6 +259,87 @@ async def test_generation_lifecycle_round_trip_discover_plan_dispatch_poll_termi
     event_names = [event_type for event_type, _payload in events]
     assert "generation_dispatch_submitted" in event_names
     assert "generation_dispatch_lineage_recorded" in event_names
+
+
+async def test_dispatch_envelope_plan_free_direct_call_reaches_same_lifecycle(
+    session_factory,
+) -> None:
+    """A plan-free ``dispatch_envelope`` caller (no ``plan_id``) lands in the
+    identical submit/persist/poll lifecycle: an artifact row is created, a
+    pollable ``artifact_id`` is returned, and both lineage events fire cleanly
+    with ``plan_id`` absent everywhere."""
+
+    driver = FaithfulLifecycleDriver()
+    driver_registry = GenerationDriverRegistry()
+    driver_registry.register_driver(driver)
+
+    events, append = await _events()
+
+    envelope = InvocationEnvelope(
+        operator_id="generate_video_from_image",
+        inputs=[
+            ArtifactRef(
+                artifact_id="artifact-src-1",
+                artifact_type="artifact",
+                metadata={},
+            )
+        ],
+        backend_identity_triple=dict(_TRIPLE),
+    )
+    # Plan-free provenance: NO plan_id (a direct forge_generate_* caller has no
+    # plan). ``planned_output_artifact_id`` is optional provenance.
+    provenance = {"planned_output_artifact_id": None}
+
+    result = await dispatch_envelope(
+        envelope,
+        provenance=provenance,
+        driver_registry=driver_registry,
+        session_factory=session_factory,
+        event_appender=append,
+    )
+
+    assert result == DispatchResult(status="submitted", artifact_id=result.artifact_id)
+    assert result.artifact_id is not None
+    assert driver.submissions[0].operator_id == "generate_video_from_image"
+
+    # The artifact lands in the same status-driven lifecycle the poller consumes.
+    async with session_factory() as session:
+        artifact = await GenerationArtifactRepo(session).get_by_id(result.artifact_id)
+        assert artifact is not None
+        assert artifact.lifecycle_state == "submitted"
+        assert artifact.execution_provenance["backend_identity_triple"] == _TRIPLE
+        assert artifact.execution_provenance["request_id"] == "req-1"
+        assert resolve_backend_id(artifact) == _BACKEND_ID
+        # plan_id is absent for a plan-free caller (body + lineage).
+        assert "plan_id" not in artifact.content_provenance
+        assert "source_plan_id" not in artifact.content_provenance["lineage"]
+        assert artifact.content_provenance["operator_id"] == "generate_video_from_image"
+        assert artifact.content_provenance["lineage"]["input_artifact_ids"] == [
+            "artifact-src-1"
+        ]
+
+    # Both lineage events fire cleanly with plan_id absent.
+    submitted = [p for n, p in events if n == "generation_dispatch_submitted"]
+    lineage = [p for n, p in events if n == "generation_dispatch_lineage_recorded"]
+    assert len(submitted) == 1
+    assert len(lineage) == 1
+    assert "plan_id" not in submitted[0]
+    assert submitted[0]["backend_id"] == _BACKEND_ID
+    assert submitted[0]["operator_id"] == "generate_video_from_image"
+    assert "plan_id" not in lineage[0]
+    assert lineage[0]["input_artifact_ids"] == ["artifact-src-1"]
+
+    # Pollable by artifact_id in the shared lifecycle — same poller, no plan.
+    poll_result = await GenerationPoller(session_factory, driver_registry).poll_once()
+    assert poll_result.processed == 1
+    assert poll_result.terminal == 1
+    assert driver.polled_request_ids == ["req-1"]
+
+    async with session_factory() as session:
+        terminal = await GenerationArtifactRepo(session).get_by_id(result.artifact_id)
+        assert terminal is not None
+        assert terminal.lifecycle_state == "complete"
+        assert terminal.content_hash is not None
 
 
 async def test_generation_dispatch_no_driver_refuses_without_artifact(

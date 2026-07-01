@@ -16,7 +16,10 @@ from typing import Any
 from forge_contracts.references import ArtifactRef, Reference
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from forge_bridge.orchestration.drivers import GenerationDriverRegistry
+from forge_bridge.orchestration.drivers import (
+    GenerationDriverRegistry,
+    backend_id_from_identity_triple,
+)
 from forge_bridge.store.orch_entity_views import DBOrchExecutionPlan
 from forge_bridge.store.orch_execution_result_repo import ExecutionResultRepo
 from forge_bridge.store.orch_generation_artifact_repo import GenerationArtifactRepo
@@ -192,6 +195,10 @@ async def dispatch_plan(
             execution_result_ids=tuple(execution_result_ids),
         )
 
+    # The backend triple lives on the resolved driver, not the plan, so the
+    # plan prologue resolves the driver here to author the envelope. The
+    # plan-free ``dispatch_envelope`` re-resolves (idempotent dict lookup) as
+    # the single submit chokepoint, so both doors reach the identical path.
     backend_identity_triple = dict(driver.backend_identity_triple)
     inputs = [_artifact_ref(item) for item in (step.get("inputs") or [])]
     envelope = InvocationEnvelope(
@@ -200,21 +207,97 @@ async def dispatch_plan(
         backend_identity_triple=backend_identity_triple,
     )
 
-    handle = await driver.submit(envelope)
+    provenance: dict[str, Any] = {
+        "plan_id": str(plan.id),
+        "planned_output_artifact_id": step.get("output_artifact_id"),
+        "execution_result_ids": tuple(execution_result_ids),
+    }
+    return await dispatch_envelope(
+        envelope,
+        provenance=provenance,
+        driver_registry=driver_registry,
+        session_factory=session_factory,
+        event_appender=event_appender,
+        run_id=run_id,
+    )
 
-    body = {
-        "name": f"orch_generation_artifact:{step['operator_id']}:{handle.request_id}",
-        "platform_locators": {},
-        "content_provenance": {
-            "operator_id": step["operator_id"],
-            "plan_id": str(plan.id),
-            "planned_output_artifact_id": step.get("output_artifact_id"),
-            "inputs": [_dump_artifact_ref(ref) for ref in inputs],
-            "lineage": {
-                "source_plan_id": str(plan.id),
-                "input_artifact_ids": [ref.artifact_id for ref in inputs],
-            },
+
+async def dispatch_envelope(
+    envelope: InvocationEnvelope,
+    *,
+    provenance: dict[str, Any],
+    driver_registry: GenerationDriverRegistry,
+    session_factory: async_sessionmaker[AsyncSession],
+    event_appender: Callable[[str, dict], Awaitable[None]],
+    run_id: uuid.UUID | None = None,
+) -> DispatchResult:
+    """Plan-free submit-and-persist core for a single generation invocation.
+
+    Both the planner-driven ``dispatch_plan`` and a future direct
+    ``forge_generate_*`` tool converge here: resolve the backend driver from the
+    envelope's identity triple, submit exactly once, persist the submitted
+    artifact, and emit the two lineage events. The result is a pollable
+    ``artifact_id`` in the same status-driven lifecycle the poller consumes.
+
+    ``provenance`` carries OPTIONAL plan-lineage:
+      - ``plan_id`` — when present, stamped onto ``content_provenance``,
+        ``content_provenance.lineage.source_plan_id`` and both lineage events;
+        a plan-free caller OMITS it and it is absent everywhere downstream.
+      - ``planned_output_artifact_id`` — optional provenance string.
+      - ``execution_result_ids`` — upstream (plan-shaped) perception-lane
+        result ids threaded onto the returned ``DispatchResult`` so the plan
+        path is byte-preserved.
+    """
+
+    execution_result_ids = tuple(provenance.get("execution_result_ids") or ())
+    plan_id = provenance.get("plan_id")
+
+    backend_id = backend_id_from_identity_triple(dict(envelope.backend_identity_triple))
+    driver = driver_registry.get_driver(backend_id) if backend_id else None
+    if driver is None:
+        no_driver_payload: dict[str, Any] = {
+            "operator_id": envelope.operator_id,
+            "backend_id": backend_id,
+        }
+        if plan_id is not None:
+            no_driver_payload = {"plan_id": plan_id, **no_driver_payload}
+        await event_appender("dispatch_no_driver", no_driver_payload)
+        return DispatchResult(
+            status="refused",
+            refusal_code="dispatch_no_driver",
+            execution_result_ids=execution_result_ids,
+        )
+
+    backend_identity_triple = dict(driver.backend_identity_triple)
+    inputs = list(envelope.inputs)
+
+    # --- single driver.submit() chokepoint --------------------------------
+    # SEAM (Rung-C / #31 D6): the future GenerationGrant CAS authority guard
+    # gates spend HERE so both the planner door and a direct forge_generate_*
+    # tool are gated at one point. Assent/ratify stays ABOVE this core in the
+    # tool layer; never submit above this line. The grant mechanism is
+    # design-stage and intentionally NOT built in HALF 1.
+    handle = await driver.submit(envelope)
+    # ----------------------------------------------------------------------
+
+    content_provenance: dict[str, Any] = {
+        "operator_id": envelope.operator_id,
+        "planned_output_artifact_id": provenance.get("planned_output_artifact_id"),
+        "inputs": [_dump_artifact_ref(ref) for ref in inputs],
+        "lineage": {
+            "input_artifact_ids": [ref.artifact_id for ref in inputs],
         },
+    }
+    if plan_id is not None:
+        content_provenance["plan_id"] = plan_id
+        content_provenance["lineage"]["source_plan_id"] = plan_id
+
+    body: dict[str, Any] = {
+        "name": (
+            f"orch_generation_artifact:{envelope.operator_id}:{handle.request_id}"
+        ),
+        "platform_locators": {},
+        "content_provenance": content_provenance,
         "execution_provenance": {
             "backend_identity_triple": backend_identity_triple,
             "request_id": handle.request_id,
@@ -230,27 +313,27 @@ async def dispatch_plan(
         artifact = await GenerationArtifactRepo(session).insert_submitted(body)
         await session.commit()
 
-    await event_appender(
-        "generation_dispatch_submitted",
-        {
-            "plan_id": str(plan.id),
-            "artifact_id": str(artifact.id),
-            "operator_id": step["operator_id"],
-            "backend_id": backend_id,
-            "request_id": handle.request_id,
-            "run_id": str(run_id) if run_id is not None else None,
-        },
-    )
-    await event_appender(
-        "generation_dispatch_lineage_recorded",
-        {
-            "artifact_id": str(artifact.id),
-            "plan_id": str(plan.id),
-            "input_artifact_ids": [ref.artifact_id for ref in inputs],
-        },
-    )
+    submitted_event: dict[str, Any] = {
+        "artifact_id": str(artifact.id),
+        "operator_id": envelope.operator_id,
+        "backend_id": backend_id,
+        "request_id": handle.request_id,
+        "run_id": str(run_id) if run_id is not None else None,
+    }
+    if plan_id is not None:
+        submitted_event = {"plan_id": plan_id, **submitted_event}
+    await event_appender("generation_dispatch_submitted", submitted_event)
+
+    lineage_event: dict[str, Any] = {
+        "artifact_id": str(artifact.id),
+        "input_artifact_ids": [ref.artifact_id for ref in inputs],
+    }
+    if plan_id is not None:
+        lineage_event["plan_id"] = plan_id
+    await event_appender("generation_dispatch_lineage_recorded", lineage_event)
+
     return DispatchResult(
         status="submitted",
         artifact_id=artifact.id,
-        execution_result_ids=tuple(execution_result_ids),
+        execution_result_ids=execution_result_ids,
     )
