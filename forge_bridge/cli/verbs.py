@@ -21,9 +21,23 @@ kinds beyond str/int/offset -- not invented before something needs them.
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Any, Callable
+
+# Single source of truth for the per-segment rename authoring: the counter
+# helpers, the entry-identity metadata block, and the per-entry builder now live
+# in ``forge_bridge.graph.editorial_delta`` so the CLI hand-build here and the
+# composition ``RenameDeltaNode`` stay byte-identical (no logic fork). Re-imported
+# into this module's namespace so ``verbs.expand_counter`` / ``verbs.has_counter``
+# / ``verbs.validate_counter`` keep resolving for existing renderers + tests.
+from forge_bridge.graph.editorial_delta import (  # noqa: F401 (re-exported)
+    RENAME_SEQUENCE_ID,
+    _entry_metadata,
+    build_rename_entry,
+    expand_counter,
+    has_counter,
+    validate_counter,
+)
 
 
 @dataclass(frozen=True)
@@ -131,73 +145,11 @@ def describe_change(verb: Verb, current: Any, value: Any) -> str:
 # The builders accept ``values["segments"]`` (a list) and treat the legacy
 # ``values["segment"]`` as the one-element case, so a single-segment build stays
 # byte-identical to before (a 1-element list -> exactly the old 1-entry delta).
-
-# A per-segment counter token: ``$n`` / ``$iteration`` with an OPTIONAL
-# ``{width[,start[,step]]}`` spec. This single form REPLACES the old
-# ``$nn``/``$nnn`` repetition padding (one syntax, not two): ``$n`` -> 1,2,3
-# (no pad); ``$n{3}`` -> 001,002,003; ``$n{3,10}`` -> 010,011,012 (start at 10);
-# ``$n{3,10,10}`` -> 010,020,030 (start 10, step 10 -- the ``sh###`` convention).
-_COUNTER_RE = re.compile(r"\$(?:n|iteration)(?:\{([^}]*)\})?")
-
-
-def has_counter(template: str) -> bool:
-    """True when ``template`` carries a per-segment counter token (see ``expand_counter``)."""
-    return _COUNTER_RE.search(template) is not None
-
-
-def _counter_spec(body: str | None) -> tuple[int, int, int]:
-    """Parse a ``{width[,start[,step]]}`` body into ``(width, start, step)``.
-
-    ``body is None`` (a bare ``$n``) -> ``(0, 1, 1)``: no pad, start 1, step 1.
-    Raises ``ValueError`` for a malformed body (empty, a non-int field, a negative
-    width, or >3 fields) so the renderer can reject the value legibly via
-    ``validate_counter`` instead of silently mangling the name.
-    """
-    if body is None:
-        return 0, 1, 1
-    fields = body.split(",")
-    if not (1 <= len(fields) <= 3):
-        raise ValueError(body)
-    nums = [int(f) for f in fields]          # ValueError on an empty / non-int field
-    width = nums[0]
-    if width < 0:
-        raise ValueError(body)
-    start = nums[1] if len(nums) > 1 else 1
-    step = nums[2] if len(nums) > 2 else 1
-    return width, start, step
-
-
-def expand_counter(template: str, position: int) -> str:
-    """Expand every counter token in ``template`` for a segment at 0-based ``position``.
-
-    The rendered value is ``start + position*step`` zero-padded to ``width``
-    (width 0 = no pad). ``position`` is the segment's index in TIMELINE order
-    (see ``timeline_sorted``) so the numbering runs left-to-right as the eye
-    expects. Multiple tokens in one template all render the SAME value. A template
-    carrying NO token is returned unchanged, so a literal rename -- single OR
-    multi -- is byte-identical to the legacy build. Raises ``ValueError`` on a
-    malformed spec; callers gate with ``validate_counter`` first.
-    """
-    def _sub(m: re.Match[str]) -> str:
-        width, start, step = _counter_spec(m.group(1))
-        return f"{start + position * step:0{width}d}"
-    return _COUNTER_RE.sub(_sub, template)
-
-
-def validate_counter(template: str) -> str | None:
-    """A legible reason ``template``'s counter spec is malformed, else ``None``.
-
-    Lets the renderers reject ``$n{}`` / ``$n{x}`` / a non-int or >3-field spec
-    BEFORE the builder expands it -- no silently-mangled names. A token-free
-    template is always valid (the literal applies to every selected segment).
-    """
-    for m in _COUNTER_RE.finditer(template):
-        try:
-            _counter_spec(m.group(1))
-        except ValueError:
-            return (f"bad counter format {m.group(0)!r} — "
-                    f"use $n{{width,start,step}}, e.g. $n{{3,10,10}}")
-    return None
+#
+# The per-segment counter helpers (``has_counter`` / ``expand_counter`` /
+# ``validate_counter``) + ``_entry_metadata`` + ``build_rename_entry`` now live in
+# ``forge_bridge.graph.editorial_delta`` (imported at the top of this module) so
+# the composition ``RenameDeltaNode`` reuses the SAME authoring code.
 
 
 def timeline_sorted(segs: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -225,17 +177,6 @@ def _segments_of(values: dict[str, Any]) -> list[dict[str, Any]]:
     return timeline_sorted(segs)
 
 
-def _entry_metadata(seg: dict[str, Any], sequence_name: Any) -> dict[str, Any]:
-    """The shared host-identity metadata block for one DeltaEntry."""
-    return {
-        "track_idx": int(seg["track_idx"]),
-        "record_in": str(seg["record_in"]),
-        "seg_name": str(seg["seg_name"]),
-        "source_name": str(seg["source_name"]),
-        "sequence_name": str(sequence_name),
-    }
-
-
 def build_rename_delta(values: dict[str, Any]) -> dict[str, Any]:
     """Build a host-neutral rename TimelineDelta dict (1..N segments).
 
@@ -247,25 +188,20 @@ def build_rename_delta(values: dict[str, Any]) -> dict[str, Any]:
     multi — byte-identical to the legacy single build); a name carrying ``$n`` /
     ``$iteration`` (optional ``{width,start,step}``) expands per 0-based
     timeline-ordered position (see ``expand_counter``).
+
+    The per-entry authoring is ``build_rename_entry`` — the SAME primitive the
+    composition ``RenameDeltaNode`` calls, so the CLI hand-build and the graph
+    author stay byte-identical.
     """
-    from forge_core.traffik.editing import DeltaEntry, TimelineDelta  # lazy
+    from forge_core.traffik.editing import TimelineDelta  # lazy
 
     segs = _segments_of(values)
     template = str(values["new_name"])
     entries = [
-        DeltaEntry(
-            action="updated",
-            object_type="segment",
-            object_id="exec-rename",
-            before={"id": "exec-rename", "name": str(seg["seg_name"])},
-            # token present -> expand per 0-based timeline position; a token-free
-            # name returns unchanged, so a literal rename stays byte-identical.
-            after={"id": "exec-rename", "name": expand_counter(template, i)},
-            metadata=_entry_metadata(seg, values["sequence_name"]),
-        )
+        build_rename_entry(seg, template, i, values["sequence_name"])
         for i, seg in enumerate(segs)
     ]
-    return TimelineDelta(sequence_id="fbridge-exec-rename", entries=entries).to_dict()
+    return TimelineDelta(sequence_id=RENAME_SEQUENCE_ID, entries=entries).to_dict()
 
 
 def _build_trim_delta(
