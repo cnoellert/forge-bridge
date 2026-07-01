@@ -32,8 +32,10 @@ from typing import Any, Callable
 # / ``verbs.validate_counter`` keep resolving for existing renderers + tests.
 from forge_bridge.graph.editorial_delta import (  # noqa: F401 (re-exported)
     RENAME_SEQUENCE_ID,
+    TRIM_SEQUENCE_ID,
     _entry_metadata,
     build_rename_entry,
+    build_trim_entry,
     expand_counter,
     has_counter,
     validate_counter,
@@ -205,7 +207,7 @@ def build_rename_delta(values: dict[str, Any]) -> dict[str, Any]:
 
 
 def _build_trim_delta(
-    values: dict[str, Any], *, field: str, frame_key: str, sign: int
+    values: dict[str, Any], *, trim_side: str
 ) -> dict[str, Any]:
     """Build a host-neutral relative-trim TimelineDelta dict (1..N segments, one field).
 
@@ -214,28 +216,24 @@ def _build_trim_delta(
     operation to ``forge_apply_segment_temporal_delta`` (the only protocol-
     compliant temporal executor). The host derives the OFFSET internally from
     ``after - before``, so the SAME artist-facing ``count`` applies to every
-    selected segment and the absolute frame stays internal. ``sign`` is +1 for a
-    head trim (in-point later) and -1 for a tail trim (out-point earlier).
-    ``values`` carries ``sequence_name`` + the segment(s) (``segments`` / legacy
-    ``segment``) supplying the identity metadata + per-segment ``frame_key``.
+    selected segment and the absolute frame stays internal. ``trim_side``
+    (``head`` / ``tail``) selects the changed field + the sign.
+
+    The per-entry authoring is ``build_trim_entry`` — the SAME primitive the
+    composition ``TrimDeltaNode`` calls, so the CLI hand-build and the graph
+    author stay byte-identical. ``values`` carries ``sequence_name`` + the
+    segment(s) (``segments`` / legacy ``segment``) supplying the identity
+    metadata + per-segment frame value.
     """
-    from forge_core.traffik.editing import DeltaEntry, TimelineDelta  # lazy
+    from forge_core.traffik.editing import TimelineDelta  # lazy
 
     segs = _segments_of(values)
     count = int(values["count"])
     entries = [
-        DeltaEntry(
-            action="updated",
-            object_type="segment",
-            object_id="exec-trim",
-            # single changed field -> classified as a supported temporal trim
-            before={"id": "exec-trim", field: int(seg[frame_key])},
-            after={"id": "exec-trim", field: int(seg[frame_key]) + sign * count},
-            metadata=_entry_metadata(seg, values["sequence_name"]),
-        )
+        build_trim_entry(seg, count, trim_side, values["sequence_name"])
         for seg in segs
     ]
-    return TimelineDelta(sequence_id="fbridge-exec-trim", entries=entries).to_dict()
+    return TimelineDelta(sequence_id=TRIM_SEQUENCE_ID, entries=entries).to_dict()
 
 
 def build_trim_head_delta(values: dict[str, Any]) -> dict[str, Any]:
@@ -245,7 +243,7 @@ def build_trim_head_delta(values: dict[str, Any]) -> dict[str, Any]:
     (``after - before``) equals ``count`` (positive moves the in-point later /
     shortens; negative extends, consuming a head handle).
     """
-    return _build_trim_delta(values, field="frame_in", frame_key="record_in_frame", sign=1)
+    return _build_trim_delta(values, trim_side="head")
 
 
 def build_trim_tail_delta(values: dict[str, Any]) -> dict[str, Any]:
@@ -255,7 +253,7 @@ def build_trim_tail_delta(values: dict[str, Any]) -> dict[str, Any]:
     (``before - after``) equals ``count`` (positive moves the out-point earlier /
     shortens; negative extends, consuming a tail handle).
     """
-    return _build_trim_delta(values, field="frame_out", frame_key="record_out_frame", sign=-1)
+    return _build_trim_delta(values, trim_side="tail")
 
 
 def build_host_mutation_spec(delta_dict: dict[str, Any], operator_id: str) -> Any:
@@ -335,6 +333,102 @@ def build_rename_fanout_spec(
                         output_port=PortTopology.manifest(),
                         config={
                             "new_name": str(template),
+                            "sequence_name": str(sequence_name),
+                        },
+                    )
+                },
+            ),
+            NodeSpec(
+                node_id="collect",
+                operator_id="collect",
+                input_ports={"input": PortContract.any()},
+                output_port=PortTopology.manifest(),
+            ),
+            NodeSpec(
+                node_id="host_resolve",
+                operator_id=_HOST_RESOLVE_OP,
+                input_ports={"delta": PortContract.manifest_gate()},
+                output_port=PortTopology.manifest(),
+            ),
+            NodeSpec(
+                node_id="delta_to_manifest",
+                operator_id="delta_to_manifest",
+                input_ports=HostResolveBoundary.input_ports,
+                output_port=HostResolveBoundary.output_port,
+            ),
+        ),
+        edges=(
+            Edge(from_node="segments", to_node="foreach", to_port="input"),
+            Edge(from_node="foreach", to_node="collect", to_port="input"),
+            Edge(from_node="collect", to_node="host_resolve", to_port="delta"),
+            Edge(
+                from_node="host_resolve",
+                to_node="delta_to_manifest",
+                to_port="deltas",
+            ),
+        ),
+    )
+
+
+def build_trim_fanout_spec(
+    segments: list[dict[str, Any]],
+    count: int,
+    trim_side: str,
+    sequence_name: Any,
+) -> Any:
+    """Author the GRAPH fan-out relative-trim spec (order-insensitive).
+
+    The trim analog of ``build_rename_fanout_spec``. Instead of hand-building a
+    multi-entry ``TimelineDelta`` in Python (``_build_trim_delta`` ->
+    ``build_host_mutation_spec``), the graph AUTHORS it::
+
+        literal_source(segments)
+            -> foreach( trim_delta_entry )      # per-item single-entry temporal delta
+            -> collect                          # fold N single-entry -> one multi-entry
+            -> traffik.flame_delta.host_resolve # project delta -> host-resolve payload
+            -> delta_to_manifest                # resolve payload -> MutationManifest
+
+    It rides the SAME ``preview_editorial_delta`` / ``apply_editorial_delta`` rail
+    downstream as rename — and, crucially, the SAME ``host_resolve`` operator
+    (``traffik.flame_delta.host_resolve``). The TEMPORAL executor
+    (``forge_apply_segment_temporal_delta``, vs. rename's spatial
+    ``forge_apply_segment_delta``) is selected inside that operation from the delta
+    CONTENT — ``build_trim_entry`` authors a single ``frame_in`` / ``frame_out``
+    change, which the operation classifies as a temporal trim. There is no separate
+    temporal host-resolve operator id.
+
+    A trim is order-AGNOSTIC (each entry's offset depends only on that segment's own
+    frame value + the shared ``count``, downstream is identity-keyed), so it is safe
+    on unsorted input with NO ordering step — the same property that let literal
+    rename skip a sort. ``count`` is the signed artist-facing frame count;
+    ``trim_side`` is ``head`` / ``tail``.
+    """
+    from forge_bridge.composition.graph_spec import GraphSpec, NodeSpec, Edge
+    from forge_bridge.composition.host_resolve_boundary import HostResolveBoundary
+    from forge_bridge.graph.ports import PortContract, PortTopology
+
+    return GraphSpec(
+        nodes=(
+            NodeSpec(
+                node_id="segments",
+                operator_id="literal_source",
+                output_port=PortTopology.list_of("segment"),
+                config={"output": {"segments": list(segments)}},
+            ),
+            NodeSpec(
+                node_id="foreach",
+                operator_id="foreach",
+                input_ports={"input": PortContract.any()},
+                output_port=PortTopology.iteration_results(),
+                config={
+                    "body": NodeSpec(
+                        node_id="trim_body",
+                        operator_id="trim_delta_entry",
+                        input_ports={"item": PortContract.any()},
+                        output_port=PortTopology.manifest(),
+                        config={
+                            "count": int(count),
+                            "trim_side": str(trim_side),
                             "sequence_name": str(sequence_name),
                         },
                     )

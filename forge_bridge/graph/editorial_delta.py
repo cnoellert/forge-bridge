@@ -8,12 +8,18 @@ that both surfaces need:
   * the composition graph (``RenameDeltaNode`` is the foreach body node that maps
     ONE segment item to ONE single-entry ``TimelineDelta``).
 
-Keeping the entry-authoring in one place is load-bearing: the CLI hand-build
-(``build_rename_delta``) and the graph author (``RenameDeltaNode``) must stay
-byte-identical while both exist, so they call the SAME ``build_rename_entry`` /
-``expand_counter`` / ``_entry_metadata`` — no logic fork.
+Keeping the entry-authoring in one place is load-bearing: the CLI hand-build and
+the graph author must stay byte-identical while both exist, so they call the SAME
+per-entry primitive — no logic fork. Two verb families live here:
 
-``forge_core`` is imported lazily inside ``build_rename_entry`` / ``RenameDeltaNode``
+  * rename — ``build_rename_delta`` (CLI) + ``RenameDeltaNode`` (graph) share
+    ``build_rename_entry`` / ``expand_counter`` / ``_entry_metadata``;
+  * relative trim — ``_build_trim_delta`` (CLI) + ``TrimDeltaNode`` (graph) share
+    ``build_trim_entry`` (+ ``_entry_metadata``). A trim is order-INSENSITIVE (a
+    per-segment identity-keyed offset, no ``$n`` counter, no position), so it needs
+    no timeline-ordering step.
+
+``forge_core`` is imported lazily inside the entry builders / graph nodes
 so this module (and everything that imports it, including ``fbridge --help``)
 loads cleanly without the pipeline plugin installed. Graph stays peer-import-free
 at module level.
@@ -32,6 +38,25 @@ from forge_bridge.graph.ports import PortContract, PortTopology
 # emit the same ``sequence_id`` / ``object_id`` byte-for-byte.
 RENAME_SEQUENCE_ID = "fbridge-exec-rename"
 _RENAME_OBJECT_ID = "exec-rename"
+
+# Same discipline for the relative-trim delta: defined ONCE so the CLI hand-build
+# (``_build_trim_delta``) and the per-item graph node (``TrimDeltaNode``) emit a
+# byte-identical ``sequence_id`` / ``object_id``.
+TRIM_SEQUENCE_ID = "fbridge-exec-trim"
+_TRIM_OBJECT_ID = "exec-trim"
+
+# The per-side trim geometry: which single field the delta changes, which segment
+# frame key holds its current value, and the sign the artist-facing count is
+# applied with. ``head`` moves the in-point later (+count shortens); ``tail`` moves
+# the out-point earlier (-count shortens). A single changed frame field is what the
+# ``traffik.flame_delta.host_resolve`` operation classifies as a TEMPORAL trim,
+# routing it to ``forge_apply_segment_temporal_delta`` (vs. rename's spatial
+# ``forge_apply_segment_delta``) — the executor is selected from the delta CONTENT,
+# not a different host-resolve operator id.
+_TRIM_SIDES: dict[str, tuple[str, str, int]] = {
+    "head": ("frame_in", "record_in_frame", 1),
+    "tail": ("frame_out", "record_out_frame", -1),
+}
 
 
 # A per-segment counter token: ``$n`` / ``$iteration`` with an OPTIONAL
@@ -139,6 +164,41 @@ def build_rename_entry(
     )
 
 
+def build_trim_entry(
+    seg: dict[str, Any],
+    count: int,
+    trim_side: str,
+    sequence_name: Any,
+) -> Any:
+    """Author ONE relative-trim ``DeltaEntry`` for segment ``seg``.
+
+    THE per-segment trim authoring primitive. ``_build_trim_delta`` (the CLI
+    multi-entry hand-build) and ``TrimDeltaNode`` (the graph foreach body) both
+    call it, so the two paths cannot drift. ``count`` is the SIGNED artist-facing
+    frame count (positive shortens, negative extends); ``trim_side`` (``head`` /
+    ``tail``) selects the single changed field + the sign via ``_TRIM_SIDES``. The
+    host derives the offset internally from ``after - before``, so the SAME count
+    applies to every selected segment and the absolute frame stays internal.
+
+    Order-INSENSITIVE by construction: each entry's before/after depends only on
+    the segment's own frame value + count (no counter, no position), so a trim
+    fan-out needs no timeline-ordering step.
+    """
+    from forge_core.traffik.editing import DeltaEntry  # lazy: pipeline plugin
+
+    field, frame_key, sign = _TRIM_SIDES[trim_side]
+    base = int(seg[frame_key])
+    return DeltaEntry(
+        action="updated",
+        object_type="segment",
+        object_id=_TRIM_OBJECT_ID,
+        # single changed field -> classified as a supported temporal trim
+        before={"id": _TRIM_OBJECT_ID, field: base},
+        after={"id": _TRIM_OBJECT_ID, field: base + sign * int(count)},
+        metadata=_entry_metadata(seg, sequence_name),
+    )
+
+
 def _item_position(item: dict[str, Any]) -> int:
     """The 0-based counter position for ``item``, from its foreach iteration index.
 
@@ -187,4 +247,41 @@ class RenameDeltaNode:
         )
         return TimelineDelta(
             sequence_id=RENAME_SEQUENCE_ID, entries=[entry]
+        ).to_dict()
+
+
+@dataclass(frozen=True)
+class TrimDeltaNode:
+    """Map ONE segment item to ONE single-entry relative-trim ``TimelineDelta`` dict.
+
+    The composition foreach body node for "fan-out A" trim: foreach hands this node
+    one segment at a time; a downstream ``collect`` folds the N single-entry deltas
+    back into one multi-entry ``TimelineDelta`` byte-identical to the CLI hand-build
+    (``_build_trim_delta``). It reuses the SAME ``build_trim_entry`` primitive so the
+    two paths cannot drift.
+
+    Unlike ``RenameDeltaNode`` it does NOT read the foreach iteration index — a trim
+    is position-INDEPENDENT (each entry's offset depends only on the segment's own
+    frame value + the shared ``count``), so a trim fan-out carries no counter and no
+    ordering seam. It AUTHORS a delta; it never applies (``no_state_mutation`` in
+    admission) — ``commit`` downstream owns application.
+    """
+
+    count: int
+    trim_side: str
+    sequence_name: str
+
+    port_contract: ClassVar[PortContract] = PortContract(
+        (PortTopology.any(),),
+        PortTopology.manifest(),
+    )
+
+    def run(self, item: dict[str, Any]) -> dict[str, Any]:
+        from forge_core.traffik.editing import TimelineDelta  # lazy: pipeline plugin
+
+        entry = build_trim_entry(
+            item, self.count, self.trim_side, self.sequence_name
+        )
+        return TimelineDelta(
+            sequence_id=TRIM_SEQUENCE_ID, entries=[entry]
         ).to_dict()

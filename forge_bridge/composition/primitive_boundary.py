@@ -17,7 +17,7 @@ from forge_bridge.composition.admission import admit_operator
 from forge_bridge.composition.graph_spec import NodeSpec
 from forge_bridge.composition.node_result import NodeResult
 from forge_bridge.graph.collect import CollectError, CollectNode
-from forge_bridge.graph.editorial_delta import RenameDeltaNode
+from forge_bridge.graph.editorial_delta import RenameDeltaNode, TrimDeltaNode
 from forge_bridge.graph.filter import (
     FilterNode,
     FilterPredicate,
@@ -83,6 +83,13 @@ class PrimitiveBoundary:
             )
         if node.operator_id == "rename_delta_entry":
             return _run_rename_delta_entry(
+                node,
+                resolved_inputs,
+                admission.resolved_class,
+                self.artifact_id_factory,
+            )
+        if node.operator_id == "trim_delta_entry":
+            return _run_trim_delta_entry(
                 node,
                 resolved_inputs,
                 admission.resolved_class,
@@ -385,6 +392,74 @@ def _run_rename_delta_entry(
     except Exception as exc:  # noqa: BLE001 - boundary converts author failure
         return _error(
             "rename_delta_author_failed",
+            f"{type(exc).__name__}: {exc}",
+            resolved_class,
+            source_artifact_ids=srcs,
+        )
+
+    topology = infer_topology(output)
+    return NodeResult(
+        status="ok",
+        run_id=uuid.uuid4(),
+        artifact_id=artifact_id_factory(),
+        output=output,
+        output_topology=topology.to_dict(),
+        artifact_type=topology.item_type if topology.kind == "list" else topology.kind,
+        source_artifact_ids=srcs,
+        resolved_class=resolved_class,
+    )
+
+
+def _run_trim_delta_entry(
+    node: NodeSpec,
+    resolved_inputs: dict[str, NodeResult],
+    resolved_class: str,
+    artifact_id_factory: Callable[[], uuid.UUID],
+) -> NodeResult:
+    if len(resolved_inputs) != 1:
+        return _error(
+            "invalid_primitive_input",
+            "TrimDeltaEntry requires exactly one upstream input.",
+            resolved_class,
+        )
+    upstream = next(iter(resolved_inputs.values()))
+    srcs = _source_artifact_ids(resolved_inputs)
+    if not upstream.has_usable_output:
+        return _error(
+            "invalid_primitive_input",
+            "TrimDeltaEntry requires a usable upstream output.",
+            resolved_class,
+            source_artifact_ids=srcs,
+        )
+
+    count = node.config.get("count")
+    trim_side = node.config.get("trim_side")
+    sequence_name = node.config.get("sequence_name")
+    # count must be a real int (reject bool, which is an int subclass); trim_side
+    # constrained to the two authored sides so a bad config fails closed here, not
+    # in the delta author.
+    if (
+        isinstance(count, bool)
+        or not isinstance(count, int)
+        or trim_side not in ("head", "tail")
+        or not isinstance(sequence_name, str)
+    ):
+        return _error(
+            "invalid_trim_config",
+            "TrimDeltaEntry requires int count + trim_side in {head,tail} + "
+            "str sequence_name.",
+            resolved_class,
+            source_artifact_ids=srcs,
+        )
+
+    try:
+        segment = _extract_single_segment(upstream.output)
+        output = TrimDeltaNode(
+            count=count, trim_side=trim_side, sequence_name=sequence_name
+        ).run(segment)
+    except Exception as exc:  # noqa: BLE001 - boundary converts author failure
+        return _error(
+            "trim_delta_author_failed",
             f"{type(exc).__name__}: {exc}",
             resolved_class,
             source_artifact_ids=srcs,
