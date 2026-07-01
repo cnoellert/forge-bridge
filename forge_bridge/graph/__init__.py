@@ -27,8 +27,11 @@ from forge_bridge.graph.commit import (
 )
 from forge_bridge.graph.editorial_delta import (
     RENAME_SEQUENCE_ID,
+    TRIM_SEQUENCE_ID,
     RenameDeltaNode,
+    TrimDeltaNode,
     build_rename_entry,
+    build_trim_entry,
     expand_counter,
     has_counter,
     validate_counter,
@@ -85,8 +88,11 @@ __all__ = [
     "CommitError",
     "CommitNode",
     "RENAME_SEQUENCE_ID",
+    "TRIM_SEQUENCE_ID",
     "RenameDeltaNode",
+    "TrimDeltaNode",
     "build_rename_entry",
+    "build_trim_entry",
     "expand_counter",
     "has_counter",
     "validate_counter",

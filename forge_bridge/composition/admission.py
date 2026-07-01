@@ -223,6 +223,18 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         idempotent_result=True,
     ),
     AdmissionRecord(
+        operator_id="trim_delta_entry",
+        resolved_class="primitive.trim_delta_entry",
+        dispatch_kind="primitive",
+        synchronous=True,
+        returns_reference=False,
+        # AUTHORS a single-entry relative-trim TimelineDelta from one segment item;
+        # it does NOT apply. A downstream commit owns host mutation, so this stays
+        # no_state_mutation=True (same character as rename_delta_entry + foreach).
+        no_state_mutation=True,
+        idempotent_result=True,
+    ),
+    AdmissionRecord(
         operator_id="commit",
         resolved_class="mcp.host_mutation",
         dispatch_kind="commit",

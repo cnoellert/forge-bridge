@@ -217,15 +217,19 @@ def _build_mutation_spec_multi(
     the same preview->ratify->commit rail (Approach A). ponytail: same call
     surface `run_oneshot` builds inline.
 
-    DUAL-PATH cutover (the live foreach first step): a counter-free LITERAL
-    rename is authored by the GRAPH fan-out spec
-    (``literal_source -> foreach(rename_delta_entry) -> collect -> host_resolve
-    -> delta_to_manifest``) rather than the CLI hand-build. Literal rename is
-    order-agnostic (the template is unchanged for every segment, downstream is
-    identity-keyed), so it is safe on unsorted input with NO ordering step. The
-    ``$n`` counter (order-sensitive) and every non-rename verb (trims — no graph
-    node yet) stay on the proven CLI hand-build rail. Both paths flow into the
-    SAME preview/ratify/apply rail unchanged. See
+    DUAL-PATH cutover (the live foreach step): two verb families are now authored
+    by a GRAPH fan-out spec (``literal_source -> foreach(<delta_entry>) -> collect
+    -> host_resolve -> delta_to_manifest``) rather than the CLI hand-build —
+
+      * a counter-free LITERAL rename (``rename_delta_entry``), and
+      * any relative TRIM (``trim_delta_entry``).
+
+    Both are order-AGNOSTIC (the per-segment value depends only on that segment —
+    the literal template is unchanged; the trim offset uses the segment's own
+    frame value — and downstream is identity-keyed), so both are safe on unsorted
+    input with NO ordering step. The ``$n`` counter rename (order-sensitive) stays
+    on the proven CLI hand-build rail. All paths flow into the SAME
+    preview/ratify/apply rail unchanged. See
     ``.planning/CONVERGENCE-foreach-cutover.md``.
     """
     value = values.get(verb.value_field)
@@ -235,6 +239,10 @@ def _build_mutation_spec_multi(
         and not _verbs.has_counter(value)
     ):
         return _verbs.build_rename_fanout_spec(segs, value, sequence)
+    if verb.value_kind == "offset" and verb.trim_side is not None:
+        return _verbs.build_trim_fanout_spec(
+            segs, int(value), verb.trim_side, sequence
+        )
     delta = verb.build_delta({"sequence_name": sequence, "segments": segs, **values})
     return _verbs.build_host_mutation_spec(delta, _verbs.host_resolve_operator())
 
