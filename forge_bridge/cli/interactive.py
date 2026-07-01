@@ -272,7 +272,13 @@ async def _preview_mutation_multi(
     fail-closed reason (e.g. UNRESOLVED_TARGET).
     """
     from forge_bridge.orchestration.apply_editorial_delta import preview_editorial_delta
-    spec = _build_mutation_spec_multi(verb, sequence, segs, values)
+    try:
+        spec = _build_mutation_spec_multi(verb, sequence, segs, values)
+    except _verbs.TimelineOrderError as exc:
+        # fail-closed: the order-sensitive counter graph refused unsorted input.
+        # Surface through the SAME (where, why) fail path a preview error uses, so
+        # the operator sees a legible "can't do that" — never wrong numbers.
+        return None, ("ordering", str(exc))
     results = await preview_editorial_delta(spec)
     err = _node_error(results)
     if err is not None:
