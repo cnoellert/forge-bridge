@@ -7,6 +7,7 @@ configuration by the MCP boundary.
 """
 from __future__ import annotations
 
+import copy
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -46,6 +47,12 @@ class PrimitiveBoundary:
                 f"Operator {node.operator_id!r} is not a primitive.",
                 admission.resolved_class,
         )
+        if node.operator_id == "literal_source":
+            return _run_literal_source(
+                node,
+                admission.resolved_class,
+                self.artifact_id_factory,
+            )
         if node.operator_id == "filter":
             return _run_filter(
                 node,
@@ -86,6 +93,38 @@ class PrimitiveBoundary:
             f"Primitive {node.operator_id!r} is not implemented.",
             admission.resolved_class,
         )
+
+
+def _run_literal_source(
+    node: NodeSpec,
+    resolved_class: str,
+    artifact_id_factory: Callable[[], uuid.UUID],
+) -> NodeResult:
+    """Emit a config-authored literal collection as this node's output.
+
+    A source node: it takes no upstream input and emits ``node.config['output']``
+    verbatim. This is the production analog of the test-only ``fixture_source`` —
+    the graph's way of feeding a caller-supplied collection (e.g. the selected
+    segments of an ``fbridge exec`` fan-out) into a downstream ``foreach``. The
+    payload is copied so the caller's list is never aliased into the graph.
+    """
+    if "output" not in node.config:
+        return _error(
+            "invalid_literal_source_config",
+            "literal_source requires config['output'].",
+            resolved_class,
+        )
+    output = copy.deepcopy(node.config["output"])
+    topology = infer_topology(output)
+    return NodeResult(
+        status="ok",
+        run_id=uuid.uuid4(),
+        artifact_id=artifact_id_factory(),
+        output=output,
+        output_topology=topology.to_dict(),
+        artifact_type=topology.item_type if topology.kind == "list" else topology.kind,
+        resolved_class=resolved_class,
+    )
 
 
 def _run_filter(

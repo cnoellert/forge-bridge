@@ -443,12 +443,28 @@ async def test_apply_held_success(monkeypatch):
 
 
 def test_build_mutation_spec_is_canonical_author():
-    # the one spec author both preview and stage use — proves single representation
+    # the one spec author both preview and stage use — proves single representation.
+    # DUAL-PATH cutover: a counter-free LITERAL rename is now GRAPH-authored
+    # (literal_source -> foreach -> collect -> host_resolve -> delta_to_manifest);
+    # the rename template rides the foreach body config, not a hand-built delta.
     spec = interactive._build_mutation_spec(
         verbs.REGISTRY["rename"], "CUT", _fake_seg(), {"new_name": "shot_010_v2"})
-    assert [n.node_id for n in spec.nodes] == ["op", "delta_to_manifest"]
-    delta = spec.nodes[0].config["arguments"]["delta"]
-    assert (delta.get("changes") or delta.get("entries"))[0]["after"]["name"] == "shot_010_v2"
+    assert [n.node_id for n in spec.nodes] == [
+        "segments", "foreach", "collect", "host_resolve", "delta_to_manifest"]
+    body = spec.nodes[1].config["body"]
+    assert body.operator_id == "rename_delta_entry"
+    assert body.config["new_name"] == "shot_010_v2"
+
+
+def test_build_mutation_spec_counter_and_trim_stay_on_cli_rail():
+    # The order-sensitive $n counter and the trim verbs (no graph node yet) stay
+    # on the proven CLI hand-build rail — the graph path is literal-rename only.
+    counter = interactive._build_mutation_spec(
+        verbs.REGISTRY["rename"], "CUT", _fake_seg(), {"new_name": "shot_$n{3,10,10}"})
+    assert [n.node_id for n in counter.nodes] == ["op", "delta_to_manifest"]
+    trim = interactive._build_mutation_spec(
+        verbs.REGISTRY["trim_head"], "CUT", _fake_seg(), {"count": 12})
+    assert [n.node_id for n in trim.nodes] == ["op", "delta_to_manifest"]
 
 
 @pytest.mark.asyncio
@@ -471,11 +487,14 @@ async def test_stage_mutation_persists_canonical_spec(monkeypatch):
         display="rename shot_010 -> shot_010_v2")
     assert gid == "deadbeef1234"
     assert captured["session_factory"] == "SF"
-    # persisted spec is the SAME canonical author the preview uses (one representation)
+    # persisted spec is the SAME canonical author the preview uses (one
+    # representation) — a literal rename is GRAPH-authored (dual-path cutover).
     spec = captured["spec"]
-    assert [n.node_id for n in spec.nodes] == ["op", "delta_to_manifest"]
-    delta = spec.nodes[0].config["arguments"]["delta"]
-    assert (delta.get("changes") or delta.get("entries"))[0]["after"]["name"] == "shot_010_v2"
+    assert [n.node_id for n in spec.nodes] == [
+        "segments", "foreach", "collect", "host_resolve", "delta_to_manifest"]
+    body = spec.nodes[1].config["body"]
+    assert body.operator_id == "rename_delta_entry"
+    assert body.config["new_name"] == "shot_010_v2"
 
 
 # -- interactive y/s/n branching (mocked; no daemon/Flame/DB) -----------------

@@ -280,6 +280,98 @@ def build_host_mutation_spec(delta_dict: dict[str, Any], operator_id: str) -> An
     )
 
 
+def build_rename_fanout_spec(
+    segments: list[dict[str, Any]],
+    template: str,
+    sequence_name: Any,
+) -> Any:
+    """Author the GRAPH fan-out rename spec (counter-free literal rename only).
+
+    The production promotion of the offline ``_fanout_graph`` proof
+    (``tests/composition/test_m2_batch_author_foreach.py``). Instead of
+    hand-building a multi-entry ``TimelineDelta`` in Python (``build_rename_delta``
+    -> ``build_host_mutation_spec``), the graph AUTHORS it::
+
+        literal_source(segments)
+            -> foreach( rename_delta_entry )   # per-item single-entry delta
+            -> collect                          # fold N single-entry -> one multi-entry
+            -> traffik.flame_delta.host_resolve # project delta -> host-resolve payload
+            -> delta_to_manifest                # resolve payload -> MutationManifest
+
+    It rides the SAME ``preview_editorial_delta`` / ``apply_editorial_delta`` rail
+    downstream (``host_resolve`` + ``delta_to_manifest`` are the identical nodes
+    ``build_host_mutation_spec`` uses; the source of the ``delta`` is the only
+    thing that changes — a graph author, not a CLI hand-build).
+
+    ONLY for a token-free literal ``template``: literal rename returns the name
+    unchanged for every segment, so it is order-agnostic and needs no ordering
+    step (see ``.planning/CONVERGENCE-foreach-cutover.md``). A ``$n`` counter is
+    order-sensitive and stays on the CLI hand-build rail. ``fixture_source`` in
+    the offline proof is replaced by the admitted ``literal_source`` primitive so
+    the spec runs through the real ``UnifiedDispatch`` (no test seam).
+    """
+    from forge_bridge.composition.graph_spec import GraphSpec, NodeSpec, Edge
+    from forge_bridge.composition.host_resolve_boundary import HostResolveBoundary
+    from forge_bridge.graph.ports import PortContract, PortTopology
+
+    return GraphSpec(
+        nodes=(
+            NodeSpec(
+                node_id="segments",
+                operator_id="literal_source",
+                output_port=PortTopology.list_of("segment"),
+                config={"output": {"segments": list(segments)}},
+            ),
+            NodeSpec(
+                node_id="foreach",
+                operator_id="foreach",
+                input_ports={"input": PortContract.any()},
+                output_port=PortTopology.iteration_results(),
+                config={
+                    "body": NodeSpec(
+                        node_id="rename_body",
+                        operator_id="rename_delta_entry",
+                        input_ports={"item": PortContract.any()},
+                        output_port=PortTopology.manifest(),
+                        config={
+                            "new_name": str(template),
+                            "sequence_name": str(sequence_name),
+                        },
+                    )
+                },
+            ),
+            NodeSpec(
+                node_id="collect",
+                operator_id="collect",
+                input_ports={"input": PortContract.any()},
+                output_port=PortTopology.manifest(),
+            ),
+            NodeSpec(
+                node_id="host_resolve",
+                operator_id=_HOST_RESOLVE_OP,
+                input_ports={"delta": PortContract.manifest_gate()},
+                output_port=PortTopology.manifest(),
+            ),
+            NodeSpec(
+                node_id="delta_to_manifest",
+                operator_id="delta_to_manifest",
+                input_ports=HostResolveBoundary.input_ports,
+                output_port=HostResolveBoundary.output_port,
+            ),
+        ),
+        edges=(
+            Edge(from_node="segments", to_node="foreach", to_port="input"),
+            Edge(from_node="foreach", to_node="collect", to_port="input"),
+            Edge(from_node="collect", to_node="host_resolve", to_port="delta"),
+            Edge(
+                from_node="host_resolve",
+                to_node="delta_to_manifest",
+                to_port="deltas",
+            ),
+        ),
+    )
+
+
 _HOST_RESOLVE_OP = "traffik.flame_delta.host_resolve"
 
 # ponytail: these verbs are Bridge-INTERNAL operators (host_resolve /
