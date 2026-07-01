@@ -411,3 +411,100 @@ def test_driver_registry_uses_backend_identity_triple_key() -> None:
     assert registry.registered_backends() == frozenset({_BACKEND_ID})
     assert registry.get_driver(_BACKEND_ID) is driver
     assert registry.get_driver("legacy.wrong_key") is None
+
+
+# ─────────────────────────────────────────────────────────────
+# Bridge #139 — runtime-bound dispatch_generation entry
+# ─────────────────────────────────────────────────────────────
+
+
+async def test_dispatch_generation_runtime_bound_reaches_same_lifecycle(
+    session_factory,
+    monkeypatch,
+) -> None:
+    """The runtime-bound ``dispatch_generation`` entry (bridge #139) resolves
+    its three deps at INVOCATION time (holder registry + process
+    session_factory + per-call derived event_appender) and lands in the
+    identical submit/persist/poll lifecycle as a direct ``dispatch_envelope``
+    call: an artifact row is created, a pollable ``artifact_id`` is returned,
+    and the artifact reaches ``complete`` through the shared poller."""
+    from forge_bridge.orchestration import generation_entry
+
+    driver = FaithfulLifecycleDriver()
+    driver_registry = GenerationDriverRegistry()
+    driver_registry.register_driver(driver)
+
+    # Establish an auto-restored baseline, then publish via the real setter (as
+    # bootstrap_daemon does). monkeypatch restores ``_generation_driver_registry``
+    # to its pre-test value on teardown regardless of the setter's mutation, so
+    # no global state leaks into the unset-safety test.
+    monkeypatch.setattr(generation_entry, "_generation_driver_registry", None)
+    generation_entry.set_generation_driver_registry(driver_registry)
+    assert generation_entry.get_generation_driver_registry() is driver_registry
+
+    # Pin the process session factory to the per-test DB. dispatch_generation
+    # resolves it via the module-level name, so patching the attribute here
+    # steers both the session factory and the derived event_appender.
+    monkeypatch.setattr(
+        generation_entry, "get_async_session_factory", lambda: session_factory
+    )
+
+    envelope = InvocationEnvelope(
+        operator_id="generate_video_from_image",
+        inputs=[
+            ArtifactRef(
+                artifact_id="artifact-src-1",
+                artifact_type="artifact",
+                metadata={},
+            )
+        ],
+        backend_identity_triple=dict(_TRIPLE),
+    )
+
+    result = await generation_entry.dispatch_generation(
+        envelope,
+        provenance={"planned_output_artifact_id": None},
+        # idempotency_key accepted now; dedup is a reserved seam, not enforced.
+        idempotency_key="idem-key-not-enforced-yet",
+    )
+
+    assert result == DispatchResult(status="submitted", artifact_id=result.artifact_id)
+    assert result.artifact_id is not None
+    assert driver.submissions[0].operator_id == "generate_video_from_image"
+
+    # Artifact lands in the same status-driven lifecycle the poller consumes.
+    async with session_factory() as session:
+        artifact = await GenerationArtifactRepo(session).get_by_id(result.artifact_id)
+        assert artifact is not None
+        assert artifact.lifecycle_state == "submitted"
+        assert resolve_backend_id(artifact) == _BACKEND_ID
+        # Plan-free caller: plan_id absent everywhere downstream.
+        assert "plan_id" not in artifact.content_provenance
+        assert artifact.content_provenance["lineage"]["input_artifact_ids"] == [
+            "artifact-src-1"
+        ]
+
+    # Pollable by artifact_id in the shared lifecycle — same poller, no plan.
+    poll_result = await GenerationPoller(session_factory, driver_registry).poll_once()
+    assert poll_result.processed == 1
+    assert poll_result.terminal == 1
+    assert driver.polled_request_ids == ["req-1"]
+
+    async with session_factory() as session:
+        terminal = await GenerationArtifactRepo(session).get_by_id(result.artifact_id)
+        assert terminal is not None
+        assert terminal.lifecycle_state == "complete"
+        assert terminal.content_hash is not None
+
+
+def test_get_generation_driver_registry_raises_when_unset(monkeypatch) -> None:
+    """Pre-bootstrap safety: with the holder unset, resolving the registry
+    raises a clear 'daemon not bootstrapped / generation dispatch unavailable'
+    error rather than submitting against a registry that was never wired."""
+    import pytest
+
+    from forge_bridge.orchestration import generation_entry
+
+    monkeypatch.setattr(generation_entry, "_generation_driver_registry", None)
+    with pytest.raises(RuntimeError, match="daemon not bootstrapped"):
+        generation_entry.get_generation_driver_registry()
