@@ -83,6 +83,7 @@ _IN_PROCESS_FORGE_TOOLS: frozenset[str] = frozenset({
     "forge_approve_staged",
     "forge_reject_staged",
     "forge_staged_pending_read",
+    "forge_ratify_generation_grant",
 })
 
 # In-process ops attached by sibling `register_with(mcp)` (forge-vision etc.):

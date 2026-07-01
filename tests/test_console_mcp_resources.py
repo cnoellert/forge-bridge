@@ -89,7 +89,8 @@ def test_register_console_resources_registers_two_tool_shims(api):
     mock_mcp = MagicMock()
     register_console_resources(mock_mcp, api._manifest_service, api)
     names = [call.kwargs.get("name") for call in mock_mcp.tool.call_args_list]
-    # Phase 9 shims (2) + Phase 14 FB-B staged-ops tools (4) + STAGED-07 shim (1) = 7 total.
+    # Phase 9 shims (2) + Phase 14 FB-B staged-ops tools (4) + STAGED-07 shim (1)
+    # + #146 generation-grant ratify tool (1) = 8 total.
     assert "forge_manifest_read" in names
     assert "forge_tools_read" in names
     assert "forge_list_staged" in names
@@ -97,7 +98,8 @@ def test_register_console_resources_registers_two_tool_shims(api):
     assert "forge_approve_staged" in names
     assert "forge_reject_staged" in names
     assert "forge_staged_pending_read" in names
-    assert len(names) == 7
+    assert "forge_ratify_generation_grant" in names
+    assert len(names) == 8
 
 
 def test_all_resources_have_application_json_mime(api):

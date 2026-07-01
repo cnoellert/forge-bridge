@@ -142,7 +142,9 @@ def register_console_resources(
     # both modules are fully initialised before either import runs.
     from forge_bridge.mcp.tools import (  # noqa: PLC0415 — intentional deferred import
         ListStagedInput, GetStagedInput, ApproveStagedInput, RejectStagedInput,
+        RatifyGenerationGrantInput,
         _list_staged_impl, _get_staged_impl, _approve_staged_impl, _reject_staged_impl,
+        _ratify_generation_grant_impl,
     )
 
     # Inject input model names into module globals so FastMCP's get_type_hints()
@@ -156,6 +158,7 @@ def register_console_resources(
         "GetStagedInput": GetStagedInput,
         "ApproveStagedInput": ApproveStagedInput,
         "RejectStagedInput": RejectStagedInput,
+        "RatifyGenerationGrantInput": RatifyGenerationGrantInput,
     })
 
     @mcp.tool(
@@ -245,6 +248,43 @@ def register_console_resources(
     )
     async def forge_reject_staged(params: RejectStagedInput) -> str:
         return await _reject_staged_impl(params, session_factory)
+
+    # -- GenerationGrant spend-gate (#146) — ratify tool (flip-critical) ------
+    # Generators' paid forge_generate_* proof runs through MCP, so this is the
+    # flip-critical surface: it ratifies a proposed grant (proposed -> ratified)
+    # so a subsequent submit can consume it at the dispatch chokepoint. Pure
+    # authority transition — nothing is applied/replayed here. The estimate/mint
+    # side (forge_estimate_generation) is DEFERRED to the generators peer, which
+    # owns the peer-declared cost; it mints the proposed grant via
+    # GenerationGrantRepo.propose().
+    @mcp.tool(
+        name="forge_ratify_generation_grant",
+        description=(
+            "Forge: ratify a generation grant so a paid generation submit is "
+            "authorized to spend.\n\n"
+            "Ratification is authority — it advances a proposed grant (a free "
+            "quote) to ratified. The submit then consumes it exactly once at the "
+            "dispatch chokepoint. Requires a non-empty actor identity and the "
+            "12-char grant_id from the estimate/quote.\n\n"
+            "Use this tool ONLY when:\n"
+            "- the operator explicitly approves a paid generation by grant_id\n\n"
+            "Do NOT use this tool for:\n"
+            "- staged pipeline operations → use forge_approve_staged\n"
+            "- ratifying a compiled graph-intent (host mutation) → use the "
+            "ratify endpoint / fbridge ratify\n"
+            "- estimating/quoting a generation → that is the generators peer's "
+            "forge_estimate_generation"
+        ),
+        annotations={
+            "readOnlyHint": False,
+            "idempotentHint": False,
+            "destructiveHint": False,
+        },
+    )
+    async def forge_ratify_generation_grant(
+        params: RatifyGenerationGrantInput,
+    ) -> str:
+        return await _ratify_generation_grant_impl(params, session_factory)
 
     # -- Phase 14 (FB-B) STAGED-07 — pending-queue snapshot resource + tool shim
     # Per D-12: ship only forge://staged/pending (proposed-only) + forge_staged_pending_read shim.

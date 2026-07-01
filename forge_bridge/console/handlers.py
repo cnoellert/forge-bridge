@@ -1593,6 +1593,87 @@ async def ratify_endpoint(request: Request) -> JSONResponse:
     )
 
 
+async def ratify_generation_endpoint(request: Request) -> JSONResponse:
+    """POST /api/v1/ratify-generation — ratify a generation grant (#146).
+
+    A PURE proposed -> ratified transition (unlike /api/v1/ratify there is no
+    chain to replay/apply — the runs spend, not the grant). The response is the
+    canonical extensible ``grant.to_dict()`` so #140 cost-preview, #142 budget,
+    and the Console projection all ride additively on the same JSON.
+    """
+    request_id = str(uuid.uuid4())
+    client_ip = request.client.host if request.client else "unknown"
+
+    decision: RateLimitDecision = check_rate_limit(client_ip)
+    if not decision.allowed:
+        return _chat_error(
+            "rate_limit_exceeded",
+            f"Rate limit reached — wait {decision.retry_after}s before retrying.",
+            429,
+            request_id,
+            extra_headers={"Retry-After": str(decision.retry_after)},
+        )
+
+    try:
+        body = await request.json()
+    except Exception:
+        return _chat_error(
+            "validation_error", "request body is not valid JSON", 400, request_id,
+        )
+    if not isinstance(body, dict):
+        return _chat_error(
+            "validation_error", "request body must be a JSON object", 400, request_id,
+        )
+
+    grant_id = body.get("grant_id")
+    actor = body.get("actor", "local")
+    if not isinstance(grant_id, str) or not re.fullmatch(r"[a-f0-9]{12}", grant_id):
+        return _chat_error(
+            "validation_error",
+            "grant_id must be a 12-character lowercase hex string",
+            400,
+            request_id,
+        )
+    if not isinstance(actor, str) or not actor.strip():
+        return _chat_error(
+            "validation_error", "actor must be a non-empty string", 400, request_id,
+        )
+
+    from forge_bridge.store.generation_grant_repo import (
+        GenerationGrantLifecycleError,
+        GenerationGrantNotFound,
+        GenerationGrantRepo,
+    )
+
+    session_factory = request.app.state.session_factory
+    async with session_factory() as session:
+        repo = GenerationGrantRepo(session)
+        try:
+            grant = await repo.ratify(grant_id, actor=actor.strip())
+        except GenerationGrantNotFound:
+            return _chat_error(
+                "grant_not_found",
+                f"no generation_grant with grant_id {grant_id}",
+                404,
+                request_id,
+            )
+        except GenerationGrantLifecycleError as exc:
+            return _chat_error(
+                "illegal_transition",
+                str(exc),
+                409,
+                request_id,
+                details={"current_status": exc.from_status},
+            )
+        await session.commit()
+
+    return JSONResponse(
+        grant.to_dict(),
+        status_code=200,
+        headers={"X-Request-ID": request_id},
+    )
+
+
 async def chat_handler(request: Request) -> Response:
     """POST /api/v1/chat — Phase 16 FB-D chat endpoint.
 
