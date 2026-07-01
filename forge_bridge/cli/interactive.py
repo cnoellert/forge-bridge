@@ -226,27 +226,28 @@ def _build_mutation_spec_multi(
     the same preview->ratify->commit rail (Approach A). ponytail: same call
     surface `run_oneshot` builds inline.
 
-    DUAL-PATH cutover (the live foreach step): two verb families are now authored
-    by a GRAPH fan-out spec (``literal_source -> foreach(<delta_entry>) -> collect
-    -> host_resolve -> delta_to_manifest``) rather than the CLI hand-build —
+    GRAPH cutover (the live foreach steps): the whole rename + trim verb families
+    are now authored by a GRAPH fan-out spec (``literal_source ->
+    foreach(<delta_entry>) -> collect -> host_resolve -> delta_to_manifest``)
+    rather than the CLI hand-build —
 
-      * a counter-free LITERAL rename (``rename_delta_entry``), and
+      * EVERY rename (``rename_delta_entry``) — literal AND ``$n`` counter, and
       * any relative TRIM (``trim_delta_entry``).
 
-    Both are order-AGNOSTIC (the per-segment value depends only on that segment —
-    the literal template is unchanged; the trim offset uses the segment's own
-    frame value — and downstream is identity-keyed), so both are safe on unsorted
-    input with NO ordering step. The ``$n`` counter rename (order-sensitive) stays
-    on the proven CLI hand-build rail. All paths flow into the SAME
-    preview/ratify/apply rail unchanged. See
+    Literal rename and trim are order-AGNOSTIC (the per-segment value depends only
+    on that segment — the literal template is unchanged; the trim offset uses the
+    segment's own frame value — and downstream is identity-keyed), so both are safe
+    on unsorted input. The ``$n`` counter rename IS order-sensitive (it numbers by
+    the foreach arrival index): its correctness rests on the gather-boundary
+    ordering invariant (``_match_selected`` timeline-sorts the working set), and
+    ``build_rename_fanout_spec`` asserts that fail-closed at its assembly edge. All
+    paths flow into the SAME preview/ratify/apply rail unchanged. The generic
+    ``build_delta`` fallback below is retained as a defensive author for any future
+    non-rename/non-trim verb; no current registry verb reaches it. See
     ``.planning/CONVERGENCE-foreach-cutover.md``.
     """
     value = values.get(verb.value_field)
-    if (
-        verb.value_kind == "str"
-        and isinstance(value, str)
-        and not _verbs.has_counter(value)
-    ):
+    if verb.value_kind == "str" and isinstance(value, str):
         return _verbs.build_rename_fanout_spec(segs, value, sequence)
     if verb.value_kind == "offset" and verb.trim_side is not None:
         return _verbs.build_trim_fanout_spec(
@@ -625,6 +626,15 @@ async def _run_verb(
     if _verbs.is_unchanged(verb, value, current):
         con.print("  cancelled — value unchanged")
         return
+    # a rename now rides the graph fan-out (single = 1-element fan-out), which
+    # expands any counter token lazily during execution — so reject a MALFORMED
+    # counter spec ($n{}, $n{x}) up front with a legible message, mirroring the
+    # multi-select path, rather than letting it error inside the graph body.
+    if verb.value_kind == "str":
+        cerr = _verbs.validate_counter(value)
+        if cerr is not None:
+            con.print(f"  [red]can't do that[/red] — {cerr}")
+            return
     # CLI-side range guard: reject an impossible trim with a legible message
     # before it reaches the host (no-op for non-trim verbs).
     rerr = _verbs.validate_trim(verb, value, seg)
