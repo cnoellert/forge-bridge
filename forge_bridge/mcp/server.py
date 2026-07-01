@@ -355,6 +355,19 @@ async def bootstrap_daemon(mcp_server: FastMCP) -> _BootstrapResult:
 
     generation_driver_registry = GenerationDriverRegistry()
 
+    # Bridge #139 — publish the driver registry on a neutral process-level
+    # holder so the runtime-bound direct-dispatch entry can resolve it at
+    # invocation time. A Pass-B sibling's in-process forge_generate_* handler is
+    # registered mcp-only via register_with(mcp) and thus cannot receive the
+    # runtime deps at registration time; it reaches dispatch_envelope through
+    # dispatch_generation, which resolves this registry from the holder. Import
+    # direction is one-way (server -> generation_entry); generation_entry never
+    # imports mcp.server, so no circular import.
+    from forge_bridge.orchestration.generation_entry import (
+        set_generation_driver_registry,
+    )
+    set_generation_driver_registry(generation_driver_registry)
+
     # Issue #26 — the adapter rung Step 5's comment promised. Register sibling
     # declarations into a ToolRegistry wired to THIS driver registry, BEFORE the
     # dispatch consumer starts, so generation siblings' drivers are reachable
