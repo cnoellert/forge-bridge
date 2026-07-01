@@ -189,9 +189,18 @@ def _match_selected(
     (``record_in_frame`` / ``record_out_frame`` / ``head`` / ``tail`` / …). So we
     keep the ``_segments``-shaped dicts whose key matches a selected identity —
     never hand-build a dict from the (thin) selection walk.
+
+    The result is TIMELINE-ORDERED here, at the gather boundary — the ONE
+    authoritative home for "what a resolved working set is" (live segments arrive
+    from Flame in natural traversal order, not timeline order). Downstream callers
+    (the fan-out preview + the graph fan-out spec builder) receive an ordered
+    working set and no longer re-sort defensively; the order-sensitive ``$n``
+    counter graph asserts this invariant fail-closed at its assembly edge
+    (``verbs.build_rename_fanout_spec``). See ``.planning/CONVERGENCE-foreach-cutover.md``.
     """
     keys = {_selection_key(i) for i in identities}
-    return [s for s in segs if _selection_key(s) in keys]
+    matched = [s for s in segs if _selection_key(s) in keys]
+    return _verbs.timeline_sorted(matched)
 
 
 def _ratified_assent() -> Any:
@@ -217,27 +226,28 @@ def _build_mutation_spec_multi(
     the same preview->ratify->commit rail (Approach A). ponytail: same call
     surface `run_oneshot` builds inline.
 
-    DUAL-PATH cutover (the live foreach step): two verb families are now authored
-    by a GRAPH fan-out spec (``literal_source -> foreach(<delta_entry>) -> collect
-    -> host_resolve -> delta_to_manifest``) rather than the CLI hand-build —
+    GRAPH cutover (the live foreach steps): the whole rename + trim verb families
+    are now authored by a GRAPH fan-out spec (``literal_source ->
+    foreach(<delta_entry>) -> collect -> host_resolve -> delta_to_manifest``)
+    rather than the CLI hand-build —
 
-      * a counter-free LITERAL rename (``rename_delta_entry``), and
+      * EVERY rename (``rename_delta_entry``) — literal AND ``$n`` counter, and
       * any relative TRIM (``trim_delta_entry``).
 
-    Both are order-AGNOSTIC (the per-segment value depends only on that segment —
-    the literal template is unchanged; the trim offset uses the segment's own
-    frame value — and downstream is identity-keyed), so both are safe on unsorted
-    input with NO ordering step. The ``$n`` counter rename (order-sensitive) stays
-    on the proven CLI hand-build rail. All paths flow into the SAME
-    preview/ratify/apply rail unchanged. See
+    Literal rename and trim are order-AGNOSTIC (the per-segment value depends only
+    on that segment — the literal template is unchanged; the trim offset uses the
+    segment's own frame value — and downstream is identity-keyed), so both are safe
+    on unsorted input. The ``$n`` counter rename IS order-sensitive (it numbers by
+    the foreach arrival index): its correctness rests on the gather-boundary
+    ordering invariant (``_match_selected`` timeline-sorts the working set), and
+    ``build_rename_fanout_spec`` asserts that fail-closed at its assembly edge. All
+    paths flow into the SAME preview/ratify/apply rail unchanged. The generic
+    ``build_delta`` fallback below is retained as a defensive author for any future
+    non-rename/non-trim verb; no current registry verb reaches it. See
     ``.planning/CONVERGENCE-foreach-cutover.md``.
     """
     value = values.get(verb.value_field)
-    if (
-        verb.value_kind == "str"
-        and isinstance(value, str)
-        and not _verbs.has_counter(value)
-    ):
+    if verb.value_kind == "str" and isinstance(value, str):
         return _verbs.build_rename_fanout_spec(segs, value, sequence)
     if verb.value_kind == "offset" and verb.trim_side is not None:
         return _verbs.build_trim_fanout_spec(
@@ -263,7 +273,13 @@ async def _preview_mutation_multi(
     fail-closed reason (e.g. UNRESOLVED_TARGET).
     """
     from forge_bridge.orchestration.apply_editorial_delta import preview_editorial_delta
-    spec = _build_mutation_spec_multi(verb, sequence, segs, values)
+    try:
+        spec = _build_mutation_spec_multi(verb, sequence, segs, values)
+    except _verbs.TimelineOrderError as exc:
+        # fail-closed: the order-sensitive counter graph refused unsorted input.
+        # Surface through the SAME (where, why) fail path a preview error uses, so
+        # the operator sees a legible "can't do that" — never wrong numbers.
+        return None, ("ordering", str(exc))
     results = await preview_editorial_delta(spec)
     err = _node_error(results)
     if err is not None:
@@ -493,9 +509,11 @@ async def _run_fanout(
         return
     plan = held.get("resolved_plan") or []
     con.print(f"\n  [bold]Preview[/bold] — {verb.label}, {len(plan)} segments in Flame:")
-    # iterate the SAME timeline-sorted order + 0-based index the delta builder
-    # uses, so the previewed name matches exactly what gets applied.
-    for i, s in enumerate(_verbs.timeline_sorted(segs)):
+    # ``segs`` is already timeline-ordered (the gather boundary owns ordering, and
+    # the counter graph asserts it fail-closed), so enumerate directly — the 0-based
+    # index matches the foreach iteration index the delta builder expands against,
+    # so the previewed name matches exactly what gets applied.
+    for i, s in enumerate(segs):
         if verb.value_kind == "str":
             con.print(f"    {s.get('seg_name')}  →  "
                       f"{_verbs.expand_counter(value, i)}")
@@ -556,8 +574,9 @@ async def _run_verb(
                 elif len(chosen) > 1:
                     # FAN-OUT (Approach A): apply the verb to ALL selected segments
                     # in one preview->ratify->commit via a single multi-entry delta.
-                    await _run_fanout(con, verb=verb, sequence=sel_seq,
-                                      segs=_verbs.timeline_sorted(chosen))
+                    # ``chosen`` is already timeline-ordered by ``_match_selected``
+                    # (the gather boundary owns ordering — no re-sort here).
+                    await _run_fanout(con, verb=verb, sequence=sel_seq, segs=chosen)
                     return
                 # chosen empty (selection matched no live segment) -> fall through
 
@@ -607,6 +626,15 @@ async def _run_verb(
     if _verbs.is_unchanged(verb, value, current):
         con.print("  cancelled — value unchanged")
         return
+    # a rename now rides the graph fan-out (single = 1-element fan-out), which
+    # expands any counter token lazily during execution — so reject a MALFORMED
+    # counter spec ($n{}, $n{x}) up front with a legible message, mirroring the
+    # multi-select path, rather than letting it error inside the graph body.
+    if verb.value_kind == "str":
+        cerr = _verbs.validate_counter(value)
+        if cerr is not None:
+            con.print(f"  [red]can't do that[/red] — {cerr}")
+            return
     # CLI-side range guard: reject an impossible trim with a legible message
     # before it reaches the host (no-op for non-trim verbs).
     rerr = _verbs.validate_trim(verb, value, seg)

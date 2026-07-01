@@ -456,12 +456,18 @@ def test_build_mutation_spec_is_canonical_author():
     assert body.config["new_name"] == "shot_010_v2"
 
 
-def test_build_mutation_spec_counter_stays_on_cli_rail():
-    # The order-sensitive $n counter rename stays on the proven CLI hand-build
-    # rail — the graph rename path is literal-rename only (order-agnostic).
+def test_build_mutation_spec_counter_is_graph_authored():
+    # COUNTER CUTOVER: the order-sensitive $n counter rename is now GRAPH-authored
+    # too (same fan-out shape as the literal rename). The graph expands the counter
+    # from the foreach iteration index; a single segment is a 1-element fan-out
+    # (trivially timeline-ordered, so the fail-closed assert does not fire).
     counter = interactive._build_mutation_spec(
         verbs.REGISTRY["rename"], "CUT", _fake_seg(), {"new_name": "shot_$n{3,10,10}"})
-    assert [n.node_id for n in counter.nodes] == ["op", "delta_to_manifest"]
+    assert [n.node_id for n in counter.nodes] == [
+        "segments", "foreach", "collect", "host_resolve", "delta_to_manifest"]
+    body = counter.nodes[1].config["body"]
+    assert body.operator_id == "rename_delta_entry"
+    assert body.config["new_name"] == "shot_$n{3,10,10}"
 
 
 def test_build_mutation_spec_trim_is_graph_authored():

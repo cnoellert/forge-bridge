@@ -42,6 +42,19 @@ from forge_bridge.graph.editorial_delta import (  # noqa: F401 (re-exported)
 )
 
 
+class TimelineOrderError(ValueError):
+    """The segments reaching an order-SENSITIVE graph fan-out are not timeline-ordered.
+
+    Raised fail-closed at the counter-rename graph-assembly edge
+    (``build_rename_fanout_spec``) when a ``$n`` counter template would number
+    segments by foreach ARRIVAL index while the arrival order is not timeline
+    order — which would silently stamp the wrong shot numbers. The gather boundary
+    (``interactive._match_selected``) is the single home that guarantees the order;
+    this is the assert that keeps a future caller from bypassing it. Surfaced to
+    the operator through the normal preview fail path (never silently applied).
+    """
+
+
 @dataclass(frozen=True)
 class Verb:
     """One artist-legible action. ``name`` is its slash-command."""
@@ -301,16 +314,38 @@ def build_rename_fanout_spec(
     ``build_host_mutation_spec`` uses; the source of the ``delta`` is the only
     thing that changes — a graph author, not a CLI hand-build).
 
-    ONLY for a token-free literal ``template``: literal rename returns the name
-    unchanged for every segment, so it is order-agnostic and needs no ordering
-    step (see ``.planning/CONVERGENCE-foreach-cutover.md``). A ``$n`` counter is
-    order-sensitive and stays on the CLI hand-build rail. ``fixture_source`` in
-    the offline proof is replaced by the admitted ``literal_source`` primitive so
-    the spec runs through the real ``UnifiedDispatch`` (no test seam).
+    Authors BOTH the counter-free literal rename AND the ``$n`` counter rename.
+    A literal template returns the name unchanged for every segment, so it is
+    order-agnostic and needs no ordering step. A ``$n`` counter numbers each
+    segment by its foreach ARRIVAL index, so it is order-SENSITIVE — correct only
+    when the arrival order IS timeline order. This function is the counter graph's
+    ASSEMBLY EDGE, so it asserts that invariant fail-closed here: a counter
+    template over segments that are not ``timeline_sorted`` raises
+    ``TimelineOrderError`` (the single definition of order is ``timeline_sorted``)
+    rather than silently stamping the wrong shot numbers. The invariant is
+    established upstream at the gather boundary (``interactive._match_selected``);
+    this assert catches any caller that bypasses it. The check is scoped to counter
+    templates: a literal rename is order-agnostic, so it is accepted on unsorted
+    input with no ordering step (see ``.planning/CONVERGENCE-foreach-cutover.md``).
+    ``fixture_source`` in the offline proof is replaced by the admitted
+    ``literal_source`` primitive so the spec runs through the real
+    ``UnifiedDispatch`` (no test seam).
     """
     from forge_bridge.composition.graph_spec import GraphSpec, NodeSpec, Edge
     from forge_bridge.composition.host_resolve_boundary import HostResolveBoundary
     from forge_bridge.graph.ports import PortContract, PortTopology
+
+    # Fail-closed assert-at-edge: an order-SENSITIVE counter template requires the
+    # foreach arrival order to be timeline order. Reuse ``timeline_sorted`` as the
+    # single definition of order. Literal templates are order-agnostic (skipped).
+    if has_counter(str(template)):
+        segs = list(segments)
+        if segs != timeline_sorted(segs):
+            raise TimelineOrderError(
+                "counter rename needs the selected segments in timeline order, "
+                "but they reached the graph unsorted — refusing rather than "
+                "stamping the wrong numbers"
+            )
 
     return GraphSpec(
         nodes=(
