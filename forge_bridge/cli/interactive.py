@@ -189,9 +189,18 @@ def _match_selected(
     (``record_in_frame`` / ``record_out_frame`` / ``head`` / ``tail`` / …). So we
     keep the ``_segments``-shaped dicts whose key matches a selected identity —
     never hand-build a dict from the (thin) selection walk.
+
+    The result is TIMELINE-ORDERED here, at the gather boundary — the ONE
+    authoritative home for "what a resolved working set is" (live segments arrive
+    from Flame in natural traversal order, not timeline order). Downstream callers
+    (the fan-out preview + the graph fan-out spec builder) receive an ordered
+    working set and no longer re-sort defensively; the order-sensitive ``$n``
+    counter graph asserts this invariant fail-closed at its assembly edge
+    (``verbs.build_rename_fanout_spec``). See ``.planning/CONVERGENCE-foreach-cutover.md``.
     """
     keys = {_selection_key(i) for i in identities}
-    return [s for s in segs if _selection_key(s) in keys]
+    matched = [s for s in segs if _selection_key(s) in keys]
+    return _verbs.timeline_sorted(matched)
 
 
 def _ratified_assent() -> Any:
@@ -493,9 +502,11 @@ async def _run_fanout(
         return
     plan = held.get("resolved_plan") or []
     con.print(f"\n  [bold]Preview[/bold] — {verb.label}, {len(plan)} segments in Flame:")
-    # iterate the SAME timeline-sorted order + 0-based index the delta builder
-    # uses, so the previewed name matches exactly what gets applied.
-    for i, s in enumerate(_verbs.timeline_sorted(segs)):
+    # ``segs`` is already timeline-ordered (the gather boundary owns ordering, and
+    # the counter graph asserts it fail-closed), so enumerate directly — the 0-based
+    # index matches the foreach iteration index the delta builder expands against,
+    # so the previewed name matches exactly what gets applied.
+    for i, s in enumerate(segs):
         if verb.value_kind == "str":
             con.print(f"    {s.get('seg_name')}  →  "
                       f"{_verbs.expand_counter(value, i)}")
@@ -556,8 +567,9 @@ async def _run_verb(
                 elif len(chosen) > 1:
                     # FAN-OUT (Approach A): apply the verb to ALL selected segments
                     # in one preview->ratify->commit via a single multi-entry delta.
-                    await _run_fanout(con, verb=verb, sequence=sel_seq,
-                                      segs=_verbs.timeline_sorted(chosen))
+                    # ``chosen`` is already timeline-ordered by ``_match_selected``
+                    # (the gather boundary owns ordering — no re-sort here).
+                    await _run_fanout(con, verb=verb, sequence=sel_seq, segs=chosen)
                     return
                 # chosen empty (selection matched no live segment) -> fall through
 
