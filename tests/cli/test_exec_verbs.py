@@ -456,15 +456,32 @@ def test_build_mutation_spec_is_canonical_author():
     assert body.config["new_name"] == "shot_010_v2"
 
 
-def test_build_mutation_spec_counter_and_trim_stay_on_cli_rail():
-    # The order-sensitive $n counter and the trim verbs (no graph node yet) stay
-    # on the proven CLI hand-build rail — the graph path is literal-rename only.
+def test_build_mutation_spec_counter_stays_on_cli_rail():
+    # The order-sensitive $n counter rename stays on the proven CLI hand-build
+    # rail — the graph rename path is literal-rename only (order-agnostic).
     counter = interactive._build_mutation_spec(
         verbs.REGISTRY["rename"], "CUT", _fake_seg(), {"new_name": "shot_$n{3,10,10}"})
     assert [n.node_id for n in counter.nodes] == ["op", "delta_to_manifest"]
-    trim = interactive._build_mutation_spec(
-        verbs.REGISTRY["trim_head"], "CUT", _fake_seg(), {"count": 12})
-    assert [n.node_id for n in trim.nodes] == ["op", "delta_to_manifest"]
+
+
+def test_build_mutation_spec_trim_is_graph_authored():
+    # DUAL-PATH cutover: a relative trim is now GRAPH-authored
+    # (literal_source -> foreach(trim_delta_entry) -> collect -> host_resolve ->
+    # delta_to_manifest), order-agnostic like the literal rename. The offset +
+    # trim_side ride the foreach body config, not a hand-built delta.
+    for side, verb in (("head", "trim_head"), ("tail", "trim_tail")):
+        trim = interactive._build_mutation_spec(
+            verbs.REGISTRY[verb], "CUT", _fake_seg(), {"count": 12})
+        assert [n.node_id for n in trim.nodes] == [
+            "segments", "foreach", "collect", "host_resolve", "delta_to_manifest"]
+        body = trim.nodes[1].config["body"]
+        assert body.operator_id == "trim_delta_entry"
+        assert body.config["count"] == 12
+        assert body.config["trim_side"] == side
+        # THE FINDING: trim rides the SAME host_resolve operator as rename; the
+        # temporal executor is selected from the delta content downstream.
+        host_resolve = trim.nodes[3]
+        assert host_resolve.operator_id == verbs.host_resolve_operator()
 
 
 @pytest.mark.asyncio
