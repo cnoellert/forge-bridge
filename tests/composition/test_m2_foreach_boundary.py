@@ -72,9 +72,12 @@ async def test_foreach_boundary_reenters_shared_dispatch_per_item():
         "input_count": 2,
         "output_count": 2,
     }
+    # foreach authors each item's ordinal iteration index onto the per-item
+    # payload under the reserved ``_foreach`` namespace (foreach is the sole
+    # author); the body reads a real index rather than a pre-stamped scaffold.
     assert [p["shots"] for p in seen_payloads] == [
-        [{"id": "gs_010", "is_greenscreen": True}],
-        [{"id": "gs_020", "is_greenscreen": True}],
+        [{"id": "gs_010", "is_greenscreen": True, "_foreach": {"index": 0}}],
+        [{"id": "gs_020", "is_greenscreen": True, "_foreach": {"index": 1}}],
     ]
     assert [p["count"] for p in seen_payloads] == [1, 1]
     assert [i["result"] for i in result.output["iterations"]] == [

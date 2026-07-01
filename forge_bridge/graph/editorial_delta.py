@@ -24,6 +24,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
+from forge_bridge.graph.foreach import FOREACH_INDEX_KEY, FOREACH_META_KEY
 from forge_bridge.graph.ports import PortContract, PortTopology
 
 # The canonical identity literals of an ``fbridge exec`` rename delta. They are
@@ -31,14 +32,6 @@ from forge_bridge.graph.ports import PortContract, PortTopology
 # emit the same ``sequence_id`` / ``object_id`` byte-for-byte.
 RENAME_SEQUENCE_ID = "fbridge-exec-rename"
 _RENAME_OBJECT_ID = "exec-rename"
-
-# The 0-based timeline position of a segment, pre-annotated onto the item dict.
-# A foreach body sees one item at a time and is NOT handed its iteration index
-# (the #86 per-item-derivation gap), so a counter template ($n) needs the
-# position carried IN the item. A position annotator (or foreach index surfacing)
-# supplies this key upstream; ``_entry_metadata`` never reads it, so it does not
-# leak into the emitted entry.
-POSITION_KEY = "_position"
 
 
 # A per-segment counter token: ``$n`` / ``$iteration`` with an OPTIONAL
@@ -147,11 +140,22 @@ def build_rename_entry(
 
 
 def _item_position(item: dict[str, Any]) -> int:
-    """The 0-based timeline position pre-annotated onto ``item`` (default 0)."""
-    try:
-        return int(item.get(POSITION_KEY, 0) or 0)
-    except (TypeError, ValueError):
-        return 0
+    """The 0-based counter position for ``item``, from its foreach iteration index.
+
+    Read from the reserved ``_foreach`` namespace that ``ForEachNode`` authors onto
+    each per-iteration payload (default 0 when absent).
+    """
+    # ORDINAL-AS-COUNTER-POSITION GUARD: this is the foreach ARRIVAL-order index,
+    # not a timeline position. Rendering it as a $n shot number is correct ONLY
+    # under an upstream timeline-ordering guarantee on the collection fed to
+    # foreach; nothing on this read path enforces that order.
+    meta = item.get(FOREACH_META_KEY)
+    if isinstance(meta, dict):
+        try:
+            return int(meta.get(FOREACH_INDEX_KEY, 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+    return 0
 
 
 @dataclass(frozen=True)
@@ -159,7 +163,8 @@ class RenameDeltaNode:
     """Map ONE segment item to ONE single-entry rename ``TimelineDelta`` dict.
 
     The composition foreach body node for "fan-out A" rename: foreach hands this
-    node one segment at a time (position pre-annotated under ``_position``); a
+    node one segment at a time, its iteration index authored under the reserved
+    ``_foreach`` namespace (read via ``_item_position`` for a ``$n`` counter); a
     downstream ``collect`` folds the N single-entry deltas back into one
     multi-entry ``TimelineDelta`` byte-identical to the CLI hand-build. It AUTHORS
     a delta; it never applies (``no_state_mutation`` in admission) — ``commit``
