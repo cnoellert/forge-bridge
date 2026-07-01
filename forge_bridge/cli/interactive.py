@@ -216,7 +216,25 @@ def _build_mutation_spec_multi(
     intent). The builder folds ``segs`` into ONE multi-entry TimelineDelta riding
     the same preview->ratify->commit rail (Approach A). ponytail: same call
     surface `run_oneshot` builds inline.
+
+    DUAL-PATH cutover (the live foreach first step): a counter-free LITERAL
+    rename is authored by the GRAPH fan-out spec
+    (``literal_source -> foreach(rename_delta_entry) -> collect -> host_resolve
+    -> delta_to_manifest``) rather than the CLI hand-build. Literal rename is
+    order-agnostic (the template is unchanged for every segment, downstream is
+    identity-keyed), so it is safe on unsorted input with NO ordering step. The
+    ``$n`` counter (order-sensitive) and every non-rename verb (trims — no graph
+    node yet) stay on the proven CLI hand-build rail. Both paths flow into the
+    SAME preview/ratify/apply rail unchanged. See
+    ``.planning/CONVERGENCE-foreach-cutover.md``.
     """
+    value = values.get(verb.value_field)
+    if (
+        verb.value_kind == "str"
+        and isinstance(value, str)
+        and not _verbs.has_counter(value)
+    ):
+        return _verbs.build_rename_fanout_spec(segs, value, sequence)
     delta = verb.build_delta({"sequence_name": sequence, "segments": segs, **values})
     return _verbs.build_host_mutation_spec(delta, _verbs.host_resolve_operator())
 
