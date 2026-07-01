@@ -96,6 +96,8 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "if",
         "select_delta",
         "foreach",
+        "collect",
+        "rename_delta_entry",
         "commit",
     }
     assert "filter(is_greenscreen == true)" not in ADMISSION_TABLE

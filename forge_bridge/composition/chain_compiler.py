@@ -18,6 +18,7 @@ from typing import Any
 from forge_bridge.composition.admission import AdmissionRejected, admit_operator
 from forge_bridge.composition.graph_spec import Edge, GraphSpec, NodeSpec
 from forge_bridge.graph import (
+    CollectNode,
     CommitNode,
     FilterNode,
     ForEachNode,
@@ -80,7 +81,13 @@ def _node_for_step(step_text: str, index: int) -> NodeSpec:
             },
         )
     if is_collect_step(step_text):
-        return _unadmitted_graph_step(step_text, "collect")
+        return _admitted_node(
+            index,
+            "collect",
+            input_ports={"input": CollectNode.port_contract},
+            output_port=CollectNode.port_contract.emits,
+            config={"step_text": step_text},
+        )
     if is_commit_step(step_text):
         return _admitted_node(
             index,
