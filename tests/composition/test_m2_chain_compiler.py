@@ -191,7 +191,6 @@ def test_compile_chain_steps_preserves_json_args_and_literals():
     "steps",
     [
         ["unknown_tool"],
-        ["collect"],
         ["select gs_010"],
         ["stage(ee_drift_review)"],
     ],
@@ -199,6 +198,22 @@ def test_compile_chain_steps_preserves_json_args_and_literals():
 def test_compile_chain_steps_fails_closed_for_unadmitted_tokens(steps):
     with pytest.raises(ChainCompileError):
         compile_chain_steps(steps)
+
+
+def test_compile_chain_steps_admits_collect_after_foreach():
+    graph = compile_chain_steps([
+        "forge_is_greenscreen shot_id=batch clip_ref=mock://batch.mov",
+        "foreach(forge_roto_ref shot_id=gs_010 clip_ref=mock://gs_010.mov)",
+        "collect",
+    ])
+
+    collect_node = graph.nodes[-1]
+    assert collect_node.operator_id == "collect"
+    # foreach emits iteration_results; the collect input port must accept it.
+    foreach_node = graph.nodes[-2]
+    assert collect_node.input_ports["input"].accepts_topology(
+        foreach_node.output_port
+    )
 
 
 def test_execution_log_is_not_a_replayable_chain_corpus_today():

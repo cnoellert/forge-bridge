@@ -25,6 +25,14 @@ from forge_bridge.graph.commit import (
     is_commit_step,
     parse_commit_step,
 )
+from forge_bridge.graph.editorial_delta import (
+    RENAME_SEQUENCE_ID,
+    RenameDeltaNode,
+    build_rename_entry,
+    expand_counter,
+    has_counter,
+    validate_counter,
+)
 from forge_bridge.graph.filter import (
     FilterNode,
     FilterPredicate,
@@ -76,6 +84,12 @@ __all__ = [
     "CollectNode",
     "CommitError",
     "CommitNode",
+    "RENAME_SEQUENCE_ID",
+    "RenameDeltaNode",
+    "build_rename_entry",
+    "expand_counter",
+    "has_counter",
+    "validate_counter",
     "ForEachNode",
     "ForeachInputError",
     "ForeachParseError",

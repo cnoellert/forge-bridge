@@ -185,6 +185,30 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         idempotent_result=True,
     ),
     AdmissionRecord(
+        operator_id="collect",
+        resolved_class="primitive.collect",
+        dispatch_kind="primitive",
+        synchronous=True,
+        returns_reference=False,
+        # collect folds list[IterationResult] -> one manifest: a pure read-only
+        # topology reconciliation, no host/canonical state mutation.
+        no_state_mutation=True,
+        idempotent_result=True,
+    ),
+    AdmissionRecord(
+        operator_id="rename_delta_entry",
+        resolved_class="primitive.rename_delta_entry",
+        dispatch_kind="primitive",
+        synchronous=True,
+        returns_reference=False,
+        # AUTHORS a single-entry rename TimelineDelta from one segment item; it
+        # does NOT apply. A downstream commit owns host mutation, so this stays
+        # no_state_mutation=True (same character as the other value-transform
+        # primitives + foreach).
+        no_state_mutation=True,
+        idempotent_result=True,
+    ),
+    AdmissionRecord(
         operator_id="commit",
         resolved_class="mcp.host_mutation",
         dispatch_kind="commit",

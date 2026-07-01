@@ -15,6 +15,8 @@ from typing import Any, Callable
 from forge_bridge.composition.admission import admit_operator
 from forge_bridge.composition.graph_spec import NodeSpec
 from forge_bridge.composition.node_result import NodeResult
+from forge_bridge.graph.collect import CollectError, CollectNode
+from forge_bridge.graph.editorial_delta import RenameDeltaNode
 from forge_bridge.graph.filter import (
     FilterNode,
     FilterPredicate,
@@ -60,6 +62,20 @@ class PrimitiveBoundary:
             )
         if node.operator_id == "select_delta":
             return _run_select_delta(
+                node,
+                resolved_inputs,
+                admission.resolved_class,
+                self.artifact_id_factory,
+            )
+        if node.operator_id == "collect":
+            return _run_collect(
+                node,
+                resolved_inputs,
+                admission.resolved_class,
+                self.artifact_id_factory,
+            )
+        if node.operator_id == "rename_delta_entry":
+            return _run_rename_delta_entry(
                 node,
                 resolved_inputs,
                 admission.resolved_class,
@@ -243,6 +259,128 @@ def _run_select_delta(
         source_artifact_ids=srcs,
         resolved_class=resolved_class,
     )
+
+
+def _run_collect(
+    node: NodeSpec,
+    resolved_inputs: dict[str, NodeResult],
+    resolved_class: str,
+    artifact_id_factory: Callable[[], uuid.UUID],
+) -> NodeResult:
+    if len(resolved_inputs) != 1:
+        return _error(
+            "invalid_primitive_input",
+            "Collect requires exactly one upstream input.",
+            resolved_class,
+        )
+    upstream = next(iter(resolved_inputs.values()))
+    srcs = _source_artifact_ids(resolved_inputs)
+    if not upstream.has_usable_output:
+        return _error(
+            "invalid_primitive_input",
+            "Collect requires a usable upstream output.",
+            resolved_class,
+            source_artifact_ids=srcs,
+        )
+
+    try:
+        output = CollectNode().run(upstream.output)
+    except CollectError as exc:
+        return _error(
+            getattr(exc, "code", "primitive_error"),
+            getattr(exc, "message", str(exc)),
+            resolved_class,
+            source_artifact_ids=srcs,
+        )
+
+    topology = infer_topology(output)
+    return NodeResult(
+        status="ok",
+        run_id=uuid.uuid4(),
+        artifact_id=artifact_id_factory(),
+        output=output,
+        output_topology=topology.to_dict(),
+        artifact_type=topology.item_type if topology.kind == "list" else topology.kind,
+        source_artifact_ids=srcs,
+        resolved_class=resolved_class,
+    )
+
+
+def _run_rename_delta_entry(
+    node: NodeSpec,
+    resolved_inputs: dict[str, NodeResult],
+    resolved_class: str,
+    artifact_id_factory: Callable[[], uuid.UUID],
+) -> NodeResult:
+    if len(resolved_inputs) != 1:
+        return _error(
+            "invalid_primitive_input",
+            "RenameDeltaEntry requires exactly one upstream input.",
+            resolved_class,
+        )
+    upstream = next(iter(resolved_inputs.values()))
+    srcs = _source_artifact_ids(resolved_inputs)
+    if not upstream.has_usable_output:
+        return _error(
+            "invalid_primitive_input",
+            "RenameDeltaEntry requires a usable upstream output.",
+            resolved_class,
+            source_artifact_ids=srcs,
+        )
+
+    new_name = node.config.get("new_name")
+    sequence_name = node.config.get("sequence_name")
+    if not isinstance(new_name, str) or not isinstance(sequence_name, str):
+        return _error(
+            "invalid_rename_config",
+            "RenameDeltaEntry requires str config new_name + sequence_name.",
+            resolved_class,
+            source_artifact_ids=srcs,
+        )
+
+    try:
+        segment = _extract_single_segment(upstream.output)
+        output = RenameDeltaNode(
+            new_name=new_name, sequence_name=sequence_name
+        ).run(segment)
+    except Exception as exc:  # noqa: BLE001 - boundary converts author failure
+        return _error(
+            "rename_delta_author_failed",
+            f"{type(exc).__name__}: {exc}",
+            resolved_class,
+            source_artifact_ids=srcs,
+        )
+
+    topology = infer_topology(output)
+    return NodeResult(
+        status="ok",
+        run_id=uuid.uuid4(),
+        artifact_id=artifact_id_factory(),
+        output=output,
+        output_topology=topology.to_dict(),
+        artifact_type=topology.item_type if topology.kind == "list" else topology.kind,
+        source_artifact_ids=srcs,
+        resolved_class=resolved_class,
+    )
+
+
+def _extract_single_segment(payload: Any) -> dict[str, Any]:
+    """The one segment dict inside a foreach per-item payload.
+
+    Foreach hands a body a collection-of-one payload (``{"segments": [seg], ...}``)
+    for a keyed source, or the bare item for a manifest-like/list source. Pull the
+    single segment dict out of whichever shape arrives.
+    """
+    if isinstance(payload, Mapping):
+        if "seg_name" in payload:
+            return dict(payload)
+        segments = payload.get("segments")
+        if isinstance(segments, list) and segments and isinstance(segments[0], Mapping):
+            return dict(segments[0])
+        raise ValueError("RenameDeltaEntry payload carries no segment.")
+    if isinstance(payload, list) and payload and isinstance(payload[0], Mapping):
+        return dict(payload[0])
+    raise ValueError("RenameDeltaEntry requires a segment-shaped payload.")
 
 
 def _filter_predicate(config: dict[str, Any]) -> FilterPredicate:
