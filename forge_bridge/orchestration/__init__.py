@@ -17,6 +17,11 @@ from forge_bridge.orchestration.dispatcher import (
 from forge_bridge.orchestration.dispatch_consumer import (
     DispatchOnExecutionEntryConsumer,
 )
+from forge_bridge.orchestration.generation_entry import (
+    dispatch_generation,
+    get_generation_driver_registry,
+    set_generation_driver_registry,
+)
 from forge_bridge.orchestration.drivers import (
     DriverPollResult,
     DriverReregisteredWarning,
@@ -104,6 +109,9 @@ __all__ = [
     "DispatchResult",
     "dispatch_envelope",
     "dispatch_plan",
+    "dispatch_generation",
+    "set_generation_driver_registry",
+    "get_generation_driver_registry",
     "DispatchOnExecutionEntryConsumer",
     "GenerationDriverProtocol",
     "GenerationDriverRegistry",
