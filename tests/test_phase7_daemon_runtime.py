@@ -85,6 +85,27 @@ async def _trigger_replay_execution(session_factory, *, capability: dict | None 
                 remediation_entry="new_attempt_same_plan",
             )
         )
+        # #146: the daemon dispatch consumer gates generation spend at the
+        # driver.submit() chokepoint via run.grant_id. This bridge-owned proof
+        # mints + auto-ratifies a grant and stamps it on the replay run so the
+        # live consumer path stays green. Real replay grant-inheritance stays
+        # reserved for #142; here we stamp the run attributes directly.
+        from forge_bridge.store.generation_grant_repo import GenerationGrantRepo
+        from forge_bridge.store.models import DBEntity as _DBEntity
+
+        grant_repo = GenerationGrantRepo(session)
+        grant = await grant_repo.propose(
+            operator_id="generate_video_from_image",
+            backend_identity_triple=_TRIPLE,
+            estimated_cost={"currency": "USD", "amount": 0.0},
+            run_kind="daemon-proof",
+        )
+        await grant_repo.ratify(grant.grant_id, actor="bridge:test")
+        run_entity = await session.get(_DBEntity, lifecycle.run_id)
+        if run_entity is not None:
+            attrs = dict(run_entity.attributes or {})
+            attrs["grant_id"] = grant.grant_id
+            run_entity.attributes = attrs
         await session.commit()
     return source, lifecycle
 
