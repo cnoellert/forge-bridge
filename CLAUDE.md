@@ -20,7 +20,7 @@ The core ideas:
 
 ## Current State
 
-Shipped at tag `v1.5.1` (2026-05-31); `pyproject.toml` version is `1.5.1`. The 19 symbols in `forge_bridge.__all__` have stayed byte-stable since the v1.4.1 baseline — five milestones of behavior (v1.5 → v1.9) deepened the runtime without expanding the public surface. Shipped since v1.4.1:
+Shipped at tag `v1.8.2` (2026-06-25); `pyproject.toml` version is `1.8.2`. The 19 symbols in `forge_bridge.__all__` have stayed byte-stable since the v1.4.1 baseline — five milestones of behavior (v1.5 → v1.9) deepened the runtime without expanding the public surface. Shipped since v1.4.1:
 
 - **v1.5 Legibility** — reader docs (INSTALL.md, GETTING-STARTED.md, RECIPES.md, TROUBLESHOOTING.md).
 - **v1.6 Operability** — graph-native operational runtime (`graph_store` JSONL append log, `fbridge flame-exec`, `fbridge graph list/show`), doctor observability (`postgres` + `graph_store` rows, daemon-routed Flame probe, `ollama-turn` / `ollama-compile` log lines), chat-layer convergence (default model `qwen2.5-coder:32b → :14b`, SSE streaming, K=2 orchestrator termination).
@@ -135,7 +135,7 @@ forge-bridge/
 │           └── forge_bridge.py   ← HTTP server running inside Flame on :9999
 │
 ├── scripts/
-│   └── install-flame-hook.sh    ← Deploys the Flame hook (defaults pinned to v1.5.1)
+│   └── install-flame-hook.sh    ← Deploys the Flame hook (defaults pinned to v1.8.2)
 │
 ├── tests/                   ← pytest suite (test_*.py); see tests/llm/, tests/integration/, tests/console/
 │
@@ -211,7 +211,7 @@ pip install -e ".[dev,llm]"
 
 # 3. Install the Flame hook
 ./scripts/install-flame-hook.sh
-# or standalone: curl -fsSL https://raw.githubusercontent.com/cnoellert/forge-bridge/v1.5.1/scripts/install-flame-hook.sh | bash
+# or standalone: curl -fsSL https://raw.githubusercontent.com/cnoellert/forge-bridge/v1.8.2/scripts/install-flame-hook.sh | bash
 
 # 4. Run migrations (defaults to forge:forge@localhost:5432/forge_bridge — set FORGE_DB_URL to override)
 alembic upgrade head
@@ -256,7 +256,7 @@ Milestone: **v1.9 Conversational Reads** (active). There is no single live state
 
 **Constraints (binding):**
 
-- Public `forge_bridge.__all__` is **19** and has not moved since v1.4.1; `pyproject.toml` is `1.5.1`. New internal packages (e.g. `forge_bridge/comprehension/`, `forge_bridge/corpus/`) carry their own `__all__` and do NOT touch the top-level 19. No new external libraries.
+- Public `forge_bridge.__all__` is **19** and has not moved since v1.4.1; `pyproject.toml` is `1.8.2`. New internal packages (e.g. `forge_bridge/comprehension/`, `forge_bridge/corpus/`) carry their own `__all__` and do NOT touch the top-level 19. No new external libraries.
 - The CR.1 comprehension corpus (`forge_bridge/comprehension/`) is a **distinct instrument** from the v1.6 divergence corpus (`forge_bridge/corpus/`) — mirror the atomic-append-JSONL + versioned-schema pattern, never couple schemas or gates, and keep the two named distinctly forever.
 - Writer's-room cadence persists: framing → discuss → plan → execute, cross-voice review (DT grounding / Creative experience / Orch synthesis), grounded against live file reads.
 
