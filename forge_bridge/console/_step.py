@@ -167,6 +167,7 @@ async def execute_chain_step(
     from forge_bridge.console._param_extract import extract_explicit_params
     from forge_bridge.console._tool_chain import (
         DISAMBIGUATION_KEY,
+        STORE_UNAVAILABLE_KEY,
         UNRESOLVED_KEY,
         resolve_required_params,
     )
@@ -376,6 +377,21 @@ async def execute_chain_step(
         if selected is not None and "selected_segments" not in params:
             params = dict(params)
             params["selected_segments"] = selected
+
+    # #37 — store degraded/unreachable short-circuit. A grounding probe
+    # that couldn't reach the store must surface as an honest infra error,
+    # NOT collapse into MISSING_PROJECT_ID. Mirrors the planner-front
+    # wording + stop_reason="store_unavailable" (see _planner_front.py).
+    if STORE_UNAVAILABLE_KEY in params:
+        return {"error": {
+            "type": "store_unavailable",
+            "stop_reason": "store_unavailable",
+            "message": (
+                "I can't reach the project store right now. Please try "
+                "again once forge-bridge is reconnected."
+            ),
+            "details": params[STORE_UNAVAILABLE_KEY],
+        }}
 
     if DISAMBIGUATION_KEY in params:
         candidates = (params[DISAMBIGUATION_KEY] or {}).get("candidates", []) or []
