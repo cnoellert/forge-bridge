@@ -18,6 +18,7 @@ from forge_bridge.composition.graph_spec import NodeSpec
 from forge_bridge.composition.node_result import NodeResult
 from forge_bridge.graph.collect import CollectError, CollectNode
 from forge_bridge.graph.editorial_delta import RenameDeltaNode, TrimDeltaNode
+from forge_bridge.graph.extract import ExtractContextNode
 from forge_bridge.graph.filter import (
     FilterNode,
     FilterPredicate,
@@ -50,6 +51,13 @@ class PrimitiveBoundary:
         if node.operator_id == "literal_source":
             return _run_literal_source(
                 node,
+                admission.resolved_class,
+                self.artifact_id_factory,
+            )
+        if node.operator_id == "extract_context":
+            return _run_extract_context(
+                node,
+                resolved_inputs,
                 admission.resolved_class,
                 self.artifact_id_factory,
             )
@@ -130,6 +138,39 @@ def _run_literal_source(
         output=output,
         output_topology=topology.to_dict(),
         artifact_type=topology.item_type if topology.kind == "list" else topology.kind,
+        resolved_class=resolved_class,
+    )
+
+
+def _run_extract_context(
+    node: NodeSpec,
+    resolved_inputs: dict[str, NodeResult],
+    resolved_class: str,
+    artifact_id_factory: Callable[[], uuid.UUID],
+) -> NodeResult:
+    """Emit the single inherited-context kwarg an upstream result forwards.
+
+    Reads the upstream edge value the same way ``ForeachBoundary`` does. Never
+    errors on a missing/unusable upstream: ``ExtractContextNode`` returns ``{}``
+    for a non-dict input, so over-insertion before every non-first MCP node is
+    always safe — the downstream boundary just merges an empty scalars dict.
+    """
+    upstream = next(iter(resolved_inputs.values()), None)
+    data = (
+        upstream.output
+        if upstream is not None and upstream.has_usable_output
+        else None
+    )
+    output = ExtractContextNode().run(data)
+    topology = infer_topology(output)
+    return NodeResult(
+        status="ok",
+        run_id=uuid.uuid4(),
+        artifact_id=artifact_id_factory(),
+        output=output,
+        output_topology=topology.to_dict(),
+        artifact_type=topology.item_type if topology.kind == "list" else topology.kind,
+        source_artifact_ids=_source_artifact_ids(resolved_inputs),
         resolved_class=resolved_class,
     )
 
