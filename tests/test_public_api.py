@@ -193,11 +193,15 @@ def test_server_started_flag_default():
 # pin v1.5.1.
 
 def test_package_version():
-    """pyproject.toml version is 1.5.1 (v1.5.1 registry-fix release; see findings #2)."""
+    """pyproject.toml's declared version matches installed metadata (drift guard, no rot)."""
+    import tomllib
+    from importlib.metadata import version as _pkg_version
+
     pyproject = Path(__file__).parent.parent / "pyproject.toml"
-    content = pyproject.read_text()
-    assert 'version = "1.5.1"' in content, (
-        'pyproject.toml must declare version = "1.5.1" per the v1.5.1 release.'
+    declared = tomllib.loads(pyproject.read_text())["project"]["version"]
+    assert declared == _pkg_version("forge-bridge"), (
+        f'pyproject.toml version {declared!r} != installed metadata '
+        f'{_pkg_version("forge-bridge")!r} — reinstall or reconcile.'
     )
 
 
