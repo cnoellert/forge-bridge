@@ -6,11 +6,19 @@ real dispatch callable for M1/M2 composition: admitted MCP operators wrapped
 into bridge-internal ``NodeResult`` envelopes. It requires an async MCP client.
 
 The boundary owns invocation lowering: it translates ``node.config`` into MCP
-kwargs, but never invents missing values. In M1, kwargs come from explicit
+kwargs, but never invents missing values. Static kwargs come from explicit
 ``config["arguments"]``/``config["args"]`` or, for compiled plans, from static
-``inputs[].metadata.scalars``. Edges are value-blind by design: upstream
-``NodeResult.output`` is used for lineage only, not for kwarg extraction. The
-input-identity-to-kwarg mapping remains unbound pending #86.
+``inputs[].metadata.scalars``.
+
+Edges may also carry kwarg *values* (#153): when a node nominates a
+``config["kwarg_input_port"]``, the boundary sources that port's upstream
+``NodeResult.output`` (a scalars dict authored by a visible ``ExtractContextNode``)
+and merges it *under* the static kwargs — ``{**edge_scalars, **static}`` — so
+step-text arguments always win, mirroring the legacy fold order
+(``{**public_inherited, **static}`` in ``console/_step.py``). The merge is purely
+mechanical; the which-key extraction meaning lives in the upstream node, never
+here. Edges into ports the node does *not* nominate stay value-blind (lineage
+only).
 
 Asynchronous generation/make operators are intentionally not admitted here. They
 need submit/poll/cost/non-determinism handling. Synchronous reference-producing
@@ -74,7 +82,7 @@ class MCPToolBoundary:
             )
 
         mcp = self._mcp if self._mcp is not None else _default_mcp()
-        arguments = _node_arguments(node)
+        arguments = _node_arguments(node, resolved_inputs)
         available = await _maybe_list_tools(mcp)
         if available is not None:
             arguments = normalize_tool_args(node.operator_id, arguments, available)
@@ -121,7 +129,19 @@ async def _maybe_list_tools(mcp: Any) -> Any | None:
     return await list_tools()
 
 
-def _node_arguments(node: NodeSpec) -> dict[str, Any]:
+def _node_arguments(
+    node: NodeSpec, resolved_inputs: dict[str, NodeResult]
+) -> dict[str, Any]:
+    # Legacy folds inherited context UNDER the static step-text args
+    # (`{**public_inherited, **static}` in ``_step.py``): edge-sourced scalars
+    # are lowest precedence, static step-text arguments win. Reproduce that fold
+    # order here — ``{**edge_scalars, **static}``.
+    static = _static_arguments(node)
+    edge_scalars = _edge_scalars(node, resolved_inputs)
+    return {**edge_scalars, **static}
+
+
+def _static_arguments(node: NodeSpec) -> dict[str, Any]:
     if "arguments" in node.config:
         return _mapping_arguments(node, "arguments")
     if "args" in node.config:
@@ -143,6 +163,28 @@ def _node_arguments(node: NodeSpec) -> dict[str, Any]:
             )
         kwargs.update(scalars)
     return kwargs
+
+
+def _edge_scalars(
+    node: NodeSpec, resolved_inputs: dict[str, NodeResult]
+) -> dict[str, Any]:
+    """Read the nominated kwarg-input-port's upstream output as a scalars dict.
+
+    Value-blind by default: only a port the node explicitly nominates via
+    ``config["kwarg_input_port"]`` is read for kwargs; every other input edge
+    stays lineage-only. The upstream ``ExtractContextNode`` owns the extraction
+    meaning — this is a mechanical merge.
+    """
+    port = node.config.get("kwarg_input_port")
+    if not isinstance(port, str) or not port:
+        return {}
+    result = resolved_inputs.get(port)
+    if result is None or not result.has_usable_output:
+        return {}
+    output = result.output
+    if not isinstance(output, Mapping):
+        return {}
+    return dict(output)
 
 
 def _mapping_arguments(node: NodeSpec, key: str) -> dict[str, Any]:

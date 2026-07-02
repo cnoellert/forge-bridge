@@ -163,6 +163,19 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         idempotent_result=True,
     ),
     AdmissionRecord(
+        operator_id="extract_context",
+        resolved_class="primitive.extract_context",
+        dispatch_kind="primitive",
+        synchronous=True,
+        returns_reference=False,
+        # Emits the single inherited-context kwarg an upstream result forwards
+        # (`extract_chain_context`) as a scalars dict; reads no host/canonical
+        # state, so it is a pure read-only value emitter — same character as the
+        # other value-transform primitives.
+        no_state_mutation=True,
+        idempotent_result=True,
+    ),
+    AdmissionRecord(
         operator_id="filter",
         resolved_class="primitive.filter",
         dispatch_kind="primitive",

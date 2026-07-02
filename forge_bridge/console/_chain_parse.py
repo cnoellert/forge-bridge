@@ -40,7 +40,7 @@ the per-step pipeline land in one place.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import List
 
 
 # ── Chain parsing ────────────────────────────────────────────────────────
@@ -105,48 +105,9 @@ def parse_chain(message: str) -> List[str]:
 
 # ── Chain context extraction ─────────────────────────────────────────────
 
-
-def extract_chain_context(result: Any) -> Dict[str, str]:
-    """Deterministically extract a single context parameter from a tool result.
-
-    Priority (first match wins — no multi-key merge):
-
-      1. ``projects`` → ``project_id``
-      2. ``shots`` → ``shot_id``
-      3. ``versions`` → ``version_id``
-
-    Rules:
-
-      - Only propagate when exactly **one** item exists in the list.
-      - Item must be a dict with a non-empty string ``id`` (after strip).
-      - Return immediately on the first qualifying key; otherwise ``{}``.
-
-    Defensive on input shape: non-dict input returns ``{}``.
-    """
-    if not isinstance(result, dict):
-        return {}
-
-    def _single_id(lst: Any) -> str | None:
-        if (
-            isinstance(lst, list)
-            and len(lst) == 1
-            and isinstance(lst[0], dict)
-        ):
-            _id = lst[0].get("id")
-            if isinstance(_id, str) and _id.strip():
-                return _id
-        return None
-
-    _id = _single_id(result.get("projects"))
-    if _id is not None:
-        return {"project_id": _id}
-
-    _id = _single_id(result.get("shots"))
-    if _id is not None:
-        return {"shot_id": _id}
-
-    _id = _single_id(result.get("versions"))
-    if _id is not None:
-        return {"version_id": _id}
-
-    return {}
+# ``extract_chain_context`` now has its single canonical author in the graph
+# layer (`forge_bridge.graph.extract`) so the graph-native ``ExtractContextNode``
+# can share it without importing "up" into ``console/``. Re-exported here so the
+# legacy chain path (`_step.py`) and its tests keep importing it from this module
+# byte-identically.
+from forge_bridge.graph.extract import extract_chain_context  # noqa: E402,F401

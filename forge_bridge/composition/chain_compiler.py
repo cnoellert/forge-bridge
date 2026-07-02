@@ -20,6 +20,7 @@ from forge_bridge.composition.graph_spec import Edge, GraphSpec, NodeSpec
 from forge_bridge.graph import (
     CollectNode,
     CommitNode,
+    ExtractContextNode,
     FilterNode,
     ForEachNode,
     IfGateNode,
@@ -35,6 +36,13 @@ from forge_bridge.graph import (
 from forge_bridge.graph.ports import PortContract, PortTopology
 
 _SAFE_NODE_RE = re.compile(r"[^0-9A-Za-z_]+")
+
+#: The kwarg-input-port an MCP node nominates for edge-sourced scalars (#153).
+#: Distinct from the "input" lineage port so the boundary reads only the
+#: extractor's scalars dict, never the full prior result.
+_KWARG_PORT = "inherited_kwargs"
+#: The extractor's own single upstream-consuming input port.
+_EXTRACTOR_INPUT_PORT = "input"
 
 
 class ChainCompileError(ValueError):
@@ -55,18 +63,76 @@ def compile_chain_steps(steps: Sequence[str]) -> GraphSpec:
     for index, raw_step in enumerate(steps):
         step_text = _clean_step(raw_step, index)
         node = _node_for_step(step_text, index)
+        extractor: NodeSpec | None = None
         if index > 0:
+            prior_id = nodes[-1].node_id
             port = _input_port(node)
             node = _with_input_port(node, port)
             edges.append(
-                Edge(
-                    from_node=nodes[-1].node_id,
-                    to_node=node.node_id,
-                    to_port=port,
-                )
+                Edge(from_node=prior_id, to_node=node.node_id, to_port=port)
             )
+            # #153 — value→kwarg binding. For every non-first MCP node, author a
+            # visible extractor consuming the prior node's output and wire its
+            # single-key scalars dict into a nominated kwarg-input-port. The
+            # boundary merges it UNDER the static step-text args. Over-insertion
+            # is safe: the extractor emits ``{}`` when nothing qualifies. The
+            # prior→node lineage edge above is kept for lineage/topology.
+            if _is_mcp(node.operator_id):
+                extractor = _extractor_node(index)
+                node = _with_kwarg_port(node, _KWARG_PORT)
+                edges.append(
+                    Edge(
+                        from_node=prior_id,
+                        to_node=extractor.node_id,
+                        to_port=_EXTRACTOR_INPUT_PORT,
+                    )
+                )
+                edges.append(
+                    Edge(
+                        from_node=extractor.node_id,
+                        to_node=node.node_id,
+                        to_port=_KWARG_PORT,
+                    )
+                )
+        if extractor is not None:
+            nodes.append(extractor)
         nodes.append(node)
     return GraphSpec(nodes=tuple(nodes), edges=tuple(edges))
+
+
+def _is_mcp(operator_id: str) -> bool:
+    """True when ``operator_id`` is an admitted MCP-dispatch operator."""
+    try:
+        return admit_operator(operator_id).dispatch_kind == "mcp"
+    except AdmissionRejected:
+        return False
+
+
+def _extractor_node(index: int) -> NodeSpec:
+    """Author the value-extractor node feeding step ``index``'s kwarg port."""
+    return NodeSpec(
+        node_id=f"extract_context#{index}",
+        operator_id="extract_context",
+        input_ports={_EXTRACTOR_INPUT_PORT: ExtractContextNode.port_contract},
+        output_port=ExtractContextNode.port_contract.emits,
+        config={},
+    )
+
+
+def _with_kwarg_port(node: NodeSpec, port: str) -> NodeSpec:
+    """Declare ``port`` as the node's kwarg-input-port (value-edge sink)."""
+    ports = dict(node.input_ports)
+    ports[port] = PortContract.any()
+    config = dict(node.config)
+    config["kwarg_input_port"] = port
+    return NodeSpec(
+        node_id=node.node_id,
+        operator_id=node.operator_id,
+        input_ports=ports,
+        output_port=node.output_port,
+        backend_id=node.backend_id,
+        config=config,
+    )
 
 
 def _node_for_step(step_text: str, index: int) -> NodeSpec:

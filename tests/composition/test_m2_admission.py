@@ -92,6 +92,7 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "traffik.flame_sequence.ingest_edit_state",
         "delta_to_manifest",
         "author_prompt",
+        "extract_context",
         "filter",
         "if",
         "select_delta",
