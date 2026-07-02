@@ -129,3 +129,34 @@ Runs live with zero vision dependency, under **existing per-make human-driven au
 ### Gated builds (re-open triggers)
 - Autonomous paid loop — pending (a) vision ships QC/caption/beat contract (forge-vision#1) **and** (b) the `GenerationGrant` is built to the D1–D4 contract (all three substrate conditions enforced at `:203`). *(Atomicity is no longer a gate — D4. Generators gate: cleared. Framing gate: cleared.)*
 - Manual-QC free-Ollama slice — **buildable now**, no remaining gate (D5 answered).
+
+---
+
+## 2026-07-02 RECONCILIATION — the `GenerationGrant` primitive shipped (#146 / PR #147)
+
+D1–D6 were ratified above but not yet built. **#146 (PR #147, `c416cc6`) built the primitive** — as the **single-use, direct-tool variant**, not the full autonomous-loop ceiling model D4/D6 describe. This section reconciles the two so #66/#142 build *forward from* the shipped code, not from a blank slate. The D1–D6 rulings **stand**; this records what's satisfied, what diverged, and why.
+
+**Context that (retroactively) justifies the variant:** when D1–D6 were framed (2026-06-16) the only dispatch path was the *planner* (`dispatch_plan`, run-based). Since then the **direct-tool door** (`dispatch_generation`, #145) shipped — a plan-free, run-free entry a sibling's `forge_generate_*` calls. #146 built the grant to gate *that* door: one tool call = one make = one grant. That is the correct primitive for the direct case and the honest minimum; the autonomous-loop model is its superset.
+
+### Satisfied by #146
+- **D1** — distinct `generation_grant` entity + mutable state-machine repo (NOT the immutable CAR path). Exactly as ruled.
+- **D2** — mint via preview→ratify; the ratify handler branches (separate `POST /api/v1/ratify-generation` + `fbridge ratify-generation` + MCP `forge_ratify_generation_grant`); the mandatory gate is at the single `driver.submit()` chokepoint. As ruled.
+- **D3** — general shape (`operator_id, backend_identity_triple, estimated_cost, run_kind`), no speculative `originator_type` enum. As ruled.
+- **D5** — `qc_correction` key: NOT touched by #146 (it's QC-note routing, part of the loop build, not the grant primitive). Still open, still named.
+- **D6 (partial)** — `run.grant_id` accessor ✅; **atomic CAS immediately before `submit`** ✅ (`_resolve_and_consume_grant` → `consume_atomic` → `driver.submit`); **fail-closed** ✅.
+
+### Divergences from D4/D6 — conscious, and each with a forward implication
+1. **Consume is a terminal `status → consumed` flip, not a bounded `spent += cost ≤ ceiling` decrement** (`generation_grant_repo.py:220-231`). This is "ceiling = exactly 1 make" — bounded, so it does NOT violate D4's anti-theater gate (it is not unbounded spend laundered behind authority). **Forward:** the autonomous loop's spend-ceiling model (D4/D6, tracked as #142) is an **evolution of `consume_atomic`** — flip → decrement + `ceiling`/`spent` fields on the terms/state split — **not a fresh build.** It touches the consume path; #142/#66 must not assume pure extension.
+2. **No 1:many inheritance — `manual_qc.revise` mints a FRESH grant per remediation run** (`manual_qc.py:260-274`, explicitly: *"deliberately NOT grant inheritance … a single-use grant, inherited, would already be consumed — inheritance stays reserved for #142"*). D6 ruled derived runs *inherit* the source `grant_id`. Correct under single-use; **the loop model needs the D6 inherit** (one grant spans the derived-run chain, decrementing a shared ceiling). Re-open with the ceiling evolution.
+3. **`run_id` is NOT strictly required — `grant_id` is an accepted anchor** (`_resolve_and_consume_grant` fails closed only when `run_id=None` AND `grant_id=None`). D6 point-2 said "require a valid `run_id` or fail closed." The direct-tool door has no run, so it legitimately anchors on `grant_id`; the D6 concern (run-present-but-grant-absent bypass on the *planner* door) still holds and is covered because the planner door resolves `run.grant_id`. **Not a regression — a superset anchor the run-only framing didn't anticipate.**
+
+### Forward re-cut — remaining #31 / #66 work (framing DECIDED; this is the build order)
+1. **Manual-QC free-Ollama slice (#66 entry) — buildable now, no new primitive, and the single-use grant already exists for it.** `author_prompt` (free) → render → human types QC note → re-author → render → approve → video. Runs under the shipped single-use grant (author-QC auto-ratifies, cost 0). Prereq D5 (`qc_correction` typed routing) is the only bridge-side wiring. **This is the post-bug-sweep target.**
+2. **QC-note typed routing (D5)** — carry a `qc_correction` reference typed through bridge routing (generators already frames it). Small; rides the manual slice.
+3. **Autonomous-loop grant evolution (#142, when vision#1 + autonomy triggers clear)** — evolve `consume_atomic` flip → bounded decrement; add `ceiling`/`spent`; wire D6 1:many inheritance; GraphEngine QC-branch flip mints a derived run under the same grant.
+4. **Vision QC/caption/beat contract (forge-vision#1)** — external gate on the *autonomous* loop only; the manual slice does not wait on it.
+
+### Disposition
+- **Framing (D1–D6): stands, unchanged.** #146 = a faithful partial build (single-use direct-tool variant).
+- **#146 → #142 is evolution, not extension** (the consume-model divergence). Recorded so the loop build starts from the right place.
+- **#66 manual slice is unblocked and is the next build** after the bug sweep.
