@@ -59,6 +59,28 @@ async def test_replay_execution_entry_dispatches_automatically_and_polls_termina
                 remediation_entry="new_attempt_same_plan",
             )
         )
+        # #146: this proof drives replay.reconstruct DIRECTLY (bypassing
+        # manual_qc.revise where the production grant-mint lives), then feeds the
+        # run through the live dispatch consumer, now spend-gated at the
+        # driver.submit() chokepoint. Mint + auto-ratify a grant and stamp
+        # run.grant_id so the chokepoint resolves it via run_id and the
+        # bridge-owned proof stays green (sibling of the daemon-runtime fix).
+        from forge_bridge.store.generation_grant_repo import GenerationGrantRepo
+        from forge_bridge.store.models import DBEntity as _DBEntity
+
+        grant_repo = GenerationGrantRepo(session)
+        grant = await grant_repo.propose(
+            operator_id="generate_video_from_image",
+            backend_identity_triple=_TRIPLE,
+            estimated_cost={"currency": "USD", "amount": 0.0},
+            run_kind="attach-vertical-proof",
+        )
+        await grant_repo.ratify(grant.grant_id, actor="bridge:test")
+        run_entity = await session.get(_DBEntity, lifecycle.run_id)
+        if run_entity is not None:
+            attrs = dict(run_entity.attributes or {})
+            attrs["grant_id"] = grant.grant_id
+            run_entity.attributes = attrs
         await session.commit()
 
     assert lifecycle.current_stage == "execution"

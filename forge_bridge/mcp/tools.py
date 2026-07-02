@@ -78,6 +78,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from typing import Optional
 
@@ -135,6 +136,32 @@ class RejectStagedInput(BaseModel):
         min_length=1,
         description="Caller identity (free string, non-empty per D-07)",
     )
+
+    @field_validator("actor")
+    @classmethod
+    def actor_not_whitespace_only(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("actor must not be whitespace-only")
+        return v
+
+
+class RatifyGenerationGrantInput(BaseModel):
+    grant_id: str = Field(
+        ...,
+        description="12-char generation-grant handle from a prior estimate/quote",
+    )
+    actor: str = Field(
+        ...,
+        min_length=1,
+        description="Caller identity (free string, non-empty)",
+    )
+
+    @field_validator("grant_id")
+    @classmethod
+    def grant_id_is_hex12(cls, v: str) -> str:
+        if not re.fullmatch(r"[a-f0-9]{12}", v):
+            raise ValueError("grant_id must be a 12-character lowercase hex string")
+        return v
 
     @field_validator("actor")
     @classmethod
@@ -267,6 +294,43 @@ async def _reject_staged_impl(params: "RejectStagedInput", session_factory) -> s
             })
         await session.commit()
     return _envelope_json(op.to_dict())
+
+
+async def _ratify_generation_grant_impl(
+    params: "RatifyGenerationGrantInput", session_factory,
+) -> str:
+    """Ratify a generation grant — proposed -> ratified (#146).
+
+    A pure state transition: there is NOTHING to apply or replay (the runs
+    spend, not the grant). Returns the canonical extensible grant.to_dict()
+    shape so #140/#142/Console ride additively.
+    """
+    from forge_bridge.store.generation_grant_repo import (
+        GenerationGrantLifecycleError,
+        GenerationGrantNotFound,
+        GenerationGrantRepo,
+    )
+    async with session_factory() as session:
+        repo = GenerationGrantRepo(session)
+        try:
+            grant = await repo.ratify(params.grant_id, actor=params.actor)
+        except GenerationGrantNotFound:
+            return json.dumps({
+                "error": {
+                    "code": "grant_not_found",
+                    "message": f"no generation_grant with grant_id {params.grant_id}",
+                }
+            })
+        except GenerationGrantLifecycleError as exc:
+            return json.dumps({
+                "error": {
+                    "code": "illegal_transition",
+                    "message": str(exc),
+                    "current_status": exc.from_status,
+                }
+            })
+        await session.commit()
+    return _envelope_json(grant.to_dict())
 
 
 def _client():

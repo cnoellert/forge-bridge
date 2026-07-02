@@ -46,11 +46,12 @@ def _reset_filter_cache():
 # ── Test 1: In-process tool set matches resources module ──────────────────────
 
 def test_in_process_tool_set_matches_resources_module():
-    """Regression guard: _IN_PROCESS_FORGE_TOOLS must contain EXACTLY the seven
+    """Regression guard: _IN_PROCESS_FORGE_TOOLS must contain EXACTLY the eight
     names registered by register_console_resources in forge_bridge/console/resources.py.
 
     If register_console_resources adds another in-process tool, this test fails —
-    forcing the classification to be updated. Expected cardinality is SEVEN (not six).
+    forcing the classification to be updated. Expected cardinality is EIGHT
+    (the #146 forge_ratify_generation_grant tool joined the seven prior).
     """
     from forge_bridge.console._tool_filter import _IN_PROCESS_FORGE_TOOLS
     from forge_bridge.console.resources import register_console_resources
@@ -66,9 +67,9 @@ def test_in_process_tool_set_matches_resources_module():
         f"  In resources: {sorted(registered_names)}\n"
         f"Update _IN_PROCESS_FORGE_TOOLS in _tool_filter.py."
     )
-    # The expected cardinality is SEVEN — not six.
-    assert len(_IN_PROCESS_FORGE_TOOLS) == 7, (
-        f"Expected exactly 7 in-process forge_* tools, got {len(_IN_PROCESS_FORGE_TOOLS)}: "
+    # The expected cardinality is EIGHT.
+    assert len(_IN_PROCESS_FORGE_TOOLS) == 8, (
+        f"Expected exactly 8 in-process forge_* tools, got {len(_IN_PROCESS_FORGE_TOOLS)}: "
         f"{sorted(_IN_PROCESS_FORGE_TOOLS)}"
     )
 

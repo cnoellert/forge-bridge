@@ -362,6 +362,141 @@ def ratify_cmd(
     if not _ratify_is_success(body):
         raise typer.Exit(code=1)
 
+
+def _ratify_generation_http(grant_id: str, actor: str, *, client=None) -> dict:
+    """POST to /api/v1/ratify-generation and return the daemon's JSON grant."""
+    import httpx
+
+    url = f"{config.console_url()}/api/v1/ratify-generation"
+    own_client = client is None
+    if own_client:
+        client = httpx.Client(timeout=_RATIFY_TIMEOUT_SECONDS)
+    try:
+        try:
+            response = client.post(
+                url, json={"grant_id": grant_id, "actor": actor},
+            )
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.TimeoutException) as exc:
+            raise _RatifyTransportError(url, type(exc).__name__)
+        except httpx.HTTPError as exc:
+            raise _RatifyTransportError(url, str(exc) or type(exc).__name__)
+        try:
+            body = response.json()
+        except ValueError:
+            return {"error": {"code": "invalid_response",
+                              "message": f"daemon returned non-JSON ({response.status_code})",
+                              "status_code": response.status_code}}
+        if not isinstance(body, dict):
+            return {"error": {"code": "invalid_response",
+                              "message": "daemon returned a non-object JSON response",
+                              "status_code": response.status_code}}
+        return body
+    finally:
+        if own_client:
+            client.close()
+
+
+def _render_ratify_generation_human(body: dict) -> None:
+    from rich.table import Table
+
+    from forge_bridge.cli.render import HEADER_STYLE, TOOLS_BOX, make_console
+
+    console = make_console()
+    table = Table(box=TOOLS_BOX, header_style=HEADER_STYLE)
+    table.add_column("Field")
+    table.add_column("Value")
+
+    error = body.get("error")
+    if isinstance(error, dict):
+        table.add_row("status", "failed")
+        table.add_row("code", str(error.get("code", "ratify_failed")))
+        table.add_row("message", str(error.get("message", "")))
+        details = error.get("details")
+        if isinstance(details, dict):
+            for key in ("current_status", "url", "reason"):
+                if key in details:
+                    table.add_row(key, str(details[key]))
+        console.print(table)
+        return
+
+    # Success — the canonical grant.to_dict() shape.
+    table.add_row("grant_id", str(body.get("grant_id", "")))
+    table.add_row("status", str(body.get("status", "")))
+    table.add_row("run_kind", str(body.get("run_kind", "")))
+    table.add_row("decided_by", str(body.get("decided_by", "")))
+    cost = body.get("estimated_cost")
+    if isinstance(cost, dict):
+        table.add_row(
+            "estimated_cost",
+            f"{cost.get('amount', '')} {cost.get('currency', '')}".strip(),
+        )
+    console.print(table)
+
+
+@app.command(
+    "ratify-generation",
+    help="Ratify a generation grant so a paid generation submit can spend (#146).",
+)
+def ratify_generation_cmd(
+    grant_id: Annotated[
+        str,
+        typer.Argument(help="12-char generation-grant handle from an estimate/quote"),
+    ],
+    actor: Annotated[
+        str,
+        typer.Option("--actor", help="Caller identity (free string)"),
+    ] = "local",
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit JSON result instead of a Rich table"),
+    ] = False,
+) -> None:
+    """Ratify a generation grant (pure proposed -> ratified; nothing is applied).
+
+    Exit codes:
+      0  grant ratified
+      1  ratify failed or CLI validation failed
+      2  daemon unreachable (transport error)
+    """
+    if not _GRAPH_INTENT_ID_RE.match(grant_id):
+        body = _ratify_validation_error(
+            "grant_id must be a 12-character lowercase hex string"
+        )
+        if json_output:
+            sys.stdout.write(json.dumps(body) + "\n")
+        else:
+            _render_ratify_generation_human(body)
+        raise typer.Exit(code=1)
+
+    actor = actor.strip()
+    if not actor:
+        body = _ratify_validation_error("actor must be a non-empty string")
+        if json_output:
+            sys.stdout.write(json.dumps(body) + "\n")
+        else:
+            _render_ratify_generation_human(body)
+        raise typer.Exit(code=1)
+
+    try:
+        body = _ratify_generation_http(grant_id, actor)
+    except _RatifyTransportError as exc:
+        body = {"error": {"code": "daemon_unreachable", "url": exc.url,
+                          "reason": exc.reason}}
+        if json_output:
+            sys.stdout.write(json.dumps(body) + "\n")
+        else:
+            _render_ratify_generation_human(body)
+        raise typer.Exit(code=2)
+
+    if json_output:
+        sys.stdout.write(json.dumps(body, default=str) + "\n")
+    else:
+        _render_ratify_generation_human(body)
+
+    if body.get("error") is not None or body.get("status") != "ratified":
+        raise typer.Exit(code=1)
+
+
 app.command(
     "doctor",
     help=(

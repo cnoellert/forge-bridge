@@ -20,6 +20,7 @@ from forge_bridge.console.handlers import (
     health_handler,
     manifest_handler,
     ratify_endpoint,
+    ratify_generation_endpoint,   # NEW (#146 generation spend-gate)
     staged_approve_handler,   # NEW (Plan 14-03)
     staged_list_handler,      # NEW (Plan 14-03)
     staged_reject_handler,    # NEW (Plan 14-03)
@@ -112,6 +113,8 @@ def build_console_app(
         Route("/api/v1/chat", chat_handler, methods=["POST"]),
         # A.2 — ratify + apply endpoint
         Route("/api/v1/ratify", ratify_endpoint, methods=["POST"]),
+        # #146 — ratify a generation grant (pure proposed -> ratified, no apply)
+        Route("/api/v1/ratify-generation", ratify_generation_endpoint, methods=["POST"]),
         # Phase X (Context Pressure Instrument) — storage-only capture endpoint,
         # route-separated from the compile path (handler imports no compile
         # entrypoint); resolver-blindness is structural + tested.
