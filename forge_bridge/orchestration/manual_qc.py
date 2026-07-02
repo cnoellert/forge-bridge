@@ -18,6 +18,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from forge_bridge import __version__
+from forge_bridge.orchestration.author_driver import OllamaAuthorDriver
 from forge_bridge.orchestration.discovery import (
     make_db_event_appender,
     register_all_siblings,
@@ -326,7 +327,26 @@ async def _runtime(
             event_appender=appender,
             bridge_version=__version__,
         )
+        # Self-contained on a stock install (#66 Slice 1): register bridge's OWN
+        # local-Ollama author_prompt driver directly into the default registry,
+        # so _select_author_backend finds an ollama-api author surface even with
+        # ZERO federation siblings present. Only the default (registry is None)
+        # path gets it — a caller-supplied registry stays exactly as passed.
+        _register_bridge_author_driver(registry)
     return _Runtime(factory, registry, appender)
+
+
+def _register_bridge_author_driver(registry: GenerationDriverRegistry) -> None:
+    """Register the bridge-local ollama-api author driver if not already present.
+
+    Guarded against a sibling that happens to register the same composite
+    backend_id (surface.model): register_driver would raise on a duplicate, so
+    a pre-existing backend wins and bridge's driver is skipped.
+    """
+    driver = OllamaAuthorDriver()
+    if driver.backend_id in registry.registered_backends():
+        return
+    registry.register_driver(driver)
 
 
 async def _dispatch_poll_and_pause(
