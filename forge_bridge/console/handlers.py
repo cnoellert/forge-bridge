@@ -680,6 +680,7 @@ async def _execute_forced_tool(
     from forge_bridge.console._name_resolve import resolve_name_from_candidates
     from forge_bridge.console._tool_chain import (
         DISAMBIGUATION_KEY,
+        STORE_UNAVAILABLE_KEY,
         UNRESOLVED_KEY,
         resolve_required_params,
     )
@@ -728,6 +729,39 @@ async def _execute_forced_tool(
     # prompt. On a unique match, inject the resolved id, re-run the
     # resolver (which short-circuits in memory hydration since project_id
     # is now caller-supplied), and fall through to tool execution.
+    # #37 — store degraded/unreachable short-circuit. A grounding probe
+    # that couldn't reach the store must surface as an honest infra error,
+    # NOT collapse into MISSING_PROJECT_ID ("which project?"). Mirrors the
+    # planner-front wording + stop_reason="store_unavailable" (see
+    # _planner_front.py). No tool call, no memory write.
+    if STORE_UNAVAILABLE_KEY in params:
+        store_unavailable_msg = (
+            "I can't reach the project store right now. Please try again "
+            "once forge-bridge is reconnected."
+        )
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        logger.info(
+            "chat tool_forced_store_unavailable request_id=%s client_ip=%s "
+            "tool=%s tools_available=%d tools_filtered=%d wall_clock_ms=%d",
+            request_id, client_ip, tool_name,
+            tools_available_count, tools_filtered_count, elapsed_ms,
+        )
+        return JSONResponse(
+            {
+                "final_text": store_unavailable_msg,
+                "stop_reason": "store_unavailable",
+                "tool": tool_name,
+                "tool_forced": False,
+                "messages": list(messages) + [{
+                    "role": "assistant",
+                    "content": store_unavailable_msg,
+                }],
+                "request_id": request_id,
+            },
+            status_code=200,
+            headers={"X-Request-ID": request_id},
+        )
+
     if DISAMBIGUATION_KEY in params:
         disambiguation = params[DISAMBIGUATION_KEY]
         candidates = disambiguation.get("candidates", []) or []

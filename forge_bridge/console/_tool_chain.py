@@ -59,6 +59,16 @@ logger = logging.getLogger(__name__)
 DISAMBIGUATION_KEY = "__disambiguation__"
 UNRESOLVED_KEY = "__unresolved__"
 
+# #37 — sentinel key for a store-degraded / unreachable grounding result.
+# Mirrors DISAMBIGUATION_KEY exactly (same sentinel idiom, centralized
+# name, wire-string is contract). Distinguishes an infra failure from a
+# genuine zero-projects result: a degraded store must surface as an honest
+# "can't reach the store" message, NOT collapse into MISSING_PROJECT_ID
+# ("which project?"). The LIVE planner-front path raises
+# ProjectGroundingUnavailable for the same reason (#44); the tool-chain
+# uses sentinels, so it mirrors this idiom rather than raising.
+STORE_UNAVAILABLE_KEY = "__store_unavailable__"
+
 
 # ── Structured-payload extraction ─────────────────────────────────────────
 
@@ -122,7 +132,7 @@ def _extract_structured(raw: Any) -> Optional[dict]:
 
 async def _resolve_project_id(
     mcp: Any,
-) -> Optional[Union[str, list[dict]]]:
+) -> Optional[Union[str, list[dict], dict]]:
     """Three-valued return: pin the system state to one of three buckets
     so callers can route deterministically without ever guessing.
 
@@ -133,10 +143,16 @@ async def _resolve_project_id(
                         in upstream order. Caller path: PR27
                         disambiguation (no inject, no memory write,
                         handler short-circuits with MULTIPLE_PROJECTS).
-      - ``None``      — zero projects, transport error, or any
-                        malformed entry. Caller path: existing PR22
-                        graceful contract (MISSING_PROJECT_ID surfaces
-                        downstream).
+      - ``dict``      — store degraded/unreachable (#37): a transport
+                        exception, or an explicit error/``STORE_UNAVAILABLE``
+                        code from ``forge_list_projects``. Carries
+                        ``{STORE_UNAVAILABLE_KEY: {"reason": <detail>}}``.
+                        Caller path: honest store-unavailable message
+                        (no inject, no memory write).
+      - ``None``      — a genuine healthy zero (``projects == []`` with
+                        no error), or any malformed entry. Caller path:
+                        existing PR22 graceful contract (MISSING_PROJECT_ID
+                        surfaces downstream).
 
     Strict fail-closed on the multi-candidate path: a single malformed
     project entry collapses the entire result to ``None``. Better to
@@ -172,12 +188,29 @@ async def _resolve_project_id(
             available = await list_tools()
             args = normalize_tool_args("forge_list_projects", args, available)
         raw = await mcp.call_tool("forge_list_projects", args)
-    except Exception:  # noqa: BLE001 — fail closed on any error
-        return None
+    except Exception:  # noqa: BLE001 — transport failure ≠ empty result (#37)
+        # A store/transport failure is NOT a healthy zero. Surface the
+        # store-unavailable sentinel so callers render an honest infra
+        # error instead of masking it as MISSING_PROJECT_ID.
+        return {STORE_UNAVAILABLE_KEY: {"reason": "project store unreachable"}}
 
     data = _extract_structured(raw)
     if not isinstance(data, dict):
         return None
+    # #37 — explicit store-degraded signal from ``forge_list_projects``
+    # (see mcp/tools.py:list_projects → ``_err(..., "STORE_UNAVAILABLE")``).
+    # A truthy ``error`` or the STORE_UNAVAILABLE code means the store is
+    # degraded, NOT that it returned a healthy zero — surface it as such.
+    # SCOPE LIMIT: a genuine empty result (``projects == []`` with no
+    # error/code) still falls through to ``None`` → MISSING_PROJECT_ID.
+    # Distinguishing successful-empty from a silently-degraded store needs
+    # a store-health marker, deferred to #38.
+    if data.get("error") or data.get("code") == "STORE_UNAVAILABLE":
+        detail = data.get("error")
+        return {STORE_UNAVAILABLE_KEY: {
+            "reason": detail if isinstance(detail, str) and detail
+            else "project store unavailable",
+        }}
     projects = data.get("projects")
     if not isinstance(projects, list) or not projects:
         # Zero projects, or non-list payload — fall through to fail
@@ -490,6 +523,18 @@ async def resolve_required_params(
                 DISAMBIGUATION_KEY: {
                     "type": "project",
                     "candidates": result,
+                }
+            }
+
+        # #37 — store degraded/unreachable. Mirror the disambiguation
+        # sentinel exactly: no memory write (a degraded store must NOT
+        # poison cache), caller params NOT merged. The handler / _step
+        # consumers short-circuit to an honest store-unavailable message.
+        if isinstance(result, dict) and STORE_UNAVAILABLE_KEY in result:
+            return {
+                STORE_UNAVAILABLE_KEY: {
+                    "type": "project",
+                    "reason": result[STORE_UNAVAILABLE_KEY].get("reason"),
                 }
             }
 

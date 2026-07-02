@@ -190,15 +190,20 @@ async def test_pr25_non_chain_tool_passes_through_unchanged():
 
 
 @pytest.mark.asyncio
-async def test_pr25_resolver_returns_none_on_call_tool_exception():
-    """Any error from `forge_list_projects` (transport, ToolError, etc.)
-    → resolver returns None. Fail closed."""
+async def test_pr25_resolver_surfaces_store_unavailable_on_call_tool_exception():
+    """#37: a transport error from `forge_list_projects` (transport,
+    ToolError, etc.) is NOT a healthy zero — the resolver returns the
+    store-unavailable sentinel so callers render an honest infra error
+    instead of masking it as MISSING_PROJECT_ID. (Previously this fell
+    closed to None, collapsing an infra failure into "which project?".)"""
+    from forge_bridge.console._tool_chain import STORE_UNAVAILABLE_KEY
+
     mcp = AsyncMock()
     mcp.call_tool = AsyncMock(side_effect=RuntimeError("backend down"))
 
-    pid = await _resolve_project_id(mcp)
+    result = await _resolve_project_id(mcp)
 
-    assert pid is None
+    assert isinstance(result, dict) and STORE_UNAVAILABLE_KEY in result
     mcp.call_tool.assert_called_once_with("forge_list_projects", {})
 
 
