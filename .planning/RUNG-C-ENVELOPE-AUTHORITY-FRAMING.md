@@ -2,7 +2,7 @@
 
 Opens the framing cycle on **#31** (rung C — live planner/origination, mutating surface). Input = the **4-lens converged lean on #66** (authority guardian / orchestration maintainer / operator-workflow / minimalist-skeptic + redline), grounded here against live seams. Supersedes the rung-C section of [`LIVE-GENERATION-JOIN-RUNGS.md`](LIVE-GENERATION-JOIN-RUNGS.md) on the authority mechanism (see "What changed" below); the rest of that doc (rung A/B/D, contract ruling) still holds.
 
-This is the first time bridge would **autonomously originate costly, mutating operations** — the substrate-not-producer line crossed deliberately. Frame the primitive, not the endpoint.
+**The unit of authority changes here.** Today the artist approves every expensive creative action individually; Rung C lets the artist *delegate a bounded creative objective — within explicit limits — and the system spends that authority autonomously until it succeeds or hits a limit.* (Substrate-wise this is the first time bridge autonomously originates costly, mutating operations — the substrate-not-producer line crossed deliberately.) Frame the primitive **and** the experience it serves — the **Experience model** section (Creative + DT converged, 2026-07-02) is the north star; everything between here and there is the infrastructure beneath it.
 
 ---
 
@@ -160,3 +160,32 @@ D1–D6 were ratified above but not yet built. **#146 (PR #147, `c416cc6`) built
 - **Framing (D1–D6): stands, unchanged.** #146 = a faithful partial build (single-use direct-tool variant).
 - **#146 → #142 is evolution, not extension** (the consume-model divergence). Recorded so the loop build starts from the right place.
 - **#66 manual slice is unblocked and is the next build** after the bug sweep.
+
+---
+
+## Experience model — the actual north star (Creative + DT converged, 2026-07-02)
+
+D1–D6 frame the *authority mechanism*. Creative and DT review converged on the layer the mechanism **serves** — the artist's experience — and both insisted *that*, not the substrate, is the framing. Folded in here; it reframes the opening and adds product requirements to the #66 build. **These do not change the grant/ceiling/CAS mechanism — they specify the surface it exists to serve.**
+
+**Reframed thesis.** The breakthrough isn't "bridge originates costly work" (an implementation fact) — it's that **the unit of authority changes**: approve-every-action → **delegate a bounded creative objective the system spends autonomously until it succeeds or hits a limit.** The system is not replacing creative direction; **it is compressing the feedback loop.** The artist's job shifts from approving every render to *defining the boundaries within which the system may explore.* Everything else — AssentRecords, grants, envelopes, retries, budgets — is infrastructure in service of that one experience.
+
+**The envelope is creative latitude, not a billing mechanism.** Artists are not fundamentally approving "budget, retries, beats" — they're answering **"how much freedom am I giving the system to explore before it has to come back to me?"** The ceilings are how that latitude is *enforced*, not what it *means*. The ratify surface should speak latitude; ceilings are the implementation.
+
+**Load-bearing principle (DT).** *Separate watching from approving; separate the common case from the stuck case.* The envelope handles authority **once, up front.** Then: **visibility is continuous and non-blocking; intervention is cheap and always available but never mandatory; and the one place mandatory human authorship is right is the stuck terminus** — where auto-critique has already proven it can't converge, exactly when a human note is most valuable and least intrusive.
+
+Four experience requirements ride **atop** the D1–D6 substrate:
+
+1. **Default = autonomous-with-a-live-feed, not per-beat gating.** Stills stream in as they land, non-blocking; the artist can yank the cord any time. Per-beat *blocking* approval is a first-class **opt-in** mode for hero work, not the baseline. *Watching ≠ approving.* — The hazard that makes visibility non-optional: an auto-QC loop optimizes toward "passes QC," which drifts to **inoffensive, not good**; the watching artist is the only guard against a loop that competently produces dead storyboards *inside budget*.
+2. **Two operating modes, one authority model (not two architectures).** **Automatic** — critique routes straight back into generation (fast iteration inside the envelope). **Inspect** — each critique is surfaced before the next expensive generation (an art director on an expensive sequence). Same grant, same ceilings; a per-run policy flag selects which.
+3. **The halt terminus is a decision surface, not a report.** On hand-back the artist makes exactly one call — **raise ceiling / redirect / kill** — so optimize for it: (a) the failing beat's latest still + the QC critique that *keeps* failing (ranked #1); (b) spend-so-far vs ceiling + retries used (so "raise the ceiling" is informed); (c) the beats that *did* land, as a contact sheet (so "cut with what we have" sits beside "this whole direction is wrong"). **Primary affordance = "here's my note, try again with +N retries," not "approve more budget."** Folds Q4 into Q3.
+4. **`qc_correction` visibility splits by case.** In-budget with retries remaining → **auto-route, don't gate**, but the correction is **visible read-only in the live feed** (gating every correction is per-beat babysitting through the back door). At the halt/escalation boundary → the correction is **editable** (retries exhausted = auto-critique isn't converging = when human critique earns the interruption). Authorship doctrine stays clean: **bridge authors zero prose; vision authors the verdict in-loop; the artist replaces it only at the terminus, where they are the legitimate author** — the done/attributed line holds.
+
+**Manual-QC slice, re-valued: "the system learns the rhythm before it learns the judgment."** Not a mock standing in for vision — the **first real product.** Critique *is* the creative job (a director critiques — "colder expression, lose the warm light, drop the second figure" — they don't generate). So the manual slice is the **purest expression of the artist's role**, shipped as a **permanent first-class "I'll direct this one myself" mode**, never a placeholder. The workflow is invariant across the transition — **only the author of the critique changes** (human today → vision proposes tomorrow). Inverted risk to guard: the danger isn't drudgery, it's that when vision arrives the artist *quietly loses the seat manual-QC gave them* — so the mode stays. Guardrail: **the note stays free-text and terse** — the moment it demands a structured form, it becomes the tool's job again.
+
+### What this adds to the #66 build (experience requirements, atop D1–D6)
+- Manual-QC slice ships as a **permanent first-class "direct-it-myself" mode**, free-text terse note — not a throwaway vision-stub. *(near-term, #66 manual slice)*
+- A **non-blocking live feed** of stills as they land, QC correction shown read-only inline. *(baseline surface; single-beat form in the manual slice, full form with the autonomous loop)*
+- **Automatic vs inspect** as a per-run policy on the loop, selected at ratify time alongside latitude/ceilings. *(autonomous loop)*
+- The **halt terminus rendered as a decision surface** (failing still + persistent critique + spend/retries + contact sheet), primary affordance "my note, +N retries." *(autonomous loop; the manual slice's approve/redirect is its seed)*
+- The ratify surface speaks **creative latitude**; ceilings are enforcement, not vocabulary.
+- Authorship line held throughout: bridge routes, never authors; artist authors only at the terminus.
