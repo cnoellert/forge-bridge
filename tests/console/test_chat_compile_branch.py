@@ -231,7 +231,7 @@ async def test_run_compile_branch_non_mutating_executes_chain(monkeypatch):
         "error": None,
     }
     run_chain = AsyncMock(return_value=chain_body)
-    monkeypatch.setattr(_chat_compile, "run_chain_steps", run_chain)
+    monkeypatch.setattr(_chat_compile, "run_chain_steps_with_shadow", run_chain)
 
     outcome = await run_compile_branch(
         router=router,
@@ -273,7 +273,7 @@ async def test_run_compile_branch_source_routing_uses_execution_tools(monkeypatc
         "error": None,
     }
     run_chain = AsyncMock(return_value=chain_body)
-    monkeypatch.setattr(_chat_compile, "run_chain_steps", run_chain)
+    monkeypatch.setattr(_chat_compile, "run_chain_steps_with_shadow", run_chain)
 
     outcome = await run_compile_branch(
         router=router,
@@ -339,7 +339,7 @@ async def test_run_compile_branch_strips_commit_for_exact_read_tool(monkeypatch)
         "error": None,
     }
     run_chain = AsyncMock(return_value=chain_body)
-    monkeypatch.setattr(_chat_compile, "run_chain_steps", run_chain)
+    monkeypatch.setattr(_chat_compile, "run_chain_steps_with_shadow", run_chain)
 
     outcome = await run_compile_branch(
         router=router,
@@ -480,7 +480,7 @@ async def test_run_compile_branch_salvages_trailing_empty_segment(monkeypatch):
         "error": None,
     }
     run_chain = AsyncMock(return_value=chain_body)
-    monkeypatch.setattr(_chat_compile, "run_chain_steps", run_chain)
+    monkeypatch.setattr(_chat_compile, "run_chain_steps_with_shadow", run_chain)
 
     outcome = await run_compile_branch(
         router=router,
@@ -694,7 +694,7 @@ def test_chat_handler_json_regime_2_full_path(monkeypatch):
     }
     monkeypatch.setattr(
         _chat_compile,
-        "run_chain_steps",
+        "run_chain_steps_with_shadow",
         AsyncMock(return_value=chain_body),
     )
     emit_capture = MagicMock()
@@ -738,7 +738,7 @@ def test_chat_handler_json_answer_failure_still_delivers_read(monkeypatch):
     }
     monkeypatch.setattr(
         _chat_compile,
-        "run_chain_steps",
+        "run_chain_steps_with_shadow",
         AsyncMock(return_value=chain_body),
     )
     client, patches = _chat_client(
@@ -774,7 +774,7 @@ def test_chat_handler_json_answer_timeout_still_delivers_read(monkeypatch):
     }
     monkeypatch.setattr(
         _chat_compile,
-        "run_chain_steps",
+        "run_chain_steps_with_shadow",
         AsyncMock(return_value=chain_body),
     )
     client, patches = _chat_client(
@@ -811,7 +811,7 @@ def test_chat_handler_json_chain_aborted_preserves_error_and_skips_answer(
     }
     monkeypatch.setattr(
         _chat_compile,
-        "run_chain_steps",
+        "run_chain_steps_with_shadow",
         AsyncMock(return_value=chain_body),
     )
     emit_capture = MagicMock()
@@ -871,7 +871,7 @@ def test_chat_handler_json_regime_2_emits_tool_enforced_false(monkeypatch):
     )
     monkeypatch.setattr(
         _chat_compile,
-        "run_chain_steps",
+        "run_chain_steps_with_shadow",
         AsyncMock(return_value={
             "status": "success",
             "request_id": "req",
@@ -1038,7 +1038,7 @@ def test_chat_handler_sse_regime_2_event_sequence(monkeypatch):
     }
     monkeypatch.setattr(
         _chat_compile,
-        "run_chain_steps",
+        "run_chain_steps_with_shadow",
         AsyncMock(return_value=chain_body),
     )
     client, patches = _chat_client(
