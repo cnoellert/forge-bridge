@@ -20,9 +20,12 @@ from forge_bridge.graph.ports import PortContract, PortTopology
 
 
 def extract_chain_context(result: Any) -> Dict[str, str]:
-    """Deterministically extract a single context parameter from a tool result.
+    """Deterministically extract inherited-context kwargs from a tool result.
 
-    Priority (first match wins — no multi-key merge):
+    Two orthogonal probes, unioned into the returned dict:
+
+    **Singleton-id probe** (first match wins *among the id keys* — the id keys
+    are never unioned with one another):
 
       1. ``projects`` → ``project_id``
       2. ``shots`` → ``shot_id``
@@ -32,7 +35,16 @@ def extract_chain_context(result: Any) -> Dict[str, str]:
 
       - Only propagate when exactly **one** item exists in the list.
       - Item must be a dict with a non-empty string ``id`` (after strip).
-      - Return immediately on the first qualifying key; otherwise ``{}``.
+      - Stop at the first qualifying id key.
+
+    **Sequence-name probe** (#153 slice 2a — *additive*, independent of the id
+    probe): read ``result["sequence"]`` (falling back to
+    ``result["sequence_name"]``) and forward it as ``sequence_name`` when it is a
+    non-empty string. This reproduces the legacy ``__previous_result__.sequence``
+    backfill (``console/_step.py`` — the extractor's input *is* the previous
+    result, so the source key is the same). Faithful to the legacy fold, a single
+    step may therefore carry **both** a singleton id *and* ``sequence_name`` (the
+    two-key case: e.g. a lone ``shots`` list next to a ``sequence`` key).
 
     Defensive on input shape: non-dict input returns ``{}``.
     """
@@ -50,29 +62,42 @@ def extract_chain_context(result: Any) -> Dict[str, str]:
                 return _id
         return None
 
-    _id = _single_id(result.get("projects"))
-    if _id is not None:
-        return {"project_id": _id}
+    context: Dict[str, str] = {}
 
-    _id = _single_id(result.get("shots"))
-    if _id is not None:
-        return {"shot_id": _id}
+    # Singleton-id probe: first match wins among the id keys (unchanged from
+    # slice 1 — projects > shots > versions, at most one id key emitted).
+    project_id = _single_id(result.get("projects"))
+    if project_id is not None:
+        context["project_id"] = project_id
+    else:
+        shot_id = _single_id(result.get("shots"))
+        if shot_id is not None:
+            context["shot_id"] = shot_id
+        else:
+            version_id = _single_id(result.get("versions"))
+            if version_id is not None:
+                context["version_id"] = version_id
 
-    _id = _single_id(result.get("versions"))
-    if _id is not None:
-        return {"version_id": _id}
+    # Sequence-name probe (#153 slice 2a): additive and orthogonal to the id
+    # probe. Mirror the legacy backfill exactly — ``sequence`` then
+    # ``sequence_name``, forwarded only when a non-empty string.
+    seq = result.get("sequence") or result.get("sequence_name")
+    if isinstance(seq, str) and seq:
+        context["sequence_name"] = seq
 
-    return {}
+    return context
 
 
 @dataclass(frozen=True)
 class ExtractContextNode:
-    """Emit the single inherited-context kwarg an upstream result forwards.
+    """Emit the inherited-context kwargs an upstream result forwards.
 
     A value-transform primitive: it consumes an upstream tool result (a
-    manifest/dict) and emits a single-key ``{kwarg: value}`` scalars dict, or
-    ``{}`` when nothing qualifies. The which-key decision lives *inside this
-    visible node*, not in the value-blind MCP boundary that merges the dict.
+    manifest/dict) and emits a ``{kwarg: value}`` scalars dict, or ``{}`` when
+    nothing qualifies. The dict carries at most one singleton id key and, since
+    #153 slice 2a, an additive ``sequence_name`` (so a single node may forward
+    two keys). The which-key decision lives *inside this visible node*, not in
+    the value-blind MCP boundary that merges the dict.
     """
 
     #: Input accepts a manifest-shaped upstream result; the emitted scalars dict
