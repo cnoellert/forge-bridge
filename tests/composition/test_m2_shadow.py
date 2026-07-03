@@ -220,6 +220,87 @@ async def test_flag_on_timeout_records_shadow_timeout(monkeypatch, shadow_dir):
     assert records[0]["outcome"] == "shadow_timeout"
 
 
+# ── FLAG-ON: graph replay requests an identity legacy never recorded ────────
+
+
+@pytest.mark.asyncio
+async def test_flag_on_replay_miss_records_replay_miss_distinct_from_divergence(
+    monkeypatch, shadow_dir
+):
+    """A #153-shaped divergence lands ``outcome="replay_miss"`` end-to-end.
+
+    Construction: WRAPPER-LEVEL (option 1, the truest end-to-end). This drives
+    the real ``run_chain_steps_with_shadow`` with the flag on; only the
+    authoritative ``run_chain_steps`` is stubbed, exactly as every other flag-on
+    test in this file does. The stubbed legacy records ONE ``forge_is_greenscreen``
+    call whose ``shot_id`` value diverges from the value in the compiled step
+    (``shot_id=gs-DIVERGENT`` recorded vs ``shot_id=gs`` in the chain step). The
+    graph path is fully real from there: the SAME step is compiled, the
+    ``GraphExecutor`` dispatches the operator, and ``_ReplayMCP`` looks up the
+    graph-requested call-identity — which, because the recorded value differs,
+    is a distinct ``_match_key`` the captured records never cover. That raises
+    the real ``ShadowReplayMiss`` at ``_shadow.py:328`` and lands the real
+    emitted ``replay_miss`` record in the JSONL sink.
+
+    This is the truest available construction: the whole graph → compile →
+    dispatch → replay → emit path runs unmocked; the assertion is on the REAL
+    record in the sink, not a mock of the emit. (Option 2 — hand-driving
+    ``shadow_compare`` with a bare recorder — was unnecessary because the
+    wrapper accepts a stubbed legacy cleanly, so the wrapper stays in the loop.)
+
+    The value-divergence (not a bare empty/absent record) is deliberately the
+    faithful #153 shape: the graph asks for a call identity legacy never
+    recorded *because a kwarg value differs* — the exact property the
+    skew-robust match-key preserves and the reason a robustly-keyed miss is
+    #153 evidence rather than benign skew.
+    """
+
+    monkeypatch.setenv(SHADOW_ENV, "1")
+    steps = ["forge_is_greenscreen shot_id=gs clip_ref=mock://x"]
+
+    async def _fake_legacy(*, mcp, steps, request_id, **kwargs):
+        # Legacy records a call whose shot_id value diverges from the compiled
+        # step, so the graph's replay request keys to an identity absent from
+        # the captured records → a genuine (not benign-skew) replay miss.
+        raw = await mcp.call_tool(
+            "forge_is_greenscreen",
+            {"shot_id": "gs-DIVERGENT", "clip_ref": "mock://x"},
+        )
+        return {
+            "status": "success",
+            "request_id": request_id,
+            "chain": [{"step": steps[0], "result": raw}],
+            "error": None,
+        }
+
+    monkeypatch.setattr(_engine, "run_chain_steps", _fake_legacy)
+
+    body = await run_chain_steps_with_shadow(
+        steps=steps,
+        tools=[],
+        mcp=_FakeMCP({"status": "ok", "is_greenscreen": True}),
+        request_id="r-miss",
+        client_ip="test",
+        started=0.0,
+    )
+
+    assert body["status"] == "success"  # authoritative body intact
+    records = _read_records(shadow_dir)
+    assert len(records) == 1
+    rec = records[0]
+    assert rec["outcome"] == "replay_miss"
+    assert rec["comparison_mode"] == "replay"
+    # replay_miss is its OWN category and must NEVER be conflated with
+    # divergence — that separation is a locked review decision.
+    assert rec["outcome"] != "divergence"
+    # It is the REPLAY-stage miss (the graph asked for an uncaptured identity),
+    # not the compile-stage replay_miss (a compiler-gap): the graph compiled,
+    # ran, and the miss carries the tool it could not serve.
+    assert rec["stage"] == "replay"
+    assert "forge_is_greenscreen" in rec["replay_misses"]
+    assert rec["chain_steps"] == steps
+
+
 # ── The skew-robust match-key (grounding-pass Q2) ───────────────────────────
 
 
