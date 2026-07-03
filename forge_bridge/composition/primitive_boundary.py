@@ -154,6 +154,10 @@ def _run_extract_context(
     errors on a missing/unusable upstream: ``ExtractContextNode`` returns ``{}``
     for a non-dict input, so over-insertion before every non-first MCP node is
     always safe — the downstream boundary just merges an empty scalars dict.
+
+    When the compiler authored ``config["wrap_key"]`` (#153 slice 2b — the
+    ``format_result.data`` whole-payload handoff), the node re-keys the entire
+    upstream result under that key instead of extracting singleton kwargs.
     """
     upstream = next(iter(resolved_inputs.values()), None)
     data = (
@@ -161,7 +165,7 @@ def _run_extract_context(
         if upstream is not None and upstream.has_usable_output
         else None
     )
-    output = ExtractContextNode().run(data)
+    output = ExtractContextNode(wrap_key=node.config.get("wrap_key")).run(data)
     topology = infer_topology(output)
     return NodeResult(
         status="ok",

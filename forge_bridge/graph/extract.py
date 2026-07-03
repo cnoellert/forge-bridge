@@ -13,10 +13,49 @@ no new ``PortTopology`` is introduced.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, ClassVar, Dict
 
 from forge_bridge.graph.ports import PortContract, PortTopology
+
+#: The format-terminal step grammar (#153 slice 2b). Canonical author of the
+#: ``format as <class>`` parse, shared by the legacy chain path
+#: (``console/_step.py`` re-imports ``extract_format_class`` under its old
+#: ``_extract_format_class`` name) and the graph compiler (which recognizes a
+#: format terminal and forwards the whole prior result as ``data``). Relocated
+#: here — a lower layer than ``console/`` — for the same one-canonical-author
+#: reason ``extract_chain_context`` was (slice 2a).
+_FORMAT_STEP_RE = re.compile(
+    r"\bformat\s+as\s+(?:(?:a|an|the)\s+)?"
+    r"(?P<format>email|table|bullets?|bullet[_ -]?list)\b",
+    re.IGNORECASE,
+)
+
+
+def is_format_step(step_text: str) -> bool:
+    """True when a chain step is a format terminal (``format as <class>``).
+
+    Recognizes the deterministic ``-> format as email`` chain form so the graph
+    compiler can route it to the ``format_result`` operator. The bare
+    ``format_result`` tool-name form (no format phrase) is not matched here — it
+    reaches the operator via first-token dispatch instead.
+    """
+    return bool(_FORMAT_STEP_RE.search(step_text or ""))
+
+
+def extract_format_class(step_text: str) -> str | None:
+    """Parse the ``format`` class from a format-terminal step, or ``None``.
+
+    Byte-identical to the legacy ``_extract_format_class`` it replaces (the
+    legacy name re-imports this). Normalizes ``bullet``/``bullet list``/
+    ``bullet_list`` spellings to the canonical ``bullets`` class.
+    """
+    match = _FORMAT_STEP_RE.search(step_text or "")
+    if not match:
+        return None
+    value = match.group("format").lower().replace("-", "_").replace(" ", "_")
+    return "bullets" if value in {"bullet", "bullets", "bullet_list"} else value
 
 
 def extract_chain_context(result: Any) -> Dict[str, str]:
@@ -98,7 +137,19 @@ class ExtractContextNode:
     #153 slice 2a, an additive ``sequence_name`` (so a single node may forward
     two keys). The which-key decision lives *inside this visible node*, not in
     the value-blind MCP boundary that merges the dict.
+
+    **Wrap mode (#153 slice 2b).** When ``wrap_key`` is set, the node instead
+    re-keys the *whole* upstream result under that single key
+    (``{wrap_key: <entire input>}``). This reproduces the legacy
+    ``format_result.data = __previous_result__`` whole-payload handoff. Re-keying
+    the payload is a transport relabel, not a semantic transform, so it stays the
+    same node type / same admission record / same port contract — the mode rides
+    in a field, not in the port topology.
     """
+
+    #: When set, emit ``{wrap_key: <whole input>}`` instead of the extracted
+    #: singleton kwargs. Compiler-authored via ``config["wrap_key"]``.
+    wrap_key: str | None = None
 
     #: Input accepts a manifest-shaped upstream result; the emitted scalars dict
     #: types back to a manifest via ``infer_topology``. Both are existing
@@ -109,4 +160,6 @@ class ExtractContextNode:
     )
 
     def run(self, data: Any) -> dict[str, Any]:
+        if self.wrap_key:
+            return {self.wrap_key: data}
         return extract_chain_context(data)

@@ -94,6 +94,20 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         idempotent_result=True,
     ),
     AdmissionRecord(
+        operator_id="format_result",
+        resolved_class="mcp.chain_terminal_format",
+        dispatch_kind="mcp",
+        synchronous=True,
+        returns_reference=False,
+        # A reads-only terminal formatter: reads no host/canonical state and
+        # applies no mutation (it renders the prior chain result as operator
+        # text). idempotent_result=False — it routes to the Anthropic cloud
+        # model, whose rendered prose is non-deterministic. (#153 slice 2b is
+        # OFFLINE arg-parity only, so the cloud hop is not exercised here.)
+        no_state_mutation=True,
+        idempotent_result=False,
+    ),
+    AdmissionRecord(
         operator_id="flame_rename_shots",
         resolved_class="mcp.host_mutation_discover",
         dispatch_kind="mcp",

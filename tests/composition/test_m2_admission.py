@@ -86,6 +86,7 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "forge_is_greenscreen",
         "forge_roto_ref",
         "forge_assemble_deliverable_package",
+        "format_result",
         "flame_rename_shots",
         "traffik.editorial.apply_steps",
         "traffik.flame_delta.host_resolve",

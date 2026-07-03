@@ -67,10 +67,13 @@ except ImportError as _corpus_import_error:
 
 logger = logging.getLogger(__name__)
 
-_FORMAT_STEP_RE = re.compile(
-    r"\bformat\s+as\s+(?:(?:a|an|the)\s+)?"
-    r"(?P<format>email|table|bullets?|bullet[_ -]?list)\b",
-    re.IGNORECASE,
+# The ``format as <class>`` parse now has its single canonical author in the
+# graph layer (`forge_bridge.graph.extract`) so the graph compiler (#153 slice
+# 2b) recognizes the format terminal without importing "up" into ``console/``.
+# Re-exported here under the legacy name so this module + its tests keep calling
+# ``_extract_format_class`` byte-identically.
+from forge_bridge.graph.extract import (  # noqa: E402
+    extract_format_class as _extract_format_class,
 )
 
 
@@ -566,14 +569,6 @@ def _topology_dict_for_value(value: Any) -> dict[str, str]:
     from forge_bridge.graph import infer_topology
 
     return infer_topology(value).to_dict()
-
-
-def _extract_format_class(step_text: str) -> str | None:
-    match = _FORMAT_STEP_RE.search(step_text or "")
-    if not match:
-        return None
-    value = match.group("format").lower().replace("-", "_").replace(" ", "_")
-    return "bullets" if value in {"bullet", "bullets", "bullet_list"} else value
 
 
 def _extract_semantic_step_params(step_text: str) -> dict[str, Any]:
