@@ -24,10 +24,12 @@ from forge_bridge.graph import (
     FilterNode,
     ForEachNode,
     IfGateNode,
+    extract_format_class,
     is_collect_step,
     is_commit_step,
     is_filter_step,
     is_foreach_step,
+    is_format_step,
     is_if_step,
     is_select_step,
     is_stage_step,
@@ -43,6 +45,13 @@ _SAFE_NODE_RE = re.compile(r"[^0-9A-Za-z_]+")
 _KWARG_PORT = "inherited_kwargs"
 #: The extractor's own single upstream-consuming input port.
 _EXTRACTOR_INPUT_PORT = "input"
+
+#: The reads-only terminal formatter operator (#153 slice 2b). Its ``data``
+#: kwarg inherits the WHOLE prior result (a whole-payload handoff), authored by
+#: a wrap-flavored extractor rather than the singleton-id extractor.
+_FORMAT_RESULT_OP = "format_result"
+#: The kwarg the format terminal fills with the whole prior result.
+_FORMAT_DATA_KEY = "data"
 
 
 class ChainCompileError(ValueError):
@@ -78,7 +87,16 @@ def compile_chain_steps(steps: Sequence[str]) -> GraphSpec:
             # is safe: the extractor emits ``{}`` when nothing qualifies. The
             # prior→node lineage edge above is kept for lineage/topology.
             if _is_mcp(node.operator_id):
-                extractor = _extractor_node(index)
+                # A format terminal inherits the WHOLE prior result under
+                # ``data`` (legacy ``format_result.data = __previous_result__``),
+                # so it gets a wrap-flavored extractor. Every other MCP node gets
+                # the singleton-id/sequence extractor. Tool-name-aware
+                # edge-authoring is VISIBLE in the GraphSpec, not a runtime branch
+                # in the boundary.
+                if node.operator_id == _FORMAT_RESULT_OP:
+                    extractor = _wrap_extractor_node(index, _FORMAT_DATA_KEY)
+                else:
+                    extractor = _extractor_node(index)
                 node = _with_kwarg_port(node, _KWARG_PORT)
                 edges.append(
                     Edge(
@@ -116,6 +134,23 @@ def _extractor_node(index: int) -> NodeSpec:
         input_ports={_EXTRACTOR_INPUT_PORT: ExtractContextNode.port_contract},
         output_port=ExtractContextNode.port_contract.emits,
         config={},
+    )
+
+
+def _wrap_extractor_node(index: int, wrap_key: str) -> NodeSpec:
+    """Author a whole-payload extractor: re-key the prior result under ``wrap_key``.
+
+    Same class / same ``extract_context`` admission / same port contract as the
+    singleton extractor — only ``config["wrap_key"]`` differs, which flips
+    ``ExtractContextNode`` into wrap mode (``{wrap_key: <whole input>}``). Used
+    for the ``format_result.data`` whole-payload handoff (#153 slice 2b).
+    """
+    return NodeSpec(
+        node_id=f"extract_context#{index}",
+        operator_id="extract_context",
+        input_ports={_EXTRACTOR_INPUT_PORT: ExtractContextNode.port_contract},
+        output_port=ExtractContextNode.port_contract.emits,
+        config={"wrap_key": wrap_key},
     )
 
 
@@ -170,6 +205,8 @@ def _node_for_step(step_text: str, index: int) -> NodeSpec:
             output_port=IfGateNode.port_contract.emits,
             config={"step_text": step_text},
         )
+    if is_format_step(step_text):
+        return _format_result_node(step_text, index)
     if is_stage_step(step_text):
         return _unadmitted_graph_step(step_text, "stage")
     if is_select_step(step_text):
@@ -186,6 +223,10 @@ def _node_for_step(step_text: str, index: int) -> NodeSpec:
     operator_id = _first_token(step_text)
     if not operator_id:
         raise ChainCompileError(f"empty chain step at index {index}")
+    if operator_id == _FORMAT_RESULT_OP:
+        # The bare ``format_result`` tool-name form (no ``format as`` phrase);
+        # route it through the same format-terminal author as the phrase form.
+        return _format_result_node(step_text, index)
     return _admitted_node(
         index,
         operator_id,
@@ -194,6 +235,28 @@ def _node_for_step(step_text: str, index: int) -> NodeSpec:
             "step_text": step_text,
             "arguments": _step_arguments(step_text),
         },
+    )
+
+
+def _format_result_node(step_text: str, index: int) -> NodeSpec:
+    """Author the ``format_result`` terminal node.
+
+    ``format`` rides the static-from-text path exactly as legacy does: parse it
+    from the step text and inject it ONLY when the step text did not already
+    supply one (mirrors legacy ``if "format" not in params``). ``data`` is NOT
+    authored here — it inherits the whole prior result via the wrap-flavored
+    extractor edge (authored in ``compile_chain_steps``), merged UNDER these
+    static args so an explicit ``data`` in the step text still wins.
+    """
+    arguments = _step_arguments(step_text)
+    format_class = extract_format_class(step_text)
+    if format_class is not None and "format" not in arguments:
+        arguments["format"] = format_class
+    return _admitted_node(
+        index,
+        _FORMAT_RESULT_OP,
+        output_port=PortTopology.any(),
+        config={"step_text": step_text, "arguments": arguments},
     )
 
 

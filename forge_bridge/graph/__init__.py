@@ -39,6 +39,8 @@ from forge_bridge.graph.editorial_delta import (
 from forge_bridge.graph.extract import (
     ExtractContextNode,
     extract_chain_context,
+    extract_format_class,
+    is_format_step,
 )
 from forge_bridge.graph.filter import (
     FilterNode,
@@ -102,6 +104,8 @@ __all__ = [
     "validate_counter",
     "ExtractContextNode",
     "extract_chain_context",
+    "extract_format_class",
+    "is_format_step",
     "ForEachNode",
     "ForeachInputError",
     "ForeachParseError",
