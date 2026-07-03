@@ -106,7 +106,7 @@ def make_client():
             ),
             patch.object(
                 _chat_compile,
-                "run_chain_steps",
+                "run_chain_steps_with_shadow",
                 new=AsyncMock(return_value=_chain_success_body()),
             ),
         )

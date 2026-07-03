@@ -5,6 +5,11 @@ import logging
 import time
 from typing import Any, Optional
 
+from forge_bridge.composition._shadow import (
+    shadow_compare,
+    shadow_enabled,
+    wrap_mcp_for_shadow,
+)
 from forge_bridge.console._step import execute_chain_step
 from forge_bridge.console._recovery import response_body
 from forge_bridge.graph import infer_topology
@@ -120,3 +125,70 @@ async def run_chain_steps(
         "chain": chain_trace,
         "error": None,
     }
+
+
+async def run_chain_steps_with_shadow(
+    *,
+    steps: list[str],
+    tools: list,
+    mcp: Any,
+    request_id: str,
+    client_ip: str,
+    started: float,
+    assent_record: Optional[AssentRecord] = None,
+    session_factory: Optional[Any] = None,
+) -> dict:
+    """Authoritative read execution + opportunistic graph parity evidence.
+
+    The legacy ``run_chain_steps`` stays authoritative and byte-identical; this
+    wrapper is the graph engine's first live production caller, in SHADOW mode
+    (M2 slice 5). Its ONLY responsibility is: run the authoritative path once,
+    then hand the already-computed body plus the in-memory tool-call records to
+    the instrumentation layer. All operational concerns — flag, sink, time-box,
+    outcome taxonomy, ``comparison_mode``, error/timeout capture — live in
+    ``composition/_shadow.py``, not here.
+
+    Flag-off is an exact passthrough of ``run_chain_steps`` (authoritative
+    behavior unchanged, fully reversible). Flag-on wraps the MCP in a
+    transparent recorder (a pure observer), runs legacy ONCE against it, then
+    fires the compare hook. A shadow failure can never regress the read: the
+    authoritative body is captured before the hook runs and returned regardless.
+    """
+
+    if not shadow_enabled():
+        return await run_chain_steps(
+            steps=steps,
+            tools=tools,
+            mcp=mcp,
+            request_id=request_id,
+            client_ip=client_ip,
+            started=started,
+            assent_record=assent_record,
+            session_factory=session_factory,
+        )
+
+    recorder = wrap_mcp_for_shadow(mcp)
+    chain_body = await run_chain_steps(
+        steps=steps,
+        tools=tools,
+        mcp=recorder,
+        request_id=request_id,
+        client_ip=client_ip,
+        started=started,
+        assent_record=assent_record,
+        session_factory=session_factory,
+    )
+    # ponytail: inline time-boxed; async fire-and-forget only if latency matters
+    # when always-on. ``shadow_compare`` never raises; this guard is a final
+    # backstop so a shadow failure can never regress a successful read.
+    try:
+        await shadow_compare(
+            steps=steps,
+            legacy_body=chain_body,
+            recorder=recorder,
+            request_id=request_id,
+            client_ip=client_ip,
+        )
+    except Exception:
+        logger.debug("shadow_compare backstop swallow", exc_info=True)
+    return chain_body

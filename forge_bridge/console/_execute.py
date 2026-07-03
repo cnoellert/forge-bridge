@@ -11,7 +11,7 @@ import uuid
 from typing import Any
 
 from forge_bridge.console._constants import CHAIN_MAX_STEPS
-from forge_bridge.console._engine import run_chain_steps
+from forge_bridge.console._engine import run_chain_steps_with_shadow
 
 
 async def execute_command(
@@ -132,7 +132,7 @@ async def execute_command(
 
     request_id = str(uuid.uuid4())
     started = time.monotonic()
-    return await run_chain_steps(
+    return await run_chain_steps_with_shadow(
         steps=chain_steps,
         tools=tools,
         mcp=mcp,

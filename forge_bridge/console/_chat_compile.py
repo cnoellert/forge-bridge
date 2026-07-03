@@ -12,7 +12,7 @@ from typing import Any, Optional
 
 from forge_bridge.chain_corpus import emit_compile_record, start_trace_capture
 from forge_bridge.console._authority import dispatch_authority
-from forge_bridge.console._engine import run_chain_steps
+from forge_bridge.console._engine import run_chain_steps, run_chain_steps_with_shadow
 from forge_bridge.console._executor_route import apply_executor_routing
 from forge_bridge.console._param_extract import extract_explicit_params
 from forge_bridge.console._source_route import apply_source_routing
@@ -340,7 +340,7 @@ async def run_compile_branch(
     routed_steps = apply_source_routing(user_prompt, steps, execution_tools or tools)
     chain_tools = execution_tools if routed_steps != steps and execution_tools else tools
     steps = routed_steps
-    chain_body = await run_chain_steps(
+    chain_body = await run_chain_steps_with_shadow(
         steps=steps,
         tools=chain_tools,
         mcp=trace.mcp,
