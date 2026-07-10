@@ -6,10 +6,13 @@ reads-only, and applies no host mutation: it emits the left collection enriched
 with its matched right item nested under a key. It is the fan-in primitive
 behind the slate-insert editorial vertical.
 
-Matching is exact string equality by default; an optional casefold+strip
-normalization applies only when explicitly requested. Zero and multiple matches
-are structured failures because JoinNode does not guess, and a nesting-key
-collision fails closed rather than clobbering the left item.
+Matching is exact value equality by default (``12`` (int) does not match
+``"12"`` (str); this is intended and predictable). An optional casefold+strip
+normalization is an opt-in loosen-matching flag that applies only when
+explicitly requested. Zero and multiple matches are structured failures because
+JoinNode does not guess, and a nesting-key collision fails closed rather than
+clobbering the left item. A None or unhashable join-key value is always a
+structured error, never a silent match.
 """
 from __future__ import annotations
 
@@ -49,6 +52,9 @@ class JoinSpec:
     left_key: str
     right_key: str = ""      # empty → use left_key
     into: str = "joined"
+    # Opt-in loosen-matching flag: when True, BOTH sides are coerced to
+    # casefolded, stripped strings before comparison (so ``12`` matches
+    # ``"12"``). Off by default, where matching is exact value equality.
     normalize: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -97,7 +103,9 @@ class JoinNode:
                     "join_key_missing",
                     f"right item is missing join key '{right_attr}'",
                 )
-            index.setdefault(self._norm(item[right_attr]), []).append(item)
+            right_value = item[right_attr]
+            _guard_key_value(right_value, "right", right_attr)
+            index.setdefault(self._norm(right_value), []).append(item)
 
         joined: list[dict[str, Any]] = []
         for item in left_collection:
@@ -107,6 +115,7 @@ class JoinNode:
                     f"left item is missing join key '{left_attr}'",
                 )
             value = item[left_attr]
+            _guard_key_value(value, "left", left_attr)
             matches = index.get(self._norm(value), [])
             if not matches:
                 raise JoinError("join_miss", f"left key '{value}' had no right match")
@@ -149,6 +158,29 @@ class JoinNode:
         if self.spec.normalize:
             return str(value).casefold().strip()
         return value
+
+
+def _guard_key_value(value: Any, side: str, key: str) -> None:
+    """Reject a None or unhashable join-key value as a structured JoinError.
+
+    Runs on the RAW key value before normalization, so an unhashable value
+    (list/dict) is rejected even under ``normalize=True`` (which would otherwise
+    stringify it into a hashable). A None key is always a structured error —
+    never a silent match against another None or the literal ``"None"``. Applies
+    symmetrically to the left lookup key and the right index key.
+    """
+    if value is None:
+        raise JoinError(
+            "join_invalid_key",
+            f"{side} join key '{key}' has an unusable value: {value!r}",
+        )
+    try:
+        hash(value)
+    except TypeError:
+        raise JoinError(
+            "join_invalid_key",
+            f"{side} join key '{key}' has an unusable value: {value!r}",
+        ) from None
 
 
 def _extract_collection(data: Any, side: str) -> tuple[str | None, list[dict[str, Any]]]:

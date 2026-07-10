@@ -144,3 +144,96 @@ def test_boundary_happy_path_returns_ok():
     result = asyncio.run(PrimitiveBoundary().dispatch(node, resolved_inputs))
     assert result.status == "ok"
     assert result.output["collection"][0]["joined"]["slate"] == "A"
+
+
+# --- FIX 1: unhashable / None key values → structured join_invalid_key ---
+
+
+def _ok(output):
+    return NodeResult(
+        status="ok",
+        run_id=uuid.uuid4(),
+        artifact_id=uuid.uuid4(),
+        output=output,
+    )
+
+
+def _dispatch(config, left, right):
+    node = NodeSpec(node_id="j", operator_id="join", config=config)
+    resolved_inputs = {"left": _ok(left), "right": _ok(right)}
+    return asyncio.run(PrimitiveBoundary().dispatch(node, resolved_inputs))
+
+
+def test_boundary_unhashable_right_key_returns_join_invalid_key():
+    # right key value is a list (unhashable) → boundary error NodeResult, no raise
+    result = _dispatch(
+        {"left_key": "seg_name"},
+        left=[{"seg_name": "sh010"}],
+        right=[{"seg_name": ["sh010"], "slate": "A"}],
+    )
+    assert result.status == "error"
+    assert result.reason_code == "join_invalid_key"
+
+
+def test_boundary_unhashable_left_key_returns_join_invalid_key():
+    result = _dispatch(
+        {"left_key": "seg_name"},
+        left=[{"seg_name": ["sh010"]}],
+        right=[{"seg_name": "sh010", "slate": "A"}],
+    )
+    assert result.status == "error"
+    assert result.reason_code == "join_invalid_key"
+
+
+def test_boundary_none_right_key_returns_join_invalid_key():
+    result = _dispatch(
+        {"left_key": "seg_name"},
+        left=[{"seg_name": "sh010"}],
+        right=[{"seg_name": None, "slate": "A"}],
+    )
+    assert result.status == "error"
+    assert result.reason_code == "join_invalid_key"
+
+
+# --- FIX 2: missing / empty left_key routes through from_dict → join_invalid_spec ---
+
+
+def test_boundary_missing_left_key_returns_join_invalid_spec_not_keyerror():
+    result = _dispatch(
+        {},  # no left_key
+        left=[{"seg_name": "sh010"}],
+        right=[{"seg_name": "sh010", "slate": "A"}],
+    )
+    assert result.status == "error"
+    assert result.reason_code == "join_invalid_spec"
+
+
+def test_boundary_empty_left_key_returns_join_invalid_spec():
+    result = _dispatch(
+        {"left_key": ""},
+        left=[{"seg_name": "sh010"}],
+        right=[{"seg_name": "sh010", "slate": "A"}],
+    )
+    assert result.status == "error"
+    assert result.reason_code == "join_invalid_spec"
+
+
+# --- Regression: normal exact-match happy path through the boundary is unchanged ---
+
+
+def test_boundary_exact_match_regression_ok_with_nested_join_and_provenance():
+    result = _dispatch(
+        {"left_key": "seg_name"},
+        left=[{"seg_name": "sh010"}],
+        right=[{"seg_name": "sh010", "slate": "A"}],
+    )
+    assert result.status == "ok"
+    assert result.output["collection"][0]["joined"] == {"seg_name": "sh010", "slate": "A"}
+    assert result.output["join"] == {
+        "left_count": 1,
+        "right_count": 1,
+        "matched": 1,
+        "left_key": "seg_name",
+        "right_key": "seg_name",
+        "normalize": False,
+    }

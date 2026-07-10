@@ -432,7 +432,10 @@ def _run_join(
         )
 
     try:
-        output = JoinNode(spec=_join_spec(node.config)).run(left.output, right.output)
+        # from_dict validates config (missing/empty left_key → catchable
+        # JoinError("join_invalid_spec")) inside the try, so nothing escapes.
+        spec = JoinSpec.from_dict(node.config)
+        output = JoinNode(spec=spec).run(left.output, right.output)
     except JoinError as exc:
         return _error(
             exc.code,
@@ -609,15 +612,6 @@ def _filter_predicate(config: dict[str, Any]) -> FilterPredicate:
     if isinstance(step_text, str):
         return parse_filter_step(step_text)
     raise PredicateParseError("missing_predicate", "Filter predicate is required.")
-
-
-def _join_spec(config: dict[str, Any]) -> JoinSpec:
-    return JoinSpec(
-        left_key=config["left_key"],
-        right_key=config.get("right_key", ""),
-        into=config.get("into", "joined"),
-        normalize=config.get("normalize", False),
-    )
 
 
 def _if_predicate(config: dict[str, Any]) -> FilterPredicate:
