@@ -27,6 +27,7 @@ from forge_bridge.graph.filter import (
     parse_filter_step,
 )
 from forge_bridge.graph.if_gate import IfGateNode, parse_if_step
+from forge_bridge.graph.join import JoinError, JoinNode, JoinSpec
 from forge_bridge.graph.ports import PortTopology, infer_topology
 
 
@@ -84,6 +85,13 @@ class PrimitiveBoundary:
             )
         if node.operator_id == "collect":
             return _run_collect(
+                node,
+                resolved_inputs,
+                admission.resolved_class,
+                self.artifact_id_factory,
+            )
+        if node.operator_id == "join":
+            return _run_join(
                 node,
                 resolved_inputs,
                 admission.resolved_class,
@@ -397,6 +405,55 @@ def _run_collect(
     )
 
 
+def _run_join(
+    node: NodeSpec,
+    resolved_inputs: dict[str, NodeResult],
+    resolved_class: str,
+    artifact_id_factory: Callable[[], uuid.UUID],
+) -> NodeResult:
+    # Two named required inputs, keyed left/right — not the single-upstream
+    # assertion the other primitives use.
+    left = resolved_inputs.get("left")
+    right = resolved_inputs.get("right")
+    srcs = _source_artifact_ids(resolved_inputs)
+    if left is None or right is None:
+        return _error(
+            "join_missing_input",
+            "Join requires named 'left' and 'right' inputs.",
+            resolved_class,
+            source_artifact_ids=srcs,
+        )
+    if not left.has_usable_output or not right.has_usable_output:
+        return _error(
+            "join_missing_input",
+            "Join requires usable 'left' and 'right' outputs.",
+            resolved_class,
+            source_artifact_ids=srcs,
+        )
+
+    try:
+        output = JoinNode(spec=_join_spec(node.config)).run(left.output, right.output)
+    except JoinError as exc:
+        return _error(
+            exc.code,
+            exc.message,
+            resolved_class,
+            source_artifact_ids=srcs,
+        )
+
+    topology = infer_topology(output)
+    return NodeResult(
+        status="ok",
+        run_id=uuid.uuid4(),
+        artifact_id=artifact_id_factory(),
+        output=output,
+        output_topology=topology.to_dict(),
+        artifact_type=topology.item_type if topology.kind == "list" else topology.kind,
+        source_artifact_ids=srcs,
+        resolved_class=resolved_class,
+    )
+
+
 def _run_rename_delta_entry(
     node: NodeSpec,
     resolved_inputs: dict[str, NodeResult],
@@ -552,6 +609,15 @@ def _filter_predicate(config: dict[str, Any]) -> FilterPredicate:
     if isinstance(step_text, str):
         return parse_filter_step(step_text)
     raise PredicateParseError("missing_predicate", "Filter predicate is required.")
+
+
+def _join_spec(config: dict[str, Any]) -> JoinSpec:
+    return JoinSpec(
+        left_key=config["left_key"],
+        right_key=config.get("right_key", ""),
+        into=config.get("into", "joined"),
+        normalize=config.get("normalize", False),
+    )
 
 
 def _if_predicate(config: dict[str, Any]) -> FilterPredicate:
