@@ -59,10 +59,20 @@ from forge_bridge.graph.foreach import (
     is_foreach_step,
     parse_foreach_step,
 )
+from forge_bridge.graph.guarded_zip import (
+    GuardedZipError,
+    GuardedZipNode,
+    GuardedZipSpec,
+)
 from forge_bridge.graph.if_gate import (
     IfGateNode,
     is_if_step,
     parse_if_step,
+)
+from forge_bridge.graph.join import (
+    JoinError,
+    JoinNode,
+    JoinSpec,
 )
 from forge_bridge.graph.ports import (
     ChainWireCompatibilityError,
@@ -110,8 +120,14 @@ __all__ = [
     "ForeachInputError",
     "ForeachParseError",
     "GraphInputError",
+    "GuardedZipError",
+    "GuardedZipNode",
+    "GuardedZipSpec",
     "IfGateNode",
     "IterationResult",
+    "JoinError",
+    "JoinNode",
+    "JoinSpec",
     "PredicateParseError",
     "ChainWireCompatibilityError",
     "PortContract",

@@ -262,6 +262,31 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         idempotent_result=True,
     ),
     AdmissionRecord(
+        operator_id="join",
+        resolved_class="primitive.join",
+        dispatch_kind="primitive",
+        synchronous=True,
+        returns_reference=False,
+        # Pairs a left collection with matching right items (name-match) and
+        # emits the left enriched with its nested match: a pure read-only value
+        # transform, no host/canonical state mutation.
+        no_state_mutation=True,
+        idempotent_result=True,
+    ),
+    AdmissionRecord(
+        operator_id="guarded_zip",
+        resolved_class="primitive.guarded_zip",
+        dispatch_kind="primitive",
+        synchronous=True,
+        returns_reference=False,
+        # Positional-binding fan-in with a name-correspondence safety check:
+        # pairs left[i] with right[i] and emits the left enriched with its
+        # nested pair. A pure read-only value transform, no host/canonical
+        # state mutation. (A pairing mismatch abstains; it never mutates.)
+        no_state_mutation=True,
+        idempotent_result=True,
+    ),
+    AdmissionRecord(
         operator_id="commit",
         resolved_class="mcp.host_mutation",
         dispatch_kind="commit",

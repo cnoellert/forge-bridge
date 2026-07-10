@@ -102,6 +102,8 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "rename_delta_entry",
         "trim_delta_entry",
         "literal_source",
+        "join",
+        "guarded_zip",
         "commit",
     }
     assert "filter(is_greenscreen == true)" not in ADMISSION_TABLE
