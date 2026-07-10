@@ -26,6 +26,12 @@ from forge_bridge.graph.filter import (
     PredicateParseError,
     parse_filter_step,
 )
+from forge_bridge.graph.guarded_zip import (
+    GuardedZipAbstain,
+    GuardedZipError,
+    GuardedZipNode,
+    GuardedZipSpec,
+)
 from forge_bridge.graph.if_gate import IfGateNode, parse_if_step
 from forge_bridge.graph.join import JoinError, JoinNode, JoinSpec
 from forge_bridge.graph.ports import PortTopology, infer_topology
@@ -92,6 +98,13 @@ class PrimitiveBoundary:
             )
         if node.operator_id == "join":
             return _run_join(
+                node,
+                resolved_inputs,
+                admission.resolved_class,
+                self.artifact_id_factory,
+            )
+        if node.operator_id == "guarded_zip":
+            return _run_guarded_zip(
                 node,
                 resolved_inputs,
                 admission.resolved_class,
@@ -437,6 +450,71 @@ def _run_join(
         spec = JoinSpec.from_dict(node.config)
         output = JoinNode(spec=spec).run(left.output, right.output)
     except JoinError as exc:
+        return _error(
+            exc.code,
+            exc.message,
+            resolved_class,
+            source_artifact_ids=srcs,
+        )
+
+    topology = infer_topology(output)
+    return NodeResult(
+        status="ok",
+        run_id=uuid.uuid4(),
+        artifact_id=artifact_id_factory(),
+        output=output,
+        output_topology=topology.to_dict(),
+        artifact_type=topology.item_type if topology.kind == "list" else topology.kind,
+        source_artifact_ids=srcs,
+        resolved_class=resolved_class,
+    )
+
+
+def _run_guarded_zip(
+    node: NodeSpec,
+    resolved_inputs: dict[str, NodeResult],
+    resolved_class: str,
+    artifact_id_factory: Callable[[], uuid.UUID],
+) -> NodeResult:
+    # Two named required inputs, keyed left/right — positional binding preserves
+    # the artist's selection order, which is authored intent.
+    left = resolved_inputs.get("left")
+    right = resolved_inputs.get("right")
+    srcs = _source_artifact_ids(resolved_inputs)
+    if left is None or right is None:
+        return _error(
+            "guarded_zip_missing_input",
+            "GuardedZip requires named 'left' and 'right' inputs.",
+            resolved_class,
+            source_artifact_ids=srcs,
+        )
+    if not left.has_usable_output or not right.has_usable_output:
+        return _error(
+            "guarded_zip_missing_input",
+            "GuardedZip requires usable 'left' and 'right' outputs.",
+            resolved_class,
+            source_artifact_ids=srcs,
+        )
+
+    try:
+        # from_dict validates config (missing/empty left_key → GuardedZipError)
+        # inside the try; a pairing mismatch raises GuardedZipAbstain and an
+        # `into` collision raises GuardedZipError — nothing else escapes.
+        spec = GuardedZipSpec.from_dict(node.config)
+        output = GuardedZipNode(spec=spec).run(left.output, right.output)
+    except GuardedZipAbstain as exc:
+        # Pairing mismatch → ABSTAIN (no usable output), NOT an error. Downstream
+        # foreach/commit sees has_usable_output=False and does not fire.
+        return NodeResult(
+            status="abstained",
+            run_id=uuid.uuid4(),
+            reason_code=exc.code,
+            message=exc.message,
+            source_artifact_ids=srcs,
+            resolved_class=resolved_class,
+        )
+    except GuardedZipError as exc:
+        # Config-invalid authoring error (bad spec / input shape / collision).
         return _error(
             exc.code,
             exc.message,

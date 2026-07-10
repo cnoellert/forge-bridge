@@ -1,5 +1,12 @@
 """Deterministic attribute-match fan-in graph primitive.
 
+``join`` is IDENTITY / KEY-BASED association and is ORDER-INDEPENDENT: each left
+item is paired with the one right item whose key value corresponds, wherever
+that right item sits in its collection. Matching is strict one-to-one — zero
+matches or multiple matches are structured errors, never a guess. For positional
+binding by the artist's authored selection order (with name validation), use
+``guarded_zip`` (``forge_bridge.graph.guarded_zip``).
+
 JoinNode pairs each item of a ``left`` collection with the one item of a
 ``right`` collection whose attribute value matches (name-match). It is pure,
 reads-only, and applies no host mutation: it emits the left collection enriched

@@ -59,6 +59,11 @@ from forge_bridge.graph.foreach import (
     is_foreach_step,
     parse_foreach_step,
 )
+from forge_bridge.graph.guarded_zip import (
+    GuardedZipError,
+    GuardedZipNode,
+    GuardedZipSpec,
+)
 from forge_bridge.graph.if_gate import (
     IfGateNode,
     is_if_step,
@@ -115,6 +120,9 @@ __all__ = [
     "ForeachInputError",
     "ForeachParseError",
     "GraphInputError",
+    "GuardedZipError",
+    "GuardedZipNode",
+    "GuardedZipSpec",
     "IfGateNode",
     "IterationResult",
     "JoinError",
