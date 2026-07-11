@@ -4,10 +4,19 @@ import copy
 import json
 from importlib.metadata import entry_points
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable
 
 import pytest
 
+from forge_bridge.composition.commit_boundary import CommitBoundary
+from forge_bridge.composition.dispatch import UnifiedDispatch
+from forge_bridge.composition.executor import GraphExecutor
+from forge_bridge.composition.graph_spec import Edge, GraphSpec, NodeSpec
+from forge_bridge.composition.host_resolve_boundary import HostResolveBoundary
+from forge_bridge.composition.operation_boundary import OperationDispatchBoundary
+from forge_bridge.core.assent import AssentRecord
+from forge_bridge.graph.ports import PortContract, PortTopology
 from forge_bridge.orchestration.operation_runner import (
     OperationRunnerUnavailable,
     build_operation_runner,
@@ -114,6 +123,12 @@ def _slate_edit_state() -> dict[str, Any]:
             ],
         }
     )
+    sequence["tracks"][1]["metadata"] = {
+        "custom": {
+            "flame_version_index": 0,
+            "flame_version_track_index": 0,
+        }
+    }
     state["session"]["active_sequence_id"] = "seq-010"
     return state
 
@@ -134,6 +149,119 @@ def _empty_track(track_id: str, name: str, *, audio: bool = False) -> dict[str, 
         "active_version_index": 0,
         "metadata": metadata,
     }
+
+
+def _slate_graph() -> GraphSpec:
+    return GraphSpec(
+        nodes=(
+            NodeSpec(
+                node_id="top",
+                operator_id="traffik.editorial.resolve_top_video_layer",
+                output_port=PortTopology.manifest(),
+                config={"arguments": {"state": _slate_edit_state()}},
+            ),
+            NodeSpec(
+                node_id="mark",
+                operator_id="traffik.editorial.mark_timecode_range",
+                input_ports={"state": PortContract.manifest_gate()},
+                output_port=PortTopology.manifest(),
+                config={
+                    "arguments": {
+                        "mark_in_timecode": "59:53:00",
+                        "mark_out_timecode": "59:58:00",
+                        "scope": "record",
+                    }
+                },
+            ),
+            NodeSpec(
+                node_id="overwrite",
+                operator_id="traffik.editorial.overwrite_insert",
+                input_ports={"state": PortContract.manifest_gate()},
+                output_port=PortTopology.manifest(),
+                config={
+                    "arguments": {
+                        "source_clip_id": "slate-source",
+                        "name": "SEQ_010_slate",
+                    }
+                },
+            ),
+            NodeSpec(
+                node_id="select_delta",
+                operator_id="select_delta",
+                input_ports={"result": PortContract.manifest_gate()},
+                output_port=PortTopology.manifest(),
+            ),
+            NodeSpec(
+                node_id="host_project",
+                operator_id="traffik.flame_delta.host_resolve",
+                input_ports={"delta": PortContract.manifest_gate()},
+                output_port=PortTopology.manifest(),
+            ),
+            NodeSpec(
+                node_id="resolve",
+                operator_id="delta_to_manifest",
+                input_ports={"deltas": PortContract.manifest_gate()},
+                output_port=PortTopology.manifest(),
+            ),
+            NodeSpec(
+                node_id="commit",
+                operator_id="commit",
+                input_ports={"held": PortContract.manifest_gate()},
+            ),
+        ),
+        edges=(
+            Edge(from_node="top", to_node="mark", to_port="state"),
+            Edge(from_node="mark", to_node="overwrite", to_port="state"),
+            Edge(from_node="overwrite", to_node="select_delta", to_port="result"),
+            Edge(from_node="select_delta", to_node="host_project", to_port="delta"),
+            Edge(from_node="host_project", to_node="resolve", to_port="deltas"),
+            Edge(from_node="resolve", to_node="commit", to_port="held"),
+        ),
+    )
+
+
+def _insert_manifest(request: dict[str, Any]) -> dict[str, Any]:
+    entry = copy.deepcopy(request["entries"][0])
+    return {
+        "type": "mutation_plan",
+        "intent_parameters": {
+            "sequence_name": request["sequence_name"],
+            "entry": entry,
+        },
+        "resolved_plan": [
+            {
+                "identity": copy.deepcopy(entry["metadata"]),
+                "payload": {"method": "version_fork_overwrite"},
+            }
+        ],
+        "originating_capability": "forge_apply_segment_insert_delta",
+        "apply_counterpart": {
+            "tool": "forge_apply_segment_insert_delta",
+            "parameter_overrides": {"mode": "apply"},
+        },
+    }
+
+
+class _InsertMCP:
+    def __init__(self) -> None:
+        self.manifest: dict[str, Any] | None = None
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def list_tools(self):
+        return [
+            SimpleNamespace(
+                name="forge_apply_segment_insert_delta",
+                inputSchema={"type": "object", "properties": {}, "required": []},
+            )
+        ]
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]):
+        self.calls.append((name, copy.deepcopy(arguments)))
+        if arguments["mode"] == "verify":
+            return copy.deepcopy(self.manifest)
+        if arguments["mode"] == "apply":
+            return {"ok": True, "created_version_index": 1}
+        raise AssertionError(arguments["mode"])
 
 
 def _load_traffik_stack(monkeypatch: pytest.MonkeyPatch, *, patch_entry_points: bool):
@@ -256,6 +384,49 @@ async def _dispatch_traffik_pair(
     )
     assert _status_value(overwrite_result) == "succeeded"
     assert overwrite_result.data["deltas"][0]["changes"][0]["action"] == "inserted"
+
+    mcp = _InsertMCP()
+
+    async def run_discover(tool_name: str, *, request: dict[str, Any]):
+        assert tool_name == "forge_apply_segment_insert_delta"
+        mcp.manifest = _insert_manifest(request)
+        return copy.deepcopy(mcp.manifest)
+
+    dispatch = UnifiedDispatch(
+        operation_boundary=OperationDispatchBoundary(run_operation=runner),
+        host_resolve_boundary=HostResolveBoundary(run_discover=run_discover),
+        commit_boundary=CommitBoundary(mcp=mcp),
+        assent_record=AssentRecord(
+            graph_intent_id="slate-insert-plugin-proof",
+            chain_steps=[
+                "traffik.editorial.resolve_top_video_layer",
+                "traffik.editorial.mark_timecode_range",
+                "traffik.editorial.overwrite_insert",
+                "select_delta",
+                "traffik.flame_delta.host_resolve",
+                "delta_to_manifest",
+                "commit",
+            ],
+            status="ratified",
+            decided_by="bridge-plugin-proof",
+        ),
+    )
+    results = await GraphExecutor(dispatch.dispatch).run(_slate_graph())
+
+    assert all(result.status == "ok" for result in results.values())
+    delta = results["select_delta"].output
+    assert delta["changes"][0]["action"] == "inserted"
+    assert delta["changes"][0]["metadata"]["version_index"] == 0
+    assert delta["changes"][0]["metadata"]["version_track_idx"] == 0
+    projected = results["host_project"].output["flame_delta_host_resolve_payload"]
+    assert projected["deltas"][0]["metadata"]["executor"] == (
+        "forge_apply_segment_insert_delta"
+    )
+    assert results["commit"].output["type"] == "commit_applied"
+    assert [(name, args["mode"]) for name, args in mcp.calls] == [
+        ("forge_apply_segment_insert_delta", "verify"),
+        ("forge_apply_segment_insert_delta", "apply"),
+    ]
 
 
 @pytest.mark.asyncio
