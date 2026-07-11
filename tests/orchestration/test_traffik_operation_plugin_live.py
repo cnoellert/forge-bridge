@@ -79,6 +79,63 @@ def _minimal_edit_state() -> dict[str, Any]:
     }
 
 
+def _slate_edit_state() -> dict[str, Any]:
+    state = _minimal_edit_state()
+    project = state["project"]
+    project["media_assets"] = [
+        {
+            "id": "slate-asset",
+            "name": "SEQ_010",
+            "media_ref": "file:///show/slates/SEQ_010.mov",
+            "duration": {"number": 240, "rate": {"frame_rate": "FPS_24"}},
+            "metadata": {},
+        }
+    ]
+    project["source_clips"] = [
+        {
+            "id": "slate-source",
+            "name": "SEQ_010",
+            "media_asset_id": "slate-asset",
+            "source_in": {"number": 0, "rate": {"frame_rate": "FPS_24"}},
+            "source_out": {"number": 240, "rate": {"frame_rate": "FPS_24"}},
+            "metadata": {},
+        }
+    ]
+    sequence = project["sequences"][0]
+    sequence.update(
+        {
+            "id": "seq-010",
+            "name": "SEQ_010",
+            "duration": {"number": 90000, "rate": {"frame_rate": "FPS_24"}},
+            "tracks": [
+                _empty_track("video-base", "L01"),
+                _empty_track("video-top", "L02"),
+                _empty_track("audio-left", "Audio L", audio=True),
+            ],
+        }
+    )
+    state["session"]["active_sequence_id"] = "seq-010"
+    return state
+
+
+def _empty_track(track_id: str, name: str, *, audio: bool = False) -> dict[str, Any]:
+    metadata = {"custom": {"audio": True, "track_kind": "audio"}} if audio else {}
+    return {
+        "id": track_id,
+        "name": name,
+        "versions": [
+            {
+                "id": f"{track_id}-v1",
+                "name": "v1",
+                "segments": [],
+                "metadata": {},
+            }
+        ],
+        "active_version_index": 0,
+        "metadata": metadata,
+    }
+
+
 def _load_traffik_stack(monkeypatch: pytest.MonkeyPatch, *, patch_entry_points: bool):
     plugins_module = pytest.importorskip(
         "forge_core.plugins",
@@ -96,6 +153,10 @@ def _load_traffik_stack(monkeypatch: pytest.MonkeyPatch, *, patch_entry_points: 
         "forge_core.traffik.plugin",
         reason="forge_core Traffik plugin is not installed",
     )
+    slate_module = pytest.importorskip(
+        "forge_core.traffik.slate_insert",
+        reason="forge_core Traffik slate-insert operations are not installed",
+    )
 
     if patch_entry_points:
         monkeypatch.setattr(
@@ -107,7 +168,7 @@ def _load_traffik_stack(monkeypatch: pytest.MonkeyPatch, *, patch_entry_points: 
     monkeypatch.setenv("FORGE_PLUGINS", "traffik")
     monkeypatch.delenv("FORGE_DCC", raising=False)
     monkeypatch.setattr(registry_module, "_DEFAULT_REGISTRY", None, raising=False)
-    return registry_module, execution_module
+    return registry_module, execution_module, slate_module
 
 
 async def _dispatch_traffik_pair(
@@ -116,13 +177,16 @@ async def _dispatch_traffik_pair(
     tmp_path: Path,
     patch_entry_points: bool,
 ) -> None:
-    registry_module, execution_module = _load_traffik_stack(
+    registry_module, execution_module, slate_module = _load_traffik_stack(
         monkeypatch,
         patch_entry_points=patch_entry_points,
     )
     expected_types = {
         execution_module.EDITORIAL_OPERATION_TYPE,
         execution_module.FLAME_DELTA_HOST_RESOLVE_OPERATION_TYPE,
+        slate_module.TOP_VIDEO_LAYER_OPERATION_TYPE,
+        slate_module.MARK_TIMECODE_RANGE_OPERATION_TYPE,
+        slate_module.OVERWRITE_INSERT_OPERATION_TYPE,
     }
 
     registry = registry_module.get_default_registry()
@@ -157,6 +221,41 @@ async def _dispatch_traffik_pair(
     assert payload["payload_kind"] == "traffik.flame_delta_host_resolve_payload"
     assert payload["schema_version"] == 3
     assert payload["deltas"][0]["metadata"]["executor"] == "forge_apply_segment_delta"
+
+    top_result = await runner(
+        slate_module.TOP_VIDEO_LAYER_OPERATION_TYPE,
+        params={"state": _slate_edit_state()},
+        idempotency_key="bridge-traffik-plugin-top-layer",
+        requested_by="bridge-plugin-proof",
+    )
+    assert _status_value(top_result) == "succeeded"
+    assert top_result.data["session"]["track_targets"][0]["track_id"] == "video-top"
+
+    mark_result = await runner(
+        slate_module.MARK_TIMECODE_RANGE_OPERATION_TYPE,
+        params={
+            "state": top_result.data,
+            "mark_in_timecode": "59:53:00",
+            "mark_out_timecode": "59:58:00",
+            "scope": "record",
+        },
+        idempotency_key="bridge-traffik-plugin-mark-range",
+        requested_by="bridge-plugin-proof",
+    )
+    assert _status_value(mark_result) == "succeeded"
+
+    overwrite_result = await runner(
+        slate_module.OVERWRITE_INSERT_OPERATION_TYPE,
+        params={
+            "state": mark_result.data,
+            "source_clip_id": "slate-source",
+            "name": "SEQ_010_slate",
+        },
+        idempotency_key="bridge-traffik-plugin-overwrite",
+        requested_by="bridge-plugin-proof",
+    )
+    assert _status_value(overwrite_result) == "succeeded"
+    assert overwrite_result.data["deltas"][0]["changes"][0]["action"] == "inserted"
 
 
 @pytest.mark.asyncio

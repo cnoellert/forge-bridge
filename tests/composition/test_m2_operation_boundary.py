@@ -18,7 +18,7 @@ from forge_bridge.composition.operation_boundary import (
     OPERATION_UNAVAILABLE,
     OperationDispatchBoundary,
 )
-from forge_bridge.graph.ports import PortTopology
+from forge_bridge.graph.ports import PortContract, PortTopology
 
 RESOLVED_CLASS = "pipeline.traffik.editorial.apply_steps"
 
@@ -76,6 +76,49 @@ def _operation_node(*, arguments: dict | None = None) -> NodeSpec:
         output_port=OperationDispatchBoundary.output_port,
         config={"arguments": arguments or {"state": _state()}},
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "operator_id",
+    [
+        "traffik.editorial.resolve_top_video_layer",
+        "traffik.editorial.mark_timecode_range",
+        "traffik.editorial.overwrite_insert",
+    ],
+)
+async def test_slate_insert_operations_receive_whole_edge_state(
+    operator_id: str,
+) -> None:
+    calls: list[dict] = []
+
+    async def run_operation(operation_type: str, **kwargs):
+        calls.append({"operation_type": operation_type, **kwargs})
+        return {"status": "success", "data": {"operation": operation_type}}
+
+    edge_state = {"project": {"sequences": []}, "session": {}}
+    node = NodeSpec(
+        node_id="editorial",
+        operator_id=operator_id,
+        input_ports={"state": PortContract.manifest_gate()},
+        output_port=PortTopology.manifest(),
+        config={"arguments": {"scope": "record"}},
+    )
+    result = await OperationDispatchBoundary(run_operation=run_operation).dispatch(
+        node,
+        {
+            "state": NodeResult(
+                status="ok",
+                run_id=uuid.uuid4(),
+                output=edge_state,
+            )
+        },
+    )
+
+    assert result.status == "ok"
+    assert result.resolved_class == f"pipeline.{operator_id}"
+    assert calls[0]["operation_type"] == operator_id
+    assert calls[0]["params"] == {"scope": "record", "state": edge_state}
 
 
 @pytest.mark.asyncio
