@@ -37,6 +37,18 @@ def test_admission_accepts_slice_one_operator_ids():
     assert editorial.returns_reference is False
     assert editorial.no_state_mutation is False
     assert editorial.idempotent_result is False
+    for operation_id in (
+        "traffik.editorial.resolve_top_video_layer",
+        "traffik.editorial.mark_timecode_range",
+        "traffik.editorial.overwrite_insert",
+    ):
+        operation = admit_operator(operation_id)
+        assert operation.resolved_class == f"pipeline.{operation_id}"
+        assert operation.dispatch_kind == "operation"
+        assert operation.synchronous is True
+        assert operation.returns_reference is False
+        assert operation.no_state_mutation is False
+        assert operation.idempotent_result is True
     host_resolve_operation = admit_operator("traffik.flame_delta.host_resolve")
     assert (
         host_resolve_operation.resolved_class
@@ -119,6 +131,9 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "format_result",
         "flame_rename_shots",
         "traffik.editorial.apply_steps",
+        "traffik.editorial.resolve_top_video_layer",
+        "traffik.editorial.mark_timecode_range",
+        "traffik.editorial.overwrite_insert",
         "traffik.flame_delta.host_resolve",
         "traffik.flame_sequence.ingest_edit_state",
         "traffik.editorial.resolve_top_video_layer",
