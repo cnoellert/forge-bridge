@@ -336,6 +336,39 @@ async def test_host_resolve_routes_temporal_executor():
 
 
 @pytest.mark.asyncio
+async def test_host_resolve_routes_start_frame_executor():
+    calls: list[dict] = []
+
+    async def run_discover(tool_name: str, *, request: dict):
+        calls.append({"tool_name": tool_name, "request": request})
+        return _manifest_dict(apply_tool="forge_apply_segment_start_frame_delta")
+
+    result = await HostResolveBoundary(run_discover=run_discover).dispatch(
+        _delta_node(),
+        {
+            "deltas": _upstream_result(
+                _entry(after={"start_frame": 1002}),
+                executor="forge_apply_segment_start_frame_delta",
+            )
+        },
+    )
+
+    assert result.status == "ok"
+    assert result.output["apply_counterpart"]["tool"] == (
+        "forge_apply_segment_start_frame_delta"
+    )
+    assert calls == [
+        {
+            "tool_name": "forge_apply_segment_start_frame_delta",
+            "request": {
+                "sequence_name": "seq_001",
+                "entries": [_entry(after={"start_frame": 1002})],
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_host_resolve_rejects_untrusted_executor():
     result = await HostResolveBoundary(run_discover=lambda *a, **k: _manifest_dict()).dispatch(
         _delta_node(),
