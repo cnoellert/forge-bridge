@@ -32,6 +32,7 @@ _TRUSTED_EXECUTORS = frozenset({
 _HOST_RESOLVE_SCHEMA_VERSION = 3
 
 _UNRESOLVED_TARGET_CODES = frozenset({
+    "identity_unresolved",
     "missing_flame_identity",
     "invalid_flame_identity",
 })

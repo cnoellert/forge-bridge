@@ -398,7 +398,11 @@ async def test_host_resolve_rejects_non_projected_schema_version():
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "error_code",
-    ["missing_flame_identity", "invalid_flame_identity"],
+    [
+        "identity_unresolved",
+        "missing_flame_identity",
+        "invalid_flame_identity",
+    ],
 )
 async def test_host_resolve_reports_unresolved_target_for_identity_failures(error_code):
     async def run_discover(_tool_name: str, *, request: dict):
