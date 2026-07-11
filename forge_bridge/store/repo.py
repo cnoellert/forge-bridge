@@ -807,6 +807,69 @@ class EventRepo:
 
 
 # ─────────────────────────────────────────────────────────────
+# Asset revocation (#160 — fitted-model consent revocation)
+# ─────────────────────────────────────────────────────────────
+
+async def revoke_asset(
+    session: AsyncSession,
+    asset_id: uuid.UUID,
+    reason: str,
+    *,
+    actor: str = "operator",
+) -> bool:
+    """Idempotently revoke a fitted-model (or any) asset (#160).
+
+    Sets ``attributes.revoked_at`` (ISO-8601) + ``attributes.revocation_reason``
+    on the asset's JSONB and appends an ``asset.revoked`` event. This is the
+    consent-withdrawal counterpart to a GenerationGrant: it mirrors the
+    transition+event discipline of ``GenerationGrantRepo.revoke`` but WITHOUT the
+    CAS — revocation is an idempotent one-way flip (a latch), not an
+    exactly-once spend, so ``REVOKED`` stays OFF the shared ``Status`` enum and
+    lives purely in the JSONB attributes.
+
+    Idempotent: re-revoking an already-revoked asset is a no-op — the row stays
+    revoked, no error is raised, and no duplicate event is emitted. Returns
+    ``True`` when this call performed the flip, ``False`` when it was already
+    revoked.
+
+    Caller owns the transaction boundary (mirrors ``GenerationGrantRepo`` — the
+    attribute mutation and the event append share this session and commit
+    together, or roll back together).
+
+    # ponytail: no manual-revocation MCP tool yet — the trigger is #161's
+    # consent-grant + tests. The operator door lands with #161 (or when a manual
+    # need appears); this repo-level flip is the substrate that door will call.
+    """
+    db_entity = await session.get(DBEntity, asset_id)
+    if db_entity is None:
+        raise ValueError(f"asset not found for revoke: {asset_id}")
+
+    attrs = dict(db_entity.attributes or {})
+    if attrs.get("revoked_at"):
+        # Already revoked — idempotent no-op; stay revoked, skip duplicate event.
+        return False
+
+    revoked_at = datetime.now(timezone.utc).isoformat()
+    attrs["revoked_at"] = revoked_at
+    attrs["revocation_reason"] = reason
+    db_entity.attributes = attrs  # reassign so the JSONB mutation is detected
+
+    await EventRepo(session).append(
+        event_type="asset.revoked",
+        payload={
+            "asset_id": str(asset_id),
+            "revoked_at": revoked_at,
+            "revocation_reason": reason,
+            "actor": actor,
+        },
+        client_name=actor,
+        project_id=db_entity.project_id,
+        entity_id=asset_id,
+    )
+    return True
+
+
+# ─────────────────────────────────────────────────────────────
 # Session Repository (connected clients)
 # ─────────────────────────────────────────────────────────────
 

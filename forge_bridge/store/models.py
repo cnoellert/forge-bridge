@@ -664,6 +664,8 @@ EVENT_TYPES = frozenset({
     "assent.ratified",
     "assent.applied",
     "assent.failed",
+    # Asset lifecycle (#160 — fitted-model consent revocation)
+    "asset.revoked",
 })
 
 

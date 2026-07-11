@@ -21,6 +21,7 @@ from forge_bridge.orchestration.drivers import (
     backend_id_from_identity_triple,
 )
 from forge_bridge.store.generation_grant_repo import GenerationGrantRepo
+from forge_bridge.store.models import DBEntity
 from forge_bridge.store.orch_entity_views import DBOrchExecutionPlan
 from forge_bridge.store.orch_execution_result_repo import ExecutionResultRepo
 from forge_bridge.store.orch_generation_artifact_repo import GenerationArtifactRepo
@@ -34,6 +35,12 @@ class InvocationEnvelope:
     operator_id: str
     inputs: list[ArtifactRef]
     backend_identity_triple: dict[str, Any]
+    # #160 — the fitted-model asset this invocation runs against. Intrinsic to
+    # the invocation (an envelope FIELD, not a dispatch kwarg), so the
+    # fail-closed revocation gate can read it at the submit chokepoint. Defaults
+    # None; existing construction sites keep working unchanged (no model named →
+    # gate no-ops, preserving existing behavior).
+    fitted_model_asset_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -207,6 +214,46 @@ async def _advisory_grant_check(
         return False, "grant_consumed"
     if existing.status != "ratified":
         return False, "grant_not_ratified"
+    return True, None
+
+
+# ─────────────────────────────────────────────────────────────
+# Fitted-model revocation gate (#160)
+# ─────────────────────────────────────────────────────────────
+# Fail-closed consent enforcement at the submit chokepoint: a revoked
+# fitted-model asset must never be inferred against. Mirrors
+# ``_resolve_and_consume_grant``'s session usage and return shape, but this is a
+# pure READ — a revocation flag is never a spend, so there is no CAS/consume.
+
+
+async def _check_model_not_revoked(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    fitted_model_asset_id: str | None,
+) -> tuple[bool, str | None]:
+    """Resolve the fitted-model asset and verify it is not revoked.
+
+    Returns ``(True, None)`` when NO model is named (the no-op / no-regression
+    case — existing envelopes without the field pass straight through) OR the
+    named asset exists and carries no ``attributes.revoked_at``. Returns
+    ``(False, "model_not_found")`` when the id resolves to no asset, and
+    ``(False, "model_revoked")`` when the asset's JSONB has ``revoked_at`` set.
+    Fail-closed by construction: any resolvable-but-revoked or missing model
+    refuses before the single ``driver.submit`` chokepoint runs.
+    """
+    if fitted_model_asset_id is None:
+        return True, None
+    try:
+        asset_uuid = uuid.UUID(str(fitted_model_asset_id))
+    except (ValueError, AttributeError, TypeError):
+        # An unparseable id resolves to no asset — fail closed.
+        return False, "model_not_found"
+    async with session_factory() as session:
+        db_entity = await session.get(DBEntity, asset_uuid)
+    if db_entity is None:
+        return False, "model_not_found"
+    if (db_entity.attributes or {}).get("revoked_at"):
+        return False, "model_revoked"
     return True, None
 
 
@@ -402,6 +449,30 @@ async def dispatch_envelope(
         return DispatchResult(
             status="refused",
             refusal_code=refusal_code,
+            execution_result_ids=execution_result_ids,
+        )
+
+    # Fitted-model revocation gate (#160): fail-closed consent enforcement at
+    # the same submit chokepoint. If the envelope names a fitted-model asset it
+    # MUST resolve and MUST NOT be revoked, else refuse before driver.submit().
+    # No model named → no-op (skip), preserving existing behavior. This is a
+    # pure read — never a spend — so it does not consume anything.
+    model_ok, model_refusal_code = await _check_model_not_revoked(
+        session_factory, fitted_model_asset_id=envelope.fitted_model_asset_id,
+    )
+    if not model_ok:
+        model_refuse_payload: dict[str, Any] = {
+            "operator_id": envelope.operator_id,
+            "backend_id": backend_id,
+            "refusal_code": model_refusal_code,
+            "run_id": str(run_id) if run_id is not None else None,
+        }
+        if plan_id is not None:
+            model_refuse_payload = {"plan_id": plan_id, **model_refuse_payload}
+        await event_appender("dispatch_model_refused", model_refuse_payload)
+        return DispatchResult(
+            status="refused",
+            refusal_code=model_refusal_code,
             execution_result_ids=execution_result_ids,
         )
     handle = await driver.submit(envelope)
