@@ -223,6 +223,44 @@ async def test_revoked_model_refuses_and_does_not_submit(session_factory):
     assert refusals[0]["refusal_code"] == "model_revoked"
 
 
+async def test_falsy_present_revoked_at_still_refuses(session_factory):
+    """A FALSY-but-present ``revoked_at`` (e.g. "") still refuses model_revoked.
+
+    Locks the presence semantics (``is not None``) against a regression back to
+    truthiness: a future writer (the #161 consent path) that stamps a falsy
+    sentinel must NOT silently open the gate. Written directly on the row to
+    simulate that writer — ``revoke_asset`` never emits a falsy sentinel.
+    """
+    from forge_bridge.store.models import DBEntity
+
+    registry, driver = _registry()
+    log, append = await _events()
+    grant_id = await _ratified_grant(session_factory)
+    model_id = await _fitted_model(session_factory, revoked=False)
+
+    async with session_factory() as session:
+        db_entity = await session.get(DBEntity, model_id)
+        attrs = dict(db_entity.attributes or {})
+        attrs["revoked_at"] = ""  # falsy but PRESENT — a future writer's sentinel
+        db_entity.attributes = attrs
+        await session.commit()
+
+    result = await _dispatch(
+        session_factory,
+        registry,
+        append,
+        _envelope(model_id),
+        grant_id=grant_id,
+    )
+
+    assert result.status == "refused"
+    assert result.refusal_code == "model_revoked"
+    assert driver.submits == []  # fail-closed — presence, not truthiness
+    refusals = [payload for name, payload in log if name == "dispatch_model_refused"]
+    assert len(refusals) == 1
+    assert refusals[0]["refusal_code"] == "model_revoked"
+
+
 async def test_missing_model_refuses_and_does_not_submit(session_factory):
     """An envelope naming an unknown asset refuses with model_not_found."""
     registry, driver = _registry()

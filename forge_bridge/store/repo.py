@@ -845,8 +845,10 @@ async def revoke_asset(
         raise ValueError(f"asset not found for revoke: {asset_id}")
 
     attrs = dict(db_entity.attributes or {})
-    if attrs.get("revoked_at"):
+    if attrs.get("revoked_at") is not None:
         # Already revoked — idempotent no-op; stay revoked, skip duplicate event.
+        # Presence-based (``is not None``) to stay consistent with the gate's
+        # fail-closed predicate: any non-None sentinel counts as revoked.
         return False
 
     revoked_at = datetime.now(timezone.utc).isoformat()

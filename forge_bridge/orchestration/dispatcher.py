@@ -252,7 +252,10 @@ async def _check_model_not_revoked(
         db_entity = await session.get(DBEntity, asset_uuid)
     if db_entity is None:
         return False, "model_not_found"
-    if (db_entity.attributes or {}).get("revoked_at"):
+    # Presence-based, fail-closed: any non-None ``revoked_at`` means revoked.
+    # Do NOT revert to truthiness — a falsy sentinel ("" / 0) from a future
+    # writer (the #161 consent path) would silently open the gate.
+    if (db_entity.attributes or {}).get("revoked_at") is not None:
         return False, "model_revoked"
     return True, None
 
@@ -355,6 +358,13 @@ async def dispatch_plan(
     # the single submit chokepoint, so both doors reach the identical path.
     backend_identity_triple = dict(driver.backend_identity_triple)
     inputs = [_artifact_ref(item) for item in (step.get("inputs") or [])]
+    # ponytail: ``fitted_model_asset_id`` is intentionally NOT threaded onto this
+    # plan-authored envelope yet — no fitted-model plan steps exist, so the
+    # revocation gate no-ops for all plan-driven dispatch (envelope carries no
+    # model id → ``_check_model_not_revoked`` returns the no-op pass). Upgrade
+    # path: when a fitted-model plan step lands, thread
+    # ``step[...] → fitted_model_asset_id`` here (mirroring how
+    # ``dispatch_envelope`` carries it) and the existing gate starts enforcing.
     envelope = InvocationEnvelope(
         operator_id=str(step["operator_id"]),
         inputs=inputs,
