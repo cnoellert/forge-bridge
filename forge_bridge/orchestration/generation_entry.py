@@ -28,6 +28,7 @@ from forge_bridge.orchestration.dispatcher import (
     DispatchResult,
     InvocationEnvelope,
     _advisory_grant_check,
+    _check_model_not_revoked,
     dispatch_envelope,
 )
 from forge_bridge.orchestration.drivers import GenerationDriverRegistry
@@ -118,6 +119,19 @@ async def dispatch_generation(
     )
     if not grant_ok:
         return DispatchResult(status="refused", refusal_code=refusal_code)
+
+    # ── Fitted-model revocation gate (#160) — direct-door advisory ─────────
+    # The envelope carries fitted_model_asset_id here (it is an envelope field),
+    # so mirror the model pre-check: fail-fast before envelope work if the named
+    # fitted-model asset is missing or revoked. The authoritative gate still
+    # runs at the mandatory chokepoint inside dispatch_envelope; this is the same
+    # advisory-early-refuse shape as the grant check above (no event emitted —
+    # the chokepoint owns the audit event).
+    model_ok, model_refusal_code = await _check_model_not_revoked(
+        session_factory, fitted_model_asset_id=envelope.fitted_model_asset_id,
+    )
+    if not model_ok:
+        return DispatchResult(status="refused", refusal_code=model_refusal_code)
 
     return await dispatch_envelope(
         envelope,
