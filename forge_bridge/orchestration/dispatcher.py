@@ -358,17 +358,17 @@ async def dispatch_plan(
     # the single submit chokepoint, so both doors reach the identical path.
     backend_identity_triple = dict(driver.backend_identity_triple)
     inputs = [_artifact_ref(item) for item in (step.get("inputs") or [])]
-    # ponytail: ``fitted_model_asset_id`` is intentionally NOT threaded onto this
-    # plan-authored envelope yet — no fitted-model plan steps exist, so the
-    # revocation gate no-ops for all plan-driven dispatch (envelope carries no
-    # model id → ``_check_model_not_revoked`` returns the no-op pass). Upgrade
-    # path: when a fitted-model plan step lands, thread
-    # ``step[...] → fitted_model_asset_id`` here (mirroring how
-    # ``dispatch_envelope`` carries it) and the existing gate starts enforcing.
+    # ponytail: ``fitted_model_asset_id`` is now threaded from the plan step onto
+    # this envelope, so the revocation gate enforces for plan-driven dispatch too.
+    # It stays dormant until the planner (``planner_passes.py:pass_5``) actually
+    # emits ``fitted_model_asset_id`` on a fitted-model plan step — that producer
+    # side is the remaining follow-on (out of #168 scope; no fitted-model
+    # generation flow exists yet).
     envelope = InvocationEnvelope(
         operator_id=str(step["operator_id"]),
         inputs=inputs,
         backend_identity_triple=backend_identity_triple,
+        fitted_model_asset_id=step.get("fitted_model_asset_id"),
     )
 
     provenance: dict[str, Any] = {
