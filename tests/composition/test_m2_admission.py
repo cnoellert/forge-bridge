@@ -47,6 +47,36 @@ def test_admission_accepts_slice_one_operator_ids():
     assert host_resolve_operation.returns_reference is False
     assert host_resolve_operation.no_state_mutation is True
     assert host_resolve_operation.idempotent_result is True
+    resolve_top = admit_operator("traffik.editorial.resolve_top_video_layer")
+    assert (
+        resolve_top.resolved_class
+        == "pipeline.traffik.editorial.resolve_top_video_layer"
+    )
+    assert resolve_top.dispatch_kind == "operation"
+    assert resolve_top.synchronous is True
+    assert resolve_top.returns_reference is False
+    assert resolve_top.no_state_mutation is True
+    assert resolve_top.idempotent_result is True
+    mark_range = admit_operator("traffik.editorial.mark_timecode_range")
+    assert (
+        mark_range.resolved_class
+        == "pipeline.traffik.editorial.mark_timecode_range"
+    )
+    assert mark_range.dispatch_kind == "operation"
+    assert mark_range.synchronous is True
+    assert mark_range.returns_reference is False
+    assert mark_range.no_state_mutation is True
+    assert mark_range.idempotent_result is True
+    overwrite_insert = admit_operator("traffik.editorial.overwrite_insert")
+    assert (
+        overwrite_insert.resolved_class
+        == "pipeline.traffik.editorial.overwrite_insert"
+    )
+    assert overwrite_insert.dispatch_kind == "operation"
+    assert overwrite_insert.synchronous is True
+    assert overwrite_insert.returns_reference is False
+    assert overwrite_insert.no_state_mutation is True
+    assert overwrite_insert.idempotent_result is True
     delta = admit_operator("delta_to_manifest")
     assert delta.resolved_class == "host.resolve.delta_to_manifest"
     assert delta.dispatch_kind == "host_resolve"
@@ -91,6 +121,9 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "traffik.editorial.apply_steps",
         "traffik.flame_delta.host_resolve",
         "traffik.flame_sequence.ingest_edit_state",
+        "traffik.editorial.resolve_top_video_layer",
+        "traffik.editorial.mark_timecode_range",
+        "traffik.editorial.overwrite_insert",
         "delta_to_manifest",
         "author_prompt",
         "extract_context",
