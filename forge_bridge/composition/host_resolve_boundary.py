@@ -27,6 +27,7 @@ HELD_FOR_REVIEW = "HELD_FOR_REVIEW"
 
 _TRUSTED_EXECUTORS = frozenset({
     "forge_apply_segment_delta",
+    "forge_apply_segment_insert_delta",
     "forge_apply_segment_start_frame_delta",
     "forge_apply_segment_temporal_delta",
 })
