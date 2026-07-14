@@ -143,8 +143,12 @@ def register_console_resources(
     from forge_bridge.mcp.tools import (  # noqa: PLC0415 — intentional deferred import
         ListStagedInput, GetStagedInput, ApproveStagedInput, RejectStagedInput,
         RatifyGenerationGrantInput,
+        ProposeConsentGrantInput, RatifyConsentGrantInput, BindConsentGrantInput,
+        GetConsentGrantInput, WithdrawConsentGrantInput,
         _list_staged_impl, _get_staged_impl, _approve_staged_impl, _reject_staged_impl,
         _ratify_generation_grant_impl,
+        _propose_consent_grant_impl, _ratify_consent_grant_impl, _bind_consent_grant_impl,
+        _get_consent_grant_impl, _withdraw_consent_grant_impl,
     )
 
     # Inject input model names into module globals so FastMCP's get_type_hints()
@@ -159,6 +163,11 @@ def register_console_resources(
         "ApproveStagedInput": ApproveStagedInput,
         "RejectStagedInput": RejectStagedInput,
         "RatifyGenerationGrantInput": RatifyGenerationGrantInput,
+        "ProposeConsentGrantInput": ProposeConsentGrantInput,
+        "RatifyConsentGrantInput": RatifyConsentGrantInput,
+        "BindConsentGrantInput": BindConsentGrantInput,
+        "GetConsentGrantInput": GetConsentGrantInput,
+        "WithdrawConsentGrantInput": WithdrawConsentGrantInput,
     })
 
     @mcp.tool(
@@ -285,6 +294,119 @@ def register_console_resources(
         params: RatifyGenerationGrantInput,
     ) -> str:
         return await _ratify_generation_grant_impl(params, session_factory)
+
+    # -- ConsentGrant fitted-model consent latch (#161) — 5 lifecycle tools ----
+    # Generators is a SEPARATE process, so the consent lifecycle is exposed over
+    # MCP: propose (mint terms) / ratify (operator door) / bind (fit binds the
+    # asset id) / get (verify-at-infer) / withdraw (operator door — triggers the
+    # withdrawal→revocation propagation so a withdrawn consent refuses infer).
+    # Bind to the ASSET, not the call (ADR-002 D-D); no CAS — consent is a
+    # durable latch, not a single-use spend.
+    @mcp.tool(
+        name="forge_propose_consent_grant",
+        description=(
+            "Forge: propose (mint) a fitted-model consent grant authorizing a "
+            "person's likeness to be fitted and replayed.\n\n"
+            "A reversible proposal — no binding, no revoke. Requires "
+            "owner_of_likeness; allowed_shot_scopes / forbidden_uses / valid_from "
+            "/ valid_until are optional (the validity window generators verify at "
+            "infer). Returns the 12-char grant_id.\n\n"
+            "Use this tool ONLY when:\n"
+            "- a person grants consent for likeness fitting/replay\n\n"
+            "Do NOT use this tool for:\n"
+            "- authorizing a paid generation spend → use the generation-grant tools\n"
+            "- ratifying a compiled graph-intent → use the ratify endpoint"
+        ),
+        annotations={
+            "readOnlyHint": False,
+            "idempotentHint": False,
+            "destructiveHint": False,
+        },
+    )
+    async def forge_propose_consent_grant(params: ProposeConsentGrantInput) -> str:
+        return await _propose_consent_grant_impl(params, session_factory)
+
+    @mcp.tool(
+        name="forge_ratify_consent_grant",
+        description=(
+            "Forge: ratify a fitted-model consent grant (proposed -> ratified).\n\n"
+            "The operator/policy door — consent is granted for a person here; the "
+            "fitted-model asset is bound later (forge_bind_consent_grant), once the "
+            "model exists. Requires a non-empty actor and the 12-char grant_id.\n\n"
+            "Use this tool ONLY when:\n"
+            "- the operator/policy layer approves a proposed consent grant\n\n"
+            "Do NOT use this tool for:\n"
+            "- binding the trained asset → use forge_bind_consent_grant\n"
+            "- withdrawing consent → use forge_withdraw_consent_grant"
+        ),
+        annotations={
+            "readOnlyHint": False,
+            "idempotentHint": False,
+            "destructiveHint": False,
+        },
+    )
+    async def forge_ratify_consent_grant(params: RatifyConsentGrantInput) -> str:
+        return await _ratify_consent_grant_impl(params, session_factory)
+
+    @mcp.tool(
+        name="forge_bind_consent_grant",
+        description=(
+            "Forge: bind the fitted-model asset id to a ratified consent grant.\n\n"
+            "The fit-time stamp — binds which trained asset this person's consent "
+            "authorizes (the grant is ratified before the model exists). Only on a "
+            "ratified grant; idempotent for the same asset; rejects rebinding a "
+            "different asset. Requires grant_id, asset_id (UUID), and actor.\n\n"
+            "Use this tool ONLY when:\n"
+            "- a fit produces the trained asset for a ratified consent grant\n\n"
+            "Do NOT use this tool for:\n"
+            "- ratifying consent → use forge_ratify_consent_grant"
+        ),
+        annotations={
+            "readOnlyHint": False,
+            "idempotentHint": False,
+            "destructiveHint": False,
+        },
+    )
+    async def forge_bind_consent_grant(params: BindConsentGrantInput) -> str:
+        return await _bind_consent_grant_impl(params, session_factory)
+
+    @mcp.tool(
+        name="forge_get_consent_grant",
+        description=(
+            "Forge: read a fitted-model consent grant by grant_id (verify-at-infer)."
+            "\n\nReturns the full consent shape — owner_of_likeness, identity_id "
+            "(the bound fitted-model asset), allowed_shot_scopes, forbidden_uses, "
+            "the valid_from/valid_until window, revoked (derived), and status. This "
+            "is the read generators call to verify consent before an infer.\n\n"
+            "Use this tool ONLY when:\n"
+            "- verifying consent/validity/binding for a fitted model by grant_id"
+        ),
+        annotations={"readOnlyHint": True, "idempotentHint": True},
+    )
+    async def forge_get_consent_grant(params: GetConsentGrantInput) -> str:
+        return await _get_consent_grant_impl(params, session_factory)
+
+    @mcp.tool(
+        name="forge_withdraw_consent_grant",
+        description=(
+            "Forge: withdraw a fitted-model consent grant — the hard consent gate."
+            "\n\nThe operator door: flips the grant to withdrawn AND, atomically, "
+            "revokes the bound fitted-model asset (if any) so inference immediately "
+            "refuses (#160 gate). Idempotent — re-withdrawing is a no-op. Requires a "
+            "non-empty actor and the 12-char grant_id; reason is optional.\n\n"
+            "Use this tool ONLY when:\n"
+            "- a person or policy withdraws consent for a fitted model\n\n"
+            "Do NOT use this tool for:\n"
+            "- rejecting a staged operation → use forge_reject_staged"
+        ),
+        annotations={
+            "readOnlyHint": False,
+            "idempotentHint": True,
+            "destructiveHint": True,
+        },
+    )
+    async def forge_withdraw_consent_grant(params: WithdrawConsentGrantInput) -> str:
+        return await _withdraw_consent_grant_impl(params, session_factory)
 
     # -- Phase 14 (FB-B) STAGED-07 — pending-queue snapshot resource + tool shim
     # Per D-12: ship only forge://staged/pending (proposed-only) + forge_staged_pending_read shim.

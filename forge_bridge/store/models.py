@@ -213,6 +213,9 @@ ENTITY_TYPES = frozenset({
     # Generation spend-gate (#146) — one row in the shared entities table,
     # ratified authority consumed atomically at the driver.submit() chokepoint.
     "generation_grant",
+    # Fitted-model consent latch (#161) — a person's asset-bound authorization
+    # to fit + replay their likeness; withdrawal propagates to asset revocation.
+    "consent_grant",
     # Phase 4B orchestration discriminators — PHASE-4B-ORCHESTRATION-DESIGN.md §4
     "orch_pipeline_run",
     "orch_inputs_catalog",
@@ -666,6 +669,11 @@ EVENT_TYPES = frozenset({
     "assent.failed",
     # Asset lifecycle (#160 — fitted-model consent revocation)
     "asset.revoked",
+    # Consent latch (#161 — fitted-model consent; withdrawal → asset revocation)
+    "consent_grant.proposed",
+    "consent_grant.ratified",
+    "consent_grant.bound",
+    "consent_grant.withdrawn",
 })
 
 
