@@ -90,7 +90,8 @@ def test_register_console_resources_registers_two_tool_shims(api):
     register_console_resources(mock_mcp, api._manifest_service, api)
     names = [call.kwargs.get("name") for call in mock_mcp.tool.call_args_list]
     # Phase 9 shims (2) + Phase 14 FB-B staged-ops tools (4) + STAGED-07 shim (1)
-    # + #146 generation-grant ratify tool (1) = 8 total.
+    # + #146 generation-grant ratify tool (1) + #161 consent-grant lifecycle (5)
+    # = 13 total.
     assert "forge_manifest_read" in names
     assert "forge_tools_read" in names
     assert "forge_list_staged" in names
@@ -99,7 +100,12 @@ def test_register_console_resources_registers_two_tool_shims(api):
     assert "forge_reject_staged" in names
     assert "forge_staged_pending_read" in names
     assert "forge_ratify_generation_grant" in names
-    assert len(names) == 8
+    assert "forge_propose_consent_grant" in names
+    assert "forge_ratify_consent_grant" in names
+    assert "forge_bind_consent_grant" in names
+    assert "forge_get_consent_grant" in names
+    assert "forge_withdraw_consent_grant" in names
+    assert len(names) == 13
 
 
 def test_all_resources_have_application_json_mime(api):

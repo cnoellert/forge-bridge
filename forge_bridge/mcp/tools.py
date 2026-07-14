@@ -171,6 +171,103 @@ class RatifyGenerationGrantInput(BaseModel):
         return v
 
 
+# ── ConsentGrant inputs (#161) — the fitted-model consent latch ───────────────
+# Generators is a SEPARATE process, so more of the consent lifecycle is exposed
+# over MCP than for GenerationGrant: propose (mint terms) / ratify (operator
+# door) / bind (fit binds the asset id) / get (verify-at-infer) / withdraw
+# (operator door — triggers the withdrawal→revocation propagation).
+
+
+class ProposeConsentGrantInput(BaseModel):
+    owner_of_likeness: str = Field(
+        ...,
+        min_length=1,
+        description="Attribution: the real person whose likeness this grant authorizes",
+    )
+    allowed_shot_scopes: Optional[list[str]] = Field(
+        default=None,
+        description="Scope-of-use tags (default ['this_clip_only'])",
+    )
+    forbidden_uses: Optional[list[str]] = Field(
+        default=None,
+        description="Explicit forbidden-use tags (default [])",
+    )
+    valid_from: Optional[str] = Field(
+        default=None,
+        description="ISO-8601 start of the validity window",
+    )
+    valid_until: Optional[str] = Field(
+        default=None,
+        description="ISO-8601 end of the validity window (verified by generators at infer)",
+    )
+    project_id: Optional[str] = Field(default=None, description="Project UUID (optional)")
+
+    @field_validator("owner_of_likeness")
+    @classmethod
+    def owner_not_whitespace_only(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("owner_of_likeness must not be whitespace-only")
+        return v
+
+
+class _ConsentGrantIdInput(BaseModel):
+    """Shared base: a 12-hex grant_id handle."""
+
+    grant_id: str = Field(
+        ...,
+        description="12-char consent-grant handle from a prior propose",
+    )
+
+    @field_validator("grant_id")
+    @classmethod
+    def grant_id_is_hex12(cls, v: str) -> str:
+        if not re.fullmatch(r"[a-f0-9]{12}", v):
+            raise ValueError("grant_id must be a 12-character lowercase hex string")
+        return v
+
+
+class RatifyConsentGrantInput(_ConsentGrantIdInput):
+    actor: str = Field(..., min_length=1, description="Caller identity (free string, non-empty)")
+
+    @field_validator("actor")
+    @classmethod
+    def actor_not_whitespace_only(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("actor must not be whitespace-only")
+        return v
+
+
+class BindConsentGrantInput(_ConsentGrantIdInput):
+    asset_id: str = Field(..., description="Fitted-model asset UUID bound at fit-time")
+    actor: str = Field(..., min_length=1, description="Caller identity (free string, non-empty)")
+
+    @field_validator("actor")
+    @classmethod
+    def actor_not_whitespace_only(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("actor must not be whitespace-only")
+        return v
+
+
+class GetConsentGrantInput(_ConsentGrantIdInput):
+    """Verify-at-infer read — returns the full consent shape (validity + status)."""
+
+
+class WithdrawConsentGrantInput(_ConsentGrantIdInput):
+    actor: str = Field(..., min_length=1, description="Caller identity (free string, non-empty)")
+    reason: str = Field(
+        default="consent_withdrawn",
+        description="Why consent was withdrawn (stamped on the grant + revocation)",
+    )
+
+    @field_validator("actor")
+    @classmethod
+    def actor_not_whitespace_only(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("actor must not be whitespace-only")
+        return v
+
+
 # ── Implementation functions ─────────────────────────────────────────────────
 # These functions are called from register_console_resources() closures (D-17
 # revised, Solution C).  They are intentionally underscore-prefixed to signal
@@ -327,6 +424,143 @@ async def _ratify_generation_grant_impl(
                     "code": "illegal_transition",
                     "message": str(exc),
                     "current_status": exc.from_status,
+                }
+            })
+        await session.commit()
+    return _envelope_json(grant.to_dict())
+
+
+async def _propose_consent_grant_impl(
+    params: "ProposeConsentGrantInput", session_factory,
+) -> str:
+    """Mint a proposed consent grant (#161) — reversible, no binding, no revoke."""
+    from forge_bridge.store.consent_grant_repo import ConsentGrantRepo
+    project_id_uuid: uuid.UUID | None = None
+    if params.project_id is not None:
+        try:
+            project_id_uuid = uuid.UUID(params.project_id)
+        except ValueError:
+            return json.dumps({"error": {"code": "bad_request", "message": "invalid project_id"}})
+    async with session_factory() as session:
+        grant = await ConsentGrantRepo(session).propose(
+            owner_of_likeness=params.owner_of_likeness,
+            allowed_shot_scopes=params.allowed_shot_scopes,
+            forbidden_uses=params.forbidden_uses,
+            valid_from=params.valid_from,
+            valid_until=params.valid_until,
+            project_id=project_id_uuid,
+        )
+        await session.commit()
+    return _envelope_json(grant.to_dict())
+
+
+async def _ratify_consent_grant_impl(
+    params: "RatifyConsentGrantInput", session_factory,
+) -> str:
+    """Ratify a consent grant — proposed -> ratified (#161). The operator door."""
+    from forge_bridge.store.consent_grant_repo import (
+        ConsentGrantLifecycleError,
+        ConsentGrantNotFound,
+        ConsentGrantRepo,
+    )
+    async with session_factory() as session:
+        repo = ConsentGrantRepo(session)
+        try:
+            grant = await repo.ratify(params.grant_id, actor=params.actor)
+        except ConsentGrantNotFound:
+            return json.dumps({
+                "error": {
+                    "code": "grant_not_found",
+                    "message": f"no consent_grant with grant_id {params.grant_id}",
+                }
+            })
+        except ConsentGrantLifecycleError as exc:
+            return json.dumps({
+                "error": {
+                    "code": "illegal_transition",
+                    "message": str(exc),
+                    "current_status": exc.from_status,
+                }
+            })
+        await session.commit()
+    return _envelope_json(grant.to_dict())
+
+
+async def _bind_consent_grant_impl(
+    params: "BindConsentGrantInput", session_factory,
+) -> str:
+    """Bind the fitted-model asset id to a ratified consent grant (#161).
+
+    The fit-time stamp: ``fitted_model_asset_id`` is mutable state bound here,
+    NOT in the content-hashed terms body.
+    """
+    from forge_bridge.store.consent_grant_repo import (
+        ConsentGrantBindingError,
+        ConsentGrantNotFound,
+        ConsentGrantRepo,
+    )
+    try:
+        asset_uuid = uuid.UUID(params.asset_id)
+    except ValueError:
+        return json.dumps({"error": {"code": "bad_request", "message": "invalid asset_id"}})
+    async with session_factory() as session:
+        repo = ConsentGrantRepo(session)
+        try:
+            grant = await repo.bind_asset(params.grant_id, asset_uuid, actor=params.actor)
+        except ConsentGrantNotFound:
+            return json.dumps({
+                "error": {
+                    "code": "grant_not_found",
+                    "message": f"no consent_grant with grant_id {params.grant_id}",
+                }
+            })
+        except ConsentGrantBindingError as exc:
+            return json.dumps({
+                "error": {
+                    "code": "bind_rejected",
+                    "message": str(exc),
+                    "current_status": exc.current_status,
+                }
+            })
+        await session.commit()
+    return _envelope_json(grant.to_dict())
+
+
+async def _get_consent_grant_impl(
+    params: "GetConsentGrantInput", session_factory,
+) -> str:
+    """Verify-at-infer read — returns the full consent shape (validity + status)."""
+    from forge_bridge.store.consent_grant_repo import ConsentGrantRepo
+    async with session_factory() as session:
+        grant = await ConsentGrantRepo(session).get_by_grant_id(params.grant_id)
+    if grant is None:
+        return _envelope_json(None)
+    return _envelope_json(grant.to_dict())
+
+
+async def _withdraw_consent_grant_impl(
+    params: "WithdrawConsentGrantInput", session_factory,
+) -> str:
+    """Withdraw consent (#161) — the operator door that triggers propagation.
+
+    Flips the grant to withdrawn AND, atomically in the same session, revokes the
+    bound fitted-model asset (if any) so inference immediately refuses.
+    """
+    from forge_bridge.store.consent_grant_repo import (
+        ConsentGrantNotFound,
+        ConsentGrantRepo,
+    )
+    async with session_factory() as session:
+        repo = ConsentGrantRepo(session)
+        try:
+            grant = await repo.withdraw(
+                params.grant_id, reason=params.reason, actor=params.actor,
+            )
+        except ConsentGrantNotFound:
+            return json.dumps({
+                "error": {
+                    "code": "grant_not_found",
+                    "message": f"no consent_grant with grant_id {params.grant_id}",
                 }
             })
         await session.commit()

@@ -74,7 +74,8 @@ _PR14_TOKEN_RE = re.compile(r"[a-z0-9]+")
 # Tools that run IN-PROCESS in the forge-bridge process itself.
 # KEEP IN SYNC with `forge_bridge/console/resources.py:register_console_resources`.
 # Test `test_in_process_tool_set_matches_resources_module` enforces this.
-# SEVEN names — verified 2026-04-27 against resources.py @mcp.tool registrations.
+# THIRTEEN names — verified 2026-07-14 against resources.py @mcp.tool registrations
+# (+5 consent-grant lifecycle tools, #161).
 _IN_PROCESS_FORGE_TOOLS: frozenset[str] = frozenset({
     "forge_manifest_read",
     "forge_tools_read",
@@ -84,6 +85,11 @@ _IN_PROCESS_FORGE_TOOLS: frozenset[str] = frozenset({
     "forge_reject_staged",
     "forge_staged_pending_read",
     "forge_ratify_generation_grant",
+    "forge_propose_consent_grant",
+    "forge_ratify_consent_grant",
+    "forge_bind_consent_grant",
+    "forge_get_consent_grant",
+    "forge_withdraw_consent_grant",
 })
 
 # In-process ops attached by sibling `register_with(mcp)` (forge-vision etc.):
