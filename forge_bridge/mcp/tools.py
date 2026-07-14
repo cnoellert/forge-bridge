@@ -563,6 +563,19 @@ async def _withdraw_consent_grant_impl(
                     "message": f"no consent_grant with grant_id {params.grant_id}",
                 }
             })
+        except ValueError as exc:
+            # Defense in depth: withdraw() propagates to revoke_asset(), which
+            # raises ValueError if the bound asset row is missing (e.g. deleted
+            # between bind and withdraw). Return a graceful envelope rather than a
+            # 500 — the withdraw is refused, nothing committed.
+            return json.dumps({
+                "error": {
+                    "code": "withdraw_failed",
+                    "message": (
+                        f"could not withdraw consent_grant {params.grant_id}: {exc}"
+                    ),
+                }
+            })
         await session.commit()
     return _envelope_json(grant.to_dict())
 

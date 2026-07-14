@@ -8,6 +8,7 @@ revocation atomically so the #160 gate immediately refuses inference.
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timezone
 
@@ -269,6 +270,71 @@ async def test_bind_asset_rejects_different_asset_when_bound(session_factory):
             await ConsentGrantRepo(session).bind_asset(grant_id, asset_b, actor="fit")
 
 
+# ── bind_asset asset-id validation (DT F1) ───────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_bind_asset_malformed_id_rejected_grant_stays_ratified(session_factory):
+    """A malformed asset_id is rejected at bind (house error), NOT bound.
+
+    Closes the "permanently un-withdrawable" stuck state: binding a non-UUID id
+    would make a later withdraw()'s uuid.UUID(...) raise, abort the withdraw, and
+    strand the grant. Here the bind is refused up front and the grant is left
+    cleanly ratified with no partial state.
+    """
+    grant_id = await _ratified(session_factory)
+    async with session_factory() as session:
+        with pytest.raises(ConsentGrantBindingError):
+            await ConsentGrantRepo(session).bind_asset(grant_id, "not-a-uuid", actor="fit")
+
+    # Grant is untouched — still ratified, still unbound (no partial stamp).
+    async with session_factory() as session:
+        grant = await ConsentGrantRepo(session).get_by_grant_id(grant_id)
+        assert grant.status == "ratified"
+        assert grant.fitted_model_asset_id is None
+    # No bound event was emitted.
+    types = await _event_types(session_factory, grant_id)
+    assert "consent_grant.bound" not in types
+
+
+@pytest.mark.asyncio
+async def test_bind_asset_nonexistent_id_rejected(session_factory):
+    """A well-formed but nonexistent asset_id is rejected — the row must exist."""
+    grant_id = await _ratified(session_factory)
+    missing = uuid.uuid4()  # valid UUID, but no asset row for it
+    async with session_factory() as session:
+        with pytest.raises(ConsentGrantBindingError) as exc:
+            await ConsentGrantRepo(session).bind_asset(grant_id, missing, actor="fit")
+        assert exc.value.current_status == "ratified"
+
+    async with session_factory() as session:
+        grant = await ConsentGrantRepo(session).get_by_grant_id(grant_id)
+        assert grant.status == "ratified"
+        assert grant.fitted_model_asset_id is None
+
+
+@pytest.mark.asyncio
+async def test_bind_asset_real_asset_succeeds_and_withdraw_still_propagates(session_factory):
+    """Regression: a real existing asset still binds, and a subsequent bound-grant
+    withdraw still propagates to revoke_asset + the gate refuses (F1 unbroken)."""
+    grant_id = await _ratified(session_factory)
+    asset_id = await _make_asset(session_factory)
+    async with session_factory() as session:
+        bound = await ConsentGrantRepo(session).bind_asset(grant_id, asset_id, actor="fit")
+        await session.commit()
+        assert bound.fitted_model_asset_id == str(asset_id)
+
+    async with session_factory() as session:
+        withdrawn = await ConsentGrantRepo(session).withdraw(grant_id, actor="op")
+        await session.commit()
+        assert withdrawn.status == "withdrawn"
+
+    ok, code = await _check_model_not_revoked(
+        session_factory, fitted_model_asset_id=str(asset_id),
+    )
+    assert ok is False
+    assert code == "model_revoked"
+
+
 # ── SAFETY-CRITICAL: withdrawal propagation end-to-end ───────────────────────
 
 @pytest.mark.asyncio
@@ -392,3 +458,38 @@ async def test_consent_grant_persists_as_valid_entity_type(session_factory):
         )).scalar_one()
         assert row.content_hash.startswith(grant_id)
         assert row.status == "proposed"
+
+
+# ── Withdraw MCP door: graceful error, no 500 (DT F2) ────────────────────────
+
+@pytest.mark.asyncio
+async def test_withdraw_door_returns_graceful_error_when_bound_asset_deleted(session_factory):
+    """The withdraw MCP door returns an error envelope (not a raised 500) when the
+    bound asset was deleted between bind and withdraw (revoke_asset raises)."""
+    from forge_bridge.mcp.tools import (
+        WithdrawConsentGrantInput,
+        _withdraw_consent_grant_impl,
+    )
+
+    grant_id = await _ratified(session_factory)
+    asset_id = await _make_asset(session_factory)
+    async with session_factory() as session:
+        await ConsentGrantRepo(session).bind_asset(grant_id, asset_id, actor="fit")
+        await session.commit()
+
+    # Delete the bound asset row out from under the grant.
+    async with session_factory() as session:
+        asset = await session.get(DBEntity, asset_id)
+        await session.delete(asset)
+        await session.commit()
+
+    params = WithdrawConsentGrantInput(grant_id=grant_id, actor="operator")
+    out = await _withdraw_consent_grant_impl(params, session_factory)
+    payload = json.loads(out)
+    assert "error" in payload
+    assert payload["error"]["code"] == "withdraw_failed"
+
+    # The grant was NOT flipped — the failed withdraw committed nothing.
+    async with session_factory() as session:
+        grant = await ConsentGrantRepo(session).get_by_grant_id(grant_id)
+        assert grant.status == "ratified"

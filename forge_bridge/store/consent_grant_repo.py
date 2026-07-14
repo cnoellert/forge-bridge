@@ -237,7 +237,20 @@ class ConsentGrantRepo(ContentAddressedRepo[ConsentGrant]):
           - idempotent for the SAME asset (no-op, no duplicate event);
           - reject binding a DIFFERENT asset when already bound.
         """
-        asset_id_str = str(asset_id)
+        # Validate the asset_id is a well-formed UUID up front and normalize it.
+        # A malformed id must be rejected HERE (house-style error), never bound:
+        # withdraw() later coerces the bound id via uuid.UUID(...) and a raw
+        # ValueError there aborts the withdraw + rolls the grant back to ratified,
+        # stranding it permanently un-withdrawable (fail-closed but stuck).
+        try:
+            asset_id_uuid = uuid.UUID(str(asset_id))
+        except (ValueError, AttributeError, TypeError) as exc:
+            raise ConsentGrantBindingError(
+                grant_id,
+                f"cannot bind consent_grant {grant_id} to malformed asset_id "
+                f"{asset_id!r}: not a valid UUID",
+            ) from exc
+        asset_id_str = str(asset_id_uuid)
         grant = await self.get_by_grant_id(grant_id)
         if grant is None:
             raise ConsentGrantNotFound(grant_id)
@@ -251,6 +264,21 @@ class ConsentGrantRepo(ContentAddressedRepo[ConsentGrant]):
                 grant_id,
                 f"cannot bind asset to consent_grant {grant_id} in status "
                 f"{db_entity.status!r}; a grant must be ratified to bind",
+                current_status=db_entity.status,
+            )
+
+        # Assert the fitted-model asset row actually exists (and is an asset).
+        # bind_asset runs at fit-time AFTER the asset is created, so it MUST exist
+        # at bind — asserting it does not break the "ratified before asset exists"
+        # flow (ratify precedes fit; bind follows asset creation). Binding a
+        # nonexistent / non-asset id would strand the grant the same way a
+        # malformed id does: withdraw()'s revoke_asset raises on the missing row.
+        asset_entity = await self.session.get(DBEntity, asset_id_uuid)
+        if asset_entity is None or asset_entity.entity_type != "asset":
+            raise ConsentGrantBindingError(
+                grant_id,
+                f"cannot bind consent_grant {grant_id} to asset {asset_id_str}: "
+                f"no such asset entity",
                 current_status=db_entity.status,
             )
 
