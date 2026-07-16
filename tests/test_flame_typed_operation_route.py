@@ -58,6 +58,10 @@ def _post_once(bridge, payload: object) -> tuple[int, dict]:
     (
         ("shot_resource_load", "_exec_typed_host_load_on_main_thread"),
         ("host_graph_read", "_exec_typed_host_graph_read_on_main_thread"),
+        (
+            "host_graph_mutation",
+            "_exec_typed_host_graph_mutation_on_main_thread",
+        ),
     ),
 )
 def test_root_accepts_only_allowlisted_typed_operations(
@@ -122,6 +126,41 @@ def test_typed_host_graph_read_runs_via_flame_plugin(bridge, monkeypatch) -> Non
 
     assert result == {"kind": "pipeline.host_graph.read_dispatch_result"}
     assert captured["payload"] == {"scope": {"dcc": "flame"}}
+    assert len(captured["plugins"]) == 1
+    assert isinstance(captured["plugins"][0], FlamePlugin)
+
+
+def test_typed_host_graph_mutation_runs_via_flame_plugin(
+    bridge,
+    monkeypatch,
+) -> None:
+    captured: dict = {}
+    dispatch_module = ModuleType("forge_core.host_graph.routing")
+
+    def execute(payload: dict, *, plugins: list[object]) -> dict:
+        captured["payload"] = payload
+        captured["plugins"] = plugins
+        return {"kind": "pipeline.host_graph.mutation_dispatch_result"}
+
+    dispatch_module.execute_host_graph_mutation_dispatch = execute
+    plugin_module = ModuleType("forge_flame.plugin")
+
+    class FlamePlugin:
+        pass
+
+    plugin_module.FlamePlugin = FlamePlugin
+    monkeypatch.setattr(bridge, "_bootstrap_forge_runtime", lambda: None)
+    monkeypatch.setitem(sys.modules, "forge_core.host_graph.routing", dispatch_module)
+    monkeypatch.setitem(sys.modules, "forge_flame.plugin", plugin_module)
+
+    result = bridge._execute_typed_host_graph_mutation(
+        {"operation_type": "pipeline.host_graph.ensure_node"}
+    )
+
+    assert result == {"kind": "pipeline.host_graph.mutation_dispatch_result"}
+    assert captured["payload"] == {
+        "operation_type": "pipeline.host_graph.ensure_node"
+    }
     assert len(captured["plugins"]) == 1
     assert isinstance(captured["plugins"][0], FlamePlugin)
 

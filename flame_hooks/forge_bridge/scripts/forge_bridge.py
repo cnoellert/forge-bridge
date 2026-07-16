@@ -317,6 +317,15 @@ def _execute_typed_host_graph_read(params):
     return execute_host_graph_read_dispatch(params, plugins=[FlamePlugin()])
 
 
+def _execute_typed_host_graph_mutation(params):
+    """Execute one allowlisted host-graph mutation operation in Flame."""
+    _bootstrap_forge_runtime()
+    from forge_core.host_graph.routing import execute_host_graph_mutation_dispatch
+    from forge_flame.plugin import FlamePlugin
+
+    return execute_host_graph_mutation_dispatch(params, plugins=[FlamePlugin()])
+
+
 def _bootstrap_forge_runtime():
     """Make an installed or source Forge runtime importable inside Flame."""
     repo_root = os.environ.get("FORGE_REPO_ROOT", "").strip()
@@ -409,6 +418,15 @@ def _exec_typed_host_graph_read_on_main_thread(params, timeout=None):
         timeout=timeout,
     )
 
+
+def _exec_typed_host_graph_mutation_on_main_thread(params, timeout=None):
+    """Run a host-graph mutation on Flame's main thread."""
+    return _exec_typed_operation_on_main_thread(
+        _execute_typed_host_graph_mutation,
+        params,
+        timeout=timeout,
+    )
+
 # ========================================================================== #
 # HTTP Server
 # ========================================================================== #
@@ -493,7 +511,11 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(400, {"error": "Request body must be an object"})
             return
         op_name = data.get("op")
-        if op_name not in {"host_graph_read", "shot_resource_load"}:
+        if op_name not in {
+            "host_graph_mutation",
+            "host_graph_read",
+            "shot_resource_load",
+        }:
             self._send_json(400, {"error": "Unknown operation"})
             return
         params = data.get("params")
@@ -507,6 +529,11 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             return
         if op_name == "shot_resource_load":
             result = _exec_typed_host_load_on_main_thread(
+                params,
+                timeout=timeout,
+            )
+        elif op_name == "host_graph_mutation":
+            result = _exec_typed_host_graph_mutation_on_main_thread(
                 params,
                 timeout=timeout,
             )
