@@ -50,7 +50,8 @@ BRIDGE_HOST = os.environ.get("FORGE_BRIDGE_HOST", "127.0.0.1")
 BRIDGE_PORT = int(os.environ.get("FORGE_BRIDGE_PORT", "9999"))
 BRIDGE_ENABLED = os.environ.get("FORGE_BRIDGE_ENABLED", "1") != "0"
 BRIDGE_ANNOUNCE = os.environ.get("FORGE_BRIDGE_ANNOUNCE", "1") != "0"
-EXEC_TIMEOUT = 60  # seconds to wait for result
+# Long host operations can exceed one minute. Requests may override this value.
+EXEC_TIMEOUT = int(os.environ.get("FORGE_BRIDGE_EXEC_TIMEOUT", "300"))
 
 _REGISTRY_HTTP_URL = os.environ.get(
     "FORGE_SESSION_REGISTRY_HTTP_URL",
@@ -259,7 +260,7 @@ def _execute_code(code):
 # Write detection — route mutations to main thread
 # ========================================================================== #
 
-def _exec_on_main_thread(code):
+def _exec_on_main_thread(code, timeout=None):
     """Execute code on Flame's main thread via schedule_idle_event.
 
     Returns result dict.  Blocks until execution completes or times out.
@@ -282,14 +283,131 @@ def _exec_on_main_thread(code):
             "traceback": None,
         }
 
-    event.wait(timeout=EXEC_TIMEOUT)
+    wait_s = EXEC_TIMEOUT if timeout is None else timeout
+    event.wait(timeout=wait_s)
     if not result_holder:
         return {
-            "error": "Main-thread execution timeout — Flame may be busy.",
+            "error": (
+                f"Main-thread execution timeout after {wait_s}s — "
+                "Flame may be busy or the operation is still running."
+            ),
             "result": None, "stdout": "", "stderr": "",
             "traceback": None,
         }
     return result_holder
+
+
+def _execute_typed_host_load(params):
+    """Execute one allowlisted typed load with Pipeline's Flame adapter."""
+    _bootstrap_forge_runtime()
+    from forge_core.shot_resources.host_load_dispatch import (
+        execute_host_load_dispatch,
+    )
+    from forge_flame.plugin import FlamePlugin
+
+    return execute_host_load_dispatch(params, plugins=[FlamePlugin()])
+
+
+def _execute_typed_host_graph_read(params):
+    """Execute one allowlisted read-only host-graph operation in Flame."""
+    _bootstrap_forge_runtime()
+    from forge_core.host_graph.routing import execute_host_graph_read_dispatch
+    from forge_flame.plugin import FlamePlugin
+
+    return execute_host_graph_read_dispatch(params, plugins=[FlamePlugin()])
+
+
+def _bootstrap_forge_runtime():
+    """Make an installed or source Forge runtime importable inside Flame."""
+    repo_root = os.environ.get("FORGE_REPO_ROOT", "").strip()
+    if repo_root:
+        if not os.path.isdir(repo_root):
+            raise RuntimeError(
+                f"FORGE_REPO_ROOT is not a directory: {repo_root}"
+            )
+        if repo_root not in sys.path:
+            sys.path.insert(0, repo_root)
+
+    conda_site = os.environ.get("FORGE_CONDA_SITE", "").strip()
+    if not conda_site:
+        conda_site_file = os.path.join("/opt", "forge", "conda_site")
+        try:
+            with open(conda_site_file, encoding="utf-8") as handle:
+                conda_site = handle.read().strip()
+        except FileNotFoundError:
+            if not repo_root:
+                raise RuntimeError(
+                    "Forge runtime is unavailable: set FORGE_REPO_ROOT or "
+                    "install Forge so /opt/forge/conda_site exists."
+                )
+
+    if conda_site:
+        if not os.path.isdir(conda_site):
+            raise RuntimeError(
+                f"FORGE_CONDA_SITE is not a directory: {conda_site}"
+            )
+        import site
+
+        site.addsitedir(conda_site)
+
+
+def _exec_typed_operation_on_main_thread(execute, params, timeout=None):
+    """Run one typed operation on Flame's main thread."""
+    wait_s = EXEC_TIMEOUT if timeout is None else timeout
+    result_holder = {}
+    event = threading.Event()
+
+    def _run():
+        try:
+            result_holder["response"] = {"result": execute(params)}
+        except Exception as exc:
+            result_holder["response"] = {
+                "result": None,
+                "error": f"{type(exc).__name__}: {exc}",
+                "traceback": traceback.format_exc(),
+            }
+        finally:
+            event.set()
+
+    try:
+        import flame as _fl
+        _fl.schedule_idle_event(_run)
+    except Exception as exc:
+        return {
+            "result": None,
+            "error": f"Cannot schedule main-thread execution: {exc}",
+            "traceback": None,
+        }
+
+    event.wait(timeout=wait_s)
+    if "response" not in result_holder:
+        return {
+            "result": None,
+            "error": (
+                f"Main-thread execution timeout after {wait_s}s — "
+                "Flame may be busy or the operation is still running."
+            ),
+            "traceback": None,
+        }
+    return result_holder["response"]
+
+
+def _exec_typed_host_load_on_main_thread(params, timeout=None):
+    """Run a typed load on Flame's main thread and return its wire envelope."""
+    return _exec_typed_operation_on_main_thread(
+        _execute_typed_host_load,
+        params,
+        timeout=timeout,
+    )
+
+
+def _exec_typed_host_graph_read_on_main_thread(params, timeout=None):
+    """Run a host-graph read on Flame's main thread."""
+    return _exec_typed_operation_on_main_thread(
+        _execute_typed_host_graph_read,
+        params,
+        timeout=timeout,
+    )
 
 # ========================================================================== #
 # HTTP Server
@@ -320,6 +438,8 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/exec":
             self._handle_exec()
+        elif self.path == "/":
+            self._handle_operation()
         elif self.path == "/reset":
             _init_namespace()
             self._send_json(200, {"result": "Namespace reset"})
@@ -344,6 +464,7 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             data = json.loads(body)
             code = data.get("code", "")
             use_main = data.get("main_thread", False)
+            req_timeout = data.get("timeout")
         except Exception as e:
             self._send_json(400, {"error": f"Bad request: {e}"})
             return
@@ -353,10 +474,47 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             return
 
         if use_main:
-            result = _exec_on_main_thread(code)
+            result = _exec_on_main_thread(code, timeout=req_timeout)
         else:
             result = _execute_code(code)
 
+        self._send_json(200, result)
+
+    def _handle_operation(self):
+        """Dispatch the narrow typed-operation protocol used by Pipeline."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            data = json.loads(self.rfile.read(length).decode("utf-8"))
+        except Exception as exc:
+            self._send_json(400, {"error": f"Bad request: {exc}"})
+            return
+
+        if not isinstance(data, dict):
+            self._send_json(400, {"error": "Request body must be an object"})
+            return
+        op_name = data.get("op")
+        if op_name not in {"host_graph_read", "shot_resource_load"}:
+            self._send_json(400, {"error": "Unknown operation"})
+            return
+        params = data.get("params")
+        if not isinstance(params, dict):
+            self._send_json(400, {"error": "params must be an object"})
+            return
+
+        timeout = data.get("timeout")
+        if timeout is not None and not isinstance(timeout, (int, float)):
+            self._send_json(400, {"error": "timeout must be numeric"})
+            return
+        if op_name == "shot_resource_load":
+            result = _exec_typed_host_load_on_main_thread(
+                params,
+                timeout=timeout,
+            )
+        else:
+            result = _exec_typed_host_graph_read_on_main_thread(
+                params,
+                timeout=timeout,
+            )
         self._send_json(200, result)
 
     def _send_json(self, code, data):
