@@ -1527,6 +1527,14 @@ class LLMRouter:
         The native client takes host without the OpenAI /v1 suffix; we strip it
         from self.local_url if present (default self.local_url is
         "http://localhost:11434/v1" and the daemon is at "http://localhost:11434").
+
+        Fast-fail connect timeout (SEED-FAST-FAIL-LLM-CONNECT-TIMEOUT-V1.5+,
+        landed via bridge #173): ollama.AsyncClient passes ``timeout`` straight
+        through to the underlying httpx.AsyncClient (verified against ollama
+        0.6.1), so an explicit httpx.Timeout converts the ~75s OS-level TCP
+        connect stall on an unreachable host into a 5s explicit failure. The
+        read timeout stays at 120s — the LLM-loop wall-clock cap — so
+        slow-but-responsive models are unaffected. No retries.
         """
         if self._local_native_client is None:
             try:
@@ -1536,10 +1544,15 @@ class LLMRouter:
                     "ollama package not installed. "
                     "Install LLM support: pip install forge-bridge[llm]"
                 )
+            import httpx  # hard dependency of ollama; already installed
+
             host = self.local_url
             if host.endswith("/v1"):
                 host = host[:-3]
-            self._local_native_client = AsyncClient(host=host)
+            self._local_native_client = AsyncClient(
+                host=host,
+                timeout=httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0),
+            )
         return self._local_native_client
 
     # ------------------------------------------------------------------
