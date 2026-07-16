@@ -66,6 +66,36 @@ if command -v python3 >/dev/null 2>&1; then
   fi
 fi
 
+# --- Stray-hook hygiene (bridge #173) -------------------------------------
+# Flame imports every .py under its hooks paths on rescan. A stray
+# forge_llm_test.py from an earlier deploy generation runs network integration
+# tests at module import time, blocking Flame's main thread 60s+ when the LLM
+# host is down. Remove that known hazard outright; warn about anything else.
+if [ -f "${TARGET_DIR}/forge_llm_test.py" ]; then
+  rm -f "${TARGET_DIR}/forge_llm_test.py"
+  # find is nullglob-safe under `set -euo pipefail` (a bare glob would not be).
+  find "${TARGET_DIR}/__pycache__" -maxdepth 1 -name 'forge_llm_test.*.pyc' -delete 2>/dev/null || true
+  echo "[forge-bridge] removed stray ${TARGET_DIR}/forge_llm_test.py — known import-time-network hazard that blocks Flame's main thread on hook rescan (bridge #173)"
+fi
+
+# Warn about (but do NOT delete) any other .py files here: on older flat-layout
+# deployments this directory doubles as projekt-forge's shared-module home (its
+# hooks resolve ../../forge_bridge/scripts), so an unconditional sweep would
+# break live consumers on those machines.
+OTHER_PY="$(find "${TARGET_DIR}" -maxdepth 1 -name '*.py' ! -name 'forge_bridge.py' 2>/dev/null || true)"
+if [ -n "${OTHER_PY}" ]; then
+  echo "" >&2
+  echo "[forge-bridge] WARNING: unexpected .py files found in ${TARGET_DIR}:" >&2
+  printf '%s\n' "${OTHER_PY}" | while IFS= read -r f; do
+    echo "  ${f}" >&2
+  done
+  echo "[forge-bridge] Flame imports every .py under its hooks paths on rescan (bridge #173)." >&2
+  echo "[forge-bridge] Verify none of these execute anything (especially network calls) at import time." >&2
+  echo "[forge-bridge] Left in place: shared modules may live here on older flat-layout deployments." >&2
+  echo "" >&2
+fi
+# ---------------------------------------------------------------------------
+
 ls -l "${TARGET_DIR}/forge_bridge.py"
 
 cat <<'NEXT'

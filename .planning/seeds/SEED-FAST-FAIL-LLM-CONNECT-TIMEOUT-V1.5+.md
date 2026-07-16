@@ -63,3 +63,7 @@ Verify at fix time:
 ## Why deferred
 
 A.6's authorization boundary scoped it to runtime-integrity classification. The connect-timeout configuration is UX, not runtime correctness — it does not affect whether the daemon is structurally sound. Out of A.6 scope by the spec's own out-of-scope list. Best landed during A.5 resumption or as part of a v1.5 chat-reliability polish pass.
+
+## LANDED
+
+**2026-07-16** — landed via the PR for bridge #173 (hook-rescan wedge). `LLMRouter._get_local_native_client` now constructs `ollama.AsyncClient` with an explicit `httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0)` (verified pass-through to the underlying httpx client on ollama 0.6.1); no retries, cloud client untouched; fast-fail verified by `tests/llm/test_connect_timeout.py` against the seed's `http://127.0.0.1:65535` host.
