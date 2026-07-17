@@ -11,6 +11,10 @@ from forge_contracts.generation import GenerationCapabilityFacts
 from pydantic import ValidationError
 
 from forge_bridge.orchestration.errors import PlannerRefusalError
+from forge_bridge.orchestration.request_reference_inventory import (
+    RequestReferenceInventory,
+    evaluate_reference_requirements,
+)
 from forge_bridge.store.orch_capability_snapshot_repo import CapabilitySnapshotRepo
 from forge_bridge.store.orch_inputs_catalog_repo import InputsCatalogRepo
 from forge_bridge.store.orch_locked_intent_repo import LockedIntentRepo
@@ -99,6 +103,7 @@ async def pass_1_validate_completeness(planner: Planner, ctx: PlanningContext) -
                 f"Inputs catalog {ctx.inputs_catalog_id} not found",
             )
         ctx.inputs_catalog = catalog.attributes
+    ctx.reference_inventory = RequestReferenceInventory.from_inputs_catalog(ctx.inputs_catalog)
 
     if ctx.capability_snapshot_id is None:
         snapshots = []
@@ -171,6 +176,20 @@ async def pass_2_filter_candidates(planner: Planner, ctx: PlanningContext) -> No
             continue
         backend_id = backend_id_from_snapshot_entry(entry)
         caps = _capabilities(entry)
+        facts = _safe_generation_facts(caps)
+
+        if facts is not None:
+            reference_feasibility = evaluate_reference_requirements(
+                facts.reference_requirements,
+                ctx.reference_inventory,
+            )
+            if not reference_feasibility.feasible:
+                logger.debug(
+                    "backend %s rejected by request reference policy: %s",
+                    backend_id,
+                    reference_feasibility.reason_codes,
+                )
+                continue
 
         if deliverable.get("requires_first_frame") and not caps.get(
             "first_frame_guarantee", False
