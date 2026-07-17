@@ -41,7 +41,7 @@ import logging
 import uuid
 from collections import defaultdict
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Callable, Coroutine
+from typing import AsyncGenerator, Callable
 
 import websockets
 import websockets.asyncio.client as ws_asyncio
@@ -49,7 +49,7 @@ from websockets.connection import State as WsState
 
 from forge_bridge.server.protocol import (
     Message, MsgType, ErrorCode,
-    hello, ping, bye, subscribe as make_subscribe, unsubscribe as make_unsubscribe,
+    hello, bye, subscribe as make_subscribe, unsubscribe as make_unsubscribe,
 )
 
 logger = logging.getLogger(__name__)
@@ -188,7 +188,7 @@ class AsyncClient:
     async def stop(self) -> None:
         """Disconnect cleanly."""
         self._stopped = True
-        self._auto_reconnect = False
+        self.auto_reconnect = False
 
         if self._ws and getattr(self._ws, 'state', None) == WsState.OPEN:
             try:
