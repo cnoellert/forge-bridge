@@ -525,6 +525,11 @@ app.command(
 )(_author.author_cmd)
 
 app.command(
+    "author-targets",
+    help="List discovered downstream generator targets for prompt authoring.",
+)(_author.author_targets_cmd)
+
+app.command(
     "qc",
     help=(
         "Apply a manual QC note as a derived authoring run, or approve a run."

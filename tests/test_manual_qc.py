@@ -5,7 +5,11 @@ from typing import Any
 
 import pytest
 
-from forge_contracts import AuthoringTarget, BackendIdentityTriple
+from forge_contracts import (
+    AuthoringTarget,
+    BackendIdentityTriple,
+    GenerationCapabilityFacts,
+)
 
 from forge_bridge.orchestration.drivers import (
     DriverPollResult,
@@ -16,6 +20,7 @@ from forge_bridge.orchestration.engine import GraphEngine
 from forge_bridge.orchestration.manual_qc import approve, revise, start_author
 from forge_bridge.orchestration.dispatcher import InvocationEnvelope
 from forge_bridge.orchestration.replay import RUN_LINEAGE_REL_KEYS
+from forge_bridge.orchestration.registration import ToolRegistration, ToolRegistry
 from forge_bridge.store.orchestration_lifecycle_state_repo import (
     OrchestrationLifecycleStateRepo,
 )
@@ -71,6 +76,19 @@ class _AuthorDriver:
         )
 
 
+class _TargetDriver:
+    backend_identity_triple = _AUTHORING_TARGET.backend_identity_triple.model_dump(
+        mode="json"
+    )
+    backend_id = "comfyui.seedance_2_0"
+
+    async def submit(self, _invocation):  # pragma: no cover - target is not rendered here
+        raise NotImplementedError
+
+    async def poll(self, _artifact):  # pragma: no cover - target is not rendered here
+        raise NotImplementedError
+
+
 def _correction_from(invocation: InvocationEnvelope) -> str | None:
     for ref in invocation.inputs:
         note = ref.metadata.get("qc_correction")
@@ -92,6 +110,26 @@ def _registry(driver: _AuthorDriver) -> GenerationDriverRegistry:
     registry = GenerationDriverRegistry()
     registry.register_driver(driver)
     return registry
+
+
+def _target_catalog(registry: GenerationDriverRegistry) -> ToolRegistry:
+    tools = ToolRegistry(generation_driver_registry=registry)
+    tools.register(
+        ToolRegistration(
+            tool_id="forge_generators.generate_video_from_image.comfyui.seedance_2_0",
+            family="generation",
+            payload_family="generation.test",
+            schema={"type": "object"},
+            capabilities={
+                "operator_id": _AUTHORING_TARGET.operator_id,
+                "generation_facts": GenerationCapabilityFacts(
+                    backend_identity=_AUTHORING_TARGET.backend_identity_triple
+                ).model_dump(mode="json"),
+            },
+        ),
+        sibling_name="test-generators",
+    )
+    return tools
 
 
 async def test_manual_qc_author_revise_and_approve_round_trip(session_factory, tmp_path):
@@ -182,6 +220,31 @@ async def test_manual_qc_start_requires_author_driver(session_factory):
         raise AssertionError("expected missing author driver failure")
 
 
+async def test_manual_qc_resolves_target_from_discovered_catalog(
+    session_factory,
+    tmp_path,
+):
+    author_driver = _AuthorDriver()
+    registry = _registry(author_driver)
+    registry.register_driver(_TargetDriver())
+
+    result = await start_author(
+        "author motion for this beat",
+        session_factory=session_factory,
+        driver_registry=registry,
+        tool_registry=_target_catalog(registry),
+        event_appender=(await _events())[1],
+        data_root=tmp_path,
+        target_operator="generate_video_from_image",
+        target_backend="comfyui.seedance_2_0",
+    )
+
+    assert result.authoring_target == _AUTHORING_TARGET.model_dump(mode="json")
+    assert author_driver.submissions[0].inputs[0].metadata["scalars"]["target"] == (
+        _AUTHORING_TARGET.model_dump(mode="json")
+    )
+
+
 async def test_manual_qc_rejects_malformed_authoring_target_before_runtime(
     session_factory,
 ):
@@ -190,4 +253,13 @@ async def test_manual_qc_rejects_malformed_authoring_target_before_runtime(
             "make something",
             session_factory=session_factory,
             authoring_target={"operator_id": "generate_still"},
+        )
+
+
+async def test_manual_qc_rejects_unpaired_injected_tool_registry(session_factory):
+    with pytest.raises(ValueError, match="matching driver_registry"):
+        await start_author(
+            "make something",
+            session_factory=session_factory,
+            tool_registry=ToolRegistry(),
         )
