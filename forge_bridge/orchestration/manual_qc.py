@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from forge_bridge import __version__
 from forge_bridge.orchestration.author_driver import OllamaAuthorDriver
+from forge_bridge.orchestration.authoring_targets import resolve_authoring_target
 from forge_bridge.orchestration.discovery import (
     make_db_event_appender,
     register_all_siblings,
@@ -88,6 +89,7 @@ class _Runtime:
     session_factory: async_sessionmaker[AsyncSession]
     driver_registry: GenerationDriverRegistry
     event_appender: Callable[[str, dict], Awaitable[None]]
+    tool_registry: ToolRegistry
 
 
 async def start_author(
@@ -98,21 +100,36 @@ async def start_author(
     event_appender: Callable[[str, dict], Awaitable[None]] | None = None,
     data_root: Path | None = None,
     authoring_target: AuthoringTarget | dict[str, Any] | None = None,
+    target_operator: str | None = None,
+    target_backend: str | None = None,
+    tool_registry: ToolRegistry | None = None,
 ) -> ManualQCResult:
     """Create, dispatch, poll, and pause a single ``author_prompt`` run."""
 
     clean_intent = intent.strip()
     if not clean_intent:
         raise ValueError("intent must be a non-empty string")
+    if authoring_target is not None and target_operator is not None:
+        raise ValueError("pass authoring_target or target_operator, not both")
+    if target_backend is not None and target_operator is None:
+        raise ValueError("target_backend requires target_operator")
     target = _normalize_authoring_target(authoring_target)
-    target_wire: str | dict[str, Any] = (
-        target.model_dump(mode="json") if target is not None else AUTHOR_TARGET
-    )
 
     runtime = await _runtime(
         session_factory=session_factory,
         driver_registry=driver_registry,
         event_appender=event_appender,
+        tool_registry=tool_registry,
+    )
+    if target_operator is not None:
+        target = resolve_authoring_target(
+            runtime.tool_registry,
+            runtime.driver_registry,
+            operator_id=target_operator,
+            backend_id=target_backend,
+        )
+    target_wire: str | dict[str, Any] = (
+        target.model_dump(mode="json") if target is not None else AUTHOR_TARGET
     )
     backend_id, triple = _select_author_backend(runtime.driver_registry)
     data_root = data_root or DEFAULT_DATA_ROOT
@@ -322,16 +339,20 @@ async def _runtime(
     session_factory: async_sessionmaker[AsyncSession] | None,
     driver_registry: GenerationDriverRegistry | None,
     event_appender: Callable[[str, dict], Awaitable[None]] | None,
+    tool_registry: ToolRegistry | None = None,
 ) -> _Runtime:
+    if driver_registry is None and tool_registry is not None:
+        raise ValueError("tool_registry requires a matching driver_registry")
     factory = session_factory or get_async_session_factory()
     registry = driver_registry
     appender = event_appender or make_db_event_appender(factory)
+    tools = tool_registry
     if registry is None:
         registry = GenerationDriverRegistry()
-        tool_registry = ToolRegistry(generation_driver_registry=registry)
+        tools = tools or ToolRegistry(generation_driver_registry=registry)
         await register_all_siblings(
             resolve_siblings(),
-            tool_registry=tool_registry,
+            tool_registry=tools,
             event_appender=appender,
             bridge_version=__version__,
         )
@@ -341,7 +362,8 @@ async def _runtime(
         # ZERO federation siblings present. Only the default (registry is None)
         # path gets it — a caller-supplied registry stays exactly as passed.
         _register_bridge_author_driver(registry)
-    return _Runtime(factory, registry, appender)
+    tools = tools or ToolRegistry(generation_driver_registry=registry)
+    return _Runtime(factory, registry, appender, tools)
 
 
 def _register_bridge_author_driver(registry: GenerationDriverRegistry) -> None:

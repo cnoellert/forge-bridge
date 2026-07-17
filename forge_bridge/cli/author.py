@@ -12,6 +12,9 @@ from rich.table import Table
 
 from forge_bridge.cli.render import HEADER_STYLE, TOOLS_BOX, make_console
 from forge_bridge.orchestration import manual_qc
+from forge_bridge.orchestration.authoring_targets import (
+    discover_authoring_target_options,
+)
 
 
 def author_cmd(
@@ -19,6 +22,20 @@ def author_cmd(
         str,
         typer.Argument(help="Single-beat text intent to author."),
     ],
+    target_operator: Annotated[
+        str | None,
+        typer.Option(
+            "--target-operator",
+            help="Downstream generation operator this prompt is authored for.",
+        ),
+    ] = None,
+    target_backend: Annotated[
+        str | None,
+        typer.Option(
+            "--target-backend",
+            help="Exact discovered backend id; required when the operator is ambiguous.",
+        ),
+    ] = None,
     as_json: Annotated[
         bool,
         typer.Option("--json", help="Emit JSON envelope to stdout."),
@@ -26,8 +43,22 @@ def author_cmd(
 ) -> None:
     """Author a text prompt and pause the run for manual QC."""
 
+    if target_backend is not None and target_operator is None:
+        _emit_error(
+            "invalid_args",
+            "--target-backend requires --target-operator",
+            as_json=as_json,
+        )
+        raise typer.Exit(code=1)
+
+    kwargs = {}
+    if target_operator is not None:
+        kwargs["target_operator"] = target_operator
+    if target_backend is not None:
+        kwargs["target_backend"] = target_backend
+
     try:
-        result = asyncio.run(manual_qc.start_author(intent))
+        result = asyncio.run(manual_qc.start_author(intent, **kwargs))
     except Exception as exc:  # noqa: BLE001 - CLI boundary maps to stable envelope
         _emit_error("author_failed", str(exc), as_json=as_json)
         raise typer.Exit(code=1)
@@ -37,6 +68,45 @@ def author_cmd(
         sys.stdout.write(json.dumps(body) + "\n")
         return
     _render_author_result(result.to_dict())
+
+
+def author_targets_cmd(
+    operator: Annotated[
+        str | None,
+        typer.Option("--operator", help="Filter targets by generation operator id."),
+    ] = None,
+    as_json: Annotated[
+        bool,
+        typer.Option("--json", help="Emit JSON envelope to stdout."),
+    ] = False,
+) -> None:
+    """List discovered downstream targets available for prompt authoring."""
+
+    try:
+        options = asyncio.run(discover_authoring_target_options(operator_id=operator))
+    except Exception as exc:  # noqa: BLE001 - CLI boundary maps to stable envelope
+        _emit_error("target_discovery_failed", str(exc), as_json=as_json)
+        raise typer.Exit(code=1)
+
+    rows = [option.to_dict() for option in options]
+    body = {"ok": True, "data": {"targets": rows, "count": len(rows)}}
+    if as_json:
+        sys.stdout.write(json.dumps(body) + "\n")
+        return
+
+    console = make_console()
+    table = Table(box=TOOLS_BOX, header_style=HEADER_STYLE)
+    table.add_column("Operator")
+    table.add_column("Backend")
+    table.add_column("Description")
+    for row in rows:
+        target = row["target"]
+        table.add_row(
+            str(target["operator_id"]),
+            str(row["backend_id"]),
+            str(row.get("summary") or row.get("label") or ""),
+        )
+    console.print(table)
 
 
 def qc_cmd(
