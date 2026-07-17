@@ -6,9 +6,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
+from pydantic import BaseModel
 
 from forge_bridge.composition.boundary import (
     MCPToolBoundary,
+    StaticScalarCollisionError,
     UnsupportedCompositionNodeError,
 )
 from forge_bridge.composition.compiler import compile_operator_sequence
@@ -18,6 +22,11 @@ from forge_bridge.composition.node_result import NodeResult
 from forge_bridge.graph.ports import PortContract, PortTopology
 
 _FIXTURE_DIR = Path(__file__).parent / "fixtures"
+
+
+class _GreenscreenInput(BaseModel):
+    shot_id: str
+    clip_ref: str
 
 
 class _FakeMCP:
@@ -250,17 +259,26 @@ async def test_mcp_boundary_null_error_field_is_not_error_status():
 async def test_compiled_plan_scalars_lower_to_tool_kwargs():
     graph = compile_operator_sequence([{
         "operator_id": "forge_is_greenscreen",
-        "inputs": [{
-            "artifact_id": "plate:gs_010",
-            "artifact_type": "plate",
-            "metadata": {
-                "role": "source_plate",
-                "scalars": {
-                    "shot_id": "gs_010",
-                    "clip_ref": "mock://perception/is_greenscreen/gs_010_true",
+        "inputs": [
+            {
+                "artifact_id": "shot:gs_010",
+                "artifact_type": "shot",
+                "metadata": {
+                    "role": "shot_identity",
+                    "scalars": {"shot_id": "gs_010"},
                 },
             },
-        }],
+            {
+                "artifact_id": "plate:gs_010",
+                "artifact_type": "plate",
+                "metadata": {
+                    "role": "source_plate",
+                    "scalars": {
+                        "clip_ref": "mock://perception/is_greenscreen/gs_010_true",
+                    },
+                },
+            },
+        ],
         "output_artifact_id": "greenscreen-assessment:gs_010",
     }])
     fake = _GreenscreenRequiredFakeMCP()
@@ -278,6 +296,45 @@ async def test_compiled_plan_scalars_lower_to_tool_kwargs():
             },
         )
     ]
+
+
+@pytest.mark.parametrize("second_value", ["gs_010", "gs_020"])
+async def test_compiled_plan_duplicate_static_scalar_refuses_before_dispatch(
+    second_value,
+):
+    graph = compile_operator_sequence([{
+        "operator_id": "forge_is_greenscreen",
+        "inputs": [
+            {
+                "artifact_id": "shot:gs_010",
+                "artifact_type": "shot",
+                "metadata": {"scalars": {"shot_id": "gs_010"}},
+            },
+            {
+                "artifact_id": "plate:gs_010",
+                "artifact_type": "plate",
+                "metadata": {
+                    "scalars": {
+                        "shot_id": second_value,
+                        "clip_ref": "mock://perception/is_greenscreen/gs_010_true",
+                    },
+                },
+            },
+        ],
+        "output_artifact_id": "greenscreen-assessment:gs_010",
+    }])
+    fake = _GreenscreenRequiredFakeMCP()
+    boundary = MCPToolBoundary(mcp=fake, artifact_id_factory=_ids())
+
+    with pytest.raises(StaticScalarCollisionError) as exc_info:
+        await GraphExecutor(boundary.dispatch).run(graph)
+
+    assert exc_info.value.node_id == "forge_is_greenscreen#0"
+    assert exc_info.value.key == "shot_id"
+    assert exc_info.value.first_input_index == 0
+    assert exc_info.value.second_input_index == 1
+    assert "no precedence contract is declared" in str(exc_info.value)
+    assert fake.calls == []
 
 
 async def test_compiled_plan_missing_required_kwarg_is_not_invented():
@@ -303,6 +360,91 @@ async def test_compiled_plan_missing_required_kwarg_is_not_invented():
     assert result.status == "error"
     assert result.reason_code == "missing_required_argument"
     assert result.message == "Missing required argument: clip_ref"
+
+
+async def test_real_fastmcp_missing_required_argument_maps_without_wording_parse():
+    mcp = FastMCP("composition-required-argument")
+
+    @mcp.tool(name="forge_is_greenscreen")
+    def is_greenscreen(shot_id: str, clip_ref: str) -> dict:
+        return {"shot_id": shot_id, "clip_ref": clip_ref}
+
+    with pytest.raises(ToolError):
+        await mcp.call_tool(
+            "forge_is_greenscreen",
+            arguments={"shot_id": "gs_010"},
+        )
+
+    graph = compile_operator_sequence([{
+        "operator_id": "forge_is_greenscreen",
+        "inputs": [{
+            "artifact_id": "shot:gs_010",
+            "artifact_type": "shot",
+            "metadata": {"scalars": {"shot_id": "gs_010"}},
+        }],
+        "output_artifact_id": "greenscreen-assessment:gs_010",
+    }])
+    boundary = MCPToolBoundary(mcp=mcp, artifact_id_factory=_ids())
+
+    results = await GraphExecutor(boundary.dispatch).run(graph)
+
+    result = results["forge_is_greenscreen#0"]
+    assert result.status == "error"
+    assert result.reason_code == "missing_required_argument"
+    assert result.message == "Missing required argument: clip_ref"
+
+
+async def test_real_fastmcp_wrapped_required_argument_maps_from_nested_schema():
+    mcp = FastMCP("composition-wrapped-required-argument")
+
+    @mcp.tool(name="forge_is_greenscreen")
+    def is_greenscreen(params: _GreenscreenInput) -> dict:
+        return params.model_dump()
+
+    graph = compile_operator_sequence([{
+        "operator_id": "forge_is_greenscreen",
+        "inputs": [{
+            "artifact_id": "shot:gs_010",
+            "artifact_type": "shot",
+            "metadata": {"scalars": {"shot_id": "gs_010"}},
+        }],
+        "output_artifact_id": "greenscreen-assessment:gs_010",
+    }])
+    boundary = MCPToolBoundary(mcp=mcp, artifact_id_factory=_ids())
+
+    results = await GraphExecutor(boundary.dispatch).run(graph)
+
+    result = results["forge_is_greenscreen#0"]
+    assert result.status == "error"
+    assert result.reason_code == "missing_required_argument"
+    assert result.message == "Missing required argument: params.clip_ref"
+
+
+async def test_real_fastmcp_runtime_tool_error_is_not_reclassified():
+    mcp = FastMCP("composition-runtime-tool-error")
+
+    @mcp.tool(name="forge_is_greenscreen")
+    def is_greenscreen(shot_id: str, clip_ref: str) -> dict:
+        raise RuntimeError(f"greenscreen backend unavailable for {shot_id}: {clip_ref}")
+
+    graph = compile_operator_sequence([{
+        "operator_id": "forge_is_greenscreen",
+        "inputs": [{
+            "artifact_id": "plate:gs_010",
+            "artifact_type": "plate",
+            "metadata": {
+                "scalars": {
+                    "shot_id": "gs_010",
+                    "clip_ref": "mock://perception/is_greenscreen/gs_010_true",
+                },
+            },
+        }],
+        "output_artifact_id": "greenscreen-assessment:gs_010",
+    }])
+    boundary = MCPToolBoundary(mcp=mcp, artifact_id_factory=_ids())
+
+    with pytest.raises(ToolError):
+        await GraphExecutor(boundary.dispatch).run(graph)
 
 
 async def test_edge_fed_node_does_not_extract_kwargs_from_upstream_output():
