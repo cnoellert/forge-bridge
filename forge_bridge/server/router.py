@@ -582,7 +582,14 @@ class Router:
             client.client_name,
             client.session_id,
         )
-        return ok(msg.msg_id, {"projects": [p.to_dict() for p in projects]})
+        return ok(msg.msg_id, {
+            "projects": [p.to_dict() for p in projects],
+            "store_health": {
+                "status": "healthy",
+                "source": "postgres",
+                "read": "project.list",
+            },
+        })
 
     # ─────────────────────────────────────────────────────────
     # Entities

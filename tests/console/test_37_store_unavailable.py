@@ -11,7 +11,7 @@ idiom (``DISAMBIGUATION_KEY``) rather than raising.
 Coverage:
   - resolver: explicit ``error`` / ``STORE_UNAVAILABLE`` code → sentinel dict
   - resolver: transport exception from ``call_tool`` → sentinel dict
-  - resolver: healthy zero (``projects == []``, no error) → ``None`` (UNCHANGED)
+  - resolver: proven healthy zero (``projects == []`` + store marker) → ``None``
   - ``resolve_required_params`` propagates the sentinel + writes no memory
   - chat handler: store error → 200 + ``stop_reason="store_unavailable"``, no tool call
   - ``execute_chain_step``: store error → ``store_unavailable`` error dict
@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -47,6 +46,14 @@ def _text_block(text: str):
 def _store_error_payload() -> str:
     # Mirrors mcp/tools.py:list_projects → _err(str(e), "STORE_UNAVAILABLE").
     return json.dumps({"error": "connection refused", "code": "STORE_UNAVAILABLE"})
+
+
+def _healthy_zero_payload() -> str:
+    return json.dumps({
+        "count": 0,
+        "projects": [],
+        "store_health": {"status": "healthy", "source": "postgres"},
+    })
 
 
 # ── Unit: resolver surfaces store-unavailable, NOT None ──────────────────
@@ -95,12 +102,41 @@ async def test_resolver_error_without_code_still_surfaces():
 async def test_resolver_healthy_zero_still_returns_none():
     mcp = AsyncMock()
     mcp.call_tool = AsyncMock(return_value=_text_block(
-        json.dumps({"count": 0, "projects": []})
+        _healthy_zero_payload()
     ))
 
     result = await _resolve_project_id(mcp)
 
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_resolver_unproven_zero_surfaces_store_unavailable():
+    mcp = AsyncMock()
+    mcp.call_tool = AsyncMock(return_value=_text_block(
+        json.dumps({"count": 0, "projects": []})
+    ))
+
+    result = await _resolve_project_id(mcp)
+
+    assert isinstance(result, dict)
+    assert STORE_UNAVAILABLE_KEY in result
+
+
+@pytest.mark.asyncio
+async def test_resolver_malformed_project_result_surfaces_store_unavailable():
+    mcp = AsyncMock()
+    mcp.call_tool = AsyncMock(return_value=_text_block(
+        json.dumps({
+            "count": 0,
+            "store_health": {"status": "healthy", "source": "postgres"},
+        })
+    ))
+
+    result = await _resolve_project_id(mcp)
+
+    assert isinstance(result, dict)
+    assert STORE_UNAVAILABLE_KEY in result
 
 
 # ── resolve_required_params: propagate sentinel, no memory write ─────────
@@ -125,7 +161,7 @@ async def test_resolve_required_params_propagates_store_unavailable():
 async def test_resolve_required_params_healthy_zero_no_sentinel():
     mcp = AsyncMock()
     mcp.call_tool = AsyncMock(return_value=_text_block(
-        json.dumps({"count": 0, "projects": []})
+        _healthy_zero_payload()
     ))
 
     out = await resolve_required_params("forge_list_versions", {}, mcp)
@@ -267,7 +303,7 @@ def test_handler_healthy_zero_still_missing_project_id():
     """Regression guard: a genuine healthy zero is UNCHANGED — still the
     PR22 MISSING_PROJECT_ID contract, NOT store_unavailable."""
     list_p, back_p, call_p, app, mock_router = _make_handler_app(
-        projects_payload=json.dumps({"count": 0, "projects": []}),
+        projects_payload=_healthy_zero_payload(),
     )
     with list_p, back_p, call_p:
         client = TestClient(app)

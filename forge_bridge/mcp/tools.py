@@ -891,7 +891,17 @@ async def list_projects() -> str:
         from forge_bridge.server.protocol import project_list
         client = _client()
         result = await client.request(project_list())
-        projects = result.get("projects", [])
+        projects = result.get("projects")
+        if not isinstance(projects, list):
+            raise RuntimeError("project store read returned no projects list")
+        store_health = result.get("store_health")
+        if not (
+            isinstance(store_health, dict)
+            and store_health.get("status") == "healthy"
+        ):
+            raise RuntimeError(
+                "project store read completed without a healthy store marker"
+            )
         logger.info(
             "forge_list_projects: received %d projects via session=%s",
             len(projects),
@@ -900,6 +910,7 @@ async def list_projects() -> str:
         return _ok({
             "count":    len(projects),
             "projects": projects,
+            "store_health": store_health,
         })
     except Exception as e:
         logger.error("forge_list_projects: project store unavailable", exc_info=True)

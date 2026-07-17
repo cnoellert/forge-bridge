@@ -201,10 +201,6 @@ async def _resolve_project_id(
     # (see mcp/tools.py:list_projects → ``_err(..., "STORE_UNAVAILABLE")``).
     # A truthy ``error`` or the STORE_UNAVAILABLE code means the store is
     # degraded, NOT that it returned a healthy zero — surface it as such.
-    # SCOPE LIMIT: a genuine empty result (``projects == []`` with no
-    # error/code) still falls through to ``None`` → MISSING_PROJECT_ID.
-    # Distinguishing successful-empty from a silently-degraded store needs
-    # a store-health marker, deferred to #38.
     if data.get("error") or data.get("code") == "STORE_UNAVAILABLE":
         detail = data.get("error")
         return {STORE_UNAVAILABLE_KEY: {
@@ -212,10 +208,21 @@ async def _resolve_project_id(
             else "project store unavailable",
         }}
     projects = data.get("projects")
-    if not isinstance(projects, list) or not projects:
-        # Zero projects, or non-list payload — fall through to fail
-        # closed. The downstream tool's PR22 contract surfaces
-        # MISSING_PROJECT_ID.
+    if not isinstance(projects, list):
+        return {STORE_UNAVAILABLE_KEY: {
+            "reason": "project store returned no projects list",
+        }}
+    if not projects:
+        store_health = data.get("store_health")
+        if not (
+            isinstance(store_health, dict)
+            and store_health.get("status") == "healthy"
+        ):
+            return {STORE_UNAVAILABLE_KEY: {
+                "reason": "empty project list has no healthy store marker",
+            }}
+        # A proven healthy zero falls through to the existing fail-closed
+        # MISSING_PROJECT_ID path (no invented id).
         return None
 
     # Single — the PR25/PR26 single-id path.
