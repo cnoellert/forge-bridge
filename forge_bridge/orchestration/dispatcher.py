@@ -211,7 +211,8 @@ async def _existing_idempotency_result(
 # The grant handle is resolved from an explicit `grant_id` kwarg, or from the
 # run's durable `run.grant_id` when only a `run_id` is supplied. A caller-
 # supplied id is a LOOKUP KEY only — never trusted as authority; the persisted
-# `status` is the authority. Fail-closed: no resolvable ratified grant → refuse.
+# status and immutable operator/backend terms are the authority. Fail-closed: no
+# resolvable ratified grant matching the exact invocation terms -> refuse.
 
 
 async def _resolve_grant_id(
@@ -242,13 +243,16 @@ async def _resolve_and_consume_grant(
     *,
     grant_id: str | None,
     run_id: uuid.UUID | None,
+    operator_id: str,
+    backend_identity_triple: dict[str, Any],
 ) -> tuple[bool, str | None]:
     """Mandatory chokepoint gate: resolve the grant and atomically consume it.
 
     Returns ``(True, None)`` when a ratified grant was consumed exactly once;
     ``(False, refusal_code)`` otherwise. ``refusal_code`` is ``grant_consumed``
-    for the already-spent (replay) case and ``grant_not_ratified`` for every
-    other refusal (no anchor, unknown id, still-proposed, revoked/failed).
+    for the already-spent (replay) case, ``grant_terms_mismatch`` when a
+    ratified grant names a different operator or backend identity, and
+    ``grant_not_ratified`` for every other refusal.
     Fail-closed by construction — ``run_id=None`` AND ``grant_id=None`` refuses.
     """
     resolved = await _resolve_grant_id(
@@ -258,6 +262,19 @@ async def _resolve_and_consume_grant(
         return False, "grant_not_ratified"
     async with session_factory() as session:
         repo = GenerationGrantRepo(session)
+        existing = await repo.get_by_grant_id(resolved)
+        if existing is None:
+            return False, "grant_not_ratified"
+        if existing.status == "consumed":
+            return False, "grant_consumed"
+        if existing.status != "ratified":
+            return False, "grant_not_ratified"
+        if not _grant_terms_match(
+            existing,
+            operator_id=operator_id,
+            backend_identity_triple=backend_identity_triple,
+        ):
+            return False, "grant_terms_mismatch"
         consumed = await repo.consume_atomic(resolved)
         if consumed is not None:
             await session.commit()
@@ -274,6 +291,8 @@ async def _advisory_grant_check(
     *,
     grant_id: str | None,
     run_id: uuid.UUID | None,
+    operator_id: str,
+    backend_identity_triple: dict[str, Any],
 ) -> tuple[bool, str | None]:
     """Direct-door advisory peek — NON-consuming fail-fast.
 
@@ -296,7 +315,27 @@ async def _advisory_grant_check(
         return False, "grant_consumed"
     if existing.status != "ratified":
         return False, "grant_not_ratified"
+    if not _grant_terms_match(
+        existing,
+        operator_id=operator_id,
+        backend_identity_triple=backend_identity_triple,
+    ):
+        return False, "grant_terms_mismatch"
     return True, None
+
+
+def _grant_terms_match(
+    grant: Any,
+    *,
+    operator_id: str,
+    backend_identity_triple: dict[str, Any],
+) -> bool:
+    """Match immutable grant terms to the exact invocation being authorized."""
+
+    return (
+        grant.operator_id == operator_id
+        and dict(grant.backend_identity_triple) == dict(backend_identity_triple)
+    )
 
 
 # ─────────────────────────────────────────────────────────────
@@ -516,6 +555,8 @@ async def dispatch_envelope(
       - ``execution_result_ids`` — upstream (plan-shaped) perception-lane
         result ids threaded onto the returned ``DispatchResult`` so the plan
         path is byte-preserved.
+      - ``source_author_artifact_id`` — an approved prompt artifact that
+        authored this downstream generation invocation.
 
     A non-None ``idempotency_key`` is globally unique for generation artifacts.
     Calls sharing a key and invocation fingerprint return the first artifact;
@@ -574,7 +615,11 @@ async def dispatch_envelope(
         # transaction lock remains held through submit and artifact insert, so
         # concurrent callers cannot both cross this line for the same key.
         grant_ok, refusal_code = await _resolve_and_consume_grant(
-            session_factory, grant_id=grant_id, run_id=run_id,
+            session_factory,
+            grant_id=grant_id,
+            run_id=run_id,
+            operator_id=envelope.operator_id,
+            backend_identity_triple=backend_identity_triple,
         )
         if not grant_ok:
             refuse_payload: dict[str, Any] = {
@@ -635,6 +680,14 @@ async def dispatch_envelope(
         if plan_id is not None:
             content_provenance["plan_id"] = plan_id
             content_provenance["lineage"]["source_plan_id"] = plan_id
+        source_author_artifact_id = provenance.get("source_author_artifact_id")
+        if source_author_artifact_id is not None:
+            content_provenance["source_author_artifact_id"] = str(
+                source_author_artifact_id
+            )
+            content_provenance["lineage"]["source_author_artifact_id"] = str(
+                source_author_artifact_id
+            )
         if model_entity is not None:
             fitted_model_asset_id = str(model_entity.id)
             content_provenance["fitted_model_asset_id"] = fitted_model_asset_id
