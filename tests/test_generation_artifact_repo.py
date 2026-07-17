@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from forge_bridge.store.content_addressed_repo import (
     ContentAddressedRepo,
@@ -144,3 +145,44 @@ async def test_find_non_terminal(session_factory) -> None:
         assert submitted_id in ids
         assert polling_id in ids
         assert terminal_id not in ids
+
+
+async def test_get_by_idempotency_key(session_factory) -> None:
+    body = _generation_body(
+        idempotency_key="generation-key-1",
+        idempotency_fingerprint="fingerprint-1",
+    )
+    async with session_factory() as session:
+        repo = GenerationArtifactRepo(session)
+        inserted = await repo.insert_submitted(body)
+        await session.commit()
+
+    async with session_factory() as session:
+        found = await GenerationArtifactRepo(session).get_by_idempotency_key(
+            "generation-key-1"
+        )
+
+    assert found is not None
+    assert found.id == inserted.id
+    assert found.idempotency_key == "generation-key-1"
+    assert found.idempotency_fingerprint == "fingerprint-1"
+
+
+async def test_idempotency_key_is_unique_for_generation_artifacts(
+    session_factory,
+) -> None:
+    async with session_factory() as session:
+        repo = GenerationArtifactRepo(session)
+        await repo.insert_submitted(_generation_body(
+            idempotency_key="generation-key-1",
+            idempotency_fingerprint="fingerprint-1",
+        ))
+        await session.commit()
+
+    async with session_factory() as session:
+        repo = GenerationArtifactRepo(session)
+        with pytest.raises(IntegrityError):
+            await repo.insert_submitted(_generation_body(
+                idempotency_key="generation-key-1",
+                idempotency_fingerprint="fingerprint-1",
+            ))

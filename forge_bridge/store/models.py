@@ -330,6 +330,15 @@ class DBEntity(Base):
                 "entity_type LIKE 'orch_%' AND content_hash IS NOT NULL"
             ),
         ),
+        Index(
+            "uq_entities_generation_idempotency_key",
+            text("(attributes ->> 'idempotency_key')"),
+            unique=True,
+            postgresql_where=text(
+                "entity_type = 'orch_generation_artifact' "
+                "AND attributes ? 'idempotency_key'"
+            ),
+        ),
         # GIN index on JSONB attributes for fast containment queries
         # e.g. WHERE attributes @> '{"sequence_id": "..."}'
         Index("ix_entities_attributes",    "attributes", postgresql_using="gin"),

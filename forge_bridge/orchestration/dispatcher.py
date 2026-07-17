@@ -8,6 +8,8 @@ round-trip hardens.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -118,6 +120,82 @@ def _artifact_ref(value: Any) -> ArtifactRef:
 
 def _dump_artifact_ref(ref: ArtifactRef) -> dict[str, Any]:
     return ref.model_dump(mode="json", exclude_none=True)
+
+
+def _normalize_generation_idempotency_key(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError("generation idempotency_key must be a string or None")
+    if not value or value != value.strip():
+        raise ValueError("generation idempotency_key must be non-empty and unpadded")
+    if len(value.encode("utf-8")) > 512:
+        raise ValueError("generation idempotency_key must not exceed 512 UTF-8 bytes")
+    return value
+
+
+def _generation_invocation_fingerprint(envelope: InvocationEnvelope) -> str:
+    """Hash the work identity shared by direct and planner dispatch doors."""
+    seed = json.dumps(
+        {
+            "operator_id": envelope.operator_id,
+            "inputs": [_dump_artifact_ref(ref) for ref in envelope.inputs],
+            "backend_identity_triple": envelope.backend_identity_triple,
+            "fitted_model_asset_id": envelope.fitted_model_asset_id,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()
+
+
+async def _existing_idempotency_result(
+    existing: Any,
+    *,
+    idempotency_key: str,
+    invocation_fingerprint: str,
+    operator_id: str,
+    backend_id: str | None,
+    event_appender: Callable[[str, dict], Awaitable[None]],
+    run_id: uuid.UUID | None,
+    plan_id: Any = None,
+    execution_result_ids: tuple[uuid.UUID, ...] = (),
+) -> DispatchResult:
+    payload: dict[str, Any] = {
+        "artifact_id": str(existing.id),
+        "operator_id": operator_id,
+        "backend_id": backend_id,
+        "idempotency_key": idempotency_key,
+        "run_id": str(run_id) if run_id is not None else None,
+    }
+    if plan_id is not None:
+        payload = {"plan_id": plan_id, **payload}
+
+    if existing.idempotency_fingerprint != invocation_fingerprint:
+        await event_appender(
+            "generation_dispatch_idempotency_conflict",
+            {
+                **payload,
+                "stored_fingerprint": existing.idempotency_fingerprint,
+                "requested_fingerprint": invocation_fingerprint,
+            },
+        )
+        return DispatchResult(
+            status="refused",
+            refusal_code="idempotency_conflict",
+            execution_result_ids=execution_result_ids,
+        )
+
+    await event_appender(
+        "generation_dispatch_deduplicated",
+        {**payload, "lifecycle_state": existing.lifecycle_state},
+    )
+    return DispatchResult(
+        status="submitted",
+        artifact_id=existing.id,
+        execution_result_ids=execution_result_ids,
+    )
 
 
 # ─────────────────────────────────────────────────────────────
@@ -273,6 +351,7 @@ async def dispatch_plan(
     event_appender: Callable[[str, dict], Awaitable[None]],
     run_id: uuid.UUID | None = None,
     grant_id: str | None = None,
+    idempotency_key: str | None = None,
 ) -> DispatchResult:
     """Dispatch plan execution through family-specific evidence lanes.
 
@@ -281,6 +360,10 @@ async def dispatch_plan(
     ``run_id`` inside ``dispatch_envelope``) must name a ratified grant, else
     the generation submit is refused. Perception-only plans never reach the
     chokepoint, so they are unaffected.
+
+    ``idempotency_key`` may be supplied explicitly or carried by the generation
+    step. If both are present they must match. The shared envelope boundary
+    serializes and resolves that key before authority spend.
     """
 
     execution_result_ids: list[uuid.UUID] = []
@@ -375,6 +458,18 @@ async def dispatch_plan(
         backend_identity_triple=backend_identity_triple,
         fitted_model_asset_id=step.get("fitted_model_asset_id"),
     )
+    step_idempotency_key = step.get("idempotency_key")
+    if (
+        idempotency_key is not None
+        and step_idempotency_key is not None
+        and idempotency_key != step_idempotency_key
+    ):
+        raise ValueError(
+            "dispatch_plan idempotency_key conflicts with the generation step"
+        )
+    resolved_idempotency_key = (
+        idempotency_key if idempotency_key is not None else step_idempotency_key
+    )
 
     provenance: dict[str, Any] = {
         "plan_id": str(plan.id),
@@ -389,6 +484,7 @@ async def dispatch_plan(
         event_appender=event_appender,
         run_id=run_id,
         grant_id=grant_id,
+        idempotency_key=resolved_idempotency_key,
     )
 
 
@@ -401,6 +497,7 @@ async def dispatch_envelope(
     event_appender: Callable[[str, dict], Awaitable[None]],
     run_id: uuid.UUID | None = None,
     grant_id: str | None = None,
+    idempotency_key: str | None = None,
 ) -> DispatchResult:
     """Plan-free submit-and-persist core for a single generation invocation.
 
@@ -418,113 +515,142 @@ async def dispatch_envelope(
       - ``execution_result_ids`` — upstream (plan-shaped) perception-lane
         result ids threaded onto the returned ``DispatchResult`` so the plan
         path is byte-preserved.
+
+    A non-None ``idempotency_key`` is globally unique for generation artifacts.
+    Calls sharing a key and invocation fingerprint return the first artifact;
+    a key reused for different work refuses with ``idempotency_conflict``.
     """
 
     execution_result_ids = tuple(provenance.get("execution_result_ids") or ())
     plan_id = provenance.get("plan_id")
+    idempotency_key = _normalize_generation_idempotency_key(idempotency_key)
+    invocation_fingerprint = (
+        _generation_invocation_fingerprint(envelope)
+        if idempotency_key is not None
+        else None
+    )
 
     backend_id = backend_id_from_identity_triple(dict(envelope.backend_identity_triple))
-    driver = driver_registry.get_driver(backend_id) if backend_id else None
-    if driver is None:
-        no_driver_payload: dict[str, Any] = {
+    async with session_factory() as artifact_session:
+        artifact_repo = GenerationArtifactRepo(artifact_session)
+        if idempotency_key is not None:
+            await artifact_repo.lock_idempotency_key(idempotency_key)
+            existing = await artifact_repo.get_by_idempotency_key(idempotency_key)
+            if existing is not None:
+                assert invocation_fingerprint is not None
+                return await _existing_idempotency_result(
+                    existing,
+                    idempotency_key=idempotency_key,
+                    invocation_fingerprint=invocation_fingerprint,
+                    operator_id=envelope.operator_id,
+                    backend_id=backend_id,
+                    event_appender=event_appender,
+                    run_id=run_id,
+                    plan_id=plan_id,
+                    execution_result_ids=execution_result_ids,
+                )
+
+        driver = driver_registry.get_driver(backend_id) if backend_id else None
+        if driver is None:
+            no_driver_payload: dict[str, Any] = {
+                "operator_id": envelope.operator_id,
+                "backend_id": backend_id,
+            }
+            if plan_id is not None:
+                no_driver_payload = {"plan_id": plan_id, **no_driver_payload}
+            await event_appender("dispatch_no_driver", no_driver_payload)
+            return DispatchResult(
+                status="refused",
+                refusal_code="dispatch_no_driver",
+                execution_result_ids=execution_result_ids,
+            )
+
+        backend_identity_triple = dict(driver.backend_identity_triple)
+        inputs = list(envelope.inputs)
+
+        # --- single driver.submit() chokepoint ----------------------------
+        # Idempotency lookup above precedes authority spend. The per-key
+        # transaction lock remains held through submit and artifact insert, so
+        # concurrent callers cannot both cross this line for the same key.
+        grant_ok, refusal_code = await _resolve_and_consume_grant(
+            session_factory, grant_id=grant_id, run_id=run_id,
+        )
+        if not grant_ok:
+            refuse_payload: dict[str, Any] = {
+                "operator_id": envelope.operator_id,
+                "backend_id": backend_id,
+                "refusal_code": refusal_code,
+                "run_id": str(run_id) if run_id is not None else None,
+            }
+            if plan_id is not None:
+                refuse_payload = {"plan_id": plan_id, **refuse_payload}
+            await event_appender("dispatch_grant_refused", refuse_payload)
+            return DispatchResult(
+                status="refused",
+                refusal_code=refusal_code,
+                execution_result_ids=execution_result_ids,
+            )
+
+        model_ok, model_refusal_code = await _check_model_not_revoked(
+            session_factory, fitted_model_asset_id=envelope.fitted_model_asset_id,
+        )
+        if not model_ok:
+            model_refuse_payload: dict[str, Any] = {
+                "operator_id": envelope.operator_id,
+                "backend_id": backend_id,
+                "refusal_code": model_refusal_code,
+                "run_id": str(run_id) if run_id is not None else None,
+            }
+            if plan_id is not None:
+                model_refuse_payload = {"plan_id": plan_id, **model_refuse_payload}
+            await event_appender("dispatch_model_refused", model_refuse_payload)
+            return DispatchResult(
+                status="refused",
+                refusal_code=model_refusal_code,
+                execution_result_ids=execution_result_ids,
+            )
+
+        handle = await driver.submit(envelope)
+        # ------------------------------------------------------------------
+
+        content_provenance: dict[str, Any] = {
             "operator_id": envelope.operator_id,
-            "backend_id": backend_id,
+            "planned_output_artifact_id": provenance.get(
+                "planned_output_artifact_id"
+            ),
+            "inputs": [_dump_artifact_ref(ref) for ref in inputs],
+            "lineage": {
+                "input_artifact_ids": [ref.artifact_id for ref in inputs],
+            },
         }
         if plan_id is not None:
-            no_driver_payload = {"plan_id": plan_id, **no_driver_payload}
-        await event_appender("dispatch_no_driver", no_driver_payload)
-        return DispatchResult(
-            status="refused",
-            refusal_code="dispatch_no_driver",
-            execution_result_ids=execution_result_ids,
-        )
+            content_provenance["plan_id"] = plan_id
+            content_provenance["lineage"]["source_plan_id"] = plan_id
 
-    backend_identity_triple = dict(driver.backend_identity_triple)
-    inputs = list(envelope.inputs)
-
-    # --- single driver.submit() chokepoint --------------------------------
-    # GenerationGrant CAS authority guard (#146): gate spend HERE so both the
-    # planner door and a direct forge_generate_* tool are gated at one point.
-    # Consume-then-submit — the atomic ratified->consumed flip MUST succeed
-    # before driver.submit() runs; a refusal never submits. Assent/ratify stays
-    # ABOVE this core in the tool layer; never submit above this line.
-    grant_ok, refusal_code = await _resolve_and_consume_grant(
-        session_factory, grant_id=grant_id, run_id=run_id,
-    )
-    if not grant_ok:
-        refuse_payload: dict[str, Any] = {
-            "operator_id": envelope.operator_id,
-            "backend_id": backend_id,
-            "refusal_code": refusal_code,
-            "run_id": str(run_id) if run_id is not None else None,
+        body: dict[str, Any] = {
+            "name": (
+                f"orch_generation_artifact:{envelope.operator_id}:"
+                f"{handle.request_id}"
+            ),
+            "platform_locators": {},
+            "content_provenance": content_provenance,
+            "execution_provenance": {
+                "backend_identity_triple": backend_identity_triple,
+                "request_id": handle.request_id,
+                "submitted_at": handle.submitted_at.isoformat(),
+                "raw_response_summary": dict(handle.raw_response_summary),
+            },
+            "polling_history": [],
         }
-        if plan_id is not None:
-            refuse_payload = {"plan_id": plan_id, **refuse_payload}
-        await event_appender("dispatch_grant_refused", refuse_payload)
-        return DispatchResult(
-            status="refused",
-            refusal_code=refusal_code,
-            execution_result_ids=execution_result_ids,
-        )
+        if run_id is not None:
+            body["run_id"] = str(run_id)
+        if idempotency_key is not None:
+            assert invocation_fingerprint is not None
+            body["idempotency_key"] = idempotency_key
+            body["idempotency_fingerprint"] = invocation_fingerprint
 
-    # Fitted-model revocation gate (#160): fail-closed consent enforcement at
-    # the same submit chokepoint. If the envelope names a fitted-model asset it
-    # MUST resolve and MUST NOT be revoked, else refuse before driver.submit().
-    # No model named → no-op (skip), preserving existing behavior. This is a
-    # pure read — never a spend — so it does not consume anything.
-    model_ok, model_refusal_code = await _check_model_not_revoked(
-        session_factory, fitted_model_asset_id=envelope.fitted_model_asset_id,
-    )
-    if not model_ok:
-        model_refuse_payload: dict[str, Any] = {
-            "operator_id": envelope.operator_id,
-            "backend_id": backend_id,
-            "refusal_code": model_refusal_code,
-            "run_id": str(run_id) if run_id is not None else None,
-        }
-        if plan_id is not None:
-            model_refuse_payload = {"plan_id": plan_id, **model_refuse_payload}
-        await event_appender("dispatch_model_refused", model_refuse_payload)
-        return DispatchResult(
-            status="refused",
-            refusal_code=model_refusal_code,
-            execution_result_ids=execution_result_ids,
-        )
-    handle = await driver.submit(envelope)
-    # ----------------------------------------------------------------------
-
-    content_provenance: dict[str, Any] = {
-        "operator_id": envelope.operator_id,
-        "planned_output_artifact_id": provenance.get("planned_output_artifact_id"),
-        "inputs": [_dump_artifact_ref(ref) for ref in inputs],
-        "lineage": {
-            "input_artifact_ids": [ref.artifact_id for ref in inputs],
-        },
-    }
-    if plan_id is not None:
-        content_provenance["plan_id"] = plan_id
-        content_provenance["lineage"]["source_plan_id"] = plan_id
-
-    body: dict[str, Any] = {
-        "name": (
-            f"orch_generation_artifact:{envelope.operator_id}:{handle.request_id}"
-        ),
-        "platform_locators": {},
-        "content_provenance": content_provenance,
-        "execution_provenance": {
-            "backend_identity_triple": backend_identity_triple,
-            "request_id": handle.request_id,
-            "submitted_at": handle.submitted_at.isoformat(),
-            "raw_response_summary": dict(handle.raw_response_summary),
-        },
-        "polling_history": [],
-    }
-    if run_id is not None:
-        body["run_id"] = str(run_id)
-
-    async with session_factory() as session:
-        artifact = await GenerationArtifactRepo(session).insert_submitted(body)
-        await session.commit()
+        artifact = await artifact_repo.insert_submitted(body)
+        await artifact_session.commit()
 
     submitted_event: dict[str, Any] = {
         "artifact_id": str(artifact.id),
@@ -533,6 +659,8 @@ async def dispatch_envelope(
         "request_id": handle.request_id,
         "run_id": str(run_id) if run_id is not None else None,
     }
+    if idempotency_key is not None:
+        submitted_event["idempotency_key"] = idempotency_key
     if plan_id is not None:
         submitted_event = {"plan_id": plan_id, **submitted_event}
     await event_appender("generation_dispatch_submitted", submitted_event)
