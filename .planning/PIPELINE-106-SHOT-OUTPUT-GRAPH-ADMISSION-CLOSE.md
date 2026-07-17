@@ -1,9 +1,9 @@
 # Pipeline Phase 106 Shot Output Graph Admission Close
 
 **Date:** 2026-07-17
-**Status:** Bridge Plan 106-01 complete; live Flame Plan 106-02 remains
-**Pipeline:** PR #121 merged as `1d729f2b2af392c5a79424800a07cc31d18db6e9`
-**Bridge:** implementation `5029a16`; grouped commit handshake proof `5f77264`
+**Status:** Phase 106 complete; live Flame Plan 106-02 passed trusted 7/7
+**Pipeline:** PR #122 merged as `534b56b9258c3c98bda79d32886698430487ad7f`
+**Bridge:** admission PR #176 `9f738ed`; authority fix PR #179 `c2dd3ab`
 
 ## Closed Scope
 
@@ -78,9 +78,23 @@ later invocation-lowering addenda remain distinct follow-up probes:
 
 Neither addendum changes this graph vertical or its authority boundary.
 
-## Remaining Phase 106 Work
+## Live Phase 106 Close
 
-Plan 106-02 must run the merged Pipeline and Bridge refs against a disposable
-live Flame Batch and bank structured evidence for unratified refusal, ratified
-apply, exact replay, drift, bounded timeout, fresh verification, and safe
-compensation or explicitly review-held residue.
+Pipeline's checked-in live harness ran the production graph from clean detached
+worktrees at Pipeline `534b56b9258c3c98bda79d32886698430487ad7f` and
+Bridge `c2dd3ab8012b09e834425e7d683d9c3355a8facf` against disposable Flame Batch
+`Test_104`.
+
+All seven rows passed trusted: preflight, unratified refusal, bounded verify
+timeout, pre-apply drift refusal with source restoration, ratified apply plus
+fresh verification, exact zero-mutation replay, and explicit review-held
+residue where delete/disconnect compensation is not admitted. Apply made three
+native changes; replay made zero.
+
+The live run also proved that overlapping Flame Compasses produce ambiguous
+membership and must remain review-required. The final proof used an isolated
+Forge-namespaced source rather than weakening semantic verification.
+
+Full structured evidence is banked in Pipeline at
+`.planning/evidence/106-bridge-composed-host-graph-vertical-2026-07-17/`.
+Phase 107 may begin from these merged refs.
