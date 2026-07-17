@@ -19,7 +19,7 @@ BACKEND CLASSIFICATION (NOT prefix-based — see in-process exception list):
    When :9999 is unreachable → these are dropped.
 
 2. In-process forge_* tools — ALWAYS reachable.
-   SEVEN tools registered from
+   Tools registered from
    `forge_bridge/console/resources.py:register_console_resources`,
    backed by `console_read_api` / `session_factory` (local SQLAlchemy +
    ManifestService).  Hardcoded in `_IN_PROCESS_FORGE_TOOLS` below.
@@ -74,8 +74,8 @@ _PR14_TOKEN_RE = re.compile(r"[a-z0-9]+")
 # Tools that run IN-PROCESS in the forge-bridge process itself.
 # KEEP IN SYNC with `forge_bridge/console/resources.py:register_console_resources`.
 # Test `test_in_process_tool_set_matches_resources_module` enforces this.
-# THIRTEEN names — verified 2026-07-14 against resources.py @mcp.tool registrations
-# (+5 consent-grant lifecycle tools, #161).
+# SEVENTEEN names — verified 2026-07-17 against resources.py registrations
+# (+4 fitted-model retention/GC lifecycle tools, #160).
 _IN_PROCESS_FORGE_TOOLS: frozenset[str] = frozenset({
     "forge_manifest_read",
     "forge_tools_read",
@@ -90,6 +90,10 @@ _IN_PROCESS_FORGE_TOOLS: frozenset[str] = frozenset({
     "forge_bind_consent_grant",
     "forge_get_consent_grant",
     "forge_withdraw_consent_grant",
+    "forge_set_fitted_model_retention",
+    "forge_list_fitted_model_gc_candidates",
+    "forge_mark_fitted_model_gc",
+    "forge_finalize_fitted_model_gc",
 })
 
 # In-process ops attached by sibling `register_with(mcp)` (forge-vision etc.):

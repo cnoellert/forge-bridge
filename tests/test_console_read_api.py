@@ -111,7 +111,7 @@ async def test_get_tools_marks_unreachable_but_never_drops(monkeypatch):
     # Backend-dependent tools are present but marked unavailable.
     assert av["flame_ping"] is False
     assert av["forge_list_shots"] is False
-    # In-process tools (the seven _IN_PROCESS_FORGE_TOOLS) and synth_* always
+    # In-process forge tools and synth_* are always
     # available — see _tool_filter._is_in_process_tool.
     assert av["forge_list_staged"] is True
     assert av["synth_a"] is True

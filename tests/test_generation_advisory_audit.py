@@ -9,6 +9,7 @@ mistaken for the chokepoint's consume/model refusal events.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from forge_contracts.references import ArtifactRef
@@ -17,6 +18,7 @@ from forge_bridge.core import Asset, Project, Registry, Status
 from forge_bridge.orchestration import generation_entry
 from forge_bridge.orchestration.dispatcher import InvocationEnvelope
 from forge_bridge.orchestration.drivers import GenerationDriverRegistry
+from forge_bridge.store.fitted_model_lifecycle_repo import FittedModelLifecycleRepo
 from forge_bridge.store.generation_grant_repo import GenerationGrantRepo
 from forge_bridge.store.repo import EntityRepo, EventRepo, ProjectRepo, revoke_asset
 
@@ -85,6 +87,36 @@ async def _revoked_model(session_factory) -> uuid.UUID:
     return model.id
 
 
+async def _marked_model(session_factory) -> uuid.UUID:
+    project = Project(name="Advisory GC", code=f"AGC{uuid.uuid4().hex[:8]}")
+    model = Asset(
+        name="identity.gc.fitted",
+        asset_type="fitted-model",
+        project_id=project.id,
+        status=Status.APPROVED,
+    )
+    as_of = datetime.now(timezone.utc)
+    async with session_factory() as session:
+        await ProjectRepo(session).save(project)
+        await EntityRepo(session, Registry.default()).save(model, project.id)
+        await session.commit()
+    async with session_factory() as session:
+        lifecycle = FittedModelLifecycleRepo(session)
+        await lifecycle.set_retention(
+            model.id,
+            retention_until=as_of - timedelta(days=1),
+            actor="operator",
+        )
+        await lifecycle.mark_gc(
+            model.id,
+            collect_after=as_of + timedelta(days=7),
+            actor="operator",
+            as_of=as_of,
+        )
+        await session.commit()
+    return model.id
+
+
 async def _advisory_events(session_factory):
     async with session_factory() as session:
         return await EventRepo(session).get_recent(
@@ -148,6 +180,32 @@ async def test_model_advisory_refusal_is_durable_and_leaves_grant_ratified(
         "refusal_code": "model_revoked",
         "run_id": None,
     }]
+    async with session_factory() as session:
+        grant = await GenerationGrantRepo(session).get_by_grant_id(grant_id)
+        assert grant is not None
+        assert grant.status == "ratified"
+        assert await EventRepo(session).get_recent(
+            event_type="dispatch_model_refused"
+        ) == []
+
+
+async def test_gc_mark_advisory_refusal_does_not_spend_grant(
+    session_factory,
+    monkeypatch,
+) -> None:
+    _bind_runtime(monkeypatch, session_factory)
+    grant_id = await _ratified_grant(session_factory)
+    model_id = await _marked_model(session_factory)
+
+    result = await generation_entry.dispatch_generation(
+        _envelope(fitted_model_asset_id=model_id),
+        provenance={"planned_output_artifact_id": None},
+        grant_id=grant_id,
+    )
+
+    assert result.refusal_code == "model_gc_pending"
+    events = await _advisory_events(session_factory)
+    assert events[0].payload["refusal_code"] == "model_gc_pending"
     async with session_factory() as session:
         grant = await GenerationGrantRepo(session).get_by_grant_id(grant_id)
         assert grant is not None

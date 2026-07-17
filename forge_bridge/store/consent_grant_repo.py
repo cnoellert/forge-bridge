@@ -58,6 +58,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from forge_bridge.core.consent_grant import ConsentGrant
 from forge_bridge.store.content_addressed_repo import ContentAddressedRepo
+from forge_bridge.store.fitted_model_lifecycle_repo import FITTED_MODEL_ASSET_TYPE
 from forge_bridge.store.models import DBEntity
 from forge_bridge.store.repo import EventRepo, revoke_asset
 
@@ -279,6 +280,13 @@ class ConsentGrantRepo(ContentAddressedRepo[ConsentGrant]):
                 grant_id,
                 f"cannot bind consent_grant {grant_id} to asset {asset_id_str}: "
                 f"no such asset entity",
+                current_status=db_entity.status,
+            )
+        if (asset_entity.attributes or {}).get("asset_type") != FITTED_MODEL_ASSET_TYPE:
+            raise ConsentGrantBindingError(
+                grant_id,
+                f"cannot bind consent_grant {grant_id} to asset {asset_id_str}: "
+                f"asset_type must be {FITTED_MODEL_ASSET_TYPE!r}",
                 current_status=db_entity.status,
             )
 

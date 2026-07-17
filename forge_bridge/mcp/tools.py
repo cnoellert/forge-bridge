@@ -82,7 +82,7 @@ import re
 import uuid
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from forge_bridge.console.handlers import _envelope_json
 
@@ -266,6 +266,62 @@ class WithdrawConsentGrantInput(_ConsentGrantIdInput):
         if not v.strip():
             raise ValueError("actor must not be whitespace-only")
         return v
+
+
+# ── Fitted-model retention / two-phase collection (#160) ────────────────────
+
+
+class _FittedModelActorInput(BaseModel):
+    asset_id: str = Field(..., description="Registry fitted-model asset UUID")
+    actor: str = Field(..., min_length=1, description="Caller identity")
+
+    @field_validator("actor")
+    @classmethod
+    def actor_not_whitespace_only(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("actor must not be whitespace-only")
+        return v
+
+
+class SetFittedModelRetentionInput(_FittedModelActorInput):
+    retention_until: str = Field(
+        ...,
+        description="Timezone-aware ISO-8601 retention deadline",
+    )
+    reason: Optional[str] = Field(default=None, description="Retention policy reason")
+
+
+class ListFittedModelGcCandidatesInput(BaseModel):
+    as_of: Optional[str] = Field(
+        default=None,
+        description="Timezone-aware ISO-8601 evaluation time (default: now)",
+    )
+
+
+class MarkFittedModelGcInput(_FittedModelActorInput):
+    collect_after: str = Field(
+        ...,
+        description="Timezone-aware ISO-8601 deadline after the GC grace period",
+    )
+
+
+class FittedModelDeletionReceiptInput(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    location_id: str = Field(..., description="Registry location UUID")
+    path: str = Field(..., min_length=1, description="Exact deleted storage locator")
+    deleted: bool = Field(..., description="Storage executor confirms bytes deleted")
+    storage_receipt: Optional[str] = Field(
+        default=None,
+        description="Provider-specific deletion receipt or version handle",
+    )
+
+
+class FinalizeFittedModelGcInput(_FittedModelActorInput):
+    deletion_receipts: list[FittedModelDeletionReceiptInput] = Field(
+        ...,
+        description="One verified deletion receipt for every model location",
+    )
 
 
 # ── Implementation functions ─────────────────────────────────────────────────
@@ -578,6 +634,120 @@ async def _withdraw_consent_grant_impl(
             })
         await session.commit()
     return _envelope_json(grant.to_dict())
+
+
+def _fitted_model_asset_id(value: str) -> tuple[uuid.UUID | None, str | None]:
+    try:
+        return uuid.UUID(value), None
+    except ValueError:
+        return None, json.dumps({
+            "error": {"code": "bad_request", "message": "invalid asset_id"}
+        })
+
+
+def _fitted_model_lifecycle_error(exc: Exception) -> str:
+    return json.dumps({
+        "error": {
+            "code": getattr(exc, "code", "fitted_model_lifecycle_error"),
+            "message": str(exc),
+        }
+    })
+
+
+async def _set_fitted_model_retention_impl(
+    params: "SetFittedModelRetentionInput", session_factory,
+) -> str:
+    from forge_bridge.store.fitted_model_lifecycle_repo import (
+        FittedModelLifecycleError,
+        FittedModelLifecycleRepo,
+    )
+    asset_id, error = _fitted_model_asset_id(params.asset_id)
+    if error is not None:
+        return error
+    assert asset_id is not None
+    async with session_factory() as session:
+        try:
+            state = await FittedModelLifecycleRepo(session).set_retention(
+                asset_id,
+                retention_until=params.retention_until,
+                actor=params.actor,
+                reason=params.reason,
+            )
+        except FittedModelLifecycleError as exc:
+            return _fitted_model_lifecycle_error(exc)
+        await session.commit()
+    return _envelope_json(state)
+
+
+async def _list_fitted_model_gc_candidates_impl(
+    params: Optional["ListFittedModelGcCandidatesInput"], session_factory,
+) -> str:
+    from forge_bridge.store.fitted_model_lifecycle_repo import (
+        FittedModelLifecycleError,
+        FittedModelLifecycleRepo,
+    )
+    params = params or ListFittedModelGcCandidatesInput()
+    async with session_factory() as session:
+        try:
+            candidates = await FittedModelLifecycleRepo(session).list_gc_candidates(
+                as_of=params.as_of,
+            )
+        except FittedModelLifecycleError as exc:
+            return _fitted_model_lifecycle_error(exc)
+    data = [candidate.to_dict() for candidate in candidates]
+    return _envelope_json(data, total=len(data))
+
+
+async def _mark_fitted_model_gc_impl(
+    params: "MarkFittedModelGcInput", session_factory,
+) -> str:
+    from forge_bridge.store.fitted_model_lifecycle_repo import (
+        FittedModelLifecycleError,
+        FittedModelLifecycleRepo,
+    )
+    asset_id, error = _fitted_model_asset_id(params.asset_id)
+    if error is not None:
+        return error
+    assert asset_id is not None
+    async with session_factory() as session:
+        try:
+            state = await FittedModelLifecycleRepo(session).mark_gc(
+                asset_id,
+                collect_after=params.collect_after,
+                actor=params.actor,
+            )
+        except FittedModelLifecycleError as exc:
+            return _fitted_model_lifecycle_error(exc)
+        await session.commit()
+    return _envelope_json(state)
+
+
+async def _finalize_fitted_model_gc_impl(
+    params: "FinalizeFittedModelGcInput", session_factory,
+) -> str:
+    from forge_bridge.store.fitted_model_lifecycle_repo import (
+        FittedModelLifecycleError,
+        FittedModelLifecycleRepo,
+    )
+    asset_id, error = _fitted_model_asset_id(params.asset_id)
+    if error is not None:
+        return error
+    assert asset_id is not None
+    receipts = [
+        receipt.model_dump(exclude_none=True)
+        for receipt in params.deletion_receipts
+    ]
+    async with session_factory() as session:
+        try:
+            state = await FittedModelLifecycleRepo(session).finalize_gc(
+                asset_id,
+                deletion_receipts=receipts,
+                actor=params.actor,
+            )
+        except FittedModelLifecycleError as exc:
+            return _fitted_model_lifecycle_error(exc)
+        await session.commit()
+    return _envelope_json(state)
 
 
 def _client():
