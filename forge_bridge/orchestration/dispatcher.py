@@ -22,6 +22,7 @@ from forge_bridge.orchestration.drivers import (
     GenerationDriverRegistry,
     backend_id_from_identity_triple,
 )
+from forge_bridge.store.fitted_model_lifecycle_repo import FittedModelLifecycleRepo
 from forge_bridge.store.generation_grant_repo import GenerationGrantRepo
 from forge_bridge.store.models import DBEntity
 from forge_bridge.store.orch_entity_views import DBOrchExecutionPlan
@@ -39,7 +40,7 @@ class InvocationEnvelope:
     backend_identity_triple: dict[str, Any]
     # #160 — the fitted-model asset this invocation runs against. Intrinsic to
     # the invocation (an envelope FIELD, not a dispatch kwarg), so the
-    # fail-closed revocation gate can read it at the submit chokepoint. Defaults
+    # fail-closed lifecycle gate can read it at the submit chokepoint. Defaults
     # None; existing construction sites keep working unchanged (no model named →
     # gate no-ops, preserving existing behavior).
     fitted_model_asset_id: str | None = None
@@ -299,14 +300,32 @@ async def _advisory_grant_check(
 
 
 # ─────────────────────────────────────────────────────────────
-# Fitted-model revocation gate (#160)
+# Fitted-model availability gate (#160)
 # ─────────────────────────────────────────────────────────────
-# Fail-closed consent enforcement at the submit chokepoint: a revoked
-# fitted-model asset must never be inferred against. The direct door may emit
-# `dispatch_advisory_refused` after an earlier read-only check; this authoritative
-# recheck owns `dispatch_model_refused` and is the only route to submit. Mirrors
-# ``_resolve_and_consume_grant``'s session usage and return shape, but this is a
-# pure READ — a revocation flag is never a spend, so there is no CAS/consume.
+# Fail-closed lifecycle enforcement at the submit chokepoint: a revoked, marked,
+# collected, malformed, or missing fitted-model asset must never be inferred
+# against. The authoritative path locks the model row through submit and records
+# use in the artifact transaction, preventing collection from racing inference.
+
+
+async def _lock_model_for_submit(
+    session: AsyncSession,
+    *,
+    fitted_model_asset_id: str | None,
+) -> tuple[DBEntity | None, str | None]:
+    """Lock and validate the fitted-model named by an invocation.
+
+    ``None`` remains the no-model/no-regression path. A named model must resolve
+    to an active ``fitted-model`` asset; the returned row lock is owned by the
+    caller's transaction and must remain held through backend submission.
+    """
+    if fitted_model_asset_id is None:
+        return None, None
+    try:
+        asset_uuid = uuid.UUID(str(fitted_model_asset_id))
+    except (ValueError, AttributeError, TypeError):
+        return None, "model_not_found"
+    return await FittedModelLifecycleRepo(session).lock_for_inference(asset_uuid)
 
 
 async def _check_model_not_revoked(
@@ -314,33 +333,19 @@ async def _check_model_not_revoked(
     *,
     fitted_model_asset_id: str | None,
 ) -> tuple[bool, str | None]:
-    """Resolve the fitted-model asset and verify it is not revoked.
+    """Advisory fitted-model availability check for pre-dispatch callers.
 
-    Returns ``(True, None)`` when NO model is named (the no-op / no-regression
-    case — existing envelopes without the field pass straight through) OR the
-    named asset exists and carries no ``attributes.revoked_at``. Returns
-    ``(False, "model_not_found")`` when the id resolves to no asset, and
-    ``(False, "model_revoked")`` when the asset's JSONB has ``revoked_at`` set.
-    Fail-closed by construction: any resolvable-but-revoked or missing model
-    refuses before the single ``driver.submit`` chokepoint runs.
+    This compatibility seam now covers the complete lifecycle, despite its
+    historical name. Its row lock ends when the advisory session closes; the
+    authoritative dispatch path repeats the check and holds its lock through
+    submit.
     """
-    if fitted_model_asset_id is None:
-        return True, None
-    try:
-        asset_uuid = uuid.UUID(str(fitted_model_asset_id))
-    except (ValueError, AttributeError, TypeError):
-        # An unparseable id resolves to no asset — fail closed.
-        return False, "model_not_found"
     async with session_factory() as session:
-        db_entity = await session.get(DBEntity, asset_uuid)
-    if db_entity is None:
-        return False, "model_not_found"
-    # Presence-based, fail-closed: any non-None ``revoked_at`` means revoked.
-    # Do NOT revert to truthiness — a falsy sentinel ("" / 0) from a future
-    # writer (the #161 consent path) would silently open the gate.
-    if (db_entity.attributes or {}).get("revoked_at") is not None:
-        return False, "model_revoked"
-    return True, None
+        _model, refusal_code = await _lock_model_for_submit(
+            session,
+            fitted_model_asset_id=fitted_model_asset_id,
+        )
+    return refusal_code is None, refusal_code
 
 
 async def dispatch_plan(
@@ -446,12 +451,8 @@ async def dispatch_plan(
     # the single submit chokepoint, so both doors reach the identical path.
     backend_identity_triple = dict(driver.backend_identity_triple)
     inputs = [_artifact_ref(item) for item in (step.get("inputs") or [])]
-    # ponytail: ``fitted_model_asset_id`` is now threaded from the plan step onto
-    # this envelope, so the revocation gate enforces for plan-driven dispatch too.
-    # It stays dormant until the planner (``planner_passes.py:pass_5``) actually
-    # emits ``fitted_model_asset_id`` on a fitted-model plan step — that producer
-    # side is the remaining follow-on (out of #168 scope; no fitted-model
-    # generation flow exists yet).
+    # ``fitted_model_asset_id`` is threaded from the plan step onto this envelope,
+    # so the same lifecycle gate enforces plan-driven and direct dispatch.
     envelope = InvocationEnvelope(
         operator_id=str(step["operator_id"]),
         inputs=inputs,
@@ -591,14 +592,16 @@ async def dispatch_envelope(
                 execution_result_ids=execution_result_ids,
             )
 
-        model_ok, model_refusal_code = await _check_model_not_revoked(
-            session_factory, fitted_model_asset_id=envelope.fitted_model_asset_id,
+        model_entity, model_refusal_code = await _lock_model_for_submit(
+            artifact_session,
+            fitted_model_asset_id=envelope.fitted_model_asset_id,
         )
-        if not model_ok:
+        if model_refusal_code is not None:
             model_refuse_payload: dict[str, Any] = {
                 "operator_id": envelope.operator_id,
                 "backend_id": backend_id,
                 "refusal_code": model_refusal_code,
+                "fitted_model_asset_id": envelope.fitted_model_asset_id,
                 "run_id": str(run_id) if run_id is not None else None,
             }
             if plan_id is not None:
@@ -611,6 +614,12 @@ async def dispatch_envelope(
             )
 
         handle = await driver.submit(envelope)
+        if model_entity is not None:
+            await FittedModelLifecycleRepo(artifact_session).record_use(
+                model_entity,
+                operator_id=envelope.operator_id,
+                request_id=handle.request_id,
+            )
         # ------------------------------------------------------------------
 
         content_provenance: dict[str, Any] = {
@@ -626,6 +635,12 @@ async def dispatch_envelope(
         if plan_id is not None:
             content_provenance["plan_id"] = plan_id
             content_provenance["lineage"]["source_plan_id"] = plan_id
+        if model_entity is not None:
+            fitted_model_asset_id = str(model_entity.id)
+            content_provenance["fitted_model_asset_id"] = fitted_model_asset_id
+            content_provenance["lineage"][
+                "fitted_model_asset_id"
+            ] = fitted_model_asset_id
 
         body: dict[str, Any] = {
             "name": (
@@ -661,6 +676,8 @@ async def dispatch_envelope(
     }
     if idempotency_key is not None:
         submitted_event["idempotency_key"] = idempotency_key
+    if model_entity is not None:
+        submitted_event["fitted_model_asset_id"] = str(model_entity.id)
     if plan_id is not None:
         submitted_event = {"plan_id": plan_id, **submitted_event}
     await event_appender("generation_dispatch_submitted", submitted_event)
@@ -669,6 +686,8 @@ async def dispatch_envelope(
         "artifact_id": str(artifact.id),
         "input_artifact_ids": [ref.artifact_id for ref in inputs],
     }
+    if model_entity is not None:
+        lineage_event["fitted_model_asset_id"] = str(model_entity.id)
     if plan_id is not None:
         lineage_event["plan_id"] = plan_id
     await event_appender("generation_dispatch_lineage_recorded", lineage_event)

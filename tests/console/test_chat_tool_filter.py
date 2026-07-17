@@ -46,13 +46,12 @@ def _reset_filter_cache():
 # ── Test 1: In-process tool set matches resources module ──────────────────────
 
 def test_in_process_tool_set_matches_resources_module():
-    """Regression guard: _IN_PROCESS_FORGE_TOOLS must contain EXACTLY the thirteen
+    """Regression guard: the in-process set must match console resources exactly.
     names registered by register_console_resources in forge_bridge/console/resources.py.
 
     If register_console_resources adds another in-process tool, this test fails —
-    forcing the classification to be updated. Expected cardinality is THIRTEEN
-    (the #161 consent-grant lifecycle — propose/ratify/bind/get/withdraw — joined
-    the eight prior, which already included #146 forge_ratify_generation_grant).
+    forcing the classification to be updated. The #160 retention/GC lifecycle
+    brings the expected cardinality to seventeen.
     """
     from forge_bridge.console._tool_filter import _IN_PROCESS_FORGE_TOOLS
     from forge_bridge.console.resources import register_console_resources
@@ -68,9 +67,8 @@ def test_in_process_tool_set_matches_resources_module():
         f"  In resources: {sorted(registered_names)}\n"
         f"Update _IN_PROCESS_FORGE_TOOLS in _tool_filter.py."
     )
-    # The expected cardinality is THIRTEEN.
-    assert len(_IN_PROCESS_FORGE_TOOLS) == 13, (
-        f"Expected exactly 13 in-process forge_* tools, got {len(_IN_PROCESS_FORGE_TOOLS)}: "
+    assert len(_IN_PROCESS_FORGE_TOOLS) == 17, (
+        f"Expected exactly 17 in-process forge_* tools, got {len(_IN_PROCESS_FORGE_TOOLS)}: "
         f"{sorted(_IN_PROCESS_FORGE_TOOLS)}"
     )
 
@@ -144,9 +142,19 @@ async def test_filter_keeps_in_process_forge_when_flame_down():
     "forge_approve_staged",
     "forge_reject_staged",
     "forge_staged_pending_read",
+    "forge_ratify_generation_grant",
+    "forge_propose_consent_grant",
+    "forge_ratify_consent_grant",
+    "forge_bind_consent_grant",
+    "forge_get_consent_grant",
+    "forge_withdraw_consent_grant",
+    "forge_set_fitted_model_retention",
+    "forge_list_fitted_model_gc_candidates",
+    "forge_mark_fitted_model_gc",
+    "forge_finalize_fitted_model_gc",
 ])
-async def test_filter_all_seven_in_process_tools_survive_when_flame_down(in_process_name):
-    """All SEVEN in-process forge_* tools must survive when Flame is unreachable.
+async def test_filter_all_in_process_tools_survive_when_flame_down(in_process_name):
+    """Every in-process forge_* tool survives when Flame is unreachable.
 
     Regression guard: if a name is accidentally dropped from _IN_PROCESS_FORGE_TOOLS,
     this test fails immediately instead of letting the chat handler return 503 on

@@ -91,7 +91,7 @@ def test_register_console_resources_registers_two_tool_shims(api):
     names = [call.kwargs.get("name") for call in mock_mcp.tool.call_args_list]
     # Phase 9 shims (2) + Phase 14 FB-B staged-ops tools (4) + STAGED-07 shim (1)
     # + #146 generation-grant ratify tool (1) + #161 consent-grant lifecycle (5)
-    # = 13 total.
+    # + #160 fitted-model retention/GC lifecycle (4) = 17 total.
     assert "forge_manifest_read" in names
     assert "forge_tools_read" in names
     assert "forge_list_staged" in names
@@ -105,7 +105,11 @@ def test_register_console_resources_registers_two_tool_shims(api):
     assert "forge_bind_consent_grant" in names
     assert "forge_get_consent_grant" in names
     assert "forge_withdraw_consent_grant" in names
-    assert len(names) == 13
+    assert "forge_set_fitted_model_retention" in names
+    assert "forge_list_fitted_model_gc_candidates" in names
+    assert "forge_mark_fitted_model_gc" in names
+    assert "forge_finalize_fitted_model_gc" in names
+    assert len(names) == 17
 
 
 def test_all_resources_have_application_json_mime(api):
@@ -115,8 +119,21 @@ def test_all_resources_have_application_json_mime(api):
         assert call.kwargs.get("mime_type") == "application/json"
 
 
-_READ_ONLY_TOOLS = {"forge_manifest_read", "forge_tools_read", "forge_list_staged", "forge_get_staged", "forge_staged_pending_read"}
-_WRITE_TOOLS = {"forge_approve_staged", "forge_reject_staged"}
+_READ_ONLY_TOOLS = {
+    "forge_manifest_read",
+    "forge_tools_read",
+    "forge_list_staged",
+    "forge_get_staged",
+    "forge_staged_pending_read",
+    "forge_list_fitted_model_gc_candidates",
+}
+_WRITE_TOOLS = {
+    "forge_approve_staged",
+    "forge_reject_staged",
+    "forge_set_fitted_model_retention",
+    "forge_mark_fitted_model_gc",
+}
+_DESTRUCTIVE_TOOLS = {"forge_finalize_fitted_model_gc"}
 
 
 def test_tool_shims_have_read_only_hint(api):
@@ -135,6 +152,9 @@ def test_tool_shims_have_read_only_hint(api):
         elif name in _WRITE_TOOLS:
             assert ann.get("readOnlyHint") is False, f"{name} should have readOnlyHint=False"
             assert ann.get("destructiveHint") is False, f"{name} should have destructiveHint=False"
+        elif name in _DESTRUCTIVE_TOOLS:
+            assert ann.get("readOnlyHint") is False, f"{name} should have readOnlyHint=False"
+            assert ann.get("destructiveHint") is True, f"{name} should have destructiveHint=True"
 
 
 def test_barrel_exposes_register_console_resources():

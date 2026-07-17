@@ -198,7 +198,7 @@ class ConsoleReadAPI:
              and a namespace inferred from the name prefix.
           3. ``_tool_filter._get_backend_reachability()`` + ``_is_in_process_tool``
              — sets ``ToolRecord.available``. Tools whose runtime is
-             in-process (synth_*, the seven _IN_PROCESS_FORGE_TOOLS) are
+             in-process (synth_* and _IN_PROCESS_FORGE_TOOLS) are
              always available; flame_* / forge_* tools that depend on the
              Flame HTTP bridge inherit the cached probe result.
 

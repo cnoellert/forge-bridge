@@ -1,4 +1,4 @@
-"""Slice B (#160) — fitted-model revocation state + fail-closed inference gate.
+"""Fitted-model revocation and lifecycle enforcement at generation dispatch.
 
 Two proofs:
 
@@ -6,12 +6,9 @@ Two proofs:
      emits an ``asset.revoked`` event, and is idempotent on re-revoke (stays
      revoked, no error, no duplicate event).
 
-  2. The fail-closed gate at the dispatch submit chokepoint: an envelope naming a
-     REVOKED fitted-model refuses with ``model_revoked`` and NEVER calls
-     ``driver.submit``; a MISSING model refuses with ``model_not_found``; a live
-     (non-revoked) model passes the gate and reaches submit; and an envelope
-     with ``fitted_model_asset_id=None`` no-ops the gate (existing behavior
-     preserved — the no-regression property).
+  2. The fail-closed gate at the dispatch submit chokepoint rejects unavailable
+     fitted models, latches successful use and provenance, and holds a model row
+     lock so collection cannot race an in-flight submit.
 
 The model gate sits AFTER the GenerationGrant spend-gate, so every gate proof
 supplies a ratified grant to clear the grant guard first, isolating the model
@@ -20,8 +17,9 @@ gate's behavior.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from forge_contracts.references import ArtifactRef
@@ -36,7 +34,14 @@ from forge_bridge.orchestration.drivers import (
     DriverSubmitResult,
     GenerationDriverRegistry,
 )
+from forge_bridge.store.fitted_model_lifecycle_repo import (
+    GC_COLLECTED,
+    FittedModelLifecycleError,
+    FittedModelLifecycleRepo,
+)
 from forge_bridge.store.generation_grant_repo import GenerationGrantRepo
+from forge_bridge.store.models import DBEntity
+from forge_bridge.store.orch_generation_artifact_repo import GenerationArtifactRepo
 from forge_bridge.store.repo import EntityRepo, EventRepo, ProjectRepo, revoke_asset
 
 pytestmark = pytest.mark.asyncio
@@ -60,6 +65,18 @@ class _CountingDriver:
 
     async def poll(self, request_id: str):  # pragma: no cover - unused
         raise NotImplementedError
+
+
+class _BlockingDriver(_CountingDriver):
+    def __init__(self) -> None:
+        super().__init__()
+        self.submit_entered = asyncio.Event()
+        self.release_submit = asyncio.Event()
+
+    async def submit(self, invocation: InvocationEnvelope) -> DriverSubmitResult:
+        self.submit_entered.set()
+        await self.release_submit.wait()
+        return await super().submit(invocation)
 
 
 def _registry() -> tuple[GenerationDriverRegistry, _CountingDriver]:
@@ -284,7 +301,7 @@ async def test_missing_model_refuses_and_does_not_submit(session_factory):
 
 
 async def test_live_model_passes_gate_and_reaches_submit(session_factory):
-    """A live (non-revoked) fitted-model clears the gate and submits."""
+    """A live fitted-model submits and records use plus exact provenance."""
     registry, driver = _registry()
     log, append = await _events()
     grant_id = await _ratified_grant(session_factory)
@@ -302,6 +319,155 @@ async def test_live_model_passes_gate_and_reaches_submit(session_factory):
     assert result.artifact_id is not None
     assert len(driver.submits) == 1
     assert [name for name, _ in log if name == "dispatch_model_refused"] == []
+
+    async with session_factory() as session:
+        model = await session.get(DBEntity, model_id)
+        artifact = await GenerationArtifactRepo(session).get_by_id(result.artifact_id)
+        use_events = await EventRepo(session).get_recent(
+            event_type="fitted_model.used", entity_id=model_id
+        )
+
+    assert model.attributes["last_used_at"]
+    assert artifact.content_provenance["fitted_model_asset_id"] == str(model_id)
+    assert (
+        artifact.content_provenance["lineage"]["fitted_model_asset_id"]
+        == str(model_id)
+    )
+    assert len(use_events) == 1
+    assert use_events[0].payload["request_id"] == "req-1"
+
+
+async def test_gc_marked_model_refuses_and_does_not_submit(session_factory):
+    registry, driver = _registry()
+    log, append = await _events()
+    grant_id = await _ratified_grant(session_factory)
+    model_id = await _fitted_model(session_factory)
+    as_of = datetime(2026, 7, 11, tzinfo=timezone.utc)
+    async with session_factory() as session:
+        lifecycle = FittedModelLifecycleRepo(session)
+        await lifecycle.set_retention(
+            model_id,
+            retention_until=as_of - timedelta(days=1),
+            actor="operator",
+        )
+        await lifecycle.mark_gc(
+            model_id,
+            collect_after=as_of + timedelta(days=7),
+            actor="operator",
+            as_of=as_of,
+        )
+        await session.commit()
+
+    result = await _dispatch(
+        session_factory,
+        registry,
+        append,
+        _envelope(model_id),
+        grant_id=grant_id,
+    )
+
+    assert result.refusal_code == "model_gc_pending"
+    assert driver.submits == []
+    assert next(
+        payload for name, payload in log if name == "dispatch_model_refused"
+    )["fitted_model_asset_id"] == str(model_id)
+
+
+async def test_collected_model_refuses_and_does_not_submit(session_factory):
+    registry, driver = _registry()
+    log, append = await _events()
+    grant_id = await _ratified_grant(session_factory)
+    model_id = await _fitted_model(session_factory)
+    async with session_factory() as session:
+        model = await session.get(DBEntity, model_id)
+        attrs = dict(model.attributes or {})
+        attrs["gc_state"] = GC_COLLECTED
+        model.attributes = attrs
+        await session.commit()
+
+    result = await _dispatch(
+        session_factory,
+        registry,
+        append,
+        _envelope(model_id),
+        grant_id=grant_id,
+    )
+
+    assert result.refusal_code == "model_collected"
+    assert driver.submits == []
+
+
+async def test_non_fitted_asset_id_fails_closed(session_factory):
+    registry, driver = _registry()
+    _log, append = await _events()
+    grant_id = await _ratified_grant(session_factory)
+    project = Project(name="Gate Asset", code=f"GA{uuid.uuid4().hex[:8]}")
+    plate = Asset(name="plate", asset_type="plate", project_id=project.id)
+    async with session_factory() as session:
+        await ProjectRepo(session).save(project)
+        await EntityRepo(session, Registry.default()).save(plate, project.id)
+        await session.commit()
+
+    result = await _dispatch(
+        session_factory,
+        registry,
+        append,
+        _envelope(plate.id),
+        grant_id=grant_id,
+    )
+
+    assert result.refusal_code == "model_not_found"
+    assert driver.submits == []
+
+
+async def test_gc_mark_waits_for_submit_and_observes_latched_use(session_factory):
+    """The dispatch transaction owns the model lock through backend submit."""
+    driver = _BlockingDriver()
+    registry = GenerationDriverRegistry()
+    registry.register_driver(driver)
+    _log, append = await _events()
+    grant_id = await _ratified_grant(session_factory)
+    model_id = await _fitted_model(session_factory)
+    as_of = datetime.now(timezone.utc)
+    async with session_factory() as session:
+        await FittedModelLifecycleRepo(session).set_retention(
+            model_id,
+            retention_until=as_of - timedelta(days=1),
+            actor="operator",
+        )
+        await session.commit()
+
+    dispatch_task = asyncio.create_task(
+        _dispatch(
+            session_factory,
+            registry,
+            append,
+            _envelope(model_id),
+            grant_id=grant_id,
+        )
+    )
+    await asyncio.wait_for(driver.submit_entered.wait(), timeout=2)
+
+    async def mark_model() -> None:
+        async with session_factory() as session:
+            await FittedModelLifecycleRepo(session).mark_gc(
+                model_id,
+                collect_after=as_of + timedelta(days=7),
+                actor="collector",
+                as_of=as_of,
+            )
+            await session.commit()
+
+    mark_task = asyncio.create_task(mark_model())
+    await asyncio.sleep(0.1)
+    assert not mark_task.done()
+
+    driver.release_submit.set()
+    result = await asyncio.wait_for(dispatch_task, timeout=2)
+    assert result.status == "submitted"
+    with pytest.raises(FittedModelLifecycleError) as exc:
+        await asyncio.wait_for(mark_task, timeout=2)
+    assert exc.value.code == "model_not_gc_eligible"
 
 
 async def test_no_model_id_noops_gate_and_submits(session_factory):

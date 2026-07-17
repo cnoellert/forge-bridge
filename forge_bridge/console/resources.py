@@ -145,10 +145,14 @@ def register_console_resources(
         RatifyGenerationGrantInput,
         ProposeConsentGrantInput, RatifyConsentGrantInput, BindConsentGrantInput,
         GetConsentGrantInput, WithdrawConsentGrantInput,
+        SetFittedModelRetentionInput, ListFittedModelGcCandidatesInput,
+        MarkFittedModelGcInput, FinalizeFittedModelGcInput,
         _list_staged_impl, _get_staged_impl, _approve_staged_impl, _reject_staged_impl,
         _ratify_generation_grant_impl,
         _propose_consent_grant_impl, _ratify_consent_grant_impl, _bind_consent_grant_impl,
         _get_consent_grant_impl, _withdraw_consent_grant_impl,
+        _set_fitted_model_retention_impl, _list_fitted_model_gc_candidates_impl,
+        _mark_fitted_model_gc_impl, _finalize_fitted_model_gc_impl,
     )
 
     # Inject input model names into module globals so FastMCP's get_type_hints()
@@ -168,6 +172,10 @@ def register_console_resources(
         "BindConsentGrantInput": BindConsentGrantInput,
         "GetConsentGrantInput": GetConsentGrantInput,
         "WithdrawConsentGrantInput": WithdrawConsentGrantInput,
+        "SetFittedModelRetentionInput": SetFittedModelRetentionInput,
+        "ListFittedModelGcCandidatesInput": ListFittedModelGcCandidatesInput,
+        "MarkFittedModelGcInput": MarkFittedModelGcInput,
+        "FinalizeFittedModelGcInput": FinalizeFittedModelGcInput,
     })
 
     @mcp.tool(
@@ -409,6 +417,85 @@ def register_console_resources(
     )
     async def forge_withdraw_consent_grant(params: WithdrawConsentGrantInput) -> str:
         return await _withdraw_consent_grant_impl(params, session_factory)
+
+    # -- Fitted-model retention and two-phase storage collection (#160) --------
+    @mcp.tool(
+        name="forge_set_fitted_model_retention",
+        description=(
+            "Forge: set an explicit retention deadline on one fitted-model asset.\n\n"
+            "Fitted models otherwise retain indefinitely. Extending retention also "
+            "cancels a pending GC mark, restoring inference availability. Requires "
+            "asset_id, a timezone-aware retention_until, and actor.\n\n"
+            "Use this tool ONLY when:\n"
+            "- an operator is applying or extending fitted-model retention policy\n\n"
+            "Do NOT use this tool to delete model bytes; storage deletion happens "
+            "between forge_mark_fitted_model_gc and forge_finalize_fitted_model_gc."
+        ),
+        annotations={
+            "readOnlyHint": False,
+            "idempotentHint": False,
+            "destructiveHint": False,
+        },
+    )
+    async def forge_set_fitted_model_retention(
+        params: SetFittedModelRetentionInput,
+    ) -> str:
+        return await _set_fitted_model_retention_impl(params, session_factory)
+
+    @mcp.tool(
+        name="forge_list_fitted_model_gc_candidates",
+        description=(
+            "Forge: list fitted models whose explicit retention has expired and "
+            "which have not been used since that deadline. Returns exact model "
+            "storage locations for operator review. Omit as_of to evaluate now.\n\n"
+            "Use this tool ONLY when:\n"
+            "- reviewing fitted-model storage eligible for garbage collection"
+        ),
+        annotations={"readOnlyHint": True, "idempotentHint": True},
+    )
+    async def forge_list_fitted_model_gc_candidates(
+        params: Optional[ListFittedModelGcCandidatesInput] = None,
+    ) -> str:
+        return await _list_fitted_model_gc_candidates_impl(params, session_factory)
+
+    @mcp.tool(
+        name="forge_mark_fitted_model_gc",
+        description=(
+            "Forge: mark one eligible fitted model for collection after an explicit "
+            "grace deadline. Marking blocks new inference and returns every location "
+            "the storage executor must delete. It does not delete bytes.\n\n"
+            "Use this tool ONLY when:\n"
+            "- an operator has reviewed a GC candidate and starts its grace period"
+        ),
+        annotations={
+            "readOnlyHint": False,
+            "idempotentHint": False,
+            "destructiveHint": False,
+        },
+    )
+    async def forge_mark_fitted_model_gc(params: MarkFittedModelGcInput) -> str:
+        return await _mark_fitted_model_gc_impl(params, session_factory)
+
+    @mcp.tool(
+        name="forge_finalize_fitted_model_gc",
+        description=(
+            "Forge: finalize collection of a marked fitted model after its grace "
+            "period and after storage deletion. Requires one successful deletion "
+            "receipt for every registered weights location. Archives the model "
+            "aggregate while preserving locators, lineage, receipts, and audit.\n\n"
+            "Use this tool ONLY when:\n"
+            "- storage executors have deleted every marked model location"
+        ),
+        annotations={
+            "readOnlyHint": False,
+            "idempotentHint": False,
+            "destructiveHint": True,
+        },
+    )
+    async def forge_finalize_fitted_model_gc(
+        params: FinalizeFittedModelGcInput,
+    ) -> str:
+        return await _finalize_fitted_model_gc_impl(params, session_factory)
 
     # -- Phase 14 (FB-B) STAGED-07 — pending-queue snapshot resource + tool shim
     # Per D-12: ship only forge://staged/pending (proposed-only) + forge_staged_pending_read shim.

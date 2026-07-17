@@ -164,13 +164,14 @@ async def dispatch_generation(
         )
         return DispatchResult(status="refused", refusal_code=refusal_code)
 
-    # ── Fitted-model revocation gate (#160) — direct-door advisory ─────────
+    # ── Fitted-model lifecycle gate (#160) — direct-door advisory ──────────
     # The envelope carries fitted_model_asset_id here (it is an envelope field),
     # so mirror the model pre-check: fail-fast before envelope work if the named
-    # fitted-model asset is missing or revoked. The authoritative gate still
-    # runs at the mandatory chokepoint inside dispatch_envelope; this is the same
-    # advisory-early-refuse shape as the grant check above. Its audit event is
-    # deliberately distinct from the chokepoint's authoritative refusal event.
+    # fitted-model asset is unavailable (missing, revoked, marked, collected, or
+    # malformed). The authoritative gate still runs at the mandatory chokepoint
+    # inside dispatch_envelope; this is the same advisory-early-refuse shape as
+    # the grant check above. Its audit event is deliberately distinct from the
+    # chokepoint's authoritative refusal event.
     model_ok, model_refusal_code = await _check_model_not_revoked(
         session_factory, fitted_model_asset_id=envelope.fitted_model_asset_id,
     )

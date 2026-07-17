@@ -85,7 +85,11 @@ def test_entity_defaults_this_clip_only():
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-async def _make_asset(session_factory) -> uuid.UUID:
+async def _make_asset(
+    session_factory,
+    *,
+    asset_type: str = "fitted-model",
+) -> uuid.UUID:
     asset_id = uuid.uuid4()
     async with session_factory() as session:
         session.add(DBEntity(
@@ -93,7 +97,7 @@ async def _make_asset(session_factory) -> uuid.UUID:
             entity_type="asset",
             name="fitted-model-jane",
             status="active",
-            attributes={"asset_type": "fitted_model"},
+            attributes={"asset_type": asset_type},
         ))
         await session.commit()
     return asset_id
@@ -313,6 +317,28 @@ async def test_bind_asset_nonexistent_id_rejected(session_factory):
         grant = await ConsentGrantRepo(session).get_by_grant_id(grant_id)
         assert grant.status == "ratified"
         assert grant.fitted_model_asset_id is None
+
+
+@pytest.mark.asyncio
+async def test_bind_asset_rejects_non_fitted_asset(session_factory):
+    """Consent cannot bind to or later revoke an unrelated registry asset."""
+    grant_id = await _ratified(session_factory)
+    plate_id = await _make_asset(session_factory, asset_type="plate")
+
+    async with session_factory() as session:
+        with pytest.raises(ConsentGrantBindingError) as exc:
+            await ConsentGrantRepo(session).bind_asset(
+                grant_id,
+                plate_id,
+                actor="fit",
+            )
+    assert exc.value.current_status == "ratified"
+
+    async with session_factory() as session:
+        grant = await ConsentGrantRepo(session).get_by_grant_id(grant_id)
+        plate = await session.get(DBEntity, plate_id)
+    assert grant.fitted_model_asset_id is None
+    assert plate.attributes.get("revoked_at") is None
 
 
 @pytest.mark.asyncio
