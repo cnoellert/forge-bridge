@@ -30,9 +30,16 @@ from forge_bridge.orchestration.dispatcher import (
     InvocationEnvelope,
     _advisory_grant_check,
     _check_model_not_revoked,
+    _existing_idempotency_result,
+    _generation_invocation_fingerprint,
+    _normalize_generation_idempotency_key,
     dispatch_envelope,
 )
-from forge_bridge.orchestration.drivers import GenerationDriverRegistry
+from forge_bridge.orchestration.drivers import (
+    GenerationDriverRegistry,
+    backend_id_from_identity_triple,
+)
+from forge_bridge.store.orch_generation_artifact_repo import GenerationArtifactRepo
 from forge_bridge.store.session import get_async_session_factory
 
 # ─────────────────────────────────────────────────────────────
@@ -100,7 +107,8 @@ async def dispatch_generation(
     Generation has two dispatch doors with distinct authority semantics:
 
       - This direct door performs advisory grant and fitted-model checks. It
-        fails fast without spending the grant and emits
+        first returns any matching idempotent artifact, then fails fast without
+        spending the grant and emits
         ``dispatch_advisory_refused`` when either check refuses.
       - :func:`dispatch_envelope` is the authoritative chokepoint for both this
         direct door and the planner door. It atomically consumes the grant,
@@ -111,13 +119,31 @@ async def dispatch_generation(
     event_appender = make_db_event_appender(session_factory)
     driver_registry = get_generation_driver_registry()
 
-    # ── SEAM (#141 idempotency pre-submit check) ───────────────────────────
-    # A dedup check keyed on ``idempotency_key`` belongs HERE, above the single
-    # submit chokepoint, so a retried forge_generate_* call collapses to the
-    # first artifact instead of double-submitting. ``idempotency_key`` is
-    # accepted in the signature now; the dedup logic is a SEPARATE slice and is
-    # intentionally NOT enforced yet.
-    #
+    # ── Idempotency preflight (#141) ────────────────────────────────────────
+    # A sequential retry may arrive with an already-consumed grant, so look up
+    # the durable artifact before the direct door's advisory grant check. The
+    # authoritative locked recheck still happens in dispatch_envelope; this
+    # preflight is an optimization and cannot authorize a new submit.
+    idempotency_key = _normalize_generation_idempotency_key(idempotency_key)
+    if idempotency_key is not None:
+        invocation_fingerprint = _generation_invocation_fingerprint(envelope)
+        async with session_factory() as session:
+            existing = await GenerationArtifactRepo(
+                session
+            ).get_by_idempotency_key(idempotency_key)
+        if existing is not None:
+            return await _existing_idempotency_result(
+                existing,
+                idempotency_key=idempotency_key,
+                invocation_fingerprint=invocation_fingerprint,
+                operator_id=envelope.operator_id,
+                backend_id=backend_id_from_identity_triple(
+                    dict(envelope.backend_identity_triple)
+                ),
+                event_appender=event_appender,
+                run_id=run_id,
+            )
+
     # ── GenerationGrant authority guard (#146) — direct-door advisory ──────
     # Early, NON-consuming fail-fast for the direct (plan-free) caller: peek the
     # resolved grant and refuse before doing envelope work if it is not a
@@ -166,6 +192,7 @@ async def dispatch_generation(
         event_appender=event_appender,
         run_id=run_id,
         grant_id=grant_id,
+        idempotency_key=idempotency_key,
     )
 
 

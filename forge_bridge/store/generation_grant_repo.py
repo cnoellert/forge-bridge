@@ -21,7 +21,8 @@ CONSUME IS ATOMIC (load-bearing correctness):
     read-check-write. Under session-per-request two concurrent submits would
     both pass a read-check and double-spend. The DB-level conditional flip
     guarantees exactly one submit consumes the grant; the loser gets a refusal.
-    This also hands #141 idempotency for free (a consumed grant refuses replay).
+    That is single-grant replay defense; #141 separately deduplicates retries
+    carrying different grants through the generation idempotency ledger.
 
 Immutability composition:
     The CAR base's update() / delete() remain raising — the terms body +

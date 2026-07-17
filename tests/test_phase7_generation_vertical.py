@@ -491,8 +491,7 @@ async def test_dispatch_generation_runtime_bound_reaches_same_lifecycle(
     result = await generation_entry.dispatch_generation(
         envelope,
         provenance={"planned_output_artifact_id": None},
-        # idempotency_key accepted now; dedup is a reserved seam, not enforced.
-        idempotency_key="idem-key-not-enforced-yet",
+        idempotency_key="phase7-runtime-bound-generation",
         grant_id=grant_id,
     )
 
@@ -505,6 +504,7 @@ async def test_dispatch_generation_runtime_bound_reaches_same_lifecycle(
         artifact = await GenerationArtifactRepo(session).get_by_id(result.artifact_id)
         assert artifact is not None
         assert artifact.lifecycle_state == "submitted"
+        assert artifact.idempotency_key == "phase7-runtime-bound-generation"
         assert resolve_backend_id(artifact) == _BACKEND_ID
         # Plan-free caller: plan_id absent everywhere downstream.
         assert "plan_id" not in artifact.content_provenance

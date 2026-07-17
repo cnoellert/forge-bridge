@@ -120,7 +120,7 @@ async def test_double_consume_replay_refuses(session_factory):
     async with session_factory() as session:
         second = await GenerationGrantRepo(session).consume_atomic(grant_id)
         await session.commit()
-        assert second is None  # #141 idempotency for free
+        assert second is None  # single-grant replay defense
 
 
 @pytest.mark.asyncio
