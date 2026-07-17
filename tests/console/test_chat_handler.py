@@ -447,7 +447,14 @@ def _pr20_build_app(tools_list, fake_call_tool=None):
             if name == "forge_list_projects":
                 return [TextContent(
                     type="text",
-                    text=json.dumps({"count": 0, "projects": []}),
+                    text=json.dumps({
+                        "count": 0,
+                        "projects": [],
+                        "store_health": {
+                            "status": "healthy",
+                            "source": "postgres",
+                        },
+                    }),
                 )]
             return [TextContent(type="text", text=f"{name}-result:{arguments!r}")]
 
@@ -608,10 +615,23 @@ def test_pr20_validation_error_returns_structured_tool_message():
     reply still returns 200 with a `tool` message carrying a structured
     error payload — NO LLM fallback to text."""
     from mcp.server.fastmcp.exceptions import ToolError
+    from mcp.types import TextContent
 
     tools = [_pr20_make_tool(n) for n in _PR20_VERSIONS_TOOLS]
 
     async def boom(name, arguments):
+        if name == "forge_list_projects":
+            return [TextContent(
+                type="text",
+                text=json.dumps({
+                    "count": 0,
+                    "projects": [],
+                    "store_health": {
+                        "status": "healthy",
+                        "source": "postgres",
+                    },
+                }),
+            )]
         raise ToolError("missing required argument 'project'")
 
     list_p, back_p, call_p, app, mock_router = _pr20_build_app(
@@ -1050,7 +1070,14 @@ def _pr24_make_call_tool(*, project_count: int, project_id: str = "proj-uuid-1")
         if name == "forge_list_projects":
             return [TextContent(
                 type="text",
-                text=json.dumps({"count": len(projects), "projects": projects}),
+                text=json.dumps({
+                    "count": len(projects),
+                    "projects": projects,
+                    "store_health": {
+                        "status": "healthy",
+                        "source": "postgres",
+                    },
+                }),
             )]
         if name == "forge_list_versions":
             if "project_id" not in arguments:

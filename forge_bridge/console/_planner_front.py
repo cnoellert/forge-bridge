@@ -156,8 +156,20 @@ async def _ground_projects(mcp: Any, tools: list) -> list[dict]:
             raise ProjectGroundingUnavailable(
                 f"forge_list_projects returned {type(parsed).__name__}"
             )
-        return [{"id": p.get("id"), "name": p.get("name")}
-                for p in (parsed.get("projects") or [])]
+        projects = parsed.get("projects")
+        if not isinstance(projects, list):
+            raise ProjectGroundingUnavailable(
+                "forge_list_projects returned no projects list"
+            )
+        store_health = parsed.get("store_health")
+        if not projects and not (
+            isinstance(store_health, dict)
+            and store_health.get("status") == "healthy"
+        ):
+            raise ProjectGroundingUnavailable(
+                "empty project list has no healthy store marker"
+            )
+        return [{"id": p.get("id"), "name": p.get("name")} for p in projects]
     except Exception as exc:  # noqa: BLE001 - grounding is best-effort
         if isinstance(exc, ProjectGroundingUnavailable):
             logger.error("planner_front: project grounding unavailable: %s", exc)

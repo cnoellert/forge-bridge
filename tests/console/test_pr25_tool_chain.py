@@ -45,7 +45,11 @@ def _projects_payload(count: int) -> str:
             {"id": f"proj-{i}", "name": f"P{i}", "code": f"P{i}"}
             for i in range(count)
         ]
-    return json.dumps({"count": len(projects), "projects": projects})
+    return json.dumps({
+        "count": len(projects),
+        "projects": projects,
+        "store_health": {"status": "healthy", "source": "postgres"},
+    })
 
 
 def _text_block(text: str):

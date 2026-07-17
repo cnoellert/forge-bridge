@@ -56,6 +56,7 @@ def _empty_projects_text() -> list[TextContent]:
             text=json.dumps({
                 "count": 0,
                 "projects": [],
+                "store_health": {"status": "healthy", "source": "postgres"},
             }),
         )
     ]
@@ -236,6 +237,18 @@ def test_planner_grounding_includes_first_party_vocabulary_block():
 
 def test_planner_project_grounding_error_is_not_empty_project_list():
     mcp = SimpleNamespace(call_tool=AsyncMock(return_value=_project_error_text()))
+
+    with pytest.raises(ProjectGroundingUnavailable):
+        asyncio.run(_ground_projects(mcp, [_list_shots_tool()]))
+
+
+def test_planner_unproven_empty_project_list_is_store_unavailable():
+    mcp = SimpleNamespace(call_tool=AsyncMock(return_value=[
+        TextContent(
+            type="text",
+            text=json.dumps({"count": 0, "projects": []}),
+        ),
+    ]))
 
     with pytest.raises(ProjectGroundingUnavailable):
         asyncio.run(_ground_projects(mcp, [_list_shots_tool()]))
