@@ -17,14 +17,22 @@ from forge_bridge.orchestration.drivers import (
     GenerationDriverRegistry,
 )
 from forge_bridge.orchestration.engine import GraphEngine
-from forge_bridge.orchestration.manual_qc import approve, revise, start_author
+from forge_bridge.orchestration.manual_qc import (
+    approve,
+    make_approved,
+    revise,
+    start_author,
+)
 from forge_bridge.orchestration.dispatcher import InvocationEnvelope
+from forge_bridge.orchestration.errors import PlannerRefusalError
 from forge_bridge.orchestration.replay import RUN_LINEAGE_REL_KEYS
 from forge_bridge.orchestration.registration import ToolRegistration, ToolRegistry
 from forge_bridge.store.orchestration_lifecycle_state_repo import (
     OrchestrationLifecycleStateRepo,
 )
 from forge_bridge.store.repo import RelationshipRepo
+from forge_bridge.store.generation_grant_repo import GenerationGrantRepo
+from forge_bridge.store.orch_generation_artifact_repo import GenerationArtifactRepo
 
 
 _TRIPLE = {
@@ -82,8 +90,16 @@ class _TargetDriver:
     )
     backend_id = "comfyui.seedance_2_0"
 
-    async def submit(self, _invocation):  # pragma: no cover - target is not rendered here
-        raise NotImplementedError
+    def __init__(self) -> None:
+        self.submissions: list[InvocationEnvelope] = []
+
+    async def submit(self, invocation: InvocationEnvelope) -> DriverSubmitResult:
+        self.submissions.append(invocation)
+        return DriverSubmitResult(
+            request_id=f"target-{len(self.submissions)}",
+            submitted_at=datetime(2026, 6, 16, tzinfo=timezone.utc),
+            raw_response_summary={"accepted": True},
+        )
 
     async def poll(self, _artifact):  # pragma: no cover - target is not rendered here
         raise NotImplementedError
@@ -104,6 +120,22 @@ async def _events():
         events.append((event_type, payload))
 
     return events, append
+
+
+async def _ratified_target_grant(session_factory) -> str:
+    async with session_factory() as session:
+        repo = GenerationGrantRepo(session)
+        grant = await repo.propose(
+            operator_id=_AUTHORING_TARGET.operator_id,
+            backend_identity_triple=(
+                _AUTHORING_TARGET.backend_identity_triple.model_dump(mode="json")
+            ),
+            estimated_cost={"currency": "USD", "amount": 0.25},
+            run_kind="manual_qc_make",
+        )
+        await repo.ratify(grant.grant_id, actor="human-reviewer")
+        await session.commit()
+        return grant.grant_id
 
 
 def _registry(driver: _AuthorDriver) -> GenerationDriverRegistry:
@@ -263,3 +295,100 @@ async def test_manual_qc_rejects_unpaired_injected_tool_registry(session_factory
             session_factory=session_factory,
             tool_registry=ToolRegistry(),
         )
+
+
+async def test_manual_qc_make_uses_approved_prompt_exact_target_and_grant(
+    session_factory,
+    tmp_path,
+):
+    author_driver = _AuthorDriver()
+    target_driver = _TargetDriver()
+    registry = _registry(author_driver)
+    registry.register_driver(target_driver)
+    events, append = await _events()
+    authored = await start_author(
+        "author motion for this beat",
+        session_factory=session_factory,
+        driver_registry=registry,
+        event_appender=append,
+        data_root=tmp_path,
+        authoring_target=_AUTHORING_TARGET,
+    )
+    grant_id = await _ratified_target_grant(session_factory)
+
+    with pytest.raises(PlannerRefusalError, match="has not been approved"):
+        await make_approved(
+            authored.artifact_id,
+            grant_id,
+            session_factory=session_factory,
+            driver_registry=registry,
+            event_appender=append,
+        )
+
+    async with session_factory() as session:
+        unspent = await GenerationGrantRepo(session).get_by_grant_id(grant_id)
+        assert unspent is not None
+        assert unspent.status == "ratified"
+
+    await approve(authored.run_id, session_factory=session_factory, actor="reviewer")
+    start_image = {
+        "artifact_id": "approved-still",
+        "artifact_type": "image",
+        "metadata": {
+            "role": "structural",
+            "url": "https://cdn.example/approved-still.png",
+        },
+    }
+    made = await make_approved(
+        authored.artifact_id,
+        grant_id,
+        scalars={"duration_seconds": 5},
+        references=[start_image],
+        session_factory=session_factory,
+        driver_registry=registry,
+        event_appender=append,
+    )
+
+    assert made.status == "submitted"
+    assert made.artifact_id is not None
+    assert made.operator_id == _AUTHORING_TARGET.operator_id
+    assert made.backend_identity_triple == (
+        _AUTHORING_TARGET.backend_identity_triple.model_dump(mode="json")
+    )
+    assert made.poll_with == "forge_generation_status"
+    assert len(target_driver.submissions) == 1
+    invocation = target_driver.submissions[0]
+    assert invocation.operator_id == _AUTHORING_TARGET.operator_id
+    assert invocation.backend_identity_triple == made.backend_identity_triple
+    assert invocation.inputs[0].artifact_id == "approved-still"
+    assert invocation.inputs[0].metadata["prompt"] == authored.text
+    assert invocation.inputs[0].metadata["scalars"] == {"duration_seconds": 5}
+    assert invocation.inputs[0].metadata["authored_prompt_artifact_id"] == str(
+        authored.artifact_id
+    )
+
+    async with session_factory() as session:
+        spent = await GenerationGrantRepo(session).get_by_grant_id(grant_id)
+        assert spent is not None
+        assert spent.status == "consumed"
+        artifact = await GenerationArtifactRepo(session).get_by_id(made.artifact_id)
+        assert artifact is not None
+        assert artifact.content_provenance["source_author_artifact_id"] == str(
+            authored.artifact_id
+        )
+        assert artifact.content_provenance["lineage"][
+            "source_author_artifact_id"
+        ] == str(authored.artifact_id)
+
+    replay = await make_approved(
+        authored.artifact_id,
+        grant_id,
+        scalars={"duration_seconds": 5},
+        references=[start_image],
+        session_factory=session_factory,
+        driver_registry=registry,
+        event_appender=append,
+    )
+    assert replay.artifact_id == made.artifact_id
+    assert len(target_driver.submissions) == 1
+    assert any(name == "manual_qc_make_resolved" for name, _payload in events)

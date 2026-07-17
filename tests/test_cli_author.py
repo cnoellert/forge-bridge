@@ -7,7 +7,12 @@ from dataclasses import dataclass
 import typer
 from typer.testing import CliRunner
 
-from forge_bridge.cli.author import author_cmd, author_targets_cmd, qc_cmd
+from forge_bridge.cli.author import (
+    author_cmd,
+    author_make_cmd,
+    author_targets_cmd,
+    qc_cmd,
+)
 
 
 runner = CliRunner()
@@ -45,10 +50,36 @@ class _Approval:
         }
 
 
+@dataclass(frozen=True)
+class _MakeResult:
+    source_run_id: uuid.UUID
+    source_artifact_id: uuid.UUID
+    artifact_id: uuid.UUID | None
+    status: str = "submitted"
+    refusal_code: str | None = None
+
+    def to_dict(self):
+        return {
+            "source_run_id": str(self.source_run_id),
+            "source_artifact_id": str(self.source_artifact_id),
+            "operator_id": "generate_video_from_image",
+            "backend_identity_triple": {
+                "surface": "comfyui",
+                "path": "seedance_2_0",
+                "revision": "r5",
+            },
+            "status": self.status,
+            "artifact_id": str(self.artifact_id) if self.artifact_id else None,
+            "refusal_code": self.refusal_code,
+            "poll_with": "forge_generation_status" if self.artifact_id else None,
+        }
+
+
 def _app() -> typer.Typer:
     app = typer.Typer()
     app.command("author")(author_cmd)
     app.command("author-targets")(author_targets_cmd)
+    app.command("author-make")(author_make_cmd)
     app.command("qc")(qc_cmd)
 
     @app.command("__noop__", hidden=True)
@@ -206,3 +237,81 @@ def test_qc_requires_note_unless_approving():
     assert result.exit_code == 1
     payload = json.loads(result.output)
     assert payload["error"]["code"] == "invalid_args"
+
+
+def test_author_make_json_passes_inputs_without_target_override(monkeypatch):
+    source_run_id = uuid.uuid4()
+    source_artifact_id = uuid.uuid4()
+    made_artifact_id = uuid.uuid4()
+
+    async def _make(got_artifact_id, grant_id, **kwargs):
+        assert got_artifact_id == str(source_artifact_id)
+        assert grant_id == "abc123def456"
+        assert kwargs == {
+            "scalars": {"duration_seconds": 5},
+            "references": [
+                {
+                    "artifact_id": "still-1",
+                    "artifact_type": "image",
+                    "metadata": {"url": "https://cdn.example/still.png"},
+                }
+            ],
+            "idempotency_key": "beat-01-video-v1",
+        }
+        return _MakeResult(
+            source_run_id=source_run_id,
+            source_artifact_id=source_artifact_id,
+            artifact_id=made_artifact_id,
+        )
+
+    monkeypatch.setattr("forge_bridge.orchestration.manual_qc.make_approved", _make)
+    inputs = json.dumps(
+        {
+            "scalars": {"duration_seconds": 5},
+            "references": [
+                {
+                    "artifact_id": "still-1",
+                    "artifact_type": "image",
+                    "metadata": {"url": "https://cdn.example/still.png"},
+                }
+            ],
+        }
+    )
+
+    result = runner.invoke(
+        _app(),
+        [
+            "author-make",
+            str(source_artifact_id),
+            "abc123def456",
+            "--inputs-json",
+            inputs,
+            "--idempotency-key",
+            "beat-01-video-v1",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["data"]["artifact_id"] == str(made_artifact_id)
+
+
+def test_author_make_rejects_target_or_unknown_input_fields():
+    result = runner.invoke(
+        _app(),
+        [
+            "author-make",
+            str(uuid.uuid4()),
+            "abc123def456",
+            "--inputs-json",
+            '{"target": "different-backend"}',
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["error"]["code"] == "invalid_args"
+    assert "only `scalars` and `references`" in payload["error"]["message"]
