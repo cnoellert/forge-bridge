@@ -169,6 +169,24 @@ class _BootstrapResult:
     console_server: Optional[Any]
 
 
+_canonical_bootstrap_result: _BootstrapResult | None = None
+_bootstrap_refcount = 0
+_bootstrap_lock: asyncio.Lock | None = None
+_bootstrap_lock_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _bootstrap_runtime_lock() -> asyncio.Lock:
+    """Return the bootstrap lock bound to the current runtime event loop."""
+    global _bootstrap_lock, _bootstrap_lock_loop
+    loop = asyncio.get_running_loop()
+    if _bootstrap_lock is None or _bootstrap_lock_loop is not loop:
+        if _canonical_bootstrap_result is not None:
+            raise RuntimeError("canonical bootstrap runtime belongs to another loop")
+        _bootstrap_lock = asyncio.Lock()
+        _bootstrap_lock_loop = loop
+    return _bootstrap_lock
+
+
 def _parse_bus_url(server_url: str) -> tuple[str, int]:
     """Extract (host, port) from a ws://host:port URL.
 
@@ -243,25 +261,55 @@ async def _run_terminal_consumer(
     from forge_bridge.orchestration.engine import GraphEngine
     from forge_bridge.orchestration.event_consumer import GraphEngineEventConsumer
 
-    async with session_factory() as session:
-        consumer = GraphEngineEventConsumer(
-            session,
-            graph_engine=GraphEngine(session),
-        )
-        last_event_id = None
-        while True:
-            try:
-                results = await consumer.process_pending(after_event_id=last_event_id)
-                if results:
-                    last_event_id = results[-1].event_id
+    last_event_id = None
+    while True:
+        try:
+            async with session_factory() as session:
+                consumer = GraphEngineEventConsumer(
+                    session,
+                    graph_engine=GraphEngine(session),
+                )
+                try:
+                    results = await consumer.process_pending(
+                        after_event_id=last_event_id
+                    )
+                    if results:
+                        last_event_id = results[-1].event_id
+                    # A read starts a transaction too. Commit empty polls so the
+                    # worker never sleeps while holding an idle transaction.
                     await session.commit()
-            except Exception:
-                await session.rollback()
-                logger.exception("terminal consumer pass failed")
+                except Exception:
+                    await session.rollback()
+                    raise
+        except Exception:
+            logger.exception("terminal consumer pass failed")
 
-            if shutdown_event.is_set():
-                return
-            await asyncio.sleep(poll_interval_seconds)
+        if shutdown_event.is_set():
+            return
+        await asyncio.sleep(poll_interval_seconds)
+
+
+async def bootstrap_daemon(mcp_server: FastMCP) -> _BootstrapResult:
+    """Acquire the process-canonical daemon runtime.
+
+    FastMCP may enter its user lifespan for the serving application and for
+    individual MCP sessions. Those are leases on one runtime, not permission
+    to create duplicate clients, workers, or console servers.
+    """
+    global _canonical_bootstrap_result, _bootstrap_refcount
+    async with _bootstrap_runtime_lock():
+        if _canonical_bootstrap_result is not None:
+            _bootstrap_refcount += 1
+            logger.debug(
+                "Reusing canonical daemon runtime (leases=%d)",
+                _bootstrap_refcount,
+            )
+            return _canonical_bootstrap_result
+
+        result = await _bootstrap_daemon_once(mcp_server)
+        _canonical_bootstrap_result = result
+        _bootstrap_refcount = 1
+        return result
 
 
 async def _cancel_task(task: asyncio.Task) -> None:
@@ -272,12 +320,12 @@ async def _cancel_task(task: asyncio.Task) -> None:
         pass
 
 
-async def bootstrap_daemon(mcp_server: FastMCP) -> _BootstrapResult:
-    """Single source of truth for daemon initialization (Phase A.4).
+async def _bootstrap_daemon_once(mcp_server: FastMCP) -> _BootstrapResult:
+    """Construct the process-canonical daemon runtime (Phase A.4).
 
-    Every entry point that runs the MCP server MUST go through this
-    function. No entry point may bypass any step. Future required
-    initialization MUST land here, not in a per-entry-point shim.
+    Every entry point that runs the MCP server MUST acquire the runtime
+    through ``bootstrap_daemon``. That public lease boundary calls this
+    constructor exactly once until the final lease is released.
 
     Steps (one-to-one with the prior ``_lifespan`` 6-step sequence,
     with a new Step 0 that closes the `fbridge up` race):
@@ -479,6 +527,23 @@ async def bootstrap_daemon(mcp_server: FastMCP) -> _BootstrapResult:
 
 
 async def teardown_daemon(result: _BootstrapResult) -> None:
+    """Release one bootstrap lease and tear down after the final release."""
+    global _canonical_bootstrap_result, _bootstrap_refcount
+    async with _bootstrap_runtime_lock():
+        if result is not _canonical_bootstrap_result or _bootstrap_refcount <= 0:
+            return
+        _bootstrap_refcount -= 1
+        if _bootstrap_refcount > 0:
+            logger.debug("Retaining canonical daemon runtime (leases=%d)", _bootstrap_refcount)
+            return
+        try:
+            await _teardown_daemon_once(result)
+        finally:
+            _canonical_bootstrap_result = None
+            _bootstrap_refcount = 0
+
+
+async def _teardown_daemon_once(result: _BootstrapResult) -> None:
     """Reverse of ``bootstrap_daemon`` — every daemon entry point's
     lifespan exit MUST go through this function.
 

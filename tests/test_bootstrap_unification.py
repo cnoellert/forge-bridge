@@ -204,16 +204,18 @@ class TestBootstrapDaemonSingletons:
 
     @pytest.mark.asyncio
     async def test_reentrant_bootstrap_reuses_canonical_runtime_singletons(self):
-        """Repeated bootstrap must not replace objects while an old console app
-        may still be serving them. That replacement is the #38 identity drift."""
+        """Nested FastMCP lifespans lease one process runtime."""
         from forge_bridge.mcp import server as _mcp_server
+
+        startup = AsyncMock(return_value=None)
+        shutdown = AsyncMock(return_value=None)
 
         with patch.object(
             _mcp_server, "_wait_for_bus", new=AsyncMock(return_value=False),
         ), patch.object(
-            _mcp_server, "startup_bridge", new=AsyncMock(return_value=None),
+            _mcp_server, "startup_bridge", new=startup,
         ), patch.object(
-            _mcp_server, "shutdown_bridge", new=AsyncMock(return_value=None),
+            _mcp_server, "shutdown_bridge", new=shutdown,
         ), patch(
             "forge_bridge.learning.watcher.watch_synthesized_tools",
             new=AsyncMock(return_value=None),
@@ -222,9 +224,15 @@ class TestBootstrapDaemonSingletons:
         ):
             first = await _mcp_server.bootstrap_daemon(_mcp_server.mcp)
             second = await _mcp_server.bootstrap_daemon(_mcp_server.mcp)
+            second_released = False
             try:
+                assert second is first
                 assert second.execution_log is first.execution_log
                 assert second.manifest_service is first.manifest_service
+                assert second.dispatch_consumer_task is first.dispatch_consumer_task
+                assert second.generation_poller_task is first.generation_poller_task
+                assert second.terminal_consumer_task is first.terminal_consumer_task
+                startup.assert_awaited_once()
                 assert (
                     _mcp_server._canonical_console_read_api._execution_log
                     is first.execution_log
@@ -235,9 +243,87 @@ class TestBootstrapDaemonSingletons:
                     health["instance_identity"]["manifest_service"]["id_match"]
                     is True
                 )
-            finally:
+
                 await _mcp_server.teardown_daemon(second)
+                second_released = True
+                assert _mcp_server._server_started is True
+                assert not first.dispatch_consumer_task.done()
+                assert not first.generation_poller_task.done()
+                assert not first.terminal_consumer_task.done()
+                shutdown.assert_not_awaited()
+            finally:
+                if not second_released:
+                    await _mcp_server.teardown_daemon(second)
                 await _mcp_server.teardown_daemon(first)
+
+            assert first.dispatch_consumer_task.done()
+            assert first.generation_poller_task.done()
+            assert first.terminal_consumer_task.done()
+            shutdown.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_terminal_consumer_bounds_every_empty_poll_transaction(
+        self,
+        monkeypatch,
+    ):
+        """An empty event poll commits and closes before the worker sleeps."""
+        from forge_bridge.mcp import server as _mcp_server
+        from forge_bridge.orchestration import engine, event_consumer
+
+        shutdown_event = asyncio.Event()
+        sessions = []
+
+        class FakeSession:
+            def __init__(self):
+                self.commits = 0
+                self.rollbacks = 0
+                self.closed = False
+
+            async def commit(self):
+                self.commits += 1
+
+            async def rollback(self):
+                self.rollbacks += 1
+
+        class SessionContext:
+            def __init__(self):
+                self.session = FakeSession()
+
+            async def __aenter__(self):
+                sessions.append(self.session)
+                return self.session
+
+            async def __aexit__(self, *_exc):
+                self.session.closed = True
+
+        class FakeConsumer:
+            calls = 0
+
+            def __init__(self, _session, *, graph_engine):
+                self.graph_engine = graph_engine
+
+            async def process_pending(self, *, after_event_id=None):
+                del after_event_id
+                type(self).calls += 1
+                if type(self).calls == 2:
+                    shutdown_event.set()
+                return []
+
+        monkeypatch.setattr(engine, "GraphEngine", lambda _session: object())
+        monkeypatch.setattr(
+            event_consumer, "GraphEngineEventConsumer", FakeConsumer
+        )
+
+        await _mcp_server._run_terminal_consumer(
+            lambda: SessionContext(),
+            poll_interval_seconds=0,
+            shutdown_event=shutdown_event,
+        )
+
+        assert len(sessions) == 2
+        assert all(session.commits == 1 for session in sessions)
+        assert all(session.rollbacks == 0 for session in sessions)
+        assert all(session.closed is True for session in sessions)
 
 
 # ---------------------------------------------------------------------------
