@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Literal
+from datetime import datetime
+from typing import Any, Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +24,9 @@ from forge_bridge.orchestration.planner_passes import (
     pass_6_emit_feasibility_verdict,
 )
 from forge_bridge.orchestration.registration import ToolRegistry
+from forge_bridge.orchestration.request_reference_inventory import (
+    RequestReferenceInventory,
+)
 from forge_bridge.orchestration.rule_checks import (
     PlanningRuleRegistry,
     default_planning_rule_registry,
@@ -42,9 +45,6 @@ from forge_bridge.store.orch_spec_convergence_trace_repo import SpecConvergenceT
 from forge_bridge.store.orchestration_compromise_ledger_repo import (
     OrchestrationCompromiseLedgerRepo,
 )
-
-if TYPE_CHECKING:
-    from forge_bridge.orchestration.replay import EffectivePinningPolicy
 
 PlannerRefusalCode = Literal[
     "inputs_missing",
@@ -94,6 +94,9 @@ class PlanningContext:
     partial_fidelity_snapshot: dict[str, Any] | None = None
     inputs_catalog: dict[str, Any] | None = None
     capability_snapshot: dict[str, Any] | None = None
+    reference_inventory: RequestReferenceInventory = field(
+        default_factory=RequestReferenceInventory
+    )
     # Phase-6A referent seam (DEFERRED, not reserved): this context carries no
     # resolved-referent / desktop world-state field. The planner is pure
     # capability-family routing — it must NOT assume plan steps arrive with

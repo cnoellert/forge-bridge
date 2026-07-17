@@ -19,6 +19,7 @@ from __future__ import annotations
 import sys
 import types
 
+import pytest
 from forge_contracts import CapabilityDeclaration, CapabilityRegistration
 from forge_contracts.generation import (
     GENERATION_FACTS_KEY,
@@ -41,6 +42,7 @@ from forge_bridge.orchestration.identity_registries import (
 from forge_bridge.orchestration.registration import ToolRegistration
 from forge_bridge.store.orch_capability_snapshot_repo import CapabilitySnapshotRepo
 from forge_bridge.store.orch_locked_intent_repo import LockedIntentRepo
+from forge_bridge.store.orch_inputs_catalog_repo import InputsCatalogRepo
 from forge_bridge.store.orch_partial_fidelity_snapshot_repo import (
     PartialFidelitySnapshotRepo,
 )
@@ -65,7 +67,12 @@ _FLAT_DECOY_TRIPLE = {
 
 
 def _facts_metadata(
-    *, typed_triple: dict | None, flat_triple: dict, malformed: bool = False, **extra
+    *,
+    typed_triple: dict | None,
+    flat_triple: dict,
+    malformed: bool = False,
+    requirements: ReferenceRequirementSpec | None = None,
+    **extra,
 ) -> dict:
     """Declaration metadata carrying a flat decoy triple plus a typed
     ``generation_facts`` payload built from the real contract type."""
@@ -81,7 +88,8 @@ def _facts_metadata(
     elif typed_triple is not None:
         metadata[GENERATION_FACTS_KEY] = GenerationCapabilityFacts(
             backend_identity=BackendIdentityTriple(**typed_triple),
-            reference_requirements=ReferenceRequirementSpec(
+            reference_requirements=requirements
+            or ReferenceRequirementSpec(
                 accepts_roles=["reference"],
                 required_roles=[],
                 requires_first_frame=False,
@@ -139,7 +147,12 @@ def _partial_fidelity_body(model_triple: dict) -> dict:
     }
 
 
-async def _seed(session, *, model_triple: dict) -> dict:
+async def _seed(
+    session,
+    *,
+    model_triple: dict,
+    inputs_catalog: dict | None = None,
+) -> dict:
     intent = await LockedIntentRepo(session).insert_if_absent(_locked_intent_body())
     rule = await RuleSnapshotRepo(session).insert_if_absent(_rule_snapshot_body())
     partial = await PartialFidelitySnapshotRepo(session).insert_if_absent(
@@ -148,11 +161,15 @@ async def _seed(session, *, model_triple: dict) -> dict:
     run = await PipelineRunRepo(session).insert_if_absent(
         {"run_kind": "original", "intent_id": str(intent.id)}
     )
+    catalog = None
+    if inputs_catalog is not None:
+        catalog = await InputsCatalogRepo(session).insert_if_absent(inputs_catalog)
     return {
         "intent_id": intent.id,
         "rule_snapshot_id": rule.id,
         "partial_fidelity_snapshot_id": partial.id,
         "run_id": run.id,
+        "inputs_catalog_id": catalog.id if catalog is not None else None,
     }
 
 
@@ -167,12 +184,15 @@ def _make_planner(session, tools: ToolRegistry) -> Planner:
 
 
 def _plan_kwargs(ids: dict) -> dict:
-    return {
+    kwargs = {
         "intent_id": ids["intent_id"],
         "run_id": ids["run_id"],
         "rule_snapshot_id": ids["rule_snapshot_id"],
         "partial_fidelity_snapshot_id": ids["partial_fidelity_snapshot_id"],
     }
+    if ids.get("inputs_catalog_id") is not None:
+        kwargs["inputs_catalog_id"] = ids["inputs_catalog_id"]
+    return kwargs
 
 
 # ── (a) unit ──────────────────────────────────────────────────────────────────
@@ -257,6 +277,120 @@ async def test_pass1_falls_back_when_no_facts_namespace(session_factory) -> None
         _FLAT_DECOY_TRIPLE
     )
     assert plan.operator_sequence[0]["backend_id"] == "stale_flat.should_lose"
+
+
+@pytest.mark.parametrize(
+    ("requirements", "inputs_catalog", "expected_refusal"),
+    [
+        pytest.param(
+            ReferenceRequirementSpec(
+                accepts_roles=["audio"],
+                required_roles=["audio"],
+                max_references=2,
+            ),
+            {
+                "inputs": [{"artifact_id": "image-1", "artifact_type": "image"}],
+                "role_assignments": {"structural": "image-1"},
+            },
+            "no_feasible_backend",
+            id="missing-required-role",
+        ),
+        pytest.param(
+            ReferenceRequirementSpec(
+                accepts_roles=["audio"],
+                required_roles=["audio"],
+                max_references=2,
+            ),
+            {
+                "inputs": [{"artifact_id": "audio-1", "artifact_type": "audio/wav"}],
+                "role_assignments": {"audio": "audio-1"},
+            },
+            None,
+            id="required-role-present",
+        ),
+        pytest.param(
+            ReferenceRequirementSpec(max_references=1),
+            {
+                "inputs": [
+                    {"artifact_id": "image-1", "artifact_type": "image"},
+                    {"artifact_id": "image-2", "artifact_type": "image"},
+                ],
+                "role_assignments": {},
+            },
+            "no_feasible_backend",
+            id="reference-limit-exceeded",
+        ),
+        pytest.param(
+            ReferenceRequirementSpec(max_references=1),
+            {
+                "inputs": [{"artifact_id": "image-1", "artifact_type": "image"}],
+                "role_assignments": {},
+            },
+            None,
+            id="reference-limit-exact",
+        ),
+        pytest.param(
+            ReferenceRequirementSpec(
+                accepts_roles=["structural", "identity"],
+                requires_first_frame=True,
+                max_references=2,
+            ),
+            {
+                "inputs": [{"artifact_id": "identity-1", "artifact_type": "image"}],
+                "role_assignments": {"identity": "identity-1"},
+            },
+            "no_feasible_backend",
+            id="input-first-frame-missing",
+        ),
+        pytest.param(
+            ReferenceRequirementSpec(
+                accepts_roles=["structural"],
+                requires_first_frame=True,
+                max_references=1,
+            ),
+            {
+                "inputs": [{"artifact_id": "frame-1", "artifact_type": "image/png"}],
+                "role_assignments": {"structural": "frame-1"},
+            },
+            None,
+            id="input-first-frame-present",
+        ),
+    ],
+)
+async def test_pass2_filters_typed_facts_against_request_inventory(
+    session_factory,
+    requirements: ReferenceRequirementSpec,
+    inputs_catalog: dict,
+    expected_refusal: str | None,
+) -> None:
+    """The planner's candidate decision changes only with request-side facts."""
+
+    tools = ToolRegistry()
+    tools.register(
+        _generation_tool(
+            _facts_metadata(
+                typed_triple=_TYPED_TRIPLE,
+                flat_triple=_FLAT_DECOY_TRIPLE,
+                requirements=requirements,
+            )
+        ),
+        sibling_name="forge_generators",
+    )
+
+    async with session_factory() as session:
+        ids = await _seed(
+            session,
+            model_triple=_TYPED_TRIPLE,
+            inputs_catalog=inputs_catalog,
+        )
+        plan = await _make_planner(session, tools).plan(**_plan_kwargs(ids))
+        await session.commit()
+
+    assert plan.refusal_code == expected_refusal
+    if expected_refusal is None:
+        assert plan.operator_sequence[0]["backend_id"] == _TYPED_BACKEND_ID
+    else:
+        assert plan.operator_sequence == []
 
 
 # ── (b) stub-sibling through the real register_all_siblings path ───────────────
