@@ -255,6 +255,24 @@ async def test_commit_boundary_requires_ratified_assent_before_apply():
     ]
 
 
+@pytest.mark.asyncio
+async def test_commit_boundary_rejects_discovered_but_unreviewed_counterpart():
+    held = _held_manifest_dict()
+    held["apply_counterpart"]["tool"] = "forge_apply_unreviewed_host_plan"
+    mcp = _RenameMCP(fresh_manifest=held)
+    dispatch = UnifiedDispatch(
+        commit_boundary=CommitBoundary(mcp=mcp),
+        assent_record=_ratified_assent(),
+    )
+
+    result = (await GraphExecutor(dispatch.dispatch).run(_commit_graph(held)))["commit"]
+
+    assert result.status == "error"
+    assert result.reason_code == CommitError.APPLY_COUNTERPART_NOT_DECLARED
+    assert "not admitted" in (result.message or "")
+    assert mcp.calls == []
+
+
 def test_mutation_manifest_normalization_ignores_capture_metadata_only():
     held = _held_manifest_dict()
     canonical = MutationManifest.from_dict(held).to_dict()
@@ -276,4 +294,5 @@ def test_commit_admission_selects_record_replay_compare_strategy():
     assert records[0].operator_id == "commit"
     assert records[0].no_state_mutation is False
     assert records[0].idempotent_result is False
+    assert records[0].state_owner == "dcc_host"
     assert compare_strategy_for(records) == "record_replay"

@@ -1,0 +1,192 @@
+{
+  "composition_authority": "bridge",
+  "edge_value_semantics": "whole_operation_output",
+  "fan_in_node_ids": [
+    "pipeline.shot_output_graph.plan",
+    "pipeline.host_graph.verify"
+  ],
+  "fingerprint": "07ca855ffcec77d6be8330f13df07b275a51a320788b5b95a73bc82164780d39",
+  "from_port": "reserved",
+  "kind": "pipeline.shot_output_graph.operator_sequence",
+  "mutation_safe": true,
+  "operator_sequence": [
+    {
+      "arguments": {
+        "canonical": "/tmp/forge-bridge-phase106/project",
+        "dcc": "Flame",
+        "shot": "tst_010",
+        "stream": "main",
+        "task": "comp"
+      },
+      "effect_class": "read",
+      "inputs": [],
+      "operator_id": "pipeline.shot_resource.current",
+      "output_artifact_id": "shot-output-graph:current",
+      "output_artifact_type": "pipeline.shot_resource.current_result",
+      "state_owner": "read_only"
+    },
+    {
+      "arguments": {
+        "request": {
+          "parameter_names": [
+            "file_type",
+            "bit_depth",
+            "compress",
+            "compress_mode",
+            "quality",
+            "media_path",
+            "media_path_pattern",
+            "create_clip",
+            "create_clip_path",
+            "include_setup",
+            "include_setup_path",
+            "frame_padding",
+            "frame_index_mode",
+            "frame_index",
+            "version_mode",
+            "version_name",
+            "add_to_workspace"
+          ]
+        },
+        "scope": {
+          "dcc": "Flame",
+          "graph_kind": "batch",
+          "graph_ref": "test_104",
+          "instance_id": "flame-fixture-1",
+          "kind": "pipeline.host_graph.scope",
+          "mutation_boundary": "dcc_host",
+          "operator_identity": "",
+          "project": "TST",
+          "schema_version": 1,
+          "session_id": "session-fixture-1"
+        }
+      },
+      "effect_class": "read",
+      "inputs": [],
+      "operator_id": "pipeline.host_graph.inspect",
+      "output_artifact_id": "shot-output-graph:snapshot",
+      "output_artifact_type": "pipeline.host_graph.snapshot",
+      "state_owner": "read_only"
+    },
+    {
+      "arguments": {
+        "request": {
+          "canonical": "/tmp/forge-bridge-phase106/project",
+          "dcc": "Flame",
+          "kind": "pipeline.shot_output_graph.request",
+          "role": "comp_render",
+          "schema_version": 1,
+          "shot": "tst_010",
+          "stream": "main",
+          "target_graph": {
+            "dcc": "Flame",
+            "graph_kind": "batch",
+            "graph_ref": "test_104",
+            "instance_id": "flame-fixture-1",
+            "kind": "pipeline.host_graph.scope",
+            "mutation_boundary": "dcc_host",
+            "operator_identity": "",
+            "project": "TST",
+            "schema_version": 1,
+            "session_id": "session-fixture-1"
+          },
+          "task": "comp",
+          "upstream_source": {
+            "port": "Result",
+            "selector": {
+              "forge_id": "",
+              "identity_tier": "stable_id",
+              "kind": "pipeline.host_graph.node_selector",
+              "name": "COMP_OUT",
+              "native_type": "Comp",
+              "schema_version": 1,
+              "stable_id": "comp-out-1"
+            }
+          },
+          "version_policy": {
+            "mode": "current"
+          }
+        }
+      },
+      "effect_class": "read",
+      "inputs": [
+        {
+          "artifact_id": "shot-output-graph:current",
+          "artifact_type": "pipeline.shot_resource.current_result",
+          "metadata": {
+            "role": "stream_context"
+          }
+        },
+        {
+          "artifact_id": "shot-output-graph:snapshot",
+          "artifact_type": "pipeline.host_graph.snapshot",
+          "metadata": {
+            "role": "host_graph_snapshot"
+          }
+        }
+      ],
+      "operator_id": "pipeline.shot_output_graph.plan",
+      "output_artifact_id": "shot-output-graph:plan",
+      "output_artifact_type": "pipeline.shot_output_graph.plan_result",
+      "state_owner": "read_only"
+    },
+    {
+      "arguments": {},
+      "effect_class": "host_mutation",
+      "inputs": [
+        {
+          "artifact_id": "shot-output-graph:plan",
+          "artifact_type": "mutation_plan",
+          "metadata": {
+            "role": "held"
+          }
+        }
+      ],
+      "operator_id": "commit",
+      "output_artifact_id": "shot-output-graph:commit",
+      "output_artifact_type": "commit_result",
+      "state_owner": "dcc_host"
+    },
+    {
+      "arguments": {
+        "scope": {
+          "dcc": "Flame",
+          "graph_kind": "batch",
+          "graph_ref": "test_104",
+          "instance_id": "flame-fixture-1",
+          "kind": "pipeline.host_graph.scope",
+          "mutation_boundary": "dcc_host",
+          "operator_identity": "",
+          "project": "TST",
+          "schema_version": 1,
+          "session_id": "session-fixture-1"
+        }
+      },
+      "effect_class": "read",
+      "inputs": [
+        {
+          "artifact_id": "shot-output-graph:plan",
+          "artifact_type": "pipeline.shot_output_graph.plan_result",
+          "metadata": {
+            "role": "expectations"
+          }
+        },
+        {
+          "artifact_id": "shot-output-graph:commit",
+          "artifact_type": "commit_result",
+          "metadata": {
+            "role": "apply_receipt"
+          }
+        }
+      ],
+      "operator_id": "pipeline.host_graph.verify",
+      "output_artifact_id": "shot-output-graph:verification",
+      "output_artifact_type": "pipeline.host_graph.verification_receipt",
+      "state_owner": "read_only"
+    }
+  ],
+  "schema_version": 1,
+  "source_node_count": 2,
+  "status": "ready",
+  "trust_status": "trusted"
+}

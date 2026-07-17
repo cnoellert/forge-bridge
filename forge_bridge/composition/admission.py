@@ -24,6 +24,7 @@ DispatchKind = Literal[
     "host_resolve",
     "generation",
 ]
+StateOwner = Literal["read_only", "peer_owned", "dcc_host", "bridge"]
 
 
 class AdmissionRejected(ValueError):
@@ -41,6 +42,7 @@ class AdmissionRecord:
     returns_reference: bool
     no_state_mutation: bool
     idempotent_result: bool
+    state_owner: StateOwner = "read_only"
 
     def __post_init__(self) -> None:
         declarations = {
@@ -56,6 +58,48 @@ class AdmissionRecord:
         if missing:
             raise AdmissionRejected(
                 f"AdmissionRecord {self.operator_id!r} missing bool declarations: "
+                f"{', '.join(missing)}"
+            )
+        if self.state_owner not in {
+            "read_only",
+            "peer_owned",
+            "dcc_host",
+            "bridge",
+        }:
+            raise AdmissionRejected(
+                f"AdmissionRecord {self.operator_id!r} has invalid state_owner "
+                f"{self.state_owner!r}"
+            )
+
+
+@dataclass(frozen=True)
+class MutationCounterpartAdmission:
+    """Reviewed authority facts for one commit-only MCP apply counterpart."""
+
+    tool_name: str
+    state_owner: StateOwner
+    synchronous: bool
+    verify_before_apply: bool
+    assent_required: bool
+    idempotent_apply: bool
+
+    def __post_init__(self) -> None:
+        if self.state_owner != "dcc_host":
+            raise AdmissionRejected(
+                f"Mutation counterpart {self.tool_name!r} must own dcc_host state"
+            )
+        declarations = {
+            "synchronous": self.synchronous,
+            "verify_before_apply": self.verify_before_apply,
+            "assent_required": self.assent_required,
+            "idempotent_apply": self.idempotent_apply,
+        }
+        missing = [
+            name for name, value in declarations.items() if not isinstance(value, bool)
+        ]
+        if missing:
+            raise AdmissionRejected(
+                f"Mutation counterpart {self.tool_name!r} missing bool declarations: "
                 f"{', '.join(missing)}"
             )
 
@@ -78,6 +122,7 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         returns_reference=True,
         no_state_mutation=True,
         idempotent_result=True,
+        state_owner="peer_owned",
     ),
     # Provisional pending #86: forge_assemble_deliverable_package commits an
     # entire package directory (plate, holdouts EXR, reference JSONs, manifest).
@@ -92,6 +137,7 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         returns_reference=True,
         no_state_mutation=True,
         idempotent_result=True,
+        state_owner="peer_owned",
     ),
     AdmissionRecord(
         operator_id="format_result",
@@ -124,33 +170,7 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         returns_reference=False,
         no_state_mutation=False,
         idempotent_result=False,
-    ),
-    AdmissionRecord(
-        operator_id="traffik.editorial.resolve_top_video_layer",
-        resolved_class="pipeline.traffik.editorial.resolve_top_video_layer",
-        dispatch_kind="operation",
-        synchronous=True,
-        returns_reference=False,
-        no_state_mutation=False,
-        idempotent_result=True,
-    ),
-    AdmissionRecord(
-        operator_id="traffik.editorial.mark_timecode_range",
-        resolved_class="pipeline.traffik.editorial.mark_timecode_range",
-        dispatch_kind="operation",
-        synchronous=True,
-        returns_reference=False,
-        no_state_mutation=False,
-        idempotent_result=True,
-    ),
-    AdmissionRecord(
-        operator_id="traffik.editorial.overwrite_insert",
-        resolved_class="pipeline.traffik.editorial.overwrite_insert",
-        dispatch_kind="operation",
-        synchronous=True,
-        returns_reference=False,
-        no_state_mutation=False,
-        idempotent_result=True,
+        state_owner="peer_owned",
     ),
     AdmissionRecord(
         operator_id="traffik.flame_delta.host_resolve",
@@ -215,6 +235,7 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         returns_reference=False,
         no_state_mutation=True,
         idempotent_result=False,
+        state_owner="peer_owned",
     ),
     AdmissionRecord(
         operator_id="literal_source",
@@ -341,6 +362,46 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         idempotent_result=True,
     ),
     AdmissionRecord(
+        operator_id="pipeline.shot_resource.current",
+        resolved_class="pipeline.shot_resource.current",
+        dispatch_kind="operation",
+        synchronous=True,
+        returns_reference=False,
+        no_state_mutation=True,
+        idempotent_result=True,
+        state_owner="read_only",
+    ),
+    AdmissionRecord(
+        operator_id="pipeline.host_graph.inspect",
+        resolved_class="pipeline.host_graph.inspect",
+        dispatch_kind="operation",
+        synchronous=True,
+        returns_reference=False,
+        no_state_mutation=True,
+        idempotent_result=True,
+        state_owner="read_only",
+    ),
+    AdmissionRecord(
+        operator_id="pipeline.shot_output_graph.plan",
+        resolved_class="pipeline.shot_output_graph.plan",
+        dispatch_kind="operation",
+        synchronous=True,
+        returns_reference=False,
+        no_state_mutation=True,
+        idempotent_result=True,
+        state_owner="read_only",
+    ),
+    AdmissionRecord(
+        operator_id="pipeline.host_graph.verify",
+        resolved_class="pipeline.host_graph.verify",
+        dispatch_kind="operation",
+        synchronous=True,
+        returns_reference=False,
+        no_state_mutation=True,
+        idempotent_result=True,
+        state_owner="read_only",
+    ),
+    AdmissionRecord(
         operator_id="commit",
         resolved_class="mcp.host_mutation",
         dispatch_kind="commit",
@@ -348,11 +409,52 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         returns_reference=False,
         no_state_mutation=False,
         idempotent_result=False,
+        state_owner="dcc_host",
     ),
 )
 
 ADMISSION_TABLE = MappingProxyType(
     {record.operator_id: record for record in _ADMISSION_RECORDS}
+)
+
+_MUTATION_COUNTERPART_RECORDS = (
+    MutationCounterpartAdmission(
+        tool_name="flame_rename_shots",
+        state_owner="dcc_host",
+        synchronous=True,
+        verify_before_apply=True,
+        assent_required=True,
+        idempotent_apply=False,
+    ),
+    MutationCounterpartAdmission(
+        tool_name="flame_create_reel",
+        state_owner="dcc_host",
+        synchronous=True,
+        verify_before_apply=True,
+        assent_required=True,
+        idempotent_apply=False,
+    ),
+    *(
+        MutationCounterpartAdmission(
+            tool_name=tool_name,
+            state_owner="dcc_host",
+            synchronous=True,
+            verify_before_apply=True,
+            assent_required=True,
+            idempotent_apply=True,
+        )
+        for tool_name in (
+            "forge_apply_segment_delta",
+            "forge_apply_segment_insert_delta",
+            "forge_apply_segment_start_frame_delta",
+            "forge_apply_segment_temporal_delta",
+            "forge_apply_host_graph_plan",
+        )
+    ),
+)
+
+MUTATION_COUNTERPART_TABLE = MappingProxyType(
+    {record.tool_name: record for record in _MUTATION_COUNTERPART_RECORDS}
 )
 
 
@@ -362,4 +464,15 @@ def admit_operator(operator_id: str) -> AdmissionRecord:
     record = ADMISSION_TABLE.get(operator_id)
     if record is None:
         raise AdmissionRejected(f"operator_id {operator_id!r} is not admitted")
+    return record
+
+
+def admit_mutation_counterpart(tool_name: str) -> MutationCounterpartAdmission:
+    """Return one reviewed commit-only MCP counterpart or fail closed."""
+
+    record = MUTATION_COUNTERPART_TABLE.get(tool_name)
+    if record is None:
+        raise AdmissionRejected(
+            f"mutation counterpart {tool_name!r} is not admitted"
+        )
     return record
