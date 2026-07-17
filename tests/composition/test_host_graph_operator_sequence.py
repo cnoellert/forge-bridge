@@ -14,8 +14,13 @@ from forge_bridge.composition.compiler import compile_operator_sequence
 from forge_bridge.composition.dispatch import UnifiedDispatch
 from forge_bridge.composition.executor import GraphExecutor
 from forge_bridge.composition.operation_boundary import OperationDispatchBoundary
+from forge_bridge.composition.planner_inventory import (
+    HOST_GRAPH_CAPABILITY_ID,
+    select_host_graph_plan,
+)
 from forge_bridge.core.assent import AssentRecord
 from forge_bridge.orchestration.operation_runner import build_operation_runner
+from forge_bridge.orchestration.registration import ToolRegistration, ToolRegistry
 
 
 _FIXTURE_PATH = Path(__file__).parent / "fixtures" / "shot_output_graph_operator_sequence.json"
@@ -225,6 +230,76 @@ def _assent(status: str) -> AssentRecord:
     )
 
 
+def _planner_registry(scope: dict[str, Any]) -> ToolRegistry:
+    profile = {
+        "plugin": "flame",
+        "dcc": "flame",
+        "display_name": "Autodesk Flame Batch",
+        "graph_kinds": ["batch"],
+        "proof_status": "trusted",
+        "node_types": [],
+    }
+    operations = []
+    for operation_type, selection_class in (
+        ("pipeline.host_graph.inspect", "atomic"),
+        ("pipeline.host_graph.verify", "atomic"),
+        ("pipeline.shot_output_graph.plan", "semantic"),
+        ("pipeline.host_graph.ensure_node", "atomic"),
+        ("pipeline.host_graph.connect", "atomic"),
+    ):
+        intents = (
+            ["canonical_shot_output_graph"]
+            if operation_type in {
+                "pipeline.shot_output_graph.plan",
+                "pipeline.host_graph.ensure_node",
+                "pipeline.host_graph.connect",
+            }
+            else [operation_type.rsplit(".", 1)[-1]]
+        )
+        operations.append(
+            {
+                "operation_type": operation_type,
+                "selection_class": selection_class,
+                "selection_priority": 0 if selection_class == "semantic" else 100,
+                "planner_intents": intents,
+                "dcc_scopes": [
+                    {
+                        "dcc": "flame",
+                        "graph_kinds": ["batch"],
+                        "proof_status": "trusted",
+                        "operation_type": operation_type,
+                    }
+                ],
+            }
+        )
+    registry = ToolRegistry()
+    registry.register(
+        ToolRegistration(
+            tool_id=HOST_GRAPH_CAPABILITY_ID,
+            family="execution",
+            payload_family="pipeline.host_graph.draft",
+            schema={"type": "object"},
+            capabilities={
+                "planner_inventory": {
+                    "kind": "pipeline.host_graph.planner_inventory",
+                    "schema_version": 1,
+                    "discovery_only": True,
+                    "grants_execution_authority": False,
+                    "automatic_mutation_admission": False,
+                    "edge_value_semantics": "whole_operation_output",
+                    "from_port": "reserved",
+                    "profiles": [profile],
+                    "operations": operations,
+                }
+            },
+        ),
+        sibling_name="forge_pipeline",
+    )
+    registry.drain_pending_events()
+    assert scope["dcc"].casefold() == profile["dcc"]
+    return registry
+
+
 def test_real_pipeline_fixture_compiles_to_exact_issue_86_topology() -> None:
     fixture = _fixture()
     graph = compile_operator_sequence(fixture["operator_sequence"])
@@ -279,6 +354,61 @@ async def test_real_fixture_runs_through_production_boundaries(monkeypatch, tmp_
         ("forge_apply_host_graph_plan", "verify"),
         ("forge_apply_host_graph_plan", "apply"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_planner_sequence_runs_verbatim_through_production_boundaries(
+    monkeypatch,
+    tmp_path,
+):
+    fixture = _fixture()
+    scope = fixture["operator_sequence"][1]["arguments"]["scope"]
+    semantic_request = fixture["operator_sequence"][2]["arguments"]["request"]
+    decision = select_host_graph_plan(
+        _planner_registry(scope),
+        {
+            "intent": "canonical_shot_output_graph",
+            "scope": scope,
+            "semantic_request": semantic_request,
+        },
+        live_sessions=[
+            {
+                "dcc": scope["dcc"],
+                "instance_id": scope["instance_id"],
+                "session_id": scope["session_id"],
+                "live": True,
+            }
+        ],
+        require_execution=True,
+    )
+    assert decision.status == "selected"
+    authored_sequence = decision.to_dict()["operator_sequence"]
+
+    operation_calls: list[_OperationRequest] = []
+    _install_operation_dispatch(monkeypatch, operation_calls)
+    manifest = _manifest()
+    mcp = _HostGraphMCP(manifest)
+    dispatch = UnifiedDispatch(
+        operation_boundary=OperationDispatchBoundary(
+            run_operation=build_operation_runner(receipt_dir=tmp_path)
+        ),
+        commit_boundary=CommitBoundary(mcp=mcp),
+        assent_record=_assent("ratified"),
+    )
+
+    results = await GraphExecutor(dispatch.dispatch).run(
+        compile_operator_sequence(authored_sequence)
+    )
+
+    assert [call.operation_type for call in operation_calls] == [
+        "pipeline.shot_resource.current",
+        "pipeline.host_graph.inspect",
+        "pipeline.shot_output_graph.plan",
+        "pipeline.host_graph.verify",
+    ]
+    assert results["commit#3"].output["type"] == "commit_applied"
+    assert results["pipeline.host_graph.verify#4"].output["trust_status"] == "trusted"
+    assert mcp.apply_count == 1
 
 
 @pytest.mark.asyncio

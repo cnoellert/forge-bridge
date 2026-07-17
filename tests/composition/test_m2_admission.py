@@ -124,6 +124,8 @@ def test_admission_accepts_slice_one_operator_ids():
     for operation_id in (
         "pipeline.shot_resource.current",
         "pipeline.host_graph.inspect",
+        "pipeline.host_graph.list_node_types",
+        "pipeline.host_graph.describe_node_type",
         "pipeline.shot_output_graph.plan",
         "pipeline.host_graph.verify",
     ):
@@ -187,6 +189,8 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "guarded_zip",
         "pipeline.shot_resource.current",
         "pipeline.host_graph.inspect",
+        "pipeline.host_graph.list_node_types",
+        "pipeline.host_graph.describe_node_type",
         "pipeline.shot_output_graph.plan",
         "pipeline.host_graph.verify",
         "commit",
