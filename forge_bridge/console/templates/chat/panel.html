@@ -110,6 +110,20 @@
             x-text="preview && preview.summary && preview.summary.mutating_steps"></dd>
         <dt>requires_ratification</dt>
         <dd x-text="preview && preview.summary && preview.summary.requires_ratification"></dd>
+        <template x-if="preview && preview.summary && preview.summary.estimated_cost">
+          <div class="graph-intent-preview__cost">
+            <dt class="graph-intent-preview__emphasis">estimated_cost</dt>
+            <dd class="graph-intent-preview__emphasis"
+                x-text="`${preview.summary.estimated_cost.amount} ${preview.summary.estimated_cost.currency}`"></dd>
+          </div>
+        </template>
+        <template x-if="preview && preview.summary && preview.summary.estimated_costs">
+          <div class="graph-intent-preview__cost">
+            <dt class="graph-intent-preview__emphasis">estimated_costs</dt>
+            <dd class="graph-intent-preview__emphasis"
+                x-text="preview.summary.estimated_costs.map(cost => `${cost.amount} ${cost.currency}`).join(' + ')"></dd>
+          </div>
+        </template>
       </dl>
 
       <div class="graph-intent-preview__steps">

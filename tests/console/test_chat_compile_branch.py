@@ -219,6 +219,146 @@ def test_build_preview_from_steps_threads_graph_intent_id():
     assert preview["graph_intent_id"] == "abc123def456"
 
 
+def test_build_preview_from_steps_uses_execution_argument_parser():
+    preview = build_preview_from_steps([
+        'forge_generate_still grant_id=abc123def456 inputs="prompt text"',
+        "commit",
+    ])
+
+    assert preview["steps"][0]["args_preview"] == {
+        "grant_id": "abc123def456",
+        "inputs": "prompt text",
+    }
+
+
+def test_build_preview_from_steps_surfaces_trusted_generation_cost():
+    preview = build_preview_from_steps(
+        ["forge_generate_still grant_id=abc123def456", "commit"],
+        generation_cost_preview={
+            "source": "generation_grant",
+            "estimated_cost": {"amount": 1.5, "currency": "USD"},
+        },
+    )
+
+    assert preview["summary"]["estimated_cost"] == {
+        "amount": 1.5,
+        "currency": "USD",
+    }
+
+
+@pytest.mark.asyncio
+async def test_generation_preview_resolves_and_persists_grant_cost(session_factory):
+    from forge_bridge.store.assent_record_repo import AssentRecordRepo
+    from forge_bridge.store.generation_grant_repo import GenerationGrantRepo
+
+    async with session_factory() as session:
+        grant_repo = GenerationGrantRepo(session)
+        proposed = await grant_repo.propose(
+            operator_id="generate_still",
+            backend_identity_triple={
+                "provider": "fal",
+                "model": "flux-pro",
+                "revision": "2026-07-17",
+            },
+            estimated_cost={"amount": 1.5, "currency": "USD", "tier": "hero"},
+            run_kind="direct_tool",
+        )
+        grant = await grant_repo.ratify(proposed.grant_id, actor="operator")
+        await session.commit()
+
+    steps = [
+        (
+            f"forge_generate_still grant_id={grant.grant_id} inputs=prompt "
+            "estimated_cost=0"
+        ),
+        "commit",
+    ]
+    router = SimpleNamespace(compile_intent=AsyncMock(return_value=steps))
+    outcome = await run_compile_branch(
+        router=router,
+        user_prompt="generate a still",
+        tools=[_authority_tool("forge_generate_still", read_only=False)],
+        mcp=SimpleNamespace(),
+        request_id="req-generation-cost",
+        client_ip="127.0.0.1",
+        started=10.0,
+        session_factory=session_factory,
+    )
+
+    assert outcome.regime == "compiled_mutating_preview"
+    assert outcome.preview["summary"]["estimated_cost"] == {
+        "amount": 1.5,
+        "currency": "USD",
+    }
+    assert outcome.preview["steps"][0]["args_preview"]["grant_id"] == grant.grant_id
+
+    async with session_factory() as session:
+        assent = await AssentRecordRepo(session).get_by_graph_intent_id(
+            outcome.graph_intent_id
+        )
+        unchanged_grant = await GenerationGrantRepo(session).get_by_grant_id(
+            grant.grant_id
+        )
+
+    evidence = assent.metadata[_chat_compile.GENERATION_COST_PREVIEW_METADATA_KEY]
+    assert evidence["source"] == "generation_grant"
+    assert evidence["estimated_cost"] == {"amount": 1.5, "currency": "USD"}
+    assert evidence["line_items"] == [{
+        "step_index": 0,
+        "tool_name": "forge_generate_still",
+        "grant_id": grant.grant_id,
+        "estimated_cost": {"amount": 1.5, "currency": "USD"},
+    }]
+    assert unchanged_grant.status == "ratified"
+
+
+@pytest.mark.asyncio
+async def test_generation_preview_keeps_mixed_currency_totals_separate(
+    session_factory,
+):
+    from forge_bridge.store.generation_grant_repo import GenerationGrantRepo
+
+    grant_ids: list[str] = []
+    async with session_factory() as session:
+        repo = GenerationGrantRepo(session)
+        for amount, currency in ((2, "USD"), (100, "credits")):
+            grant = await repo.propose(
+                operator_id="generate_still",
+                backend_identity_triple={
+                    "provider": "test",
+                    "model": currency,
+                    "revision": "1",
+                },
+                estimated_cost={"amount": amount, "currency": currency},
+                run_kind="direct_tool",
+            )
+            grant_ids.append(grant.grant_id)
+        await session.commit()
+
+    steps = [
+        f"forge_generate_still grant_id={grant_ids[0]}",
+        f"forge_generate_still grant_id={grant_ids[1]}",
+        "commit",
+    ]
+    router = SimpleNamespace(compile_intent=AsyncMock(return_value=steps))
+    outcome = await run_compile_branch(
+        router=router,
+        user_prompt="generate both",
+        tools=[_authority_tool("forge_generate_still", read_only=False)],
+        mcp=SimpleNamespace(),
+        request_id="req-generation-mixed-cost",
+        client_ip="127.0.0.1",
+        started=10.0,
+        session_factory=session_factory,
+    )
+
+    assert "estimated_cost" not in outcome.preview["summary"]
+    assert outcome.preview["summary"]["estimated_costs"] == [
+        {"amount": 2, "currency": "USD"},
+        {"amount": 100, "currency": "credits"},
+    ]
+
+
 @pytest.mark.asyncio
 async def test_run_compile_branch_non_mutating_executes_chain(monkeypatch):
     router = SimpleNamespace(
