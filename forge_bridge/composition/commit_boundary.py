@@ -171,15 +171,11 @@ class CommitBoundary:
                 DRIFT_OPERATOR_MESSAGE,
                 resolved_inputs,
             )
-        if isinstance(apply_payload, dict) and apply_payload.get("error"):
-            error_code = (
-                apply_payload["error"].get("code")
-                if isinstance(apply_payload["error"], dict)
-                else None
-            )
+        apply_failure = _apply_failure_reason(apply_payload)
+        if apply_failure:
             return self._error_result(
                 CommitError.APPLY_FAILED,
-                f"could not apply — host reported {error_code or 'an apply failure'}",
+                f"could not apply — host reported {apply_failure}",
                 resolved_inputs,
             )
 
@@ -235,6 +231,28 @@ def _default_mcp() -> Any:
     from forge_bridge.mcp.server import mcp
 
     return mcp
+
+
+def _apply_failure_reason(payload: Any) -> str:
+    """Return explicit negative host evidence without rejecting legacy success."""
+
+    if not isinstance(payload, dict):
+        return ""
+    error = payload.get("error")
+    if error:
+        if isinstance(error, dict):
+            return str(error.get("code") or error.get("type") or "an apply failure")
+        return "an apply failure"
+    reason = str(payload.get("reason") or "")
+    status = str(payload.get("status") or "").casefold()
+    trust_status = str(payload.get("trust_status") or "").casefold()
+    if payload.get("ok") is False:
+        return reason or status or "an apply failure"
+    if status in {"failed", "error", "unavailable", "unsupported"}:
+        return reason or status
+    if trust_status in {"untrusted", "review_required"}:
+        return reason or f"{trust_status} apply evidence"
+    return ""
 
 
 def _held_manifest(
