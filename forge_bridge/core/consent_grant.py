@@ -38,13 +38,12 @@ returned so downstream generators can verify the validity window at infer, but
 bridge builds no expiry sweep. Only withdrawal (→ revoke) refuses at the gate.
 
 ``to_dict()`` is the single source of truth for the shape the CLI / HTTP / MCP
-surfaces return, and it is deliberately key-compatible with the generators-local
-``ConsentGrant`` (forge-generators ``src/forge_generators/artifacts/consent.py``)
-so generators#11's stamp/verify aligns: ``grant_id``, ``identity_id`` (=
-``fitted_model_asset_id``), ``owner_of_likeness``, ``allowed_shot_scopes``,
-``forbidden_uses``, ``valid_from``, ``valid_until``, ``revoked`` (derived), and
-``revocation_handle``. Any consumer that serializes a ConsentGrant must call
-``to_dict()`` -- never hand-roll the shape (the assent.py discipline).
+surfaces return. ``bound_asset_id`` is the canonical external name for the
+fitted-model asset UUID. It must not be confused with forge-generators'
+``ConsentGrant.identity_id``, which is a trained-identity handle such as
+``dfl-marilyn``. The legacy bridge ``identity_id`` alias remains for one
+compatibility cycle but has exactly the same UUID semantics as
+``bound_asset_id``; consumers must migrate to the unambiguous name.
 
 ``grant_id`` is the opaque 12-hex ``content_hash[:12]`` handle — per-mint-unique
 by the nonce, and regex-identical to the assent graph_intent_id so the CLI /
@@ -130,7 +129,8 @@ class ConsentGrant(BridgeEntity):
         Shape:
             From super().to_dict(): id, entity_type, created_at,
                                      metadata, locations, relationships
-            Added by this method:   grant_id, identity_id (=fitted_model_asset_id),
+            Added by this method:   grant_id, bound_asset_id,
+                                     identity_id (deprecated UUID alias),
                                      owner_of_likeness, allowed_shot_scopes,
                                      forbidden_uses, valid_from, valid_until,
                                      revoked (derived from status),
@@ -138,15 +138,15 @@ class ConsentGrant(BridgeEntity):
                                      fitted_model_asset_id, nonce, decided_by,
                                      decided_at, withdrawn_at
 
-        The first block (``grant_id`` .. ``revocation_handle`` + ``status``) is
-        deliberately key-compatible with the generators-local ConsentGrant so
-        generators#11's stamp/verify aligns on ``identity_id`` == the bound
-        ``fitted_model_asset_id`` and on ``revoked`` derived from the status.
+        ``bound_asset_id`` is the canonical wire name. ``identity_id`` is a
+        deprecated bridge compatibility alias for the same asset UUID; it is
+        NOT forge-generators' trained-identity handle.
         """
         d = super().to_dict()
         d.update({
             "grant_id": self.grant_id,
-            # The binding: generators verify against identity_id == the asset id.
+            "bound_asset_id": self.fitted_model_asset_id,
+            # Deprecated compatibility alias. Remove after one release cycle.
             "identity_id": self.fitted_model_asset_id,
             "owner_of_likeness": self.owner_of_likeness,
             "allowed_shot_scopes": list(self.allowed_shot_scopes),

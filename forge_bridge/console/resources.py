@@ -374,10 +374,12 @@ def register_console_resources(
         name="forge_get_consent_grant",
         description=(
             "Forge: read a fitted-model consent grant by grant_id (verify-at-infer)."
-            "\n\nReturns the full consent shape — owner_of_likeness, identity_id "
-            "(the bound fitted-model asset), allowed_shot_scopes, forbidden_uses, "
+            "\n\nReturns the full consent shape — owner_of_likeness, bound_asset_id "
+            "(the bound fitted-model asset UUID), allowed_shot_scopes, forbidden_uses, "
             "the valid_from/valid_until window, revoked (derived), and status. This "
-            "is the read generators call to verify consent before an infer.\n\n"
+            "is the read generators call to verify consent before an infer. The "
+            "legacy identity_id field is a deprecated UUID alias and is NOT the "
+            "generators trained-identity handle.\n\n"
             "Use this tool ONLY when:\n"
             "- verifying consent/validity/binding for a fitted model by grant_id"
         ),

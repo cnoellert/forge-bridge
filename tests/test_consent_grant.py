@@ -30,9 +30,9 @@ _VALID_FROM = datetime(2026, 1, 1, tzinfo=timezone.utc)
 _VALID_UNTIL = datetime(2027, 1, 1, tzinfo=timezone.utc)
 
 
-# ── Entity to_dict shape — generators-compatibility contract ─────────────────
+# ── Entity to_dict shape — unambiguous asset-binding contract ────────────────
 
-def test_entity_to_dict_generators_compatible_keys():
+def test_entity_to_dict_names_bound_asset_without_identity_collision():
     grant = ConsentGrant(
         owner_of_likeness="Jane Doe",
         allowed_shot_scopes=["this_clip_only"],
@@ -49,14 +49,15 @@ def test_entity_to_dict_generators_compatible_keys():
                 "locations", "relationships"):
         assert key in d
     assert d["entity_type"] == "consent_grant"
-    # generators-local ConsentGrant shape (src/forge_generators/artifacts/consent.py)
-    for key in ("grant_id", "identity_id", "owner_of_likeness",
+    for key in ("grant_id", "bound_asset_id", "owner_of_likeness",
                 "allowed_shot_scopes", "forbidden_uses", "valid_from",
                 "valid_until", "revoked", "revocation_handle", "status"):
-        assert key in d, f"missing generators-compatible key {key!r}"
-    # identity_id IS the bound fitted-model asset id
+        assert key in d, f"missing consent key {key!r}"
+    assert d["bound_asset_id"] == "11111111-1111-1111-1111-111111111111"
+    # One-cycle compatibility aliases retain bridge's asset-UUID semantics.
     assert d["identity_id"] == "11111111-1111-1111-1111-111111111111"
-    assert d["fitted_model_asset_id"] == d["identity_id"]
+    assert d["fitted_model_asset_id"] == d["bound_asset_id"]
+    assert d["identity_id"] == d["bound_asset_id"]
     assert d["owner_of_likeness"] == "Jane Doe"
     assert d["allowed_shot_scopes"] == ["this_clip_only"]
     assert d["forbidden_uses"] == ["advertising"]
@@ -78,6 +79,7 @@ def test_entity_defaults_this_clip_only():
     assert grant.allowed_shot_scopes == ["this_clip_only"]
     assert grant.forbidden_uses == []
     assert grant.fitted_model_asset_id is None
+    assert grant.to_dict()["bound_asset_id"] is None
     assert grant.to_dict()["identity_id"] is None
 
 
@@ -211,6 +213,7 @@ async def test_bind_asset_sets_id_on_ratified(session_factory):
         bound = await ConsentGrantRepo(session).bind_asset(grant_id, asset_id, actor="fit")
         await session.commit()
         assert bound.fitted_model_asset_id == str(asset_id)
+        assert bound.to_dict()["bound_asset_id"] == str(asset_id)
         assert bound.to_dict()["identity_id"] == str(asset_id)
 
     types = await _event_types(session_factory, grant_id)
