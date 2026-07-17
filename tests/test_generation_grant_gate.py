@@ -26,6 +26,7 @@ from forge_bridge.orchestration.drivers import (
 from forge_bridge.store.generation_grant_repo import GenerationGrantRepo
 
 _TRIPLE = {"surface": "test", "path": "gate_backend", "revision": "v1"}
+_OTHER_TRIPLE = {"surface": "test", "path": "other_backend", "revision": "v1"}
 _BACKEND_ID = "test.gate_backend"
 
 
@@ -71,11 +72,16 @@ async def _events():
     return log, append
 
 
-async def _proposed(session_factory) -> str:
+async def _proposed(
+    session_factory,
+    *,
+    operator_id: str = "generate_video_from_image",
+    triple: dict | None = None,
+) -> str:
     async with session_factory() as session:
         grant = await GenerationGrantRepo(session).propose(
-            operator_id="generate_video_from_image",
-            backend_identity_triple=_TRIPLE,
+            operator_id=operator_id,
+            backend_identity_triple=triple or _TRIPLE,
             estimated_cost={"currency": "USD", "amount": 1.0},
             run_kind="generation",
         )
@@ -83,8 +89,17 @@ async def _proposed(session_factory) -> str:
         return grant.grant_id
 
 
-async def _ratified(session_factory) -> str:
-    grant_id = await _proposed(session_factory)
+async def _ratified(
+    session_factory,
+    *,
+    operator_id: str = "generate_video_from_image",
+    triple: dict | None = None,
+) -> str:
+    grant_id = await _proposed(
+        session_factory,
+        operator_id=operator_id,
+        triple=triple,
+    )
     async with session_factory() as session:
         await GenerationGrantRepo(session).ratify(grant_id, actor="op")
         await session.commit()
@@ -151,6 +166,45 @@ async def test_ratified_grant_submits_once_and_consumes(session_factory):
         assert grant is not None
         assert grant.status == "consumed"
         assert grant.consumed_at is not None
+
+
+async def test_ratified_grant_for_other_operator_refuses_without_spend(session_factory):
+    """A grant cannot authorize a different operation on the same backend."""
+    registry, driver = _registry()
+    log, append = await _events()
+    grant_id = await _ratified(session_factory, operator_id="generate_still")
+
+    result = await _dispatch(session_factory, registry, append, grant_id=grant_id)
+
+    assert result.status == "refused"
+    assert result.refusal_code == "grant_terms_mismatch"
+    assert driver.submits == []
+    assert any(
+        name == "dispatch_grant_refused"
+        and payload["refusal_code"] == "grant_terms_mismatch"
+        for name, payload in log
+    )
+    async with session_factory() as session:
+        grant = await GenerationGrantRepo(session).get_by_grant_id(grant_id)
+        assert grant is not None
+        assert grant.status == "ratified"
+
+
+async def test_ratified_grant_for_other_backend_refuses_without_spend(session_factory):
+    """A grant cannot authorize the same operation on a different backend."""
+    registry, driver = _registry()
+    _log, append = await _events()
+    grant_id = await _ratified(session_factory, triple=_OTHER_TRIPLE)
+
+    result = await _dispatch(session_factory, registry, append, grant_id=grant_id)
+
+    assert result.status == "refused"
+    assert result.refusal_code == "grant_terms_mismatch"
+    assert driver.submits == []
+    async with session_factory() as session:
+        grant = await GenerationGrantRepo(session).get_by_grant_id(grant_id)
+        assert grant is not None
+        assert grant.status == "ratified"
 
 
 async def test_replay_on_consumed_grant_refuses(session_factory):

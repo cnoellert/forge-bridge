@@ -49,11 +49,16 @@ def _bind_runtime(monkeypatch, session_factory) -> None:
     )
 
 
-async def _proposed_grant(session_factory) -> str:
+async def _proposed_grant(
+    session_factory,
+    *,
+    operator_id: str = _OPERATOR_ID,
+    triple: dict | None = None,
+) -> str:
     async with session_factory() as session:
         grant = await GenerationGrantRepo(session).propose(
-            operator_id=_OPERATOR_ID,
-            backend_identity_triple=_TRIPLE,
+            operator_id=operator_id,
+            backend_identity_triple=triple or _TRIPLE,
             estimated_cost={"currency": "USD", "amount": 1.0},
             run_kind="generation",
         )
@@ -151,6 +156,41 @@ async def test_grant_advisory_refusal_is_durable_and_non_consuming(
         grant = await GenerationGrantRepo(session).get_by_grant_id(grant_id)
         assert grant is not None
         assert grant.status == "proposed"
+        assert await EventRepo(session).get_recent(
+            event_type="dispatch_grant_refused"
+        ) == []
+
+
+async def test_grant_terms_mismatch_is_advisory_and_non_consuming(
+    session_factory,
+    monkeypatch,
+) -> None:
+    _bind_runtime(monkeypatch, session_factory)
+    grant_id = await _proposed_grant(session_factory, operator_id="generate_still")
+    async with session_factory() as session:
+        await GenerationGrantRepo(session).ratify(grant_id, actor="operator")
+        await session.commit()
+
+    result = await generation_entry.dispatch_generation(
+        _envelope(),
+        provenance={"planned_output_artifact_id": None},
+        grant_id=grant_id,
+    )
+
+    assert result.status == "refused"
+    assert result.refusal_code == "grant_terms_mismatch"
+    events = await _advisory_events(session_factory)
+    assert events[0].payload == {
+        "door": "dispatch_generation",
+        "advisory_check": "generation_grant",
+        "operator_id": _OPERATOR_ID,
+        "refusal_code": "grant_terms_mismatch",
+        "run_id": None,
+    }
+    async with session_factory() as session:
+        grant = await GenerationGrantRepo(session).get_by_grant_id(grant_id)
+        assert grant is not None
+        assert grant.status == "ratified"
         assert await EventRepo(session).get_recent(
             event_type="dispatch_grant_refused"
         ) == []

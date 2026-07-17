@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from forge_contracts import AuthoringTarget
+from forge_contracts.references import ArtifactRef
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from forge_bridge import __version__
@@ -26,8 +27,15 @@ from forge_bridge.orchestration.discovery import (
     register_all_siblings,
     resolve_siblings,
 )
-from forge_bridge.orchestration.dispatcher import dispatch_plan
-from forge_bridge.orchestration.drivers import GenerationDriverRegistry
+from forge_bridge.orchestration.dispatcher import (
+    InvocationEnvelope,
+    dispatch_envelope,
+    dispatch_plan,
+)
+from forge_bridge.orchestration.drivers import (
+    GenerationDriverRegistry,
+    backend_id_from_identity_triple,
+)
 from forge_bridge.orchestration.engine import GraphEngine
 from forge_bridge.orchestration.errors import PlannerRefusalError
 from forge_bridge.orchestration.lineage_graph import InMemoryLineageGraph
@@ -39,6 +47,9 @@ from forge_bridge.store.orch_execution_plan_repo import ExecutionPlanRepo
 from forge_bridge.store.orch_capability_snapshot_repo import CapabilitySnapshotRepo
 from forge_bridge.store.orch_generation_artifact_repo import GenerationArtifactRepo
 from forge_bridge.store.orch_locked_intent_repo import LockedIntentRepo
+from forge_bridge.store.orchestration_lifecycle_state_repo import (
+    OrchestrationLifecycleStateRepo,
+)
 from forge_bridge.store.orch_partial_fidelity_snapshot_repo import (
     PartialFidelitySnapshotRepo,
 )
@@ -81,6 +92,25 @@ class ManualQCApproval:
     def to_dict(self) -> dict[str, Any]:
         body = asdict(self)
         body["run_id"] = str(self.run_id)
+        return body
+
+
+@dataclass(frozen=True)
+class ManualQCMakeResult:
+    source_run_id: uuid.UUID
+    source_artifact_id: uuid.UUID
+    operator_id: str
+    backend_identity_triple: dict[str, Any]
+    status: str
+    artifact_id: uuid.UUID | None = None
+    refusal_code: str | None = None
+    poll_with: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        body = asdict(self)
+        body["source_run_id"] = str(self.source_run_id)
+        body["source_artifact_id"] = str(self.source_artifact_id)
+        body["artifact_id"] = str(self.artifact_id) if self.artifact_id else None
         return body
 
 
@@ -332,6 +362,148 @@ async def approve(
             lifecycle_stage=lifecycle.current_stage,
             lifecycle_status=lifecycle.status,
         )
+
+
+async def make_approved(
+    source_artifact_id: uuid.UUID | str,
+    grant_id: str,
+    *,
+    scalars: dict[str, Any] | None = None,
+    references: list[ArtifactRef | dict[str, Any]] | None = None,
+    idempotency_key: str | None = None,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+    driver_registry: GenerationDriverRegistry | None = None,
+    event_appender: Callable[[str, dict], Awaitable[None]] | None = None,
+    tool_registry: ToolRegistry | None = None,
+) -> ManualQCMakeResult:
+    """Submit an approved authored prompt to its persisted exact target.
+
+    Target selection is deliberately absent from this API: the target comes
+    from the author plan reviewed by the human. The caller supplies only a
+    ratified single-use grant plus optional target inputs.
+    """
+
+    artifact_id = _parse_uuid(source_artifact_id, "source_artifact_id")
+    clean_grant_id = grant_id.strip()
+    if len(clean_grant_id) != 12 or any(
+        char not in "0123456789abcdef" for char in clean_grant_id
+    ):
+        raise ValueError("grant_id must be a 12-character lowercase hex string")
+    if scalars is not None and not isinstance(scalars, dict):
+        raise ValueError("scalars must be an object")
+
+    runtime = await _runtime(
+        session_factory=session_factory,
+        driver_registry=driver_registry,
+        event_appender=event_appender,
+        tool_registry=tool_registry,
+    )
+
+    async with runtime.session_factory() as session:
+        source = await GenerationArtifactRepo(session).get_by_id(artifact_id)
+        if source is None:
+            raise PlannerRefusalError(
+                "source_artifact_missing",
+                f"author artifact {artifact_id} missing",
+            )
+        if source.lifecycle_state != "complete":
+            raise PlannerRefusalError(
+                "source_artifact_incomplete",
+                f"author artifact {artifact_id} is {source.lifecycle_state!r}",
+            )
+        source_run_id = _parse_uuid(source.run_id, "source_run_id")
+        lifecycle = await OrchestrationLifecycleStateRepo(session).get_by_run_id(
+            source_run_id
+        )
+        if (
+            lifecycle is None
+            or lifecycle.current_stage != "audit"
+            or lifecycle.status != "active"
+            or lifecycle.block is not None
+        ):
+            raise PlannerRefusalError(
+                "manual_qc_not_approved",
+                f"author run {source_run_id} has not been approved",
+            )
+
+        content_provenance = source.content_provenance
+        plan_id = (
+            content_provenance.get("plan_id")
+            if isinstance(content_provenance, dict)
+            else None
+        )
+        plan = await ExecutionPlanRepo(session).get_by_id(_parse_uuid(plan_id, "plan_id"))
+        if plan is None:
+            raise PlannerRefusalError(
+                "source_run_incomplete",
+                f"author plan {plan_id} missing",
+            )
+        raw_target = _authoring_target_from_plan(plan.attributes)
+        if raw_target is None:
+            raise PlannerRefusalError(
+                "authoring_target_missing",
+                "approved author plan has no typed downstream target",
+            )
+        target = AuthoringTarget.model_validate(raw_target)
+        prompt = _artifact_text(source.execution_provenance)
+        if not prompt:
+            raise PlannerRefusalError(
+                "authored_prompt_missing",
+                f"author artifact {artifact_id} has no terminal prompt text",
+            )
+
+    triple = target.backend_identity_triple.model_dump(mode="json")
+    backend_id = backend_id_from_identity_triple(triple)
+    driver = runtime.driver_registry.get_driver(backend_id)
+    if driver is None or dict(driver.backend_identity_triple) != triple:
+        raise PlannerRefusalError(
+            "target_driver_unavailable",
+            f"approved target backend {backend_id!r} is not invocable",
+        )
+
+    envelope = InvocationEnvelope(
+        operator_id=target.operator_id,
+        inputs=_make_inputs(
+            artifact_id,
+            prompt=prompt,
+            scalars=scalars,
+            references=references,
+        ),
+        backend_identity_triple=triple,
+    )
+    dispatch = await dispatch_envelope(
+        envelope,
+        provenance={"source_author_artifact_id": str(artifact_id)},
+        driver_registry=runtime.driver_registry,
+        session_factory=runtime.session_factory,
+        event_appender=runtime.event_appender,
+        run_id=source_run_id,
+        grant_id=clean_grant_id,
+        idempotency_key=idempotency_key or f"manual-qc-make:{artifact_id}",
+    )
+    if dispatch.status == "submitted" and dispatch.artifact_id is not None:
+        await runtime.event_appender(
+            "manual_qc_make_resolved",
+            {
+                "source_run_id": str(source_run_id),
+                "source_artifact_id": str(artifact_id),
+                "artifact_id": str(dispatch.artifact_id),
+                "operator_id": target.operator_id,
+                "backend_id": backend_id,
+            },
+        )
+    return ManualQCMakeResult(
+        source_run_id=source_run_id,
+        source_artifact_id=artifact_id,
+        operator_id=target.operator_id,
+        backend_identity_triple=triple,
+        status=dispatch.status,
+        artifact_id=dispatch.artifact_id,
+        refusal_code=dispatch.refusal_code,
+        poll_with=(
+            "forge_generation_status" if dispatch.artifact_id is not None else None
+        ),
+    )
 
 
 async def _runtime(
@@ -610,6 +782,36 @@ def _artifact_text(execution_provenance: Any) -> str:
         if path.exists():
             return path.read_text(encoding="utf-8")
     return ""
+
+
+def _make_inputs(
+    source_artifact_id: uuid.UUID,
+    *,
+    prompt: str,
+    scalars: dict[str, Any] | None,
+    references: list[ArtifactRef | dict[str, Any]] | None,
+) -> list[ArtifactRef]:
+    normalized = [ArtifactRef.model_validate(ref) for ref in (references or [])]
+    metadata_patch: dict[str, Any] = {
+        "prompt": prompt,
+        "authored_prompt_artifact_id": str(source_artifact_id),
+    }
+    if scalars:
+        metadata_patch["scalars"] = dict(scalars)
+    if not normalized:
+        return [
+            ArtifactRef(
+                artifact_id=str(source_artifact_id),
+                artifact_type="authored_prompt",
+                metadata=metadata_patch,
+            )
+        ]
+
+    first = normalized[0]
+    normalized[0] = first.model_copy(
+        update={"metadata": {**dict(first.metadata), **metadata_patch}}
+    )
+    return normalized
 
 
 def _normalize_authoring_target(

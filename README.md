@@ -210,6 +210,7 @@ forge-bridge/
 - [Architecture](docs/ARCHITECTURE.md) — Design decisions and system overview  
 - [API Reference](docs/API.md) — HTTP API for the Flame bridge endpoint
 - [Writing Endpoints](docs/ENDPOINTS.md) — How to connect new software to bridge
+- [Manual Targeted Authoring](docs/AUTHORING.md) — Human-QC prompt authoring and grant-gated make workflow
 
 ---
 

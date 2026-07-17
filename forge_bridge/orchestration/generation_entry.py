@@ -152,7 +152,11 @@ async def dispatch_generation(
     # consuming helper here would double-spend). Assent/ratify stays in the tool
     # layer ABOVE this entry.
     grant_ok, refusal_code = await _advisory_grant_check(
-        session_factory, grant_id=grant_id, run_id=run_id,
+        session_factory,
+        grant_id=grant_id,
+        run_id=run_id,
+        operator_id=envelope.operator_id,
+        backend_identity_triple=dict(envelope.backend_identity_triple),
     )
     if not grant_ok:
         await _emit_advisory_refusal(

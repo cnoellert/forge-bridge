@@ -166,6 +166,84 @@ def qc_cmd(
     _render_author_result(result.to_dict())
 
 
+def author_make_cmd(
+    source_artifact_id: Annotated[
+        str,
+        typer.Argument(help="Approved author artifact id from `fbridge author` or `qc`."),
+    ],
+    grant_id: Annotated[
+        str,
+        typer.Argument(help="Ratified generation-grant handle for the persisted target."),
+    ],
+    inputs_json: Annotated[
+        str | None,
+        typer.Option(
+            "--inputs-json",
+            help="Optional JSON object with `scalars` and/or `references`.",
+        ),
+    ] = None,
+    idempotency_key: Annotated[
+        str | None,
+        typer.Option(
+            "--idempotency-key",
+            help="Explicit retry identity; defaults to one make per author artifact.",
+        ),
+    ] = None,
+    as_json: Annotated[
+        bool,
+        typer.Option("--json", help="Emit JSON envelope to stdout."),
+    ] = False,
+) -> None:
+    """Submit an approved prompt to its persisted exact generation target."""
+
+    try:
+        inputs = json.loads(inputs_json) if inputs_json is not None else {}
+        if not isinstance(inputs, dict):
+            raise ValueError("--inputs-json must decode to an object")
+        unknown = set(inputs) - {"scalars", "references"}
+        if unknown:
+            raise ValueError(
+                "--inputs-json supports only `scalars` and `references`; "
+                f"got {sorted(unknown)}"
+            )
+        scalars = inputs.get("scalars")
+        references = inputs.get("references")
+        if scalars is not None and not isinstance(scalars, dict):
+            raise ValueError("inputs.scalars must be an object")
+        if references is not None and not isinstance(references, list):
+            raise ValueError("inputs.references must be an array")
+    except (json.JSONDecodeError, ValueError) as exc:
+        _emit_error("invalid_args", str(exc), as_json=as_json)
+        raise typer.Exit(code=1)
+
+    try:
+        result = asyncio.run(
+            manual_qc.make_approved(
+                source_artifact_id,
+                grant_id,
+                scalars=scalars,
+                references=references,
+                idempotency_key=idempotency_key,
+            )
+        )
+    except ValueError as exc:
+        _emit_error("invalid_args", str(exc), as_json=as_json)
+        raise typer.Exit(code=1)
+    except Exception as exc:  # noqa: BLE001 - CLI boundary maps to stable envelope
+        _emit_error("author_make_failed", str(exc), as_json=as_json)
+        raise typer.Exit(code=1)
+
+    body = {"ok": result.status == "submitted", "data": result.to_dict()}
+    if as_json:
+        sys.stdout.write(json.dumps(body) + "\n")
+        if not body["ok"]:
+            raise typer.Exit(code=1)
+        return
+    _render_make_result(body["data"])
+    if not body["ok"]:
+        raise typer.Exit(code=1)
+
+
 def _emit_error(code: str, message: str, *, as_json: bool) -> None:
     body = {"ok": False, "error": {"code": code, "message": message}}
     if as_json:
@@ -193,4 +271,21 @@ def _render_approval(data: dict) -> None:
     table.add_column("Value")
     table.add_row("run_id", str(data["run_id"]))
     table.add_row("status", f"{data['lifecycle_stage']}/{data['lifecycle_status']}")
+    console.print(table)
+
+
+def _render_make_result(data: dict) -> None:
+    console = make_console()
+    table = Table(box=TOOLS_BOX, header_style=HEADER_STYLE)
+    table.add_column("Field")
+    table.add_column("Value")
+    table.add_row("source_run_id", str(data["source_run_id"]))
+    table.add_row("source_artifact_id", str(data["source_artifact_id"]))
+    table.add_row("target", str(data["operator_id"]))
+    table.add_row("artifact_id", str(data.get("artifact_id") or ""))
+    table.add_row("status", str(data["status"]))
+    if data.get("refusal_code"):
+        table.add_row("refusal_code", str(data["refusal_code"]))
+    if data.get("poll_with"):
+        table.add_row("poll_with", str(data["poll_with"]))
     console.print(table)

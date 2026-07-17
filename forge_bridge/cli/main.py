@@ -530,6 +530,14 @@ app.command(
 )(_author.author_targets_cmd)
 
 app.command(
+    "author-make",
+    help=(
+        "Submit a human-approved authored prompt to its persisted exact target "
+        "using a ratified generation grant."
+    ),
+)(_author.author_make_cmd)
+
+app.command(
     "qc",
     help=(
         "Apply a manual QC note as a derived authoring run, or approve a run."
