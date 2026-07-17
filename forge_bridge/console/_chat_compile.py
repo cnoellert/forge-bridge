@@ -6,11 +6,13 @@ by the JSON and SSE chat transports. It does not own HTTP response shaping.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
+from decimal import Decimal
+import re
 import uuid
 from typing import Any, Optional
 
 from forge_bridge.chain_corpus import emit_compile_record, start_trace_capture
+from forge_bridge.composition.chain_compiler import parse_step_arguments
 from forge_bridge.console._authority import dispatch_authority
 from forge_bridge.console._engine import run_chain_steps, run_chain_steps_with_shadow
 from forge_bridge.console._executor_route import apply_executor_routing
@@ -19,6 +21,11 @@ from forge_bridge.console._source_route import apply_source_routing
 from forge_bridge.graph.commit import graph_contains_commit_node, is_commit_step
 from forge_bridge.llm.router import CompileError, normalize_chain_shape
 from forge_bridge.store.assent_record_repo import AssentRecordRepo
+
+
+GENERATION_COST_PREVIEW_METADATA_KEY = "generation_cost_preview"
+_GENERATION_TOOL_PREFIX = "forge_generate_"
+_GRANT_ID_RE = re.compile(r"^[a-f0-9]{12}$")
 
 
 @dataclass(frozen=True)
@@ -127,20 +134,91 @@ def _tool_description(tool: Any) -> str:
 
 
 def _step_args_preview(step_text: str) -> dict[str, Any]:
-    """Preview explicit args from legacy keyed forms and inline JSON steps."""
-    args = extract_explicit_params(step_text)
-    if "{" not in step_text:
-        return args
-    try:
-        decoded = json.loads(step_text[step_text.find("{"):])
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return args
-    if not isinstance(decoded, dict):
-        return args
-    params = decoded.get("params", decoded)
-    if isinstance(params, dict):
-        args = {**params, **args}
-    return args
+    """Preview the same structured arguments the graph compiler will execute."""
+    parsed = parse_step_arguments(step_text)
+    return {**parsed, **extract_explicit_params(step_text)}
+
+
+def _generation_step_references(steps: list[str]) -> list[tuple[int, str, str]]:
+    references: list[tuple[int, str, str]] = []
+    for index, step_text in enumerate(steps):
+        tool_name = step_text.split(maxsplit=1)[0] if step_text.strip() else ""
+        if not tool_name.startswith(_GENERATION_TOOL_PREFIX):
+            continue
+        grant_id = parse_step_arguments(step_text).get("grant_id")
+        if isinstance(grant_id, str) and _GRANT_ID_RE.fullmatch(grant_id):
+            references.append((index, tool_name, grant_id))
+    return references
+
+
+def _trusted_cost_projection(cost: Any) -> dict[str, Any] | None:
+    if not isinstance(cost, dict):
+        return None
+    amount = cost.get("amount")
+    currency = cost.get("currency")
+    if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+        return None
+    if not isinstance(currency, str) or not currency.strip():
+        return None
+    return {"amount": amount, "currency": currency.strip()}
+
+
+def _json_total(value: Decimal) -> int | float:
+    integral = value.to_integral_value()
+    return int(integral) if value == integral else float(value)
+
+
+async def _generation_cost_preview(
+    steps: list[str],
+    session: Any,
+) -> dict[str, Any] | None:
+    """Resolve cost only from immutable GenerationGrant terms."""
+    references = _generation_step_references(steps)
+    if not references:
+        return None
+
+    from forge_bridge.store.generation_grant_repo import GenerationGrantRepo
+
+    line_items: list[dict[str, Any]] = []
+    repo = GenerationGrantRepo(session)
+    for step_index, tool_name, grant_id in references:
+        grant = await repo.get_by_grant_id(grant_id)
+        cost = _trusted_cost_projection(
+            grant.estimated_cost if grant is not None else None
+        )
+        if cost is None:
+            # Never show a partial total: an incomplete cost preview is worse
+            # than no cost claim and the generation grant gate still fails closed.
+            return None
+        line_items.append({
+            "step_index": step_index,
+            "tool_name": tool_name,
+            "grant_id": grant_id,
+            "estimated_cost": cost,
+        })
+
+    totals: dict[str, Decimal] = {}
+    for item in line_items:
+        cost = item["estimated_cost"]
+        currency = cost["currency"]
+        totals[currency] = totals.get(currency, Decimal(0)) + Decimal(
+            str(cost["amount"])
+        )
+    total_costs = [
+        {"amount": _json_total(amount), "currency": currency}
+        for currency, amount in sorted(totals.items())
+    ]
+
+    preview: dict[str, Any] = {
+        "schema_version": 1,
+        "source": "generation_grant",
+        "line_items": line_items,
+    }
+    if len(total_costs) == 1:
+        preview["estimated_cost"] = total_costs[0]
+    else:
+        preview["estimated_costs"] = total_costs
+    return preview
 
 
 def _strip_commit_for_exact_read_graph(steps: list[str], tools: list) -> list[str] | None:
@@ -196,6 +274,7 @@ def build_compile_system_prompt(tools: list) -> str:
 def build_preview_from_steps(
     steps: list[str],
     graph_intent_id: Optional[str] = None,
+    generation_cost_preview: Optional[dict[str, Any]] = None,
 ) -> dict:
     """Construct the L4 preview shape from compiled chain steps."""
     preview_steps: list[dict[str, Any]] = []
@@ -219,6 +298,10 @@ def build_preview_from_steps(
             "requires_ratification": mutating_steps > 0,
         },
     }
+    if generation_cost_preview is not None:
+        for key in ("estimated_cost", "estimated_costs"):
+            if key in generation_cost_preview:
+                preview["summary"][key] = generation_cost_preview[key]
     if graph_intent_id is not None:
         preview = {
             "kind": preview["kind"],
@@ -311,10 +394,23 @@ async def run_compile_branch(
         else:
             graph_intent_id: str | None = None
             assent_record_id: uuid.UUID | None = None
+            generation_cost_preview: dict[str, Any] | None = None
             if session_factory is not None:
                 async with session_factory() as session:
+                    generation_cost_preview = await _generation_cost_preview(
+                        steps,
+                        session,
+                    )
                     assent_repo = AssentRecordRepo(session)
-                    record = await assent_repo.propose(chain_steps=steps)
+                    metadata = (
+                        {GENERATION_COST_PREVIEW_METADATA_KEY: generation_cost_preview}
+                        if generation_cost_preview is not None
+                        else None
+                    )
+                    record = await assent_repo.propose(
+                        chain_steps=steps,
+                        metadata=metadata,
+                    )
                     await session.commit()
                 graph_intent_id = record.graph_intent_id
                 assent_record_id = record.id
@@ -329,7 +425,11 @@ async def run_compile_branch(
             return CompileBranchOutcome(
                 regime="compiled_mutating_preview",
                 steps=steps,
-                preview=build_preview_from_steps(steps, graph_intent_id),
+                preview=build_preview_from_steps(
+                    steps,
+                    graph_intent_id,
+                    generation_cost_preview,
+                ),
                 chain_body=None,
                 compile_error=None,
                 graph_intent_id=graph_intent_id,

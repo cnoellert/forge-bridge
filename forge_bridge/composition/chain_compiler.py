@@ -233,7 +233,7 @@ def _node_for_step(step_text: str, index: int) -> NodeSpec:
         output_port=PortTopology.any(),
         config={
             "step_text": step_text,
-            "arguments": _step_arguments(step_text),
+            "arguments": parse_step_arguments(step_text),
         },
     )
 
@@ -248,7 +248,7 @@ def _format_result_node(step_text: str, index: int) -> NodeSpec:
     extractor edge (authored in ``compile_chain_steps``), merged UNDER these
     static args so an explicit ``data`` in the step text still wins.
     """
-    arguments = _step_arguments(step_text)
+    arguments = parse_step_arguments(step_text)
     format_class = extract_format_class(step_text)
     if format_class is not None and "format" not in arguments:
         arguments["format"] = format_class
@@ -340,7 +340,8 @@ def _first_token(step_text: str) -> str:
     return step_text.split(maxsplit=1)[0] if step_text.strip() else ""
 
 
-def _step_arguments(step_text: str) -> dict[str, Any]:
+def parse_step_arguments(step_text: str) -> dict[str, Any]:
+    """Parse the canonical inline-JSON and ``key=value`` step arguments."""
     json_args = _json_arguments(step_text)
     token_args = _token_arguments(step_text)
     return {**json_args, **token_args}
@@ -396,4 +397,4 @@ def _safe_node_name(value: str) -> str:
     return _SAFE_NODE_RE.sub("_", value.strip()).strip("_").lower() or "step"
 
 
-__all__ = ["ChainCompileError", "compile_chain_steps"]
+__all__ = ["ChainCompileError", "compile_chain_steps", "parse_step_arguments"]

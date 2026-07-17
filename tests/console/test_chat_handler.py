@@ -1445,6 +1445,18 @@ def _static_asset_source(filename: str) -> str:
     return (pkg_root / "console" / "static" / filename).read_text(encoding="utf-8")
 
 
+def test_ui_chat_panel_surfaces_generation_cost_before_ratification(chat_client):
+    client, _ = chat_client
+    body = client.get("/ui/chat").text
+
+    assert "preview.summary.estimated_cost.amount" in body
+    assert "preview.summary.estimated_cost.currency" in body
+    assert "preview.summary.estimated_costs.map" in body
+    assert ".graph-intent-preview__cost{display:contents}" in _static_asset_source(
+        "forge-console.css"
+    )
+
+
 def test_ui_chat_panel_has_orchestration_termination_section(chat_client):
     """Phase 24.5: panel.html ships the orchestration-termination block.
 

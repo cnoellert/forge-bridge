@@ -262,7 +262,7 @@ main#view-main{background:var(--color-bg);padding:64px 24px}
   border-color:var(--color-accent)
 }
 .graph-intent-preview__step-body{margin-top:var(--space-sm)}
-.graph-intent-preview__args{display:contents}
+.graph-intent-preview__args,.graph-intent-preview__cost{display:contents}
 .graph-intent-preview__actions{
   display:flex;
   align-items:center;
