@@ -27,6 +27,7 @@ _STOP_GRACE_SECONDS = 5.0
 _STOP_POLL_INTERVAL = 0.25
 _START_READY_TIMEOUT = 8.0
 _PORT_RELEASE_TIMEOUT = 5.0
+_LAUNCHD_READY_TIMEOUT = 8.0
 
 
 def _runtime_dir() -> Path:
@@ -364,11 +365,86 @@ _RESTART_TARGETS = {
 }
 
 
+def _launchd_job_loaded(label: str) -> bool:
+    """Whether the packaged system launchd job is loaded right now."""
+    try:
+        proc = subprocess.run(
+            ["launchctl", "print", f"system/{label}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        return False
+    return proc.returncode == 0
+
+
+def _launchd_job_pid(label: str) -> int | None:
+    """Return the current PID reported by launchd, if the job is running."""
+    try:
+        proc = subprocess.run(
+            ["launchctl", "print", f"system/{label}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except OSError:
+        return None
+    if proc.returncode != 0:
+        return None
+    for line in proc.stdout.splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key.strip() == "pid":
+            try:
+                return int(value.strip())
+            except ValueError:
+                return None
+    return None
+
+
+def _listener_owned_by(pid: int, port: int) -> bool:
+    """Whether ``pid`` owns the expected TCP listener on macOS."""
+    try:
+        proc = subprocess.run(
+            [
+                "/usr/sbin/lsof", "-nP", "-a", "-p", str(pid),
+                f"-iTCP:{port}", "-sTCP:LISTEN", "-Fp",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except OSError:
+        return False
+    return proc.returncode == 0 and f"p{pid}" in proc.stdout.splitlines()
+
+
+def _wait_for_launchd_ready(
+    label: str,
+    port: int,
+    *,
+    timeout: float = _LAUNCHD_READY_TIMEOUT,
+) -> int | None:
+    """Wait for launchd's current PID to own the replacement listener."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        pid = _launchd_job_pid(label)
+        if pid is not None and _listener_owned_by(pid, port):
+            return pid
+        time.sleep(_STOP_POLL_INTERVAL)
+    pid = _launchd_job_pid(label)
+    if pid is not None and _listener_owned_by(pid, port):
+        return pid
+    return None
+
+
 def _launchd_label(name: str) -> str | None:
-    """The launchd label supervising ``name`` on this host, or None if no plist
-    is installed for it."""
+    """The loaded packaged launchd job supervising ``name``, if any."""
     label = _LAUNCHD_LABELS.get(name)
-    if label and (_LAUNCHD_DIR / f"{label}.plist").exists():
+    if (
+        label
+        and (_LAUNCHD_DIR / f"{label}.plist").exists()
+        and _launchd_job_loaded(label)
+    ):
         return label
     return None
 
@@ -385,21 +461,58 @@ def launchd_supervised_running() -> list[str]:
     return out
 
 
-def _kickstart_launchd(label: str) -> dict[str, Any]:
-    """Restart a launchd job. Needs root, so shell out to ``sudo launchctl
-    kickstart -k`` inheriting stdio — a password prompt (if any) stays visible;
-    passwordless sudo just works."""
-    cmd = ["sudo", "launchctl", "kickstart", "-k", f"system/{label}"]
+def _restart_launchd(label: str, host: str, port: int) -> dict[str, Any]:
+    """Reload a launchd job only after its previous listener is released."""
+    plist = _LAUNCHD_DIR / f"{label}.plist"
     try:
-        proc = subprocess.run(cmd)  # inherit stdio for the sudo prompt
-        return {"ok": proc.returncode == 0, "returncode": proc.returncode}
+        bootout = subprocess.run(
+            ["sudo", "launchctl", "bootout", f"system/{label}"]
+        )
+        if bootout.returncode != 0:
+            return {
+                "ok": False,
+                "ready": False,
+                "returncode": bootout.returncode,
+                "note": "launchd bootout failed",
+            }
+
+        if not _wait_for_port_release(host, port):
+            return {
+                "ok": False,
+                "ready": False,
+                "returncode": bootout.returncode,
+                "note": "port did not release after launchd bootout",
+            }
+
+        bootstrap = subprocess.run(
+            ["sudo", "launchctl", "bootstrap", "system", str(plist)]
+        )
+        if bootstrap.returncode != 0:
+            return {
+                "ok": False,
+                "ready": False,
+                "returncode": bootstrap.returncode,
+                "note": "launchd bootstrap failed",
+            }
+
+        pid = _wait_for_launchd_ready(label, port)
+        ready = pid is not None
+        result: dict[str, Any] = {
+            "ok": ready,
+            "ready": ready,
+            "returncode": bootstrap.returncode,
+            "pid": pid,
+        }
+        if not ready:
+            result["note"] = "replacement launchd listener did not become ready"
+        return result
     except Exception as exc:  # defensive — sudo/launchctl missing
-        return {"ok": False, "error": str(exc)}
+        return {"ok": False, "ready": False, "error": str(exc)}
 
 
 def restart(target: str = "all") -> list[dict[str, Any]]:
     """Restart bridge services, routing by how each is supervised:
-    launchd-supervised → ``launchctl kickstart``; forge-managed → stop+start;
+    launchd-supervised → unload/wait/reload; forge-managed → stop+start;
     not running → start. ``target`` is one of ``all`` / ``console`` / ``server``."""
     names = _RESTART_TARGETS.get(target)
     if names is None:
@@ -434,11 +547,11 @@ def restart(target: str = "all") -> list[dict[str, Any]]:
                 "ok": bool(started.get("started")), "ready": started.get("ready"),
                 "pid": started.get("pid"), "host": host, "port": port,
             })
-        elif row.get("running") and label:
-            kick = _kickstart_launchd(label)
+        elif label:
+            launchd_result = _restart_launchd(label, host, port)
             results.append({
                 "name": name, "action": "restart", "supervisor": "launchd",
-                "label": label, "host": host, "port": port, **kick,
+                "label": label, "host": host, "port": port, **launchd_result,
             })
         elif row.get("running"):
             results.append({

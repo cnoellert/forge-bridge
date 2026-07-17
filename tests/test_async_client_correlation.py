@@ -116,3 +116,18 @@ def test_async_client_does_not_add_project_name_kwarg():
     """project_name routing is projekt-forge-specific; canonical must stay clean."""
     sig = inspect.signature(AsyncClient.__init__)
     assert "project_name" not in sig.parameters
+
+
+@pytest.mark.asyncio
+async def test_stop_disables_the_reconnect_policy_without_shadow_state():
+    client = AsyncClient(
+        client_name="test",
+        server_url="ws://example/ws",
+        auto_reconnect=True,
+    )
+
+    await client.stop()
+
+    assert client.auto_reconnect is False
+    assert client._stopped is True
+    assert not hasattr(client, "_auto_reconnect")

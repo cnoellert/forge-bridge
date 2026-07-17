@@ -230,7 +230,7 @@ sudo systemctl restart forge-bridge
 
 **macOS:**
 ```bash
-sudo launchctl kickstart -k system/com.cnoellert.forge-bridge
+fbridge restart console
 ```
 
 Both commands are idempotent — restart is safe even if no edits were made.
@@ -307,7 +307,7 @@ tail -f /var/log/forge-bridge/server.log
 Stop / restart:
 
 ```bash
-sudo launchctl kickstart -k system/com.cnoellert.forge-bridge   # restart MCP+Console
+fbridge restart console   # safely unload, wait for :9997 release, reload MCP+Console
 sudo launchctl bootout system /Library/LaunchDaemons/com.cnoellert.forge-bridge.plist           # stop one daemon
 sudo launchctl bootout system /Library/LaunchDaemons/com.cnoellert.forge-bridge-server.plist    # stop bus too
 ```
