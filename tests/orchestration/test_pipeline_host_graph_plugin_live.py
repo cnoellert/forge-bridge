@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import textwrap
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from forge_bridge.composition.commit_boundary import CommitBoundary
+from forge_bridge.composition.dispatch import UnifiedDispatch
+from forge_bridge.composition.executor import GraphExecutor
+from forge_bridge.composition.graph_spec import GraphSpec, NodeSpec
+from forge_bridge.core.assent import AssentRecord
+from forge_bridge.graph.commit import CommitError
 from forge_bridge.orchestration.operation_runner import build_operation_runner
 
 
@@ -14,6 +21,39 @@ class _AttachMCP:
 
     def add_tool(self, fn, *, name: str, **kwargs: Any) -> None:
         self.tools[name] = {"fn": fn, **kwargs}
+
+
+class _PipelineHostGraphMCP:
+    def __init__(self, tool) -> None:
+        self._tool = tool
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def list_tools(self):
+        return [
+            SimpleNamespace(
+                name="forge_apply_host_graph_plan",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        name: {"type": "object"}
+                        for name in (
+                            "target",
+                            "scope",
+                            "plan",
+                            "resolved_plan",
+                            "semantic_intent",
+                        )
+                    }
+                    | {"mode": {"type": "string"}},
+                    "required": ["target", "scope", "plan", "mode"],
+                },
+            )
+        ]
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]):
+        self.calls.append((name, dict(arguments)))
+        assert name == "forge_apply_host_graph_plan"
+        return await self._tool(**arguments)
 
 
 def _phase105_modules():
@@ -34,6 +74,67 @@ def _phase105_modules():
         reason="Pipeline Phase 105 MCP attach hook is not installed",
     )
     return host_graph, contracts, registry, bridge_registry
+
+
+def _held_manifest() -> dict[str, Any]:
+    scope = {
+        "kind": "pipeline.host_graph.scope",
+        "schema_version": 1,
+        "dcc": "Flame",
+        "graph_kind": "batch",
+        "project": "TST",
+        "instance_id": "phase106-live-proof",
+        "session_id": "phase106-session",
+        "graph_ref": "test_104",
+        "operator_identity": "",
+        "mutation_boundary": "dcc_host",
+    }
+    plan = {
+        "kind": "pipeline.host_graph.mutation_plan",
+        "schema_version": 1,
+        "scope": scope,
+        "expected_pre_state_fingerprint": "pre",
+        "changes": [{"change_id": "ensure-write", "action": "ensure_node"}],
+        "status": "ready",
+        "trust_status": "provisional",
+    }
+    return {
+        "type": "mutation_plan",
+        "intent_parameters": {
+            "target": {"dcc": "Flame", "instance_id": "phase106-live-proof"},
+            "scope": scope,
+            "semantic_intent": {
+                "shot": "tst_010",
+                "task": "comp",
+                "role": "comp_render",
+                "stream": "main",
+                "dcc": "Flame",
+            },
+        },
+        "resolved_plan": [
+            {
+                "identity": {
+                    "change_id": "ensure-write",
+                    "expected_pre_state_fingerprint": "pre",
+                },
+                "payload": {"change": plan["changes"][0]},
+            }
+        ],
+        "originating_capability": "forge_plan_shot_output_graph",
+        "apply_counterpart": {
+            "tool": "forge_apply_host_graph_plan",
+            "parameter_overrides": {"plan": plan},
+        },
+    }
+
+
+def _ratified_assent() -> AssentRecord:
+    return AssentRecord(
+        graph_intent_id="phase106-live-proof",
+        chain_steps=["commit"],
+        status="ratified",
+        decided_by="pipeline-host-graph-proof",
+    )
 
 
 def test_phase105_operations_and_tool_attach_are_discovered_without_manual_register(
@@ -184,3 +285,82 @@ async def test_build_operation_runner_dispatches_real_phase105_semantic_plan(
     assert planned.data["type"] == "mutation_plan"
     assert planned.data["apply_counterpart"]["tool"] == ("forge_apply_host_graph_plan")
     assert len(planned.data["resolved_plan"]) == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("drift", [False, True])
+async def test_real_pipeline_grouped_verify_drives_bridge_commit_boundary(
+    monkeypatch,
+    drift: bool,
+) -> None:
+    host_tools = pytest.importorskip(
+        "forge_flame.host_graph_tools",
+        reason="Pipeline Phase 106 fresh verify manifest is not installed",
+    )
+    router = pytest.importorskip("forge_core.session.router")
+    route_result_type = router.RouteResult
+    calls: list[str] = []
+
+    def route(target, path, payload, **kwargs):
+        mode = payload["params"]["mode"]
+        calls.append(mode)
+        plan = dict(payload["params"]["plan"])
+        if mode == "verify" and drift:
+            plan.update(status="review_required", trust_status="review_required")
+            status = "review_required"
+            trust_status = "review_required"
+            reason = "host_graph_pre_state_drift"
+        elif mode == "verify":
+            status = "ready"
+            trust_status = "provisional"
+            reason = None
+        else:
+            status = "succeeded"
+            trust_status = "trusted"
+            reason = None
+            plan = {
+                "kind": "pipeline.host_graph.apply_receipt",
+                "status": "succeeded",
+                "trust_status": "trusted",
+                "mutation_count": 1,
+            }
+        return route_result_type(
+            ok=True,
+            response={
+                "result": {
+                    "kind": "pipeline.host_graph.mutation_dispatch_result",
+                    "operation_type": "pipeline.host_graph.apply_plan",
+                    "mode": mode,
+                    "status": status,
+                    "trust_status": trust_status,
+                    "state_owner": "dcc_host",
+                    "reason": reason,
+                    "result": plan,
+                }
+            },
+        )
+
+    monkeypatch.setattr(router, "route", route)
+    held = _held_manifest()
+    mcp = _PipelineHostGraphMCP(host_tools.forge_apply_host_graph_plan)
+    graph = GraphSpec(
+        nodes=(NodeSpec(node_id="commit", operator_id="commit", config={"held": held}),),
+        edges=(),
+    )
+    result = (
+        await GraphExecutor(
+            UnifiedDispatch(
+                commit_boundary=CommitBoundary(mcp=mcp),
+                assent_record=_ratified_assent(),
+            ).dispatch
+        ).run(graph)
+    )["commit"]
+
+    if drift:
+        assert result.status == "error"
+        assert result.reason_code == CommitError.PLAN_STATE_DRIFT
+        assert calls == ["verify"]
+    else:
+        assert result.status == "ok"
+        assert result.output["type"] == "commit_applied"
+        assert calls == ["verify", "apply"]
