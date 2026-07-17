@@ -26,7 +26,7 @@ projekt-forge pins specific forge-bridge versions and builds production workflow
 
 ## Current Status
 
-Shipped at **v1.8.3** (2026-07-07). Active milestone: **v1.9 Conversational Reads** — restoring a model answer-pass on read queries so the chat surface answers humans in plain language, not dispatch envelopes. Milestones v1.5 Legibility (install + concept docs + recipes + diagnostics), v1.6 Operability (graph-native operational runtime, doctor observability, chat-layer convergence), v1.7 Artist Readiness (NL → compile → preview → ratify → apply authority chain), and v1.8 Console Authority (ratification projection onto the Console) have all shipped since the v1.4.1 baseline. Public `forge_bridge.__all__` remains **19 symbols** — the surface has stayed stable while behavior deepened.
+Shipped at **v1.8.4** (2026-07-17). Active milestone: **v1.9 Conversational Reads** — restoring a model answer-pass on read queries so the chat surface answers humans in plain language, not dispatch envelopes. Milestones v1.5 Legibility (install + concept docs + recipes + diagnostics), v1.6 Operability (graph-native operational runtime, doctor observability, chat-layer convergence), v1.7 Artist Readiness (NL → compile → preview → ratify → apply authority chain), and v1.8 Console Authority (ratification projection onto the Console) have all shipped since the v1.4.1 baseline. Public `forge_bridge.__all__` remains **19 symbols** — the surface has stayed stable while behavior deepened.
 
 | Component | Status |
 |-----------|--------|
@@ -98,10 +98,10 @@ Python 3.10 is the minimum supported version (per `pyproject.toml`); the `forge`
 ./scripts/install-flame-hook.sh
 
 # Or standalone on any Flame workstation — no clone required:
-curl -fsSL https://raw.githubusercontent.com/cnoellert/forge-bridge/v1.8.3/scripts/install-flame-hook.sh | bash
+curl -fsSL https://raw.githubusercontent.com/cnoellert/forge-bridge/v1.8.4/scripts/install-flame-hook.sh | bash
 ```
 
-The installer copies `forge_bridge.py` into `/opt/Autodesk/shared/python/forge_bridge/scripts/` and sanity-checks the result. Override `FORGE_BRIDGE_VERSION` (default `v1.8.3`) or `FORGE_BRIDGE_HOOK_DIR` (default the Flame shared-python path) as needed.
+The installer copies `forge_bridge.py` into `/opt/Autodesk/shared/python/forge_bridge/scripts/` and sanity-checks the result. Override `FORGE_BRIDGE_VERSION` (default `v1.8.4`) or `FORGE_BRIDGE_HOOK_DIR` (default the Flame shared-python path) as needed.
 
 Flame will load the hook automatically on next launch. The bridge starts on `http://127.0.0.1:9999/` by default.
 
