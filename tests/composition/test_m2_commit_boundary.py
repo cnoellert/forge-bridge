@@ -9,8 +9,10 @@ from types import SimpleNamespace
 import pytest
 
 from forge_bridge.composition.commit_boundary import (
+    APPLY_FAILED_OPERATOR_MESSAGE,
     DRIFT_OPERATOR_MESSAGE,
     UNRATIFIED_OPERATOR_MESSAGE,
+    VERIFICATION_FAILED_OPERATOR_MESSAGE,
     CommitBoundary,
 )
 from forge_bridge.composition.compare import (
@@ -77,6 +79,20 @@ class _ApplyFailureMCP(_RenameMCP):
 
     def _apply(self, plan: list[dict]) -> dict:
         return copy.deepcopy(self._apply_payload)
+
+
+class _TransportFailureMCP(_RenameMCP):
+    def __init__(self, *, fresh_manifest: dict, fail_mode: str):
+        super().__init__(fresh_manifest=fresh_manifest)
+        self._fail_mode = fail_mode
+
+    async def call_tool(self, name: str, arguments: dict):
+        self.calls.append((name, copy.deepcopy(arguments)))
+        if arguments["mode"] == self._fail_mode:
+            raise TimeoutError(f"{self._fail_mode} main-thread timeout")
+        if arguments["mode"] == "verify":
+            return copy.deepcopy(self._fresh_manifest)
+        return self._apply(arguments["resolved_plan"])
 
 
 def _identity_key(identity: dict) -> tuple:
@@ -225,6 +241,51 @@ async def test_commit_boundary_apply_error_payload_fails_commit(apply_payload):
             ),
         }
     }
+    assert [(name, args["mode"]) for name, args in mcp.calls] == [
+        ("flame_rename_shots", "verify"),
+        ("flame_rename_shots", "apply"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_commit_boundary_verify_timeout_fails_closed_before_apply():
+    held = _held_manifest_dict()
+    mcp = _TransportFailureMCP(fresh_manifest=held, fail_mode="verify")
+    dispatch = UnifiedDispatch(
+        commit_boundary=CommitBoundary(mcp=mcp),
+        assent_record=_ratified_assent(),
+    )
+
+    result = (await GraphExecutor(dispatch.dispatch).run(_commit_graph(held)))["commit"]
+
+    assert result.status == "error"
+    assert result.reason_code == CommitError.VERIFICATION_FAILED
+    assert result.message == (
+        f"{VERIFICATION_FAILED_OPERATOR_MESSAGE} "
+        "(TimeoutError: verify main-thread timeout)"
+    )
+    assert [(name, args["mode"]) for name, args in mcp.calls] == [
+        ("flame_rename_shots", "verify"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_commit_boundary_apply_timeout_is_never_laundered_into_success():
+    held = _held_manifest_dict()
+    mcp = _TransportFailureMCP(fresh_manifest=held, fail_mode="apply")
+    dispatch = UnifiedDispatch(
+        commit_boundary=CommitBoundary(mcp=mcp),
+        assent_record=_ratified_assent(),
+    )
+
+    result = (await GraphExecutor(dispatch.dispatch).run(_commit_graph(held)))["commit"]
+
+    assert result.status == "error"
+    assert result.reason_code == CommitError.APPLY_FAILED
+    assert result.message == (
+        f"{APPLY_FAILED_OPERATOR_MESSAGE} "
+        "(TimeoutError: apply main-thread timeout)"
+    )
     assert [(name, args["mode"]) for name, args in mcp.calls] == [
         ("flame_rename_shots", "verify"),
         ("flame_rename_shots", "apply"),

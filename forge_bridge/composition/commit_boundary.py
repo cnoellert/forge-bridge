@@ -34,6 +34,10 @@ DRIFT_OPERATOR_MESSAGE = (
 UNRATIFIED_OPERATOR_MESSAGE = (
     "could not apply — this change hasn't been approved yet"
 )
+VERIFICATION_FAILED_OPERATOR_MESSAGE = (
+    "could not apply — fresh host verification did not complete"
+)
+APPLY_FAILED_OPERATOR_MESSAGE = "could not apply — host apply did not complete"
 
 
 class CommitBoundary:
@@ -88,7 +92,14 @@ class CommitBoundary:
                 resolved_inputs,
             )
         mcp = self._mcp if self._mcp is not None else _default_mcp()
-        available = await _maybe_list_tools(mcp)
+        try:
+            available = await _maybe_list_tools(mcp)
+        except Exception as exc:  # noqa: BLE001 - transport boundary evidence
+            return self._error_result(
+                CommitError.VERIFICATION_FAILED,
+                _transport_message(VERIFICATION_FAILED_OPERATOR_MESSAGE, exc),
+                resolved_inputs,
+            )
         if available is not None and target_tool not in _tool_names(available):
             return self._error_result(
                 CommitError.APPLY_COUNTERPART_NOT_DECLARED,
@@ -99,9 +110,16 @@ class CommitBoundary:
         verify_params = _manifest_params(held, mode="verify")
         if available is not None:
             verify_params = normalize_tool_args(target_tool, verify_params, available)
-        fresh_payload = _extract_payload(
-            await mcp.call_tool(target_tool, arguments=verify_params)
-        )
+        try:
+            fresh_payload = _extract_payload(
+                await mcp.call_tool(target_tool, arguments=verify_params)
+            )
+        except Exception as exc:  # noqa: BLE001 - transport boundary evidence
+            return self._error_result(
+                CommitError.VERIFICATION_FAILED,
+                _transport_message(VERIFICATION_FAILED_OPERATOR_MESSAGE, exc),
+                resolved_inputs,
+            )
         try:
             fresh = MutationManifest.from_dict(fresh_payload)
         except MutationManifestError as exc:
@@ -137,9 +155,16 @@ class CommitBoundary:
         apply_params = _manifest_params(held, mode="apply")
         if available is not None:
             apply_params = normalize_tool_args(target_tool, apply_params, available)
-        apply_payload = _extract_payload(
-            await mcp.call_tool(target_tool, arguments=apply_params)
-        )
+        try:
+            apply_payload = _extract_payload(
+                await mcp.call_tool(target_tool, arguments=apply_params)
+            )
+        except Exception as exc:  # noqa: BLE001 - transport boundary evidence
+            return self._error_result(
+                CommitError.APPLY_FAILED,
+                _transport_message(APPLY_FAILED_OPERATOR_MESSAGE, exc),
+                resolved_inputs,
+            )
         if isinstance(apply_payload, dict) and apply_payload.get("drift") is True:
             return self._error_result(
                 CommitError.PLAN_STATE_DRIFT,
@@ -262,8 +287,16 @@ def _source_artifact_ids(
     )
 
 
+def _transport_message(prefix: str, exc: Exception) -> str:
+    detail = str(exc).strip()
+    suffix = type(exc).__name__ if not detail else f"{type(exc).__name__}: {detail}"
+    return f"{prefix} ({suffix})"
+
+
 __all__ = [
     "CommitBoundary",
+    "APPLY_FAILED_OPERATOR_MESSAGE",
     "DRIFT_OPERATOR_MESSAGE",
     "UNRATIFIED_OPERATOR_MESSAGE",
+    "VERIFICATION_FAILED_OPERATOR_MESSAGE",
 ]
