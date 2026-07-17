@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from forge_contracts import AuthoringTarget, BackendIdentityTriple
 from forge_contracts.references import ArtifactRef
 
 from forge_bridge.orchestration.author_driver import (
@@ -26,20 +27,26 @@ class _FakeRouter:
     def __init__(self, text: str = "a moody neon-lit alley") -> None:
         self._text = text
         self.calls: list[tuple[str, bool]] = []
+        self.systems: list[str | None] = []
 
     async def acomplete(self, prompt, sensitive=True, system=None, temperature=0.1):
         self.calls.append((prompt, sensitive))
+        self.systems.append(system)
         return self._text
 
 
-def _envelope(*, prompt=None, correction=None) -> InvocationEnvelope:
+def _envelope(*, prompt=None, correction=None, target=None) -> InvocationEnvelope:
     inputs: list[ArtifactRef] = []
     if prompt is not None:
         inputs.append(
             ArtifactRef(
                 artifact_id="intent-1",
                 artifact_type="text_intent",
-                metadata={"prompt": prompt, "role": "structural"},
+                metadata={
+                    "prompt": prompt,
+                    "role": "structural",
+                    **({"scalars": {"target": target}} if target is not None else {}),
+                },
             )
         )
     if correction is not None:
@@ -101,6 +108,38 @@ async def test_qc_correction_threads_into_authoring_prompt():
 
     prompt_sent, _sensitive = router.calls[0]
     assert "make the subject more specific" in prompt_sent
+
+
+async def test_typed_motion_target_shapes_local_fallback_system_prompt():
+    router = _FakeRouter(text="motion draft")
+    driver = OllamaAuthorDriver(router=router)
+    target = AuthoringTarget(
+        operator_id="generate_video_from_image",
+        backend_identity_triple=BackendIdentityTriple(
+            surface="comfyui",
+            path="seedance_2_0",
+            auth_mechanism="local",
+            revision="r5",
+        ),
+    )
+
+    await driver.submit(
+        _envelope(prompt="a runner crosses frame", target=target.model_dump(mode="json"))
+    )
+
+    assert "camera verbs, timing, and subject choreography" in router.systems[0]
+
+
+async def test_malformed_typed_target_refuses_before_local_author_call():
+    router = _FakeRouter()
+    driver = OllamaAuthorDriver(router=router)
+
+    with pytest.raises(ValueError, match="forge-contracts AuthoringTarget"):
+        await driver.submit(
+            _envelope(prompt="a runner crosses frame", target={"operator_id": "bad"})
+        )
+
+    assert router.calls == []
 
 
 def test_non_terminal_poll_is_a_silent_bug_guard():

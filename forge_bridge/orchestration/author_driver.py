@@ -28,6 +28,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from forge_contracts import AuthoringTarget
+
 from forge_bridge.orchestration.drivers import (
     DriverPollResult,
     DriverSubmitResult,
@@ -49,6 +51,21 @@ _AUTHOR_SYSTEM_PROMPT = (
     "You are drafting short creative prompt text for a VFX shot. "
     "Respond with only the drafted text — no preamble, no quotes, no commentary."
 )
+
+_AUTHOR_PURPOSE_GUIDANCE = {
+    "still": (
+        "The downstream target produces a still image. Avoid camera motion and "
+        "temporal progression; describe one inspectable frame."
+    ),
+    "motion": (
+        "The downstream target produces motion. Use concrete camera verbs, timing, "
+        "and subject choreography."
+    ),
+    "3d": (
+        "The downstream target produces 3D data. Describe silhouette, volume, "
+        "materials, and view-independent geometry."
+    ),
+}
 
 
 class OllamaAuthorDriver:
@@ -84,7 +101,7 @@ class OllamaAuthorDriver:
         text = await self._router.acomplete(
             prompt,
             sensitive=True,  # local Ollama only — never egress the shot intent.
-            system=_AUTHOR_SYSTEM_PROMPT,
+            system=_author_system_prompt(invocation),
         )
         request_id = uuid.uuid4().hex
         self._text_by_request[request_id] = text
@@ -141,3 +158,46 @@ def _author_prompt(invocation: "InvocationEnvelope") -> str:
     if correction:
         lines.append(f"Revise it to address this QC note: {correction}")
     return "\n".join(lines)
+
+
+def _author_system_prompt(invocation: "InvocationEnvelope") -> str:
+    operator_id = _target_operator_id(invocation)
+    purpose = _purpose_for_operator(operator_id)
+    guidance = _AUTHOR_PURPOSE_GUIDANCE.get(purpose)
+    if guidance is None:
+        return _AUTHOR_SYSTEM_PROMPT
+    return f"{_AUTHOR_SYSTEM_PROMPT} {guidance}"
+
+
+def _target_operator_id(invocation: "InvocationEnvelope") -> str | None:
+    for ref in invocation.inputs:
+        metadata = getattr(ref, "metadata", None) or {}
+        scalars = metadata.get("scalars")
+        if not isinstance(scalars, dict):
+            continue
+        raw_target = scalars.get("target")
+        if isinstance(raw_target, str):
+            return raw_target
+        if raw_target is not None:
+            try:
+                return AuthoringTarget.model_validate(raw_target).operator_id
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "author_prompt target must be a valid forge-contracts AuthoringTarget"
+                ) from exc
+    return None
+
+
+def _purpose_for_operator(operator_id: str | None) -> str:
+    if operator_id in {"generate_image", "generate_still", "edit_image", "relight"}:
+        return "still"
+    if operator_id in {
+        "generate_video_from_image",
+        "edit_video",
+        "reframe_video",
+        "extend_video",
+    }:
+        return "motion"
+    if operator_id == "generate_3d_from_image":
+        return "3d"
+    return "generic"
