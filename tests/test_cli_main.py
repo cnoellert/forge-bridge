@@ -100,6 +100,26 @@ def test_status_help_contains_examples():
     assert "Examples" in result.output
 
 
+def test_restart_launchd_failure_surfaces_reason():
+    restart_result = [{
+        "name": "mcp_http",
+        "action": "restart",
+        "supervisor": "launchd",
+        "label": "com.cnoellert.forge-bridge",
+        "host": "127.0.0.1",
+        "port": 9997,
+        "ok": False,
+        "ready": False,
+        "note": "port did not release after launchd bootout",
+    }]
+    with patch("forge_bridge.runtime.manager.restart", return_value=restart_result):
+        result = runner.invoke(app, ["restart", "console"])
+
+    assert result.exit_code == 0
+    assert "FAILED" in result.output
+    assert "port did not release after launchd bootout" in result.output
+
+
 def test_actions_help_contains_examples():
     result = runner.invoke(app, ["actions", "--help"])
     assert result.exit_code == 0

@@ -758,7 +758,7 @@ def status_cmd(
     "restart",
     help=(
         "Restart bridge services, routing by how each is supervised — "
-        "launchd-supervised daemons via `launchctl kickstart` (needs sudo), "
+        "launchd-supervised daemons via unload/wait/reload (needs sudo), "
         "forge-managed ones via stop+start. The friendly wrapper for a daemon "
         "redeploy: no need to know the launchd incantation."
     ),
@@ -792,8 +792,14 @@ def restart_cmd(
             sys.stdout.write(f"{name:<10} {'skipped':<12} {r.get('note', '')}\n")
         elif r.get("supervisor") == "launchd":
             label = "restarted" if r.get("ok") else "FAILED"
+            detail = ""
+            if not r.get("ok"):
+                reason = r.get("note") or r.get("error")
+                if reason:
+                    detail = f" ({reason})"
             sys.stdout.write(
-                f"{name:<10} {label:<12} launchd ({r.get('label')})  {addr}\n"
+                f"{name:<10} {label:<12} launchd ({r.get('label')})  "
+                f"{addr}{detail}\n"
             )
         else:
             verb = "started" if r["action"] == "start" else "restarted"

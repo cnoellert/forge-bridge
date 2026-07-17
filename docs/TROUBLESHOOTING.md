@@ -41,8 +41,8 @@ If doctor's output disagrees with what's documented here, doctor wins — its ou
 `fbridge down && fbridge up` only manages daemons it started itself. If the bridge was installed via `sudo ./scripts/install-bootstrap.sh` (the supervised-daemon path), it runs under launchd (macOS) or systemd (Linux), and `fbridge down` will report `external (no managed PID to stop)`. Use the supervisor's restart path instead:
 
 ```bash
-sudo launchctl kickstart -k system/com.cnoellert.forge-bridge          # macOS (chat / console / mcp_http)
-sudo launchctl kickstart -k system/com.cnoellert.forge-bridge-server   # macOS (WS server, if needed)
+fbridge restart console   # macOS (chat / console / mcp_http)
+fbridge restart server    # macOS (WS server, if needed)
 sudo systemctl restart forge-bridge                                    # Linux
 ```
 
@@ -134,7 +134,7 @@ The model is reachable, responding, and warming. Nothing is structurally wrong.
     ```bash
     sudo sed -i.bak 's/qwen3:32b/qwen2.5-coder:32b/' /etc/forge-bridge/forge-bridge.env
     sudo systemctl restart forge-bridge          # Linux
-    sudo launchctl kickstart -k system/com.cnoellert.forge-bridge   # macOS
+    fbridge restart console                     # macOS
     ```
 
     Resend. The first call after a model change is itself a cold start (30-60 s); the second call should land sub-10s.
@@ -253,7 +253,7 @@ forge-bridge itself is healthy. It's faithfully waiting on a TCP connect that th
 
     ```bash
     sudo systemctl restart forge-bridge          # Linux
-    sudo launchctl kickstart -k system/com.cnoellert.forge-bridge   # macOS
+    fbridge restart console                     # macOS
     ```
 
     Wait ~15 seconds for the daemon to come back. Run `fbridge doctor` — `llm_backend.local` should now report `ok`.
@@ -412,7 +412,7 @@ forge-bridge itself is healthy. The SQL mirror is what's offline.
 
     ```bash
     sudo systemctl restart forge-bridge          # Linux
-    sudo launchctl kickstart -k system/com.cnoellert.forge-bridge   # macOS
+    fbridge restart console                     # macOS
     ```
 
 5. **Retry the staged-ops call that failed.** It should now succeed.
@@ -543,7 +543,7 @@ forge-bridge itself is healthy. The Flame integration surface is what's offline.
 
     ```bash
     sudo systemctl restart forge-bridge          # Linux
-    sudo launchctl kickstart -k system/com.cnoellert.forge-bridge   # macOS
+    fbridge restart console                     # macOS
     ```
 
     Wait ~15 seconds for the daemon to come back. Run `fbridge doctor` — `flame_bridge` should now report `ok`.
@@ -687,11 +687,8 @@ The substrate is fine. The Flame hook is fine. Doctor's two-world view is what's
 4. **Restart the daemon:**
 
     ```bash
-    # macOS
-    sudo launchctl kickstart -k system/com.cnoellert.forge-bridge
-    # or:
-    sudo launchctl bootout system/com.cnoellert.forge-bridge && \
-    sudo launchctl bootstrap system/Library/LaunchDaemons/com.cnoellert.forge-bridge.plist
+    # macOS: unloads, waits for the old listener to release, then reloads
+    fbridge restart console
 
     # Linux
     sudo systemctl daemon-reload && sudo systemctl restart forge-bridge
@@ -850,16 +847,16 @@ This is a Python packaging / workflow hazard, not a forge-bridge bug. The same s
 
 ### Recovery
 
-Use the supervisor's kickstart, not `fbridge up`:
+Use the supervisor-aware restart command, not `fbridge up`:
 
 ```bash
 # macOS — launchd
-sudo launchctl kickstart -k system/com.cnoellert.forge-bridge
+fbridge restart console
 # Linux — systemd
 sudo systemctl restart forge-bridge
 ```
 
-After the kickstart, run `fbridge doctor` — the `install_provenance` row should clear to `ok` and report the on-disk commit as the served commit.
+After the restart, run `fbridge doctor` — the `install_provenance` row should clear to `ok` and report the on-disk commit as the served commit.
 
 ### Why this happens
 
@@ -868,7 +865,7 @@ The `install_provenance` doctor row is engineered (per Phase 24.2) to catch snap
 ### Cross-references
 
 - `docs/INSTALL.md` — supervised-daemon install path (the `install-bootstrap.sh` route).
-- The Ollama-restart and Postgres-restart failure modes above both already document the `launchctl kickstart` / `systemctl restart` invocations as part of their recovery steps; this section names them as the canonical answer for the standalone "daemon serving stale commit" symptom.
+- The Ollama-restart and Postgres-restart failure modes above both document the supervised restart path. On macOS, `fbridge restart` unloads the job, waits for the old listener to release, reloads it, and verifies that the replacement PID owns the port.
 
 ---
 
@@ -915,7 +912,7 @@ Reinstall the sibling so its dist-info regenerates, then recycle the daemon:
 # in the SIBLING checkout (e.g. forge-generators)
 pip install -e . --no-deps        # regenerates *.dist-info/entry_points.txt
 # then recycle the bridge daemon (use the supervisor that owns it)
-sudo launchctl kickstart -k system/com.cnoellert.forge-bridge   # macOS
+fbridge restart console                                        # macOS
 sudo systemctl restart forge-bridge                              # Linux
 ```
 

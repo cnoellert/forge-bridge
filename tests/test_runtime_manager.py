@@ -328,19 +328,123 @@ def test_restart_unknown_target_raises(runtime_home):
         manager.restart("bogus")
 
 
-def test_restart_launchd_supervised_kickstarts(runtime_home):
+def test_restart_launchd_supervised_reloads_job(runtime_home):
     rows = {"services": [_svc_row("mcp_http", running=True, managed=False)]}
     with patch.object(manager, "status", return_value=rows), patch.object(
         manager, "_launchd_label", return_value="com.cnoellert.forge-bridge"
     ), patch.object(
-        manager, "_kickstart_launchd", return_value={"ok": True, "returncode": 0}
-    ) as kick:
+        manager, "_restart_launchd",
+        return_value={"ok": True, "ready": True, "returncode": 0, "pid": 5151},
+    ) as restart_launchd:
         out = manager.restart("console")
     assert len(out) == 1
     assert out[0]["supervisor"] == "launchd"
     assert out[0]["label"] == "com.cnoellert.forge-bridge"
     assert out[0]["ok"] is True
-    kick.assert_called_once_with("com.cnoellert.forge-bridge")
+    assert out[0]["ready"] is True
+    assert out[0]["pid"] == 5151
+    restart_launchd.assert_called_once_with(
+        "com.cnoellert.forge-bridge", "127.0.0.1", 9997
+    )
+
+
+def test_restart_loaded_launchd_job_wins_even_while_port_is_dark(runtime_home):
+    rows = {"services": [_svc_row("mcp_http", running=False, managed=False)]}
+    with patch.object(manager, "status", return_value=rows), patch.object(
+        manager, "_launchd_label", return_value="com.cnoellert.forge-bridge"
+    ), patch.object(
+        manager, "_restart_launchd",
+        return_value={"ok": True, "ready": True, "returncode": 0, "pid": 5151},
+    ) as restart_launchd, patch.object(manager, "_start") as start:
+        out = manager.restart("console")
+
+    assert out[0]["supervisor"] == "launchd"
+    assert out[0]["pid"] == 5151
+    restart_launchd.assert_called_once_with(
+        "com.cnoellert.forge-bridge", "127.0.0.1", 9997
+    )
+    start.assert_not_called()
+
+
+def test_restart_launchd_boots_out_waits_then_bootstraps(runtime_home):
+    with patch("subprocess.run") as run, patch.object(
+        manager, "_wait_for_port_release", return_value=True
+    ) as wait_release, patch.object(
+        manager, "_wait_for_launchd_ready", return_value=5151
+    ) as wait_ready:
+        run.side_effect = [
+            type("Proc", (), {"returncode": 0})(),
+            type("Proc", (), {"returncode": 0})(),
+        ]
+        result = manager._restart_launchd(
+            "com.cnoellert.forge-bridge", "127.0.0.1", 9997
+        )
+
+    assert result == {
+        "ok": True, "ready": True, "returncode": 0, "pid": 5151,
+    }
+    assert run.call_args_list[0].args[0] == [
+        "sudo", "launchctl", "bootout",
+        "system/com.cnoellert.forge-bridge",
+    ]
+    assert run.call_args_list[1].args[0] == [
+        "sudo", "launchctl", "bootstrap", "system",
+        "/Library/LaunchDaemons/com.cnoellert.forge-bridge.plist",
+    ]
+    wait_release.assert_called_once_with("127.0.0.1", 9997)
+    wait_ready.assert_called_once_with("com.cnoellert.forge-bridge", 9997)
+
+
+def test_restart_launchd_refuses_reload_until_port_releases(runtime_home):
+    with patch("subprocess.run") as run, patch.object(
+        manager, "_wait_for_port_release", return_value=False
+    ), patch.object(manager, "_wait_for_launchd_ready") as wait_ready:
+        run.return_value = type("Proc", (), {"returncode": 0})()
+        result = manager._restart_launchd(
+            "com.cnoellert.forge-bridge", "127.0.0.1", 9997
+        )
+
+    assert result["ok"] is False
+    assert result["ready"] is False
+    assert result["note"] == "port did not release after launchd bootout"
+    assert run.call_count == 1
+    wait_ready.assert_not_called()
+
+
+def test_wait_for_launchd_ready_requires_replacement_pid_to_own_listener(
+    runtime_home,
+):
+    with patch.object(
+        manager, "_launchd_job_pid", side_effect=[4100, 4200]
+    ), patch.object(
+        manager, "_listener_owned_by", side_effect=[False, True]
+    ) as owns:
+        pid = manager._wait_for_launchd_ready(
+            "com.cnoellert.forge-bridge", 9997
+        )
+
+    assert pid == 4200
+    assert owns.call_args_list[0].args == (4100, 9997)
+    assert owns.call_args_list[1].args == (4200, 9997)
+
+
+def test_launchd_job_pid_parses_launchctl_print(runtime_home):
+    proc = type(
+        "Proc", (), {"returncode": 0, "stdout": "service = {\n\tpid = 5151\n}\n"}
+    )()
+    with patch("subprocess.run", return_value=proc):
+        assert manager._launchd_job_pid("com.cnoellert.forge-bridge") == 5151
+
+
+def test_listener_owned_by_requires_exact_lsof_pid(runtime_home):
+    proc = type("Proc", (), {"returncode": 0, "stdout": "p5151\n"})()
+    with patch("subprocess.run", return_value=proc) as run:
+        assert manager._listener_owned_by(5151, 9997) is True
+
+    assert run.call_args.args[0] == [
+        "/usr/sbin/lsof", "-nP", "-a", "-p", "5151",
+        "-iTCP:9997", "-sTCP:LISTEN", "-Fp",
+    ]
 
 
 def test_restart_managed_stops_then_starts(runtime_home):
@@ -417,7 +521,8 @@ def test_restart_all_targets_both_services(runtime_home):
     with patch.object(manager, "status", return_value=rows), patch.object(
         manager, "_launchd_label", side_effect=lambda n: labels[n]
     ), patch.object(
-        manager, "_kickstart_launchd", return_value={"ok": True, "returncode": 0}
+        manager, "_restart_launchd",
+        return_value={"ok": True, "ready": True, "returncode": 0, "pid": 5151},
     ):
         out = manager.restart("all")
     assert [r["name"] for r in out] == ["mcp_http", "state_ws"]
@@ -435,6 +540,18 @@ def test_launchd_supervised_running_detects(runtime_home, tmp_path):
     (label_dir / "com.cnoellert.forge-bridge.plist").write_text("x")
     with patch.object(manager, "status", return_value=rows), patch.object(
         manager, "_LAUNCHD_DIR", label_dir
+    ), patch.object(
+        manager, "_launchd_job_loaded", return_value=True
     ):
         out = manager.launchd_supervised_running()
     assert out == ["mcp_http"]
+
+
+def test_launchd_label_rejects_installed_but_unloaded_job(runtime_home, tmp_path):
+    label_dir = tmp_path / "LaunchDaemons"
+    label_dir.mkdir()
+    (label_dir / "com.cnoellert.forge-bridge.plist").write_text("x")
+    with patch.object(manager, "_LAUNCHD_DIR", label_dir), patch.object(
+        manager, "_launchd_job_loaded", return_value=False
+    ):
+        assert manager._launchd_label("mcp_http") is None
