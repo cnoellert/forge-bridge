@@ -217,6 +217,13 @@ async def test_commit_boundary_drift_aborts_before_apply_with_operator_message()
             "results": [{"ok": False}],
         },
         {"error": {"code": "flame_bridge_unreachable"}},
+        {
+            "ok": False,
+            "status": "failed",
+            "trust_status": "untrusted",
+            "reason": "host_graph_mutation_failed",
+            "error": "",
+        },
     ],
 )
 async def test_commit_boundary_apply_error_payload_fails_commit(apply_payload):
@@ -232,12 +239,17 @@ async def test_commit_boundary_apply_error_payload_fails_commit(apply_payload):
 
     assert result.status == "error"
     assert result.reason_code == CommitError.APPLY_FAILED
+    expected_reason = (
+        apply_payload["error"]["code"]
+        if apply_payload.get("error")
+        else apply_payload["reason"]
+    )
     assert result.output == {
         "error": {
             "type": CommitError.APPLY_FAILED,
             "message": (
                 "could not apply — host reported "
-                f"{apply_payload['error']['code']}"
+                f"{expected_reason}"
             ),
         }
     }
