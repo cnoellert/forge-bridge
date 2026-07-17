@@ -4,8 +4,10 @@ import pytest
 
 from forge_bridge.composition.admission import (
     ADMISSION_TABLE,
+    MUTATION_COUNTERPART_TABLE,
     AdmissionRecord,
     AdmissionRejected,
+    admit_mutation_counterpart,
     admit_operator,
 )
 
@@ -37,6 +39,7 @@ def test_admission_accepts_slice_one_operator_ids():
     assert editorial.returns_reference is False
     assert editorial.no_state_mutation is False
     assert editorial.idempotent_result is False
+    assert editorial.state_owner == "peer_owned"
     for operation_id in (
         "traffik.editorial.resolve_top_video_layer",
         "traffik.editorial.mark_timecode_range",
@@ -47,7 +50,7 @@ def test_admission_accepts_slice_one_operator_ids():
         assert operation.dispatch_kind == "operation"
         assert operation.synchronous is True
         assert operation.returns_reference is False
-        assert operation.no_state_mutation is False
+        assert operation.no_state_mutation is True
         assert operation.idempotent_result is True
     host_resolve_operation = admit_operator("traffik.flame_delta.host_resolve")
     assert (
@@ -116,6 +119,36 @@ def test_admission_accepts_slice_one_operator_ids():
     assert commit.dispatch_kind == "commit"
     assert commit.no_state_mutation is False
     assert commit.idempotent_result is False
+    assert commit.state_owner == "dcc_host"
+
+    for operation_id in (
+        "pipeline.shot_resource.current",
+        "pipeline.host_graph.inspect",
+        "pipeline.shot_output_graph.plan",
+        "pipeline.host_graph.verify",
+    ):
+        operation = admit_operator(operation_id)
+        assert operation.dispatch_kind == "operation"
+        assert operation.no_state_mutation is True
+        assert operation.idempotent_result is True
+        assert operation.state_owner == "read_only"
+
+
+def test_grouped_host_graph_apply_is_a_reviewed_commit_only_counterpart():
+    record = admit_mutation_counterpart("forge_apply_host_graph_plan")
+
+    assert record.state_owner == "dcc_host"
+    assert record.synchronous is True
+    assert record.verify_before_apply is True
+    assert record.assent_required is True
+    assert record.idempotent_apply is True
+    assert "forge_apply_host_graph_plan" not in ADMISSION_TABLE
+    assert "forge_apply_host_graph_plan" in MUTATION_COUNTERPART_TABLE
+
+
+def test_unknown_mutation_counterpart_fails_closed():
+    with pytest.raises(AdmissionRejected):
+        admit_mutation_counterpart("forge_apply_unreviewed_host_plan")
 
 
 def test_admission_fails_closed_for_unknown_operator():
@@ -152,6 +185,10 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "literal_source",
         "join",
         "guarded_zip",
+        "pipeline.shot_resource.current",
+        "pipeline.host_graph.inspect",
+        "pipeline.shot_output_graph.plan",
+        "pipeline.host_graph.verify",
         "commit",
     }
     assert "filter(is_greenscreen == true)" not in ADMISSION_TABLE

@@ -12,6 +12,10 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
+from forge_bridge.composition.admission import (
+    AdmissionRejected,
+    admit_mutation_counterpart,
+)
 from forge_bridge.composition.boundary import (
     _extract_payload,
     _maybe_list_tools,
@@ -69,6 +73,20 @@ class CommitBoundary:
             )
 
         target_tool = held.apply_counterpart["tool"]
+        try:
+            counterpart = admit_mutation_counterpart(target_tool)
+        except AdmissionRejected as exc:
+            return self._error_result(
+                CommitError.APPLY_COUNTERPART_NOT_DECLARED,
+                str(exc),
+                resolved_inputs,
+            )
+        if not counterpart.verify_before_apply or not counterpart.assent_required:
+            return self._error_result(
+                CommitError.APPLY_COUNTERPART_NOT_DECLARED,
+                f"apply counterpart {target_tool!r} lacks required commit authority",
+                resolved_inputs,
+            )
         mcp = self._mcp if self._mcp is not None else _default_mcp()
         available = await _maybe_list_tools(mcp)
         if available is not None and target_tool not in _tool_names(available):
