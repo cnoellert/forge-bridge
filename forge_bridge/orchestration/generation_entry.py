@@ -21,6 +21,7 @@ server (which would risk a bootstrap-time circular import).
 from __future__ import annotations
 
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from forge_bridge.orchestration.discovery import make_db_event_appender
@@ -81,7 +82,7 @@ async def dispatch_generation(
     run_id: uuid.UUID | None = None,
     grant_id: str | None = None,
 ) -> DispatchResult:
-    """Runtime-bound entry onto the plan-free ``dispatch_envelope`` core.
+    """Runtime-bound direct door onto the plan-free dispatch core.
 
     This is the door a Pass-B sibling's in-process ``forge_generate_*`` handler
     calls. Because that handler is registered via ``register_with(mcp)`` (which
@@ -95,6 +96,16 @@ async def dispatch_generation(
         not a singleton).
       - ``driver_registry`` — the process holder published at bootstrap via
         :func:`set_generation_driver_registry`.
+
+    Generation has two dispatch doors with distinct authority semantics:
+
+      - This direct door performs advisory grant and fitted-model checks. It
+        fails fast without spending the grant and emits
+        ``dispatch_advisory_refused`` when either check refuses.
+      - :func:`dispatch_envelope` is the authoritative chokepoint for both this
+        direct door and the planner door. It atomically consumes the grant,
+        rechecks fitted-model authority, emits its own authoritative refusal
+        events, and is the only path to ``driver.submit``.
     """
     session_factory = get_async_session_factory()
     event_appender = make_db_event_appender(session_factory)
@@ -118,6 +129,13 @@ async def dispatch_generation(
         session_factory, grant_id=grant_id, run_id=run_id,
     )
     if not grant_ok:
+        await _emit_advisory_refusal(
+            event_appender,
+            envelope=envelope,
+            refusal_code=refusal_code,
+            advisory_check="generation_grant",
+            run_id=run_id,
+        )
         return DispatchResult(status="refused", refusal_code=refusal_code)
 
     # ── Fitted-model revocation gate (#160) — direct-door advisory ─────────
@@ -125,12 +143,19 @@ async def dispatch_generation(
     # so mirror the model pre-check: fail-fast before envelope work if the named
     # fitted-model asset is missing or revoked. The authoritative gate still
     # runs at the mandatory chokepoint inside dispatch_envelope; this is the same
-    # advisory-early-refuse shape as the grant check above (no event emitted —
-    # the chokepoint owns the audit event).
+    # advisory-early-refuse shape as the grant check above. Its audit event is
+    # deliberately distinct from the chokepoint's authoritative refusal event.
     model_ok, model_refusal_code = await _check_model_not_revoked(
         session_factory, fitted_model_asset_id=envelope.fitted_model_asset_id,
     )
     if not model_ok:
+        await _emit_advisory_refusal(
+            event_appender,
+            envelope=envelope,
+            refusal_code=model_refusal_code,
+            advisory_check="fitted_model",
+            run_id=run_id,
+        )
         return DispatchResult(status="refused", refusal_code=model_refusal_code)
 
     return await dispatch_envelope(
@@ -141,4 +166,25 @@ async def dispatch_generation(
         event_appender=event_appender,
         run_id=run_id,
         grant_id=grant_id,
+    )
+
+
+async def _emit_advisory_refusal(
+    event_appender: Callable[[str, dict], Awaitable[None]],
+    *,
+    envelope: InvocationEnvelope,
+    refusal_code: str | None,
+    advisory_check: str,
+    run_id: uuid.UUID | None,
+) -> None:
+    """Record a direct-door refusal without impersonating the chokepoint."""
+    await event_appender(
+        "dispatch_advisory_refused",
+        {
+            "door": "dispatch_generation",
+            "advisory_check": advisory_check,
+            "operator_id": envelope.operator_id,
+            "refusal_code": refusal_code,
+            "run_id": str(run_id) if run_id is not None else None,
+        },
     )

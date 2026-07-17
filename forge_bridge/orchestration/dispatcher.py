@@ -126,6 +126,9 @@ def _dump_artifact_ref(ref: ArtifactRef) -> dict[str, Any]:
 # The grant authority is resolved and consumed HERE, at the shared dispatch
 # core, so BOTH doors — the planner (`dispatch_plan`) and the direct
 # `forge_generate_*` tool (`dispatch_generation`) — are gated at one point.
+# The direct door may refuse earlier via a non-consuming advisory check and
+# records that as `dispatch_advisory_refused`; this chokepoint remains
+# authoritative and owns `dispatch_grant_refused` after an attempted consume.
 # The grant handle is resolved from an explicit `grant_id` kwarg, or from the
 # run's durable `run.grant_id` when only a `run_id` is supplied. A caller-
 # supplied id is a LOOKUP KEY only — never trusted as authority; the persisted
@@ -221,7 +224,9 @@ async def _advisory_grant_check(
 # Fitted-model revocation gate (#160)
 # ─────────────────────────────────────────────────────────────
 # Fail-closed consent enforcement at the submit chokepoint: a revoked
-# fitted-model asset must never be inferred against. Mirrors
+# fitted-model asset must never be inferred against. The direct door may emit
+# `dispatch_advisory_refused` after an earlier read-only check; this authoritative
+# recheck owns `dispatch_model_refused` and is the only route to submit. Mirrors
 # ``_resolve_and_consume_grant``'s session usage and return shape, but this is a
 # pure READ — a revocation flag is never a spend, so there is no CAS/consume.
 
