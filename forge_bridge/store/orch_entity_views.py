@@ -387,6 +387,16 @@ class DBOrchGenerationArtifact(_OrchEntityViewBase):
     def run_id(self) -> Any:
         return self._attr("run_id")
 
+    @property
+    def idempotency_key(self) -> str | None:
+        value = self._attr("idempotency_key")
+        return value if isinstance(value, str) else None
+
+    @property
+    def idempotency_fingerprint(self) -> str | None:
+        value = self._attr("idempotency_fingerprint")
+        return value if isinstance(value, str) else None
+
 
 class DBOrchExecutionResult(_OrchEntityViewBase):
     """Lightweight terminal record for synchronous execution-family steps."""

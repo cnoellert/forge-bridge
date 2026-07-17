@@ -13,7 +13,7 @@ import copy
 import uuid
 from typing import Any, ClassVar
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from forge_bridge.store.content_addressed_repo import (
@@ -153,6 +153,38 @@ class GenerationArtifactRepo:
             select(DBEntity).where(
                 DBEntity.entity_type == self.__entity_type__,
                 DBEntity.content_hash == content_hash,
+            )
+        )
+        entity = result.scalar_one_or_none()
+        if entity is None:
+            return None
+        return self.__model__.from_entity(entity)
+
+    async def lock_idempotency_key(self, idempotency_key: str) -> None:
+        """Serialize one generation key for this transaction.
+
+        The lock must be acquired before lookup and held through submit plus
+        artifact insert. PostgreSQL releases it automatically on transaction
+        end, including refusal and exception paths.
+        """
+        await self.session.execute(
+            text(
+                "SELECT pg_advisory_xact_lock("
+                "hashtextextended('forge-generation:' || :key, 0))"
+            ),
+            {"key": idempotency_key},
+        )
+
+    async def get_by_idempotency_key(
+        self,
+        idempotency_key: str,
+    ) -> DBOrchGenerationArtifact | None:
+        result = await self.session.execute(
+            select(DBEntity).where(
+                DBEntity.entity_type == self.__entity_type__,
+                DBEntity.attributes.contains({
+                    "idempotency_key": idempotency_key,
+                }),
             )
         )
         entity = result.scalar_one_or_none()
