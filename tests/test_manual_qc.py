@@ -3,6 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+import pytest
+
+from forge_contracts import AuthoringTarget, BackendIdentityTriple
+
 from forge_bridge.orchestration.drivers import (
     DriverPollResult,
     DriverSubmitResult,
@@ -24,6 +28,15 @@ _TRIPLE = {
     "revision": "llama3.2",
 }
 _BACKEND_ID = "ollama-api.llama3.2"
+_AUTHORING_TARGET = AuthoringTarget(
+    operator_id="generate_video_from_image",
+    backend_identity_triple=BackendIdentityTriple(
+        surface="comfyui",
+        path="seedance_2_0",
+        auth_mechanism="local",
+        revision="r5",
+    ),
+)
 
 
 class _AuthorDriver:
@@ -91,11 +104,16 @@ async def test_manual_qc_author_revise_and_approve_round_trip(session_factory, t
         driver_registry=_registry(driver),
         event_appender=append,
         data_root=tmp_path,
+        authoring_target=_AUTHORING_TARGET,
     )
 
     assert first.text == "draft one"
     assert first.lifecycle_stage == "execution"
     assert first.lifecycle_status == "paused"
+    assert first.authoring_target == _AUTHORING_TARGET.model_dump(mode="json")
+    assert driver.submissions[0].inputs[0].metadata["scalars"]["target"] == (
+        _AUTHORING_TARGET.model_dump(mode="json")
+    )
 
     async with session_factory() as session:
         lifecycle = await OrchestrationLifecycleStateRepo(session).get_by_run_id(
@@ -121,6 +139,10 @@ async def test_manual_qc_author_revise_and_approve_round_trip(session_factory, t
     assert second.text == "draft two: make the subject more specific"
     assert len(driver.submissions) == 2
     assert _correction_from(driver.submissions[1]) == "make the subject more specific"
+    assert second.authoring_target == _AUTHORING_TARGET.model_dump(mode="json")
+    assert driver.submissions[1].inputs[0].metadata["scalars"]["target"] == (
+        _AUTHORING_TARGET.model_dump(mode="json")
+    )
 
     async with session_factory() as session:
         edges = await RelationshipRepo(session).get_outgoing(
@@ -158,3 +180,14 @@ async def test_manual_qc_start_requires_author_driver(session_factory):
         assert "no local (ollama-api) author_prompt driver registered" in str(exc)
     else:  # pragma: no cover - assertion helper
         raise AssertionError("expected missing author driver failure")
+
+
+async def test_manual_qc_rejects_malformed_authoring_target_before_runtime(
+    session_factory,
+):
+    with pytest.raises(ValueError, match="forge-contracts AuthoringTarget"):
+        await start_author(
+            "make something",
+            session_factory=session_factory,
+            authoring_target={"operator_id": "generate_still"},
+        )

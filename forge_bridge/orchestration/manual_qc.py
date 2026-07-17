@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from forge_contracts import AuthoringTarget
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from forge_bridge import __version__
@@ -61,6 +62,7 @@ class ManualQCResult:
     text: str
     lifecycle_stage: str
     lifecycle_status: str
+    authoring_target: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         body = asdict(self)
@@ -95,12 +97,17 @@ async def start_author(
     driver_registry: GenerationDriverRegistry | None = None,
     event_appender: Callable[[str, dict], Awaitable[None]] | None = None,
     data_root: Path | None = None,
+    authoring_target: AuthoringTarget | dict[str, Any] | None = None,
 ) -> ManualQCResult:
     """Create, dispatch, poll, and pause a single ``author_prompt`` run."""
 
     clean_intent = intent.strip()
     if not clean_intent:
         raise ValueError("intent must be a non-empty string")
+    target = _normalize_authoring_target(authoring_target)
+    target_wire: str | dict[str, Any] = (
+        target.model_dump(mode="json") if target is not None else AUTHOR_TARGET
+    )
 
     runtime = await _runtime(
         session_factory=session_factory,
@@ -112,7 +119,7 @@ async def start_author(
 
     async with runtime.session_factory() as session:
         intent_row = await LockedIntentRepo(session).insert_if_absent(
-            _locked_intent_body(clean_intent)
+            _locked_intent_body(clean_intent, target=target_wire)
         )
         rule = await RuleSnapshotRepo(session).insert_if_absent(_rule_snapshot_body())
         capability = await CapabilitySnapshotRepo(session).insert_if_absent(
@@ -166,6 +173,7 @@ async def start_author(
                 backend_id=backend_id,
                 intent=clean_intent,
                 data_root=data_root,
+                target=target_wire,
             )
         )
 
@@ -400,6 +408,7 @@ async def _dispatch_poll_and_pause(
         text=text,
         lifecycle_stage=lifecycle.current_stage,
         lifecycle_status=lifecycle.status,
+        authoring_target=_authoring_target_from_plan(plan.attributes),
     )
 
 
@@ -417,7 +426,11 @@ def _select_author_backend(
     raise RuntimeError("no local (ollama-api) author_prompt driver registered")
 
 
-def _locked_intent_body(intent: str) -> dict[str, Any]:
+def _locked_intent_body(
+    intent: str,
+    *,
+    target: str | dict[str, Any] = AUTHOR_TARGET,
+) -> dict[str, Any]:
     return {
         "source_read": {"kind": "manual_qc_author", "intent": intent},
         "change_manifest": [],
@@ -435,7 +448,7 @@ def _locked_intent_body(intent: str) -> dict[str, Any]:
         "deliverable_spec": {
             "medium": "text",
             "operator_id": AUTHOR_OPERATOR_ID,
-            "target": AUTHOR_TARGET,
+            "target": target,
         },
     }
 
@@ -484,6 +497,7 @@ def _plan_body(
     backend_id: str,
     intent: str,
     data_root: Path,
+    target: str | dict[str, Any] = AUTHOR_TARGET,
 ) -> dict[str, Any]:
     return {
         "operator_sequence": [
@@ -499,7 +513,7 @@ def _plan_body(
                             "role": "structural",
                             "scalars": {
                                 "data_root": str(data_root),
-                                "target": AUTHOR_TARGET,
+                                "target": target,
                             },
                         },
                     }
@@ -574,6 +588,34 @@ def _artifact_text(execution_provenance: Any) -> str:
         if path.exists():
             return path.read_text(encoding="utf-8")
     return ""
+
+
+def _normalize_authoring_target(
+    value: AuthoringTarget | dict[str, Any] | None,
+) -> AuthoringTarget | None:
+    if value is None:
+        return None
+    try:
+        return AuthoringTarget.model_validate(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "authoring_target must be a valid forge-contracts AuthoringTarget"
+        ) from exc
+
+
+def _authoring_target_from_plan(plan_body: dict[str, Any]) -> dict[str, Any] | None:
+    steps = plan_body.get("operator_sequence") or []
+    if not steps:
+        return None
+    inputs = steps[0].get("inputs") or []
+    if not inputs:
+        return None
+    metadata = inputs[0].get("metadata") or {}
+    scalars = metadata.get("scalars") or {}
+    raw_target = scalars.get("target")
+    if not isinstance(raw_target, dict):
+        return None
+    return AuthoringTarget.model_validate(raw_target).model_dump(mode="json")
 
 
 def _parse_uuid(value: uuid.UUID | str, field: str) -> uuid.UUID:
