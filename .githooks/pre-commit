@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "${ALLOW_PLANNING_OFF_MAIN:-0}" = "1" ]; then
+  exit 0
+fi
+
+branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+if [ "$branch" = "main" ]; then
+  exit 0
+fi
+
+staged_paths="$(git diff --cached --name-only --diff-filter=ACMRD)"
+if [ -z "$staged_paths" ]; then
+  exit 0
+fi
+
+planning_count=0
+other_count=0
+while IFS= read -r path; do
+  case "$path" in
+    .planning/*) planning_count=$((planning_count + 1)) ;;
+    *) other_count=$((other_count + 1)) ;;
+  esac
+done <<< "$staged_paths"
+
+if [ "$planning_count" -gt 0 ] && [ "$other_count" -eq 0 ]; then
+  cat >&2 <<EOF
+Planning-only commit blocked on branch '${branch:-DETACHED}'.
+
+Planning history belongs on main. Commit these staged .planning/ paths from
+main, or set ALLOW_PLANNING_OFF_MAIN=1 for an intentional exception.
+EOF
+  exit 1
+fi
