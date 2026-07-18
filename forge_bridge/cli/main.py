@@ -538,6 +538,11 @@ app.command(
 )(_author.author_make_cmd)
 
 app.command(
+    "generation-qc",
+    help="Approve a generated artifact or attach a visual correction for re-authoring.",
+)(_author.generation_qc_cmd)
+
+app.command(
     "qc",
     help=(
         "Apply a manual QC note as a derived authoring run, or approve a run."

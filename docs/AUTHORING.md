@@ -66,6 +66,45 @@ make command cannot replace it.
 
 6. Poll the returned artifact with `forge_generation_status`.
 
+## Manual Still-To-Video Beat
+
+After the still make reaches `complete`, a human makes exactly one visual
+decision against that immutable generated artifact.
+
+Request a corrected prompt when the picture misses the brief:
+
+```bash
+fbridge generation-qc GENERATED_STILL_ARTIFACT_ID \
+  "Keep the bridge visible behind the car" --actor "$USER" --json
+```
+
+The returned `revised_run_id` and `revised_author_artifact_id` are a new author
+attempt. The correction is carried as a typed `qc_correction` reference linked
+to the rejected still. Approve and make that new prompt through the same steps
+above; the rejected output remains immutable evidence.
+
+When a completed still is usable, approve it for downstream conditioning:
+
+```bash
+fbridge generation-qc GENERATED_STILL_ARTIFACT_ID \
+  --approve --actor "$USER" --json
+```
+
+Author motion from that exact approved still:
+
+```bash
+fbridge author "Track beside the car as it crosses the bridge" \
+  --from-approved-generation GENERATED_STILL_ARTIFACT_ID \
+  --target-backend comfyui.seedance_2_0 \
+  --json
+```
+
+The video author plan persists the approval event, media locator, and still
+artifact id as a conditioning reference. After prompt QC and grant ratification,
+ordinary `author-make` carries that persisted still into
+`generate_video_from_image` automatically; no `--inputs-json` restatement is
+required.
+
 ## Authority And Retry Rules
 
 - `author-make` refuses an author artifact that is incomplete or still paused
@@ -78,7 +117,15 @@ make command cannot replace it.
   An identical retry returns the existing artifact without another submit or
   grant spend. Use `--idempotency-key` only when the make identity is explicitly
   managed by the caller.
+- A generated artifact receives one append-only human visual decision. Approval
+  retries are idempotent; an approved or corrected artifact cannot be decided a
+  second way.
+- Partial generations may be corrected but cannot be approved for downstream
+  conditioning.
+- `--from-approved-generation` accepts only a completed `generate_still`
+  artifact with a durable human approval and always authors for
+  `generate_video_from_image`.
 
 This is the manual single-beat path. It does not authorize autonomous paid
-retries, automatic QC decisions, or a storyboard loop. Those remain gated on a
-bounded generation-grant design and typed Vision QC contracts.
+retries, automatic QC decisions, or a multi-beat storyboard loop. Those remain
+gated on a bounded generation-grant design and typed Vision QC contracts.

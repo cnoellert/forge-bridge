@@ -11,7 +11,7 @@ import typer
 from rich.table import Table
 
 from forge_bridge.cli.render import HEADER_STYLE, TOOLS_BOX, make_console
-from forge_bridge.orchestration import manual_qc
+from forge_bridge.orchestration import generation_review, manual_qc
 from forge_bridge.orchestration.authoring_targets import (
     discover_authoring_target_options,
 )
@@ -36,6 +36,13 @@ def author_cmd(
             help="Exact discovered backend id; required when the operator is ambiguous.",
         ),
     ] = None,
+    from_approved_generation: Annotated[
+        str | None,
+        typer.Option(
+            "--from-approved-generation",
+            help="Author image-to-video motion from this human-approved still artifact.",
+        ),
+    ] = None,
     as_json: Annotated[
         bool,
         typer.Option("--json", help="Emit JSON envelope to stdout."),
@@ -43,10 +50,25 @@ def author_cmd(
 ) -> None:
     """Author a text prompt and pause the run for manual QC."""
 
-    if target_backend is not None and target_operator is None:
+    if (
+        target_backend is not None
+        and target_operator is None
+        and from_approved_generation is None
+    ):
         _emit_error(
             "invalid_args",
             "--target-backend requires --target-operator",
+            as_json=as_json,
+        )
+        raise typer.Exit(code=1)
+    if (
+        from_approved_generation is not None
+        and target_operator is not None
+        and target_operator != generation_review.VIDEO_FROM_IMAGE_OPERATOR
+    ):
+        _emit_error(
+            "invalid_args",
+            "--from-approved-generation requires generate_video_from_image",
             as_json=as_json,
         )
         raise typer.Exit(code=1)
@@ -58,7 +80,16 @@ def author_cmd(
         kwargs["target_backend"] = target_backend
 
     try:
-        result = asyncio.run(manual_qc.start_author(intent, **kwargs))
+        if from_approved_generation is not None:
+            result = asyncio.run(
+                generation_review.start_conditioned_video_author(
+                    intent,
+                    from_approved_generation,
+                    target_backend=target_backend,
+                )
+            )
+        else:
+            result = asyncio.run(manual_qc.start_author(intent, **kwargs))
     except Exception as exc:  # noqa: BLE001 - CLI boundary maps to stable envelope
         _emit_error("author_failed", str(exc), as_json=as_json)
         raise typer.Exit(code=1)
@@ -68,6 +99,60 @@ def author_cmd(
         sys.stdout.write(json.dumps(body) + "\n")
         return
     _render_author_result(result.to_dict())
+
+
+def generation_qc_cmd(
+    generation_artifact_id: Annotated[
+        str,
+        typer.Argument(help="Terminal generated artifact id to review."),
+    ],
+    note: Annotated[
+        str | None,
+        typer.Argument(help="Visual correction note. Omit when using --approve."),
+    ] = None,
+    approve: Annotated[
+        bool,
+        typer.Option("--approve", help="Approve the artifact for downstream use."),
+    ] = False,
+    actor: Annotated[
+        str,
+        typer.Option("--actor", help="Human reviewer identity."),
+    ] = "operator",
+    as_json: Annotated[
+        bool,
+        typer.Option("--json", help="Emit JSON envelope to stdout."),
+    ] = False,
+) -> None:
+    """Record one human visual decision for a terminal generation artifact."""
+
+    if approve and note is not None:
+        _emit_error("invalid_args", "omit NOTE when using --approve", as_json=as_json)
+        raise typer.Exit(code=1)
+    if not approve and not note:
+        _emit_error("invalid_args", "NOTE is required unless --approve is set", as_json=as_json)
+        raise typer.Exit(code=1)
+
+    try:
+        result = asyncio.run(
+            generation_review.review_generation(
+                generation_artifact_id,
+                note=note,
+                approve=approve,
+                actor=actor,
+            )
+        )
+    except ValueError as exc:
+        _emit_error("invalid_args", str(exc), as_json=as_json)
+        raise typer.Exit(code=1)
+    except Exception as exc:  # noqa: BLE001 - CLI boundary maps to stable envelope
+        _emit_error("generation_qc_failed", str(exc), as_json=as_json)
+        raise typer.Exit(code=1)
+
+    body = {"ok": True, "data": result.to_dict()}
+    if as_json:
+        sys.stdout.write(json.dumps(body) + "\n")
+        return
+    _render_generation_review(body["data"])
 
 
 def author_targets_cmd(
@@ -288,4 +373,22 @@ def _render_make_result(data: dict) -> None:
         table.add_row("refusal_code", str(data["refusal_code"]))
     if data.get("poll_with"):
         table.add_row("poll_with", str(data["poll_with"]))
+    console.print(table)
+
+
+def _render_generation_review(data: dict) -> None:
+    console = make_console()
+    table = Table(box=TOOLS_BOX, header_style=HEADER_STYLE)
+    table.add_column("Field")
+    table.add_column("Value")
+    table.add_row("generation_artifact_id", str(data["generation_artifact_id"]))
+    table.add_row("decision", str(data["decision"]))
+    table.add_row("actor", str(data["actor"]))
+    if data.get("revised_run_id"):
+        table.add_row("revised_run_id", str(data["revised_run_id"]))
+    if data.get("revised_author_artifact_id"):
+        table.add_row(
+            "revised_author_artifact_id",
+            str(data["revised_author_artifact_id"]),
+        )
     console.print(table)

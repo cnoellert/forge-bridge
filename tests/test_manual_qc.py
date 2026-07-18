@@ -25,12 +25,17 @@ from forge_bridge.orchestration.manual_qc import (
 )
 from forge_bridge.orchestration.dispatcher import InvocationEnvelope
 from forge_bridge.orchestration.errors import PlannerRefusalError
+from forge_bridge.orchestration.generation_review import (
+    REVIEW_EVENT_TYPE,
+    review_generation,
+    start_conditioned_video_author,
+)
 from forge_bridge.orchestration.replay import RUN_LINEAGE_REL_KEYS
 from forge_bridge.orchestration.registration import ToolRegistration, ToolRegistry
 from forge_bridge.store.orchestration_lifecycle_state_repo import (
     OrchestrationLifecycleStateRepo,
 )
-from forge_bridge.store.repo import RelationshipRepo
+from forge_bridge.store.repo import EventRepo, RelationshipRepo
 from forge_bridge.store.generation_grant_repo import GenerationGrantRepo
 from forge_bridge.store.orch_generation_artifact_repo import GenerationArtifactRepo
 
@@ -48,6 +53,15 @@ _AUTHORING_TARGET = AuthoringTarget(
         path="seedance_2_0",
         auth_mechanism="local",
         revision="r5",
+    ),
+)
+_STILL_TARGET = AuthoringTarget(
+    operator_id="generate_still",
+    backend_identity_triple=BackendIdentityTriple(
+        surface="higgsfield-cli",
+        path="nano_banana_2",
+        auth_mechanism="device-flow-bearer",
+        revision="nano_banana_2",
     ),
 )
 
@@ -136,6 +150,49 @@ async def _ratified_target_grant(session_factory) -> str:
         await repo.ratify(grant.grant_id, actor="human-reviewer")
         await session.commit()
         return grant.grant_id
+
+
+async def _insert_generated_still(
+    session_factory,
+    *,
+    source_author_artifact_id,
+    source_run_id,
+    state: str = "complete",
+):
+    async with session_factory() as session:
+        repo = GenerationArtifactRepo(session)
+        artifact = await repo.insert_submitted(
+            {
+                "name": "generated-still",
+                "platform_locators": {},
+                "content_provenance": {
+                    "operator_id": "generate_still",
+                    "source_author_artifact_id": str(source_author_artifact_id),
+                    "lineage": {
+                        "source_author_artifact_id": str(source_author_artifact_id)
+                    },
+                },
+                "execution_provenance": {
+                    "backend_identity_triple": (
+                        _STILL_TARGET.backend_identity_triple.model_dump(mode="json")
+                    ),
+                    "request_id": "still-request-1",
+                },
+                "run_id": str(source_run_id),
+                "polling_history": [],
+            }
+        )
+        artifact = await repo.transition(
+            artifact.id,
+            state,
+            terminal_provenance={
+                "media_url": "https://cdn.example/approved-still.png",
+                "media_content_sha256": "a" * 64,
+                "media_kind": "image",
+            },
+        )
+        await session.commit()
+        return artifact
 
 
 def _registry(driver: _AuthorDriver) -> GenerationDriverRegistry:
@@ -392,3 +449,251 @@ async def test_manual_qc_make_uses_approved_prompt_exact_target_and_grant(
     assert replay.artifact_id == made.artifact_id
     assert len(target_driver.submissions) == 1
     assert any(name == "manual_qc_make_resolved" for name, _payload in events)
+
+
+async def test_generated_still_correction_reauthors_with_typed_source(
+    session_factory,
+    tmp_path,
+):
+    author_driver = _AuthorDriver()
+    registry = _registry(author_driver)
+    events, append = await _events()
+    authored = await start_author(
+        "a car crosses a wet bridge",
+        session_factory=session_factory,
+        driver_registry=registry,
+        event_appender=append,
+        data_root=tmp_path,
+        authoring_target=_STILL_TARGET,
+    )
+    await approve(authored.run_id, session_factory=session_factory)
+    still = await _insert_generated_still(
+        session_factory,
+        source_author_artifact_id=authored.artifact_id,
+        source_run_id=authored.run_id,
+    )
+
+    review = await review_generation(
+        still.id,
+        note="keep the bridge visible behind the car",
+        actor="reviewer",
+        session_factory=session_factory,
+        driver_registry=registry,
+        event_appender=append,
+    )
+
+    assert review.decision == "correction"
+    assert review.revised_run_id is not None
+    assert review.revised_author_artifact_id is not None
+    correction = next(
+        ref
+        for ref in author_driver.submissions[-1].inputs
+        if ref.artifact_type == "qc_correction"
+    )
+    assert correction.metadata["qc_correction"] == (
+        "keep the bridge visible behind the car"
+    )
+    assert correction.metadata["source_generation_artifact_id"] == str(still.id)
+
+    with pytest.raises(PlannerRefusalError, match="already has a human decision"):
+        await review_generation(
+            still.id,
+            approve=True,
+            session_factory=session_factory,
+        )
+
+
+async def test_approved_still_is_persisted_and_carried_into_video_make(
+    session_factory,
+    tmp_path,
+):
+    author_driver = _AuthorDriver()
+    target_driver = _TargetDriver()
+    registry = _registry(author_driver)
+    registry.register_driver(target_driver)
+    tools = _target_catalog(registry)
+    events, append = await _events()
+    still_author = await start_author(
+        "a car crosses a wet bridge",
+        session_factory=session_factory,
+        driver_registry=registry,
+        event_appender=append,
+        data_root=tmp_path,
+        authoring_target=_STILL_TARGET,
+    )
+    await approve(still_author.run_id, session_factory=session_factory)
+    still = await _insert_generated_still(
+        session_factory,
+        source_author_artifact_id=still_author.artifact_id,
+        source_run_id=still_author.run_id,
+    )
+    approved = await review_generation(
+        still.id,
+        approve=True,
+        actor="reviewer",
+        session_factory=session_factory,
+    )
+    approved_retry = await review_generation(
+        still.id,
+        approve=True,
+        actor="reviewer",
+        session_factory=session_factory,
+    )
+    assert approved.decision == "approved"
+    assert approved_retry.event_id == approved.event_id
+    assert approved_retry.idempotent is True
+
+    video_author = await start_conditioned_video_author(
+        "the camera tracks beside the moving car",
+        still.id,
+        target_backend="comfyui.seedance_2_0",
+        session_factory=session_factory,
+        driver_registry=registry,
+        event_appender=append,
+        data_root=tmp_path,
+        tool_registry=tools,
+    )
+    assert video_author.authoring_target == _AUTHORING_TARGET.model_dump(mode="json")
+    assert video_author.conditioning_artifact_ids == (str(still.id),)
+    conditioning = next(
+        ref
+        for ref in author_driver.submissions[-1].inputs
+        if ref.artifact_id == str(still.id)
+    )
+    assert conditioning.metadata["carry_to_make"] is True
+    assert conditioning.metadata["url"] == (
+        "https://cdn.example/approved-still.png"
+    )
+    assert conditioning.metadata["human_review_content_hash"] == still.content_hash
+
+    await approve(video_author.run_id, session_factory=session_factory)
+    grant_id = await _ratified_target_grant(session_factory)
+    made = await make_approved(
+        video_author.artifact_id,
+        grant_id,
+        session_factory=session_factory,
+        driver_registry=registry,
+        event_appender=append,
+    )
+    assert made.status == "submitted"
+    assert len(target_driver.submissions) == 1
+    submitted = target_driver.submissions[0]
+    assert submitted.inputs[0].artifact_id == str(still.id)
+    assert submitted.inputs[0].metadata["url"] == (
+        "https://cdn.example/approved-still.png"
+    )
+    assert submitted.inputs[0].metadata["prompt"] == video_author.text
+
+
+async def test_video_author_refuses_unapproved_still(
+    session_factory,
+    tmp_path,
+):
+    author_driver = _AuthorDriver()
+    target_driver = _TargetDriver()
+    registry = _registry(author_driver)
+    registry.register_driver(target_driver)
+    still_author = await start_author(
+        "a car crosses a wet bridge",
+        session_factory=session_factory,
+        driver_registry=registry,
+        event_appender=(await _events())[1],
+        data_root=tmp_path,
+        authoring_target=_STILL_TARGET,
+    )
+    await approve(still_author.run_id, session_factory=session_factory)
+    still = await _insert_generated_still(
+        session_factory,
+        source_author_artifact_id=still_author.artifact_id,
+        source_run_id=still_author.run_id,
+    )
+
+    with pytest.raises(PlannerRefusalError, match="has no human approval"):
+        await start_conditioned_video_author(
+            "track beside the car",
+            still.id,
+            target_backend="comfyui.seedance_2_0",
+            session_factory=session_factory,
+            driver_registry=registry,
+            event_appender=(await _events())[1],
+            data_root=tmp_path,
+            tool_registry=_target_catalog(registry),
+        )
+
+
+async def test_concurrent_still_approval_records_one_decision(
+    session_factory,
+    tmp_path,
+):
+    import asyncio
+
+    author_driver = _AuthorDriver()
+    registry = _registry(author_driver)
+    authored = await start_author(
+        "a car crosses a wet bridge",
+        session_factory=session_factory,
+        driver_registry=registry,
+        event_appender=(await _events())[1],
+        data_root=tmp_path,
+        authoring_target=_STILL_TARGET,
+    )
+    await approve(authored.run_id, session_factory=session_factory)
+    still = await _insert_generated_still(
+        session_factory,
+        source_author_artifact_id=authored.artifact_id,
+        source_run_id=authored.run_id,
+    )
+
+    first, second = await asyncio.gather(
+        review_generation(
+            still.id,
+            approve=True,
+            actor="reviewer-a",
+            session_factory=session_factory,
+        ),
+        review_generation(
+            still.id,
+            approve=True,
+            actor="reviewer-b",
+            session_factory=session_factory,
+        ),
+    )
+
+    assert first.event_id == second.event_id
+    assert {first.idempotent, second.idempotent} == {False, True}
+    async with session_factory() as session:
+        decisions = await EventRepo(session).get_recent(
+            event_type=REVIEW_EVENT_TYPE,
+            entity_id=still.id,
+        )
+        assert len(decisions) == 1
+
+
+async def test_partial_generation_can_be_corrected_but_not_approved(
+    session_factory,
+    tmp_path,
+):
+    author_driver = _AuthorDriver()
+    registry = _registry(author_driver)
+    authored = await start_author(
+        "a car crosses a wet bridge",
+        session_factory=session_factory,
+        driver_registry=registry,
+        event_appender=(await _events())[1],
+        data_root=tmp_path,
+        authoring_target=_STILL_TARGET,
+    )
+    await approve(authored.run_id, session_factory=session_factory)
+    still = await _insert_generated_still(
+        session_factory,
+        source_author_artifact_id=authored.artifact_id,
+        source_run_id=authored.run_id,
+        state="partial",
+    )
+
+    with pytest.raises(PlannerRefusalError, match="is 'partial'"):
+        await review_generation(
+            still.id,
+            approve=True,
+            session_factory=session_factory,
+        )

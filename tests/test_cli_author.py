@@ -11,6 +11,7 @@ from forge_bridge.cli.author import (
     author_cmd,
     author_make_cmd,
     author_targets_cmd,
+    generation_qc_cmd,
     qc_cmd,
 )
 
@@ -75,11 +76,41 @@ class _MakeResult:
         }
 
 
+@dataclass(frozen=True)
+class _GenerationReview:
+    generation_artifact_id: uuid.UUID
+    decision: str
+    actor: str
+    event_id: uuid.UUID
+    revised_run_id: uuid.UUID | None = None
+    revised_author_artifact_id: uuid.UUID | None = None
+
+    def to_dict(self):
+        return {
+            "generation_artifact_id": str(self.generation_artifact_id),
+            "decision": self.decision,
+            "actor": self.actor,
+            "media_url": "https://cdn.example/still.png",
+            "source_author_artifact_id": str(uuid.uuid4()),
+            "event_id": str(self.event_id),
+            "revised_run_id": (
+                str(self.revised_run_id) if self.revised_run_id else None
+            ),
+            "revised_author_artifact_id": (
+                str(self.revised_author_artifact_id)
+                if self.revised_author_artifact_id
+                else None
+            ),
+            "idempotent": False,
+        }
+
+
 def _app() -> typer.Typer:
     app = typer.Typer()
     app.command("author")(author_cmd)
     app.command("author-targets")(author_targets_cmd)
     app.command("author-make")(author_make_cmd)
+    app.command("generation-qc")(generation_qc_cmd)
     app.command("qc")(qc_cmd)
 
     @app.command("__noop__", hidden=True)
@@ -143,6 +174,58 @@ def test_author_backend_requires_operator(monkeypatch):
     result = runner.invoke(
         _app(),
         ["author", "write motion", "--target-backend", "comfyui.seedance_2_0", "--json"],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["error"]["code"] == "invalid_args"
+
+
+def test_author_from_approved_generation_implies_video_operator(monkeypatch):
+    still_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+    artifact_id = uuid.uuid4()
+
+    async def _start(intent, approved_still_artifact_id, *, target_backend):
+        assert intent == "track beside the car"
+        assert approved_still_artifact_id == str(still_id)
+        assert target_backend == "comfyui.seedance_2_0"
+        return _Result(run_id=run_id, artifact_id=artifact_id)
+
+    monkeypatch.setattr(
+        "forge_bridge.orchestration.generation_review.start_conditioned_video_author",
+        _start,
+    )
+
+    result = runner.invoke(
+        _app(),
+        [
+            "author",
+            "track beside the car",
+            "--from-approved-generation",
+            str(still_id),
+            "--target-backend",
+            "comfyui.seedance_2_0",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.output)["ok"] is True
+
+
+def test_author_from_approved_generation_rejects_non_video_operator():
+    result = runner.invoke(
+        _app(),
+        [
+            "author",
+            "track beside the car",
+            "--from-approved-generation",
+            str(uuid.uuid4()),
+            "--target-operator",
+            "generate_still",
+            "--json",
+        ],
     )
 
     assert result.exit_code == 1
@@ -237,6 +320,56 @@ def test_qc_requires_note_unless_approving():
     assert result.exit_code == 1
     payload = json.loads(result.output)
     assert payload["error"]["code"] == "invalid_args"
+
+
+def test_generation_qc_approve_json(monkeypatch):
+    artifact_id = uuid.uuid4()
+    event_id = uuid.uuid4()
+
+    async def _review(got_artifact_id, *, note, approve, actor):
+        assert got_artifact_id == str(artifact_id)
+        assert note is None
+        assert approve is True
+        assert actor == "reviewer"
+        return _GenerationReview(
+            generation_artifact_id=artifact_id,
+            decision="approved",
+            actor=actor,
+            event_id=event_id,
+        )
+
+    monkeypatch.setattr(
+        "forge_bridge.orchestration.generation_review.review_generation",
+        _review,
+    )
+    result = runner.invoke(
+        _app(),
+        [
+            "generation-qc",
+            str(artifact_id),
+            "--approve",
+            "--actor",
+            "reviewer",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["data"]["decision"] == "approved"
+    assert payload["data"]["event_id"] == str(event_id)
+
+
+def test_generation_qc_requires_exactly_one_decision():
+    artifact_id = str(uuid.uuid4())
+    missing = runner.invoke(_app(), ["generation-qc", artifact_id, "--json"])
+    conflicting = runner.invoke(
+        _app(),
+        ["generation-qc", artifact_id, "fix it", "--approve", "--json"],
+    )
+
+    assert missing.exit_code == 1
+    assert conflicting.exit_code == 1
 
 
 def test_author_make_json_passes_inputs_without_target_override(monkeypatch):
