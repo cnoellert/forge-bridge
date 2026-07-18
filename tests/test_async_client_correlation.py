@@ -16,10 +16,16 @@ import asyncio
 import inspect
 
 import pytest
+from websockets.protocol import State
 
-from forge_bridge.client.async_client import AsyncClient, PendingRequest
+from forge_bridge.client.async_client import AsyncClient, PendingRequest, WsState
 from forge_bridge.client.sync_client import SyncClient
 from forge_bridge.server.protocol import Message
+
+
+def test_async_client_uses_current_websockets_state_type():
+    """The client must not import the deprecated websockets.connection shim."""
+    assert WsState is State
 
 
 # ── async_client ref_msg_id correlation ────────────────────────────────
