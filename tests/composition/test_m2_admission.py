@@ -173,6 +173,22 @@ def test_shot_resource_tools_are_discovery_nodes_and_commit_only_counterparts(
     assert counterpart.idempotent_apply is True
 
 
+def test_stream_promotion_is_a_reviewed_peer_owned_commit_counterpart():
+    tool_name = "forge_promote_shot_resource_stream"
+    discovery = admit_operator(tool_name)
+    counterpart = admit_mutation_counterpart(tool_name)
+
+    assert discovery.resolved_class == "mcp.peer_mutation_discover"
+    assert discovery.dispatch_kind == "mcp"
+    assert discovery.no_state_mutation is True
+    assert discovery.idempotent_result is True
+    assert discovery.state_owner == "read_only"
+    assert counterpart.state_owner == "peer_owned"
+    assert counterpart.verify_before_apply is True
+    assert counterpart.assent_required is True
+    assert counterpart.idempotent_apply is True
+
+
 def test_unknown_mutation_counterpart_fails_closed():
     with pytest.raises(AdmissionRejected):
         admit_mutation_counterpart("forge_apply_unreviewed_host_plan")
@@ -194,6 +210,7 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "forge_load_sequence_resources",
         "forge_refresh_shot_resources",
         "forge_switch_shot_resource_version",
+        "forge_promote_shot_resource_stream",
         "traffik.editorial.apply_steps",
         "traffik.editorial.resolve_top_video_layer",
         "traffik.editorial.mark_timecode_range",
