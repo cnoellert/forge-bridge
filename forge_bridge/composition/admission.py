@@ -24,7 +24,13 @@ DispatchKind = Literal[
     "host_resolve",
     "generation",
 ]
-StateOwner = Literal["read_only", "peer_owned", "dcc_host", "bridge"]
+StateOwner = Literal[
+    "read_only",
+    "peer_owned",
+    "dcc_host",
+    "bridge",
+    "federated_transaction",
+]
 
 
 class AdmissionRejected(ValueError):
@@ -65,6 +71,7 @@ class AdmissionRecord:
             "peer_owned",
             "dcc_host",
             "bridge",
+            "federated_transaction",
         }:
             raise AdmissionRejected(
                 f"AdmissionRecord {self.operator_id!r} has invalid state_owner "
@@ -84,10 +91,15 @@ class MutationCounterpartAdmission:
     idempotent_apply: bool
 
     def __post_init__(self) -> None:
-        if self.state_owner not in {"dcc_host", "peer_owned", "bridge"}:
+        if self.state_owner not in {
+            "dcc_host",
+            "peer_owned",
+            "bridge",
+            "federated_transaction",
+        }:
             raise AdmissionRejected(
                 f"Mutation counterpart {self.tool_name!r} must own dcc_host, "
-                "peer_owned, or bridge state"
+                "peer_owned, bridge, or federated_transaction state"
             )
         declarations = {
             "synchronous": self.synchronous,
@@ -194,6 +206,16 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
     AdmissionRecord(
         operator_id="forge_register_shot_resource_promotion",
         resolved_class="mcp.bridge_mutation_discover",
+        dispatch_kind="mcp",
+        synchronous=True,
+        returns_reference=False,
+        no_state_mutation=True,
+        idempotent_result=True,
+        state_owner="read_only",
+    ),
+    AdmissionRecord(
+        operator_id="forge_publish_shot_resource_transaction",
+        resolved_class="mcp.federated_transaction_discover",
         dispatch_kind="mcp",
         synchronous=True,
         returns_reference=False,
@@ -526,6 +548,14 @@ _MUTATION_COUNTERPART_RECORDS = (
     MutationCounterpartAdmission(
         tool_name="forge_register_shot_resource_promotion",
         state_owner="bridge",
+        synchronous=True,
+        verify_before_apply=True,
+        assent_required=True,
+        idempotent_apply=True,
+    ),
+    MutationCounterpartAdmission(
+        tool_name="forge_publish_shot_resource_transaction",
+        state_owner="federated_transaction",
         synchronous=True,
         verify_before_apply=True,
         assent_required=True,
