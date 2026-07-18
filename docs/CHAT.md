@@ -88,6 +88,15 @@ and reports unnamed rows instead of silently dropping them. The response include
 counts. Invalid declarations, extra chain evidence, failed reads, or count
 mismatches retain the normal narrator fallback.
 
+## Exact project referents
+
+When the latest user message contains one full registered project name, Bridge
+resolves that name deterministically before read planning. Matching is
+case-insensitive and token-boundary exact; nested names prefer the longest full
+name, while duplicate names remain ambiguous. The planner sees only the resolved
+project and Bridge binds its id onto project-aware read steps. Partial names,
+fuzzy similarity, and references inferred from earlier turns remain model-owned.
+
 ## Regimes
 
 | Regime | Stop reason | Meaning |
