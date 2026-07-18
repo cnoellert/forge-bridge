@@ -946,9 +946,9 @@ def _assert_chain_step_arbitration_invariance(
       regardless of internal architecture claims."
 
     OPERATIONAL EXPRESSION (today's checks):
-      1. HTTP status code: 200 on ``success``, 400 on ``error``.
-      2. Response body has chain-envelope keys ``{status, request_id,
-         chain, error}``.
+      1. HTTP status code: 200 on ``success`` or recoverable
+         ``clarification_needed``, 400 on terminal ``error``.
+      2. Response body has the chain-envelope keys for its status.
       3. ``body["status"]`` matches ``expected_status``.
       4. ``body["chain"]`` is a list of length ``expected_step_count``
          on success (chain executes through). On error, length matches
@@ -957,8 +957,9 @@ def _assert_chain_step_arbitration_invariance(
       5. ``response.headers`` contains ``X-Request-ID``.
       6. ``mock_call_tool`` invocation count matches expectations:
          ``expected_step_count`` invocations on success;
-         ``len(body["chain"])`` invocations on error (each completed
-         step before the failing one called ``mcp.call_tool`` once).
+         ``len(body["chain"])`` invocations on error or clarification
+         (each completed step before the interruption called
+         ``mcp.call_tool`` once).
 
     Each assertion protects a distinct failure mode. Removing any one
     is a spec amendment, not an implementation choice.
@@ -971,7 +972,7 @@ def _assert_chain_step_arbitration_invariance(
     progression.
     """
     # 1. Status code.
-    expected_status_code = 200 if expected_status == "success" else 400
+    expected_status_code = 400 if expected_status == "error" else 200
     assert response.status_code == expected_status_code, (
         f"chain executor returned status {response.status_code}; "
         f"expected {expected_status_code}. Capture state must not "
@@ -983,7 +984,13 @@ def _assert_chain_step_arbitration_invariance(
     assert isinstance(body, dict), (
         f"response body is not a JSON object: {body!r}"
     )
-    for required_key in ("status", "request_id", "chain", "error"):
+    required_keys = ["status", "request_id", "chain"]
+    required_keys.append(
+        "clarification_needed"
+        if expected_status == "clarification_needed"
+        else "error"
+    )
+    for required_key in required_keys:
         assert required_key in body, (
             f"chain envelope missing required key {required_key!r}: "
             f"{body!r}"

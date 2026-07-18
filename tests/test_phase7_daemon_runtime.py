@@ -41,6 +41,15 @@ def _generation_capability() -> dict:
 
 
 async def _bootstrap_runtime(_mcp_server, session_factory, monkeypatch):
+    from forge_bridge.orchestration.discovery import SiblingResolution
+
+    monkeypatch.setattr(
+        "forge_bridge.orchestration.discovery.resolve_siblings",
+        lambda: SiblingResolution(
+            siblings={},
+            required_capability_kinds=frozenset(),
+        ),
+    )
     monkeypatch.setenv("FORGE_EXECUTION_RUNTIME_INTERVAL_SECONDS", "0.05")
     monkeypatch.setattr(
         _mcp_server,
