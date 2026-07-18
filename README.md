@@ -49,7 +49,7 @@ Shipped at **v1.9.0** (2026-07-18). Conversational Reads now distinguishes missi
 | Runtime doctor observability (`fbridge doctor` — Console/MCP/Flame/postgres/graph_store rows) | ✅ Shipped (v1.6) |
 | Authority chain: NL → compile → preview → ratify → apply (`AssentRecord`, `fbridge ratify`, `POST /api/v1/ratify`) | ✅ Shipped (v1.7 Thread A) |
 | Console ratification projection (preview render + ratify affordance in the Web UI) | ✅ Shipped (v1.8 CA.1) |
-| Conversational read answer-pass (plain-language answers on read queries) | 🚧 In progress (v1.9 CR.1 — landed; author-driven dogfood pending) |
+| Conversational read answer-pass (plain-language answers on read queries) | ✅ Shipped (v1.9.0; live planner-front UAT 3/3 trusted) |
 | Dependency graph traversal engine | 📋 Planned (relationships persist; no traversal module yet) |
 | Canonical event-driven pub/sub abstraction | 📋 Planned (WS server ships; canonical layer does not) |
 | Maya endpoint | 📋 Planned |
