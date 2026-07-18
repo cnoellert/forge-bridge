@@ -26,7 +26,7 @@ projekt-forge pins specific forge-bridge versions and builds production workflow
 
 ## Current Status
 
-Shipped at **v1.9.5** (2026-07-18). Conversational Reads now distinguishes missing information from missing capability, renders complete pure shot-name lists without a second model pass, and grounds directly named projects to exact registry identities. The v1.9.1 patch normalizes quoted prefixes and Flame reel names; v1.9.2 keeps current `websockets` compatibility; v1.9.3-v1.9.4 admit Pipeline load, refresh, and version-switch commit counterparts; v1.9.5 extends the same verify-before-apply, assent-required boundary to reviewed peer-owned stream-promotion copies while leaving catalog registration separate. Milestones v1.5 Legibility (install + concept docs + recipes + diagnostics), v1.6 Operability (graph-native operational runtime, doctor observability, chat-layer convergence), v1.7 Artist Readiness (NL → compile → preview → ratify → apply authority chain), and v1.8 Console Authority (ratification projection onto the Console) have all shipped since the v1.4.1 baseline. Public `forge_bridge.__all__` remains **19 symbols** — the surface has stayed stable while behavior deepened.
+Shipped at **v1.9.6** (2026-07-18). Conversational Reads now distinguishes missing information from missing capability, renders complete pure shot-name lists without a second model pass, and grounds directly named projects to exact registry identities. The v1.9.1 patch normalizes quoted prefixes and Flame reel names; v1.9.2 keeps current `websockets` compatibility; v1.9.3-v1.9.4 admit Pipeline load, refresh, and version-switch commit counterparts; v1.9.5 adds reviewed peer-owned stream-promotion copies; and v1.9.6 composes the post-copy validation and registration plan into a separate verify-before-apply, assent-required Bridge-owned catalog commit. Milestones v1.5 Legibility (install + concept docs + recipes + diagnostics), v1.6 Operability (graph-native operational runtime, doctor observability, chat-layer convergence), v1.7 Artist Readiness (NL → compile → preview → ratify → apply authority chain), and v1.8 Console Authority (ratification projection onto the Console) have all shipped since the v1.4.1 baseline. Public `forge_bridge.__all__` remains **19 symbols** — the surface has stayed stable while behavior deepened.
 
 | Component | Status |
 |-----------|--------|
@@ -98,10 +98,10 @@ Python 3.10 is the minimum supported version (per `pyproject.toml`); the `forge`
 ./scripts/install-flame-hook.sh
 
 # Or standalone on any Flame workstation — no clone required:
-curl -fsSL https://raw.githubusercontent.com/cnoellert/forge-bridge/v1.9.5/scripts/install-flame-hook.sh | bash
+curl -fsSL https://raw.githubusercontent.com/cnoellert/forge-bridge/v1.9.6/scripts/install-flame-hook.sh | bash
 ```
 
-The installer copies `forge_bridge.py` into `/opt/Autodesk/shared/python/forge_bridge/scripts/` and sanity-checks the result. Override `FORGE_BRIDGE_VERSION` (default `v1.9.5`) or `FORGE_BRIDGE_HOOK_DIR` (default the Flame shared-python path) as needed.
+The installer copies `forge_bridge.py` into `/opt/Autodesk/shared/python/forge_bridge/scripts/` and sanity-checks the result. Override `FORGE_BRIDGE_VERSION` (default `v1.9.6`) or `FORGE_BRIDGE_HOOK_DIR` (default the Flame shared-python path) as needed.
 
 Flame will load the hook automatically on next launch. The bridge starts on `http://127.0.0.1:9999/` by default.
 
