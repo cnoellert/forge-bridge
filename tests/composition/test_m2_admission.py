@@ -207,6 +207,22 @@ def test_stream_promotion_registration_is_a_bridge_owned_commit_counterpart():
     assert counterpart.idempotent_apply is True
 
 
+def test_publish_transaction_is_a_reviewed_federated_commit_counterpart():
+    tool_name = "forge_publish_shot_resource_transaction"
+    discovery = admit_operator(tool_name)
+    counterpart = admit_mutation_counterpart(tool_name)
+
+    assert discovery.resolved_class == "mcp.federated_transaction_discover"
+    assert discovery.dispatch_kind == "mcp"
+    assert discovery.no_state_mutation is True
+    assert discovery.idempotent_result is True
+    assert discovery.state_owner == "read_only"
+    assert counterpart.state_owner == "federated_transaction"
+    assert counterpart.verify_before_apply is True
+    assert counterpart.assent_required is True
+    assert counterpart.idempotent_apply is True
+
+
 def test_unknown_mutation_counterpart_fails_closed():
     with pytest.raises(AdmissionRejected):
         admit_mutation_counterpart("forge_apply_unreviewed_host_plan")
@@ -230,6 +246,7 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "forge_switch_shot_resource_version",
         "forge_promote_shot_resource_stream",
         "forge_register_shot_resource_promotion",
+        "forge_publish_shot_resource_transaction",
         "traffik.editorial.apply_steps",
         "traffik.editorial.resolve_top_video_layer",
         "traffik.editorial.mark_timecode_range",
