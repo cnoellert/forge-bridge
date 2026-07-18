@@ -26,7 +26,7 @@ projekt-forge pins specific forge-bridge versions and builds production workflow
 
 ## Current Status
 
-Shipped at **v1.9.0** (2026-07-18). Conversational Reads now distinguishes missing information from missing capability, renders complete pure shot-name lists without a second model pass, and grounds directly named projects to exact registry identities. Milestones v1.5 Legibility (install + concept docs + recipes + diagnostics), v1.6 Operability (graph-native operational runtime, doctor observability, chat-layer convergence), v1.7 Artist Readiness (NL → compile → preview → ratify → apply authority chain), and v1.8 Console Authority (ratification projection onto the Console) have all shipped since the v1.4.1 baseline. Public `forge_bridge.__all__` remains **19 symbols** — the surface has stayed stable while behavior deepened.
+Shipped at **v1.9.1** (2026-07-18). Conversational Reads now distinguishes missing information from missing capability, renders complete pure shot-name lists without a second model pass, and grounds directly named projects to exact registry identities. The v1.9.1 patch also normalizes quoted rename prefixes and Flame reel names for reconstruction/clone operations. Milestones v1.5 Legibility (install + concept docs + recipes + diagnostics), v1.6 Operability (graph-native operational runtime, doctor observability, chat-layer convergence), v1.7 Artist Readiness (NL → compile → preview → ratify → apply authority chain), and v1.8 Console Authority (ratification projection onto the Console) have all shipped since the v1.4.1 baseline. Public `forge_bridge.__all__` remains **19 symbols** — the surface has stayed stable while behavior deepened.
 
 | Component | Status |
 |-----------|--------|
@@ -49,7 +49,7 @@ Shipped at **v1.9.0** (2026-07-18). Conversational Reads now distinguishes missi
 | Runtime doctor observability (`fbridge doctor` — Console/MCP/Flame/postgres/graph_store rows) | ✅ Shipped (v1.6) |
 | Authority chain: NL → compile → preview → ratify → apply (`AssentRecord`, `fbridge ratify`, `POST /api/v1/ratify`) | ✅ Shipped (v1.7 Thread A) |
 | Console ratification projection (preview render + ratify affordance in the Web UI) | ✅ Shipped (v1.8 CA.1) |
-| Conversational read answer-pass (plain-language answers on read queries) | ✅ Shipped (v1.9.0; live planner-front UAT 3/3 trusted) |
+| Conversational read answer-pass (plain-language answers on read queries) | ✅ Shipped (v1.9.1; v1.9.0 live planner-front UAT 3/3 trusted) |
 | Dependency graph traversal engine | 📋 Planned (relationships persist; no traversal module yet) |
 | Canonical event-driven pub/sub abstraction | 📋 Planned (WS server ships; canonical layer does not) |
 | Maya endpoint | 📋 Planned |
@@ -98,10 +98,10 @@ Python 3.10 is the minimum supported version (per `pyproject.toml`); the `forge`
 ./scripts/install-flame-hook.sh
 
 # Or standalone on any Flame workstation — no clone required:
-curl -fsSL https://raw.githubusercontent.com/cnoellert/forge-bridge/v1.9.0/scripts/install-flame-hook.sh | bash
+curl -fsSL https://raw.githubusercontent.com/cnoellert/forge-bridge/v1.9.1/scripts/install-flame-hook.sh | bash
 ```
 
-The installer copies `forge_bridge.py` into `/opt/Autodesk/shared/python/forge_bridge/scripts/` and sanity-checks the result. Override `FORGE_BRIDGE_VERSION` (default `v1.9.0`) or `FORGE_BRIDGE_HOOK_DIR` (default the Flame shared-python path) as needed.
+The installer copies `forge_bridge.py` into `/opt/Autodesk/shared/python/forge_bridge/scripts/` and sanity-checks the result. Override `FORGE_BRIDGE_VERSION` (default `v1.9.1`) or `FORGE_BRIDGE_HOOK_DIR` (default the Flame shared-python path) as needed.
 
 Flame will load the hook automatically on next launch. The bridge starts on `http://127.0.0.1:9999/` by default.
 
