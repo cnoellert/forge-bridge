@@ -150,9 +150,14 @@ def test_grouped_host_graph_apply_is_a_reviewed_commit_only_counterpart():
 
 @pytest.mark.parametrize(
     "tool_name",
-    ["forge_load_shot_resources", "forge_load_sequence_resources"],
+    [
+        "forge_load_shot_resources",
+        "forge_load_sequence_resources",
+        "forge_refresh_shot_resources",
+        "forge_switch_shot_resource_version",
+    ],
 )
-def test_shot_load_tools_are_discovery_nodes_and_commit_only_counterparts(
+def test_shot_resource_tools_are_discovery_nodes_and_commit_only_counterparts(
     tool_name,
 ):
     discovery = admit_operator(tool_name)
@@ -187,6 +192,8 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "flame_rename_shots",
         "forge_load_shot_resources",
         "forge_load_sequence_resources",
+        "forge_refresh_shot_resources",
+        "forge_switch_shot_resource_version",
         "traffik.editorial.apply_steps",
         "traffik.editorial.resolve_top_video_layer",
         "traffik.editorial.mark_timecode_range",

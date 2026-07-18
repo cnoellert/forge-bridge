@@ -176,6 +176,8 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         for tool_name in (
             "forge_load_shot_resources",
             "forge_load_sequence_resources",
+            "forge_refresh_shot_resources",
+            "forge_switch_shot_resource_version",
         )
     ),
     AdmissionRecord(
@@ -487,6 +489,8 @@ _MUTATION_COUNTERPART_RECORDS = (
             "forge_apply_host_graph_plan",
             "forge_load_shot_resources",
             "forge_load_sequence_resources",
+            "forge_refresh_shot_resources",
+            "forge_switch_shot_resource_version",
         )
     ),
 )
