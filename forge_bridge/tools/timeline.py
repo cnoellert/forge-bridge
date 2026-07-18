@@ -74,6 +74,36 @@ def _find_seq(name):
             return seq
     return None
 
+def _find_reel(name):
+    desk = flame.projects.current_project.current_workspace.desktop
+    candidates = []
+    for rg in desk.reel_groups:
+        for reel in rg.reels:
+            candidates.append((reel, str(reel.name)))
+    # tier 1: exact
+    for reel, rname in candidates:
+        if rname == name:
+            return reel
+    # tier 2: quote-strip
+    for reel, rname in candidates:
+        if rname.strip("'") == name:
+            return reel
+    # tier 3: space <-> underscore swap
+    def _swap(s):
+        return s.replace('_', ' ') if '_' in s else s.replace(' ', '_')
+    for reel, rname in candidates:
+        rname_stripped = rname.strip("'")
+        if rname_stripped == _swap(name) or _swap(rname_stripped) == name:
+            return reel
+    # tier 4: casefold + whitespace collapse
+    def _norm(s):
+        return ' '.join(s.casefold().split())
+    target = _norm(name)
+    for reel, rname in candidates:
+        if _norm(rname) == target or _norm(rname.strip("'")) == target:
+            return reel
+    return None
+
 def _collect_segments(seq):
     '''Return all non-gap segments with full metadata, grouped by track.
     Each entry: {
@@ -1653,14 +1683,6 @@ import flame, json
 
 {_COLLECT_CODE}
 
-def _find_reel(name):
-    desk = flame.projects.current_project.current_workspace.desktop
-    for rg in desk.reel_groups:
-        for reel in rg.reels:
-            if reel.name.get_value() == name:
-                return reel
-    return None
-
 seq = _find_seq({params.sequence_name!r})
 scratch_reel = _find_reel({params.scratch_reel_name!r})
 
@@ -1764,14 +1786,6 @@ async def clone_version(params: CloneVersionInput) -> str:
 import flame, json
 
 {_COLLECT_CODE}
-
-def _find_reel(name):
-    desk = flame.projects.current_project.current_workspace.desktop
-    for rg in desk.reel_groups:
-        for reel in rg.reels:
-            if reel.name.get_value() == name:
-                return reel
-    return None
 
 seq = _find_seq({params.sequence_name!r})
 scratch_reel = _find_reel({params.scratch_reel_name!r})
