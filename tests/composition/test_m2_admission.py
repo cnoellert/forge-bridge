@@ -223,6 +223,29 @@ def test_publish_transaction_is_a_reviewed_federated_commit_counterpart():
     assert counterpart.idempotent_apply is True
 
 
+def test_publish_transaction_recovery_has_reviewed_status_and_abort_boundaries():
+    status = admit_operator("forge_inspect_shot_resource_publish_transaction")
+    abort = admit_operator("forge_abort_shot_resource_publish_transaction")
+    counterpart = admit_mutation_counterpart(
+        "forge_abort_shot_resource_publish_transaction"
+    )
+
+    assert status.resolved_class == "mcp.publish_transaction_status"
+    assert status.dispatch_kind == "mcp"
+    assert status.no_state_mutation is True
+    assert status.idempotent_result is True
+    assert status.state_owner == "read_only"
+    assert abort.resolved_class == "mcp.peer_mutation_discover"
+    assert abort.dispatch_kind == "mcp"
+    assert abort.no_state_mutation is True
+    assert abort.idempotent_result is True
+    assert abort.state_owner == "read_only"
+    assert counterpart.state_owner == "peer_owned"
+    assert counterpart.verify_before_apply is True
+    assert counterpart.assent_required is True
+    assert counterpart.idempotent_apply is True
+
+
 def test_unknown_mutation_counterpart_fails_closed():
     with pytest.raises(AdmissionRejected):
         admit_mutation_counterpart("forge_apply_unreviewed_host_plan")
@@ -247,6 +270,8 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "forge_promote_shot_resource_stream",
         "forge_register_shot_resource_promotion",
         "forge_publish_shot_resource_transaction",
+        "forge_inspect_shot_resource_publish_transaction",
+        "forge_abort_shot_resource_publish_transaction",
         "traffik.editorial.apply_steps",
         "traffik.editorial.resolve_top_video_layer",
         "traffik.editorial.mark_timecode_range",
