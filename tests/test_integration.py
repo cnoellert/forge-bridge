@@ -110,7 +110,7 @@ def _make_mock_session(store: InMemoryStore):
 # Server fixture
 # ─────────────────────────────────────────────────────────────
 
-class TestServer:
+class IntegrationServer:
     """A ForgeServer instance running on localhost for tests.
 
     Bypasses Postgres — uses an in-memory registry and a mock store.
@@ -126,6 +126,7 @@ class TestServer:
         self._loop:   asyncio.AbstractEventLoop | None = None
         self._ready   = threading.Event()
         self._store   = InMemoryStore()
+        self._db_originals: list[tuple[object, str, object]] = []
 
     def start(self) -> None:
         """Start the server in a background thread."""
@@ -141,6 +142,10 @@ class TestServer:
                 self._server.stop(), self._loop
             ).result(timeout=5)
             self._loop.call_soon_threadsafe(self._loop.stop)
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+            assert not self._thread.is_alive(), "Integration server thread did not stop"
+        self._restore_db()
 
     def _run(self) -> None:
         self._loop = asyncio.new_event_loop()
@@ -193,9 +198,16 @@ class TestServer:
             yield session
 
         import forge_bridge.server.router as router_mod
+        import forge_bridge.server.app as app_mod
         import forge_bridge.store.session as session_mod
-        session_mod.get_session = fake_get_session
-        router_mod.get_session  = fake_get_session
+        for module in (app_mod, session_mod, router_mod):
+            self._db_originals.append((module, "get_session", module.get_session))
+            module.get_session = fake_get_session
+
+    def _restore_db(self) -> None:
+        for module, name, original in reversed(self._db_originals):
+            setattr(module, name, original)
+        self._db_originals.clear()
 
     async def _start_server(self, server: ForgeServer) -> None:
         """Start just the WebSocket listener, skipping DB setup."""
@@ -214,7 +226,7 @@ class TestServer:
 @pytest.fixture(scope="module")
 def test_server():
     """Module-scoped test server on port 19998."""
-    server = TestServer(port=19998)
+    server = IntegrationServer(port=19998)
     server.start()
     yield server
     server.stop()

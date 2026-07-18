@@ -25,6 +25,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 
+pytestmark = pytest.mark.usefixtures("stub_bootstrap_session_factory")
+
+
 @pytest.mark.asyncio
 async def test_lifespan_publishes_console_read_api():
     """Plan 16.1-03 Task 3.1 wired _canonical_console_read_api in _lifespan

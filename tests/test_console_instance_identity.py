@@ -15,6 +15,9 @@ from forge_bridge.console.read_api import (
 )
 
 
+pytestmark = pytest.mark.usefixtures("stub_console_health_postgres")
+
+
 @pytest.fixture
 def shared(tmp_path, monkeypatch):
     """Canonical (ExecutionLog, ManifestService, ConsoleReadAPI) bundle."""

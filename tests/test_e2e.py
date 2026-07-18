@@ -55,6 +55,7 @@ class E2EServer:
         self._loop:   asyncio.AbstractEventLoop | None = None
         self._ready   = threading.Event()
         self._server: ForgeServer | None = None
+        self._db_originals: list[tuple[object, str, object]] = []
 
     def start(self) -> None:
         self._thread = threading.Thread(
@@ -69,6 +70,10 @@ class E2EServer:
                 self._server.stop(), self._loop
             ).result(timeout=5)
             self._loop.call_soon_threadsafe(self._loop.stop)
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+            assert not self._thread.is_alive(), "E2E server thread did not stop"
+        self._restore_db()
 
     def _run(self) -> None:
         self._loop = asyncio.new_event_loop()
@@ -116,9 +121,16 @@ class E2EServer:
             yield s
 
         import forge_bridge.server.router as rm
+        import forge_bridge.server.app as app_mod
         import forge_bridge.store.session as sm
-        sm.get_session = fake_session
-        rm.get_session = fake_session
+        for module in (app_mod, sm, rm):
+            self._db_originals.append((module, "get_session", module.get_session))
+            module.get_session = fake_session
+
+    def _restore_db(self) -> None:
+        for module, name, original in reversed(self._db_originals):
+            setattr(module, name, original)
+        self._db_originals.clear()
 
 
 @pytest.fixture(scope="module")

@@ -31,6 +31,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
+pytestmark = pytest.mark.usefixtures("stub_bootstrap_session_factory")
+
+
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
@@ -203,7 +206,10 @@ class TestBootstrapDaemonSingletons:
         assert _mcp_server._server_started is False
 
     @pytest.mark.asyncio
-    async def test_reentrant_bootstrap_reuses_canonical_runtime_singletons(self):
+    async def test_reentrant_bootstrap_reuses_canonical_runtime_singletons(
+        self,
+        stub_console_health_postgres,
+    ):
         """Nested FastMCP lifespans lease one process runtime."""
         from forge_bridge.mcp import server as _mcp_server
 
@@ -333,7 +339,10 @@ class TestBootstrapDaemonSingletons:
 
 class TestBridgeClientHealthVisibility:
     @pytest.mark.asyncio
-    async def test_bridge_client_check_present_in_health_services(self):
+    async def test_bridge_client_check_present_in_health_services(
+        self,
+        stub_console_health_postgres,
+    ):
         """/api/v1/health must surface bridge_client.connected so operators
         can see the race symptom without having to call a forge_* tool.
 
@@ -370,7 +379,10 @@ class TestBridgeClientHealthVisibility:
         )
 
     @pytest.mark.asyncio
-    async def test_bridge_client_check_reports_connected_when_client_alive(self):
+    async def test_bridge_client_check_reports_connected_when_client_alive(
+        self,
+        stub_console_health_postgres,
+    ):
         """Mirror invariant: when _client is connected, bridge_client.status
         is 'ok' and connected=True."""
         from forge_bridge.console.read_api import ConsoleReadAPI

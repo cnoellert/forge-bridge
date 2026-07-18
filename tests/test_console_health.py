@@ -14,6 +14,9 @@ from forge_bridge.console.read_api import (
 )
 
 
+pytestmark = pytest.mark.usefixtures("stub_console_health_postgres")
+
+
 @pytest.fixture
 def real_log(tmp_path):
     from forge_bridge.learning.execution_log import ExecutionLog
