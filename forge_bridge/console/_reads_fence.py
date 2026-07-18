@@ -57,6 +57,16 @@ class GroundedAggregation:
 
 
 @dataclass(frozen=True)
+class ReadFenceDecision:
+    """A non-executing reads-fence outcome with explicit recovery taxonomy."""
+
+    stop_reason: str
+    message: str
+    requested: str | None = None
+    supported: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class AggregationResult:
     """Substrate-computed read aggregation evidence.
 
@@ -211,33 +221,55 @@ def _resolve_group_field(term: Any) -> str | None:
     return None
 
 
-def _aggregation_clarify_question(term: str | None) -> str:
+def _aggregation_clarification(term: str | None) -> ReadFenceDecision:
     # The message keys off whether ``term`` is a groupable field, NOT off which
-    # branch tripped (#77). Only a genuinely unknown term may say "I don't have
-    # a way to group by X" — the bad-intent / bad-over / cross-check-mismatch
-    # branches fire while ``term`` is a valid groupable vocab word, so denying
-    # it would contradict the menu that lists it.
+    # branch tripped (#77). Unknown-but-concrete fields take the capability-gap
+    # path instead; this helper handles missing or internally inconsistent intent.
     if term is None or _resolve_group_field(term) is None:
         phrase = f" by {term!r}" if term else ""
-        return (
-            f"I don't have a way to group shots{phrase} — I can group shots by "
-            "status, sequence, or role. Which did you mean?"
+        return ReadFenceDecision(
+            stop_reason="clarification_needed",
+            message=(
+                f"I couldn't tell how to group the shots{phrase}. I can group "
+                "shots by status, sequence, or role. Which did you mean?"
+            ),
         )
-    return (
-        f"I can group shots by {term!r}, but I couldn't tell what you wanted to "
-        "know — I can count shots by status, sequence, or role. "
-        "Which did you mean?"
+    return ReadFenceDecision(
+        stop_reason="clarification_needed",
+        message=(
+            f"I can group shots by {term!r}, but I couldn't tell what you wanted "
+            "to know — I can count shots by status, sequence, or role. "
+            "Which did you mean?"
+        ),
+    )
+
+
+def _aggregation_capability_gap(
+    *,
+    requested: str,
+    message: str,
+) -> ReadFenceDecision:
+    return ReadFenceDecision(
+        stop_reason="capability_gap",
+        message=message,
+        requested=requested,
+        supported=(
+            "group shots by status",
+            "group shots by sequence",
+            "group shots by role",
+        ),
     )
 
 
 def ground_read_aggregation(
     aggregation: Any,
-) -> tuple[GroundedAggregation | None, str | None]:
+) -> tuple[GroundedAggregation | None, ReadFenceDecision | None]:
     """Gate a model-declared read aggregation against groupable vocabulary.
 
-    Returns ``(grounded, None)`` when no clarification is needed. ``grounded``
-    is ``None`` when the request did not declare an aggregation. Returns
-    ``(None, question)`` when the declaration cannot be re-derived.
+    Returns ``(grounded, None)`` when execution may proceed. ``grounded`` is
+    ``None`` when the request did not declare an aggregation. A non-``None``
+    decision distinguishes missing/ambiguous information (clarification) from
+    an honestly unsupported aggregation (capability gap).
 
     The model's claimed ``group_field`` is advisory only: code derives the
     canonical result key from ``group_by`` and cross-checks any claimed field
@@ -246,7 +278,7 @@ def ground_read_aggregation(
     if aggregation is None:
         return None, None
     if not isinstance(aggregation, dict):
-        return None, _aggregation_clarify_question(None)
+        return None, _aggregation_clarification(None)
     if not aggregation:
         return None, None
 
@@ -257,16 +289,31 @@ def ground_read_aggregation(
     term_label = group_by if isinstance(group_by, str) and group_by.strip() else None
 
     if intent not in AGGREGATION_INTENTS:
-        return None, _aggregation_clarify_question(term_label)
+        return None, _aggregation_clarification(term_label)
     if over not in ("shot", "shots"):
-        return None, _aggregation_clarify_question(term_label)
+        over_label = str(over or "that entity type").strip()
+        return None, _aggregation_capability_gap(
+            requested=f"aggregate {over_label}",
+            message=(
+                f"I can't aggregate {over_label!r} in this reads pass yet. "
+                "I can aggregate shots by status, sequence, or role."
+            ),
+        )
 
     derived = _resolve_group_field(group_by)
     claimed_derived = _resolve_group_field(claimed)
     if derived is None:
-        return None, _aggregation_clarify_question(term_label)
+        if term_label is None:
+            return None, _aggregation_clarification(None)
+        return None, _aggregation_capability_gap(
+            requested=f"group shots by {term_label}",
+            message=(
+                f"I can't group shots by {term_label!r} in this reads pass yet. "
+                "I can group shots by status, sequence, or role."
+            ),
+        )
     if claimed is not None and claimed_derived != derived:
-        return None, _aggregation_clarify_question(term_label)
+        return None, _aggregation_clarification(term_label)
 
     return GroundedAggregation(
         intent=intent,

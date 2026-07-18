@@ -120,8 +120,8 @@ def test_aggregation_fence_grounds_sequence_to_top_level_sequence_id():
     assert aggregation.intent == "max_by_count"
 
 
-def test_aggregation_fence_clarifies_unknown_grouping_vocab():
-    aggregation, msg = ground_read_aggregation({
+def test_aggregation_fence_declines_unknown_grouping_capability():
+    aggregation, decision = ground_read_aggregation({
         "intent": "max_by_count",
         "group_by": "artist",
         "group_field": "artist_id",
@@ -129,13 +129,15 @@ def test_aggregation_fence_clarifies_unknown_grouping_vocab():
     })
 
     assert aggregation is None
-    assert msg is not None
-    assert "artist" in msg
-    assert "status, sequence, or role" in msg
+    assert decision is not None
+    assert decision.stop_reason == "capability_gap"
+    assert decision.requested == "group shots by artist"
+    assert "artist" in decision.message
+    assert "status, sequence, or role" in decision.message
 
 
 def test_aggregation_fence_cross_checks_claimed_field():
-    aggregation, msg = ground_read_aggregation({
+    aggregation, decision = ground_read_aggregation({
         "intent": "count_by",
         "group_by": "sequence",
         "group_field": "status",
@@ -143,7 +145,8 @@ def test_aggregation_fence_cross_checks_claimed_field():
     })
 
     assert aggregation is None
-    assert msg is not None
+    assert decision is not None
+    assert decision.stop_reason == "clarification_needed"
 
 
 def test_aggregation_clarify_never_denies_a_valid_groupable_term():
@@ -163,24 +166,28 @@ def test_aggregation_clarify_never_denies_a_valid_groupable_term():
                          "group_field": "status",      "over": "shot"},
     }
     for name, agg in branches.items():
-        grounded, msg = ground_read_aggregation(agg)
+        grounded, decision = ground_read_aggregation(agg)
         assert grounded is None, name
-        assert msg is not None, name
-        assert contradiction not in msg, name
+        assert decision is not None, name
+        assert decision.stop_reason == {
+            "bad_intent": "clarification_needed",
+            "bad_over": "capability_gap",
+            "cross_check": "clarification_needed",
+        }[name]
+        assert contradiction not in decision.message, name
         # It still affirms the term is groupable, not denied.
-        assert "sequence" in msg, name
+        assert "sequence" in decision.message, name
 
 
-def test_aggregation_clarify_still_denies_genuinely_unknown_term():
-    # The 256 branch (derived is None) is the ONLY honest "I don't have a way to
-    # group by X" — an unknown term must still say so.
-    grounded, msg = ground_read_aggregation({
+def test_aggregation_gap_honestly_declines_genuinely_unknown_term():
+    grounded, decision = ground_read_aggregation({
         "intent": "max_by_count", "group_by": "artist",
         "group_field": "artist_id", "over": "shot",
     })
     assert grounded is None
-    assert msg is not None
-    assert "don't have a way to group shots by 'artist'" in msg
+    assert decision is not None
+    assert decision.stop_reason == "capability_gap"
+    assert "can't group shots by 'artist'" in decision.message
 
 
 def test_compute_read_aggregation_counts_groups_and_unassigned_bucket():
@@ -410,7 +417,7 @@ def test_planner_front_fence_proceeds_on_grounded_status():
     assert router.acomplete.await_count == 2  # planned + narrated
 
 
-def test_planner_front_clarifies_unknown_aggregation_before_execute():
+def test_planner_front_declines_unknown_aggregation_before_execute():
     router = SimpleNamespace(acomplete=AsyncMock(return_value=json.dumps({
         "plan": [{"tool": "forge_list_shots",
                   "args": {"project_id": "proj-port"}}],
@@ -428,8 +435,63 @@ def test_planner_front_clarifies_unknown_aggregation_before_execute():
         [{"role": "user", "content": "which artist has the most shots"}],
         router=router, mcp=mcp, tools=[_list_shots_tool()]))
 
-    assert body["stop_reason"] == "clarification_needed"
+    assert body["stop_reason"] == "capability_gap"
+    assert body["capability_gap"]["requested"] == "group shots by artist"
+    assert body["capability_gap"]["supported"] == [
+        "group shots by status",
+        "group shots by sequence",
+        "group shots by role",
+    ]
     assert "status, sequence, or role" in body["final_text"]
+    assert mcp.call_tool.await_count == 1
+    assert router.acomplete.await_count == 1
+
+
+def test_planner_front_honestly_declines_unavailable_cross_project_read():
+    router = SimpleNamespace(acomplete=AsyncMock(return_value=json.dumps({
+        "capability_gap": {"requested": "rank projects by shot count"},
+    })))
+    mcp = SimpleNamespace(call_tool=AsyncMock(return_value=_projects_text()))
+
+    body = asyncio.run(run_planner_front(
+        [{"role": "user", "content": "which project has the most shots"}],
+        router=router, mcp=mcp, tools=[_list_shots_tool()]))
+
+    assert body["stop_reason"] == "capability_gap"
+    assert body["plan"] == []
+    assert body["chain"] == []
+    assert body["capability_gap"] == {
+        "requested": "rank projects by shot count",
+        "supported": ["List shots"],
+    }
+    assert "won't substitute a different query" in body["final_text"]
+    # Only project grounding ran; no substitute read and no narration.
+    assert mcp.call_tool.await_count == 1
+    assert router.acomplete.await_count == 1
+
+
+def test_planner_front_substrate_declines_project_grouping_without_execution():
+    router = SimpleNamespace(acomplete=AsyncMock(return_value=json.dumps({
+        "plan": [{"tool": "forge_list_shots", "args": {}}],
+        "filters": [],
+        "aggregation": {
+            "intent": "max_by_count",
+            "group_by": "project",
+            "group_field": "project_id",
+            "over": "shot",
+        },
+    })))
+    mcp = SimpleNamespace(call_tool=AsyncMock(return_value=_projects_text()))
+
+    body = asyncio.run(run_planner_front(
+        [{"role": "user", "content": "which project has the most shots"}],
+        router=router, mcp=mcp, tools=[_list_shots_tool()]))
+
+    assert body["stop_reason"] == "capability_gap"
+    assert body["capability_gap"]["requested"] == "group shots by project"
+    assert "can't group shots by 'project'" in body["final_text"]
+    assert body["plan"] == []
+    assert body["chain"] == []
     assert mcp.call_tool.await_count == 1
     assert router.acomplete.await_count == 1
 
