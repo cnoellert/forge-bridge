@@ -19,6 +19,10 @@ from typing import Any
 
 import asyncio
 
+from forge_bridge.console._read_presentation import (
+    ground_read_presentation,
+    render_read_presentation,
+)
 from forge_bridge.console._reads_fence import (
     AggregationResult,
     compute_read_aggregation,
@@ -51,7 +55,7 @@ _PLANNER_SYSTEM = (
     "\"<id>\"}); resolve any project the user names to its id from PROJECTS.\n"
     "If you can proceed, output the MINIMAL plan:\n"
     '{"plan": [{"tool": "<tool_name>", "args": {<flat args>}}], '
-    '"filters": [], "aggregation": null}\n'
+    '"filters": [], "aggregation": null, "presentation": null}\n'
     "Alongside the plan, ALWAYS include a \"filters\" array — one entry per "
     "selection/qualifier phrase in the LAST user message (ANY word that narrows "
     "WHICH entities): a status or role term, a possessive/ownership word (\"my\", "
@@ -71,6 +75,11 @@ _PLANNER_SYSTEM = (
     "use null. Preserve the user's group phrase verbatim in the aggregation "
     "object; never map an unknown field to a nearby known one. Bridge will "
     "decide whether the field is supported.\n"
+    "For a pure request to list EVERY/ALL shot name, include "
+    '{"kind": "list", "entity": "shot", "field": "name", "scope": "all"} '
+    "as presentation. Otherwise presentation must be null. Never declare this "
+    "presentation for summaries, comparisons, partial lists, or any other field; "
+    "Bridge validates it against the executed result before rendering.\n"
     "Filtering/selecting terms must be grounded before you plan. If a term "
     "maps to one defined status, role, alias, or tool purpose in the grounding, "
     "use that meaning. If it maps to more than one concept or layer, ask which "
@@ -223,7 +232,8 @@ def _last_user(messages: list[dict]) -> str:
 def _response(text: str, messages: list[dict], *, plan: list | None = None,
               chain: list | None = None, stop: str = "planner_front",
               grounded: int = 0,
-              capability_gap: dict[str, Any] | None = None) -> dict:
+              capability_gap: dict[str, Any] | None = None,
+              deterministic_render: dict[str, Any] | None = None) -> dict:
     body = {
         "final_text": text,
         "stop_reason": stop,
@@ -234,6 +244,8 @@ def _response(text: str, messages: list[dict], *, plan: list | None = None,
     }
     if capability_gap is not None:
         body["capability_gap"] = capability_gap
+    if deterministic_render is not None:
+        body["deterministic_render"] = deterministic_render
     return body
 
 
@@ -448,6 +460,25 @@ async def run_planner_front(messages: list[dict], *, router: Any, mcp: Any,
     if aggregation_result is not None:
         chain = _chain_with_computed_aggregation(chain, aggregation_result)
 
-    answer = await _narrate(router, convo, chain)
-    return _response(answer, messages, plan=plan, chain=chain,
-                     grounded=len(projects))
+    deterministic = None
+    if aggregation is None:
+        deterministic = render_read_presentation(
+            ground_read_presentation(parsed.get("presentation")),
+            chain,
+        )
+
+    answer = (
+        deterministic.text
+        if deterministic is not None
+        else await _narrate(router, convo, chain)
+    )
+    return _response(
+        answer,
+        messages,
+        plan=plan,
+        chain=chain,
+        grounded=len(projects),
+        deterministic_render=(
+            deterministic.evidence if deterministic is not None else None
+        ),
+    )
