@@ -756,6 +756,7 @@ async def _start_console_task(
         log_config=STDERR_ONLY_LOGGING_CONFIG,  # D-20
         access_log=False,                       # D-21
         lifespan="off",                         # Starlette app has no lifespan of its own
+        ws="none",                              # Console API has no WebSocket routes
     )
     server = uvicorn.Server(config)
     task = asyncio.create_task(server.serve(), name="console_uvicorn_task")

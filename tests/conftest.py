@@ -30,6 +30,75 @@ def _isolate_forge_graph_dir(monkeypatch, tmp_path):
 
 
 @pytest.fixture
+def stub_console_health_postgres(monkeypatch):
+    """Keep unit health probes off the process-global asyncpg engine."""
+
+    class _HealthSession:
+        async def execute(self, _statement):
+            return None
+
+    class _HealthSessionContext:
+        async def __aenter__(self):
+            return _HealthSession()
+
+        async def __aexit__(self, *_exc):
+            return False
+
+    def _get_session(*_args, **_kwargs):
+        return _HealthSessionContext()
+
+    monkeypatch.setattr(
+        "forge_bridge.store.session.get_session",
+        _get_session,
+    )
+    return _get_session
+
+
+@pytest.fixture
+def stub_bootstrap_session_factory(monkeypatch):
+    """Keep structural daemon-bootstrap tests off the global DB engine."""
+
+    class _EmptyResult:
+        def scalars(self):
+            return self
+
+        def all(self):
+            return []
+
+        def scalar_one_or_none(self):
+            return None
+
+    class _BootstrapSession:
+        async def execute(self, _statement):
+            return _EmptyResult()
+
+        async def get(self, *_args, **_kwargs):
+            return None
+
+        async def commit(self):
+            return None
+
+        async def rollback(self):
+            return None
+
+    class _BootstrapSessionContext:
+        async def __aenter__(self):
+            return _BootstrapSession()
+
+        async def __aexit__(self, *_exc):
+            return False
+
+    def _session_factory():
+        return _BootstrapSessionContext()
+
+    monkeypatch.setattr(
+        "forge_bridge.mcp.server.get_async_session_factory",
+        lambda: _session_factory,
+    )
+    return _session_factory
+
+
+@pytest.fixture
 def monkeypatch_bridge(monkeypatch):
     """Patch forge_bridge.bridge.execute to return a predictable BridgeResponse.
 
@@ -224,22 +293,10 @@ async def session_factory():
             isolation_level="AUTOCOMMIT",
         )
         async with admin_engine.connect() as conn:
-            # Disconnect any lingering sessions before drop. Phase 18 HARNESS-03:
-            # the dev `forge` role is not SUPERUSER, so pg_terminate_backend raises
-            # a wrapped InsufficientPrivilegeError. Catch broadly because the
-            # SQLAlchemy ProgrammingError doesn't expose the asyncpg-level type
-            # cleanly; the DROP DATABASE that follows still succeeds once asyncpg
-            # closes its remaining connections via engine.dispose() above.
-            try:
-                await conn.execute(_phase13_text(
-                    f"SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-                    f"WHERE datname = '{test_db_name}' AND pid <> pg_backend_pid()"
-                ))
-            except Exception:
-                # forge role lacks SUPERUSER; skip the terminate-backend step.
-                # The DROP DATABASE that follows will still succeed once asyncpg
-                # closes its remaining connections via engine.dispose() above.
-                pass
+            # engine.dispose() closes every connection owned by this fixture.
+            # Avoid pg_terminate_backend here: the dev role is intentionally not
+            # a superuser, and its expected permission failure leaves asyncpg
+            # cancellation cleanup racing the per-test event-loop shutdown.
             await conn.execute(_phase13_text(f'DROP DATABASE "{test_db_name}"'))
         await admin_engine.dispose()
 

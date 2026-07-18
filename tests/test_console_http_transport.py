@@ -35,7 +35,11 @@ def _record(name: str) -> ToolRecord:
 
 
 @pytest.fixture
-async def console_server(tmp_path, monkeypatch):
+async def console_server(
+    tmp_path,
+    monkeypatch,
+    stub_console_health_postgres,
+):
     """Spin up a real uvicorn-served ConsoleReadAPI on an ephemeral port."""
     from forge_bridge.learning.execution_log import ExecutionLog
 

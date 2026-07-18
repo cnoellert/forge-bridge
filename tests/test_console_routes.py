@@ -21,7 +21,7 @@ def _record(name: str) -> ToolRecord:
 
 
 @pytest.fixture
-def client(monkeypatch):
+def client(monkeypatch, stub_console_health_postgres):
     ms = ManifestService()
     import asyncio
     loop = asyncio.new_event_loop()

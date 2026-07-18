@@ -1,0 +1,19 @@
+{
+  "baseline": {
+    "commit": "5f35cfc479e3b772b2612f50977fdf2fbbb34649",
+    "passed": 3760,
+    "skipped": 19,
+    "warnings": 40
+  },
+  "canonical_command": "/Users/cnoellert/miniconda3/envs/forge/bin/python -m pytest -q --tb=short --junitxml=/tmp/forge-bridge-zero-warning-20260718.xml",
+  "created_at": "2026-07-18",
+  "kind": "forge_bridge.canonical_warning_free",
+  "result": {
+    "duration_seconds": 135.0,
+    "passed": 3760,
+    "skipped": 19,
+    "warnings": 0
+  },
+  "schema_version": 1,
+  "status": "passed"
+}
