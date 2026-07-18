@@ -32,11 +32,11 @@ _EXPLICIT_ENTITY_RE = re.compile(
 )
 _PREFIX_PATTERNS = (
     re.compile(
-        r"\brename\b.*?\bto\s+(?P<prefix>[A-Za-z][A-Za-z0-9_-]*)\b",
+        r"\brename\b.*?\bto\s+[\"']?(?P<prefix>[A-Za-z][A-Za-z0-9_-]*)[\"']?",
         re.IGNORECASE,
     ),
     re.compile(
-        r"\bprefix\s+(?P<prefix>[A-Za-z][A-Za-z0-9_-]*)\b",
+        r"\bprefix\s+[\"']?(?P<prefix>[A-Za-z][A-Za-z0-9_-]*)[\"']?",
         re.IGNORECASE,
     ),
 )
