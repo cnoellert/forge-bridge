@@ -148,6 +148,26 @@ def test_grouped_host_graph_apply_is_a_reviewed_commit_only_counterpart():
     assert "forge_apply_host_graph_plan" in MUTATION_COUNTERPART_TABLE
 
 
+@pytest.mark.parametrize(
+    "tool_name",
+    ["forge_load_shot_resources", "forge_load_sequence_resources"],
+)
+def test_shot_load_tools_are_discovery_nodes_and_commit_only_counterparts(
+    tool_name,
+):
+    discovery = admit_operator(tool_name)
+    counterpart = admit_mutation_counterpart(tool_name)
+
+    assert discovery.dispatch_kind == "mcp"
+    assert discovery.no_state_mutation is True
+    assert discovery.idempotent_result is True
+    assert discovery.state_owner == "read_only"
+    assert counterpart.state_owner == "dcc_host"
+    assert counterpart.verify_before_apply is True
+    assert counterpart.assent_required is True
+    assert counterpart.idempotent_apply is True
+
+
 def test_unknown_mutation_counterpart_fails_closed():
     with pytest.raises(AdmissionRejected):
         admit_mutation_counterpart("forge_apply_unreviewed_host_plan")
@@ -165,6 +185,8 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "forge_assemble_deliverable_package",
         "format_result",
         "flame_rename_shots",
+        "forge_load_shot_resources",
+        "forge_load_sequence_resources",
         "traffik.editorial.apply_steps",
         "traffik.editorial.resolve_top_video_layer",
         "traffik.editorial.mark_timecode_range",
