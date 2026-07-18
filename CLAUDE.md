@@ -266,6 +266,17 @@ Milestone: **v1.9 Conversational Reads** (active). There is no single live state
 
 ## Housekeeping discipline (cleanup actions)
 
+Enable the repository-owned commit guard once per checkout:
+
+```bash
+./scripts/install-git-hooks.sh
+```
+
+It blocks planning-only commits when `HEAD` is not `main`, preventing linear
+planning history from silently landing on a feature branch. Use
+`ALLOW_PLANNING_OFF_MAIN=1 git commit ...` only for an intentional exception.
+Mixed code-and-planning feature commits are not blocked.
+
 Before any destructive housekeeping that touches the filesystem layout this project anchors to — `git worktree remove`, moving the repo, deleting a checkout — **check whether an editable install is anchored to the target path first:**
 
 ```bash
