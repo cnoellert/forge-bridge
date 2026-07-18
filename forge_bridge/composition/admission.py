@@ -84,10 +84,10 @@ class MutationCounterpartAdmission:
     idempotent_apply: bool
 
     def __post_init__(self) -> None:
-        if self.state_owner not in {"dcc_host", "peer_owned"}:
+        if self.state_owner not in {"dcc_host", "peer_owned", "bridge"}:
             raise AdmissionRejected(
-                f"Mutation counterpart {self.tool_name!r} must own dcc_host or "
-                "peer_owned state"
+                f"Mutation counterpart {self.tool_name!r} must own dcc_host, "
+                "peer_owned, or bridge state"
             )
         declarations = {
             "synchronous": self.synchronous,
@@ -184,6 +184,16 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
     AdmissionRecord(
         operator_id="forge_promote_shot_resource_stream",
         resolved_class="mcp.peer_mutation_discover",
+        dispatch_kind="mcp",
+        synchronous=True,
+        returns_reference=False,
+        no_state_mutation=True,
+        idempotent_result=True,
+        state_owner="read_only",
+    ),
+    AdmissionRecord(
+        operator_id="forge_register_shot_resource_promotion",
+        resolved_class="mcp.bridge_mutation_discover",
         dispatch_kind="mcp",
         synchronous=True,
         returns_reference=False,
@@ -411,6 +421,18 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         state_owner="read_only",
     ),
     AdmissionRecord(
+        operator_id="pipeline.shot_resource.stream_promotion.registration_plan",
+        resolved_class=(
+            "pipeline.shot_resource.stream_promotion.registration_plan"
+        ),
+        dispatch_kind="operation",
+        synchronous=True,
+        returns_reference=False,
+        no_state_mutation=True,
+        idempotent_result=True,
+        state_owner="read_only",
+    ),
+    AdmissionRecord(
         operator_id="pipeline.host_graph.inspect",
         resolved_class="pipeline.host_graph.inspect",
         dispatch_kind="operation",
@@ -496,6 +518,14 @@ _MUTATION_COUNTERPART_RECORDS = (
     MutationCounterpartAdmission(
         tool_name="forge_promote_shot_resource_stream",
         state_owner="peer_owned",
+        synchronous=True,
+        verify_before_apply=True,
+        assent_required=True,
+        idempotent_apply=True,
+    ),
+    MutationCounterpartAdmission(
+        tool_name="forge_register_shot_resource_promotion",
+        state_owner="bridge",
         synchronous=True,
         verify_before_apply=True,
         assent_required=True,
