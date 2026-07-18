@@ -20,7 +20,7 @@ The core ideas:
 
 ## Current State
 
-Shipped at tag `v1.9.0` (2026-07-18); `pyproject.toml` version is `1.9.0`. The 19 symbols in `forge_bridge.__all__` have stayed byte-stable since the v1.4.1 baseline — five milestones of behavior (v1.5 → v1.9) deepened the runtime without expanding the public surface. Shipped since v1.4.1:
+Shipped at tag `v1.9.1` (2026-07-18); `pyproject.toml` version is `1.9.1`. The 19 symbols in `forge_bridge.__all__` have stayed byte-stable since the v1.4.1 baseline — five milestones of behavior (v1.5 → v1.9) deepened the runtime without expanding the public surface. Shipped since v1.4.1:
 
 - **v1.5 Legibility** — reader docs (INSTALL.md, GETTING-STARTED.md, RECIPES.md, TROUBLESHOOTING.md).
 - **v1.6 Operability** — graph-native operational runtime (`graph_store` JSONL append log, `fbridge flame-exec`, `fbridge graph list/show`), doctor observability (`postgres` + `graph_store` rows, daemon-routed Flame probe, `ollama-turn` / `ollama-compile` log lines), chat-layer convergence (default model `qwen2.5-coder:32b → :14b`, SSE streaming, K=2 orchestrator termination).
@@ -135,7 +135,7 @@ forge-bridge/
 │           └── forge_bridge.py   ← HTTP server running inside Flame on :9999
 │
 ├── scripts/
-│   └── install-flame-hook.sh    ← Deploys the Flame hook (defaults pinned to v1.9.0)
+│   └── install-flame-hook.sh    ← Deploys the Flame hook (defaults pinned to v1.9.1)
 │
 ├── tests/                   ← pytest suite (test_*.py); see tests/llm/, tests/integration/, tests/console/
 │
@@ -211,7 +211,7 @@ pip install -e ".[dev,llm]"
 
 # 3. Install the Flame hook
 ./scripts/install-flame-hook.sh
-# or standalone: curl -fsSL https://raw.githubusercontent.com/cnoellert/forge-bridge/v1.9.0/scripts/install-flame-hook.sh | bash
+# or standalone: curl -fsSL https://raw.githubusercontent.com/cnoellert/forge-bridge/v1.9.1/scripts/install-flame-hook.sh | bash
 
 # 4. Run migrations (defaults to forge:forge@localhost:5432/forge_bridge — set FORGE_DB_URL to override)
 alembic upgrade head
@@ -252,11 +252,11 @@ Milestone: **v1.9 Conversational Reads** is shipped; no new implementation miles
 - **Reads vs mutations split:** reads may carry a model answer-pass; mutations stay deterministic preview → ratify → apply with no model prose anywhere near `AssentRecord`. In CR.1 this is enforced *structurally* — the answer-pass lives only in the `compiled_non_mutating` branch, not behind a runtime flag.
 - **Substrate, not producer:** bridge ships recording/synthesis/staging machinery; a consumer (projekt-forge in production) feeds it. On a stock install the learning pipeline and staged-ops tables stay dormant.
 
-**Milestones shipped since the v1.4.1 baseline** (writer's-room cadence — framing + commits + cursors carry archaeology; no formal GSD plan substrate): **v1.5** Legibility (reader docs) · **v1.6** Operability (graph-native runtime, doctor observability, 24.x chat-layer convergence — model bump to `qwen2.5-coder:14b`, SSE streaming, K=2 termination) · **v1.7** Artist Readiness (the NL → compile → preview → ratify → apply authority chain; `AssentRecord` substrate; `fbridge ratify` + `POST /api/v1/ratify`) · **v1.8** Console Authority (CA.1 projected the ratify chain onto the Web UI; CA.2/CA.3 unopened) · **v1.9** Conversational Reads (answer-pass plus deterministic grounded-read hardening, shipped at v1.9.0).
+**Milestones shipped since the v1.4.1 baseline** (writer's-room cadence — framing + commits + cursors carry archaeology; no formal GSD plan substrate): **v1.5** Legibility (reader docs) · **v1.6** Operability (graph-native runtime, doctor observability, 24.x chat-layer convergence — model bump to `qwen2.5-coder:14b`, SSE streaming, K=2 termination) · **v1.7** Artist Readiness (the NL → compile → preview → ratify → apply authority chain; `AssentRecord` substrate; `fbridge ratify` + `POST /api/v1/ratify`) · **v1.8** Console Authority (CA.1 projected the ratify chain onto the Web UI; CA.2/CA.3 unopened) · **v1.9** Conversational Reads (answer-pass plus deterministic grounded-read hardening, initially shipped at v1.9.0; quoted-prefix/reel normalization patched in v1.9.1).
 
 **Constraints (binding):**
 
-- Public `forge_bridge.__all__` is **19** and has not moved since v1.4.1; `pyproject.toml` is `1.9.0`. New internal packages (e.g. `forge_bridge/comprehension/`, `forge_bridge/corpus/`) carry their own `__all__` and do NOT touch the top-level 19. No new external libraries.
+- Public `forge_bridge.__all__` is **19** and has not moved since v1.4.1; `pyproject.toml` is `1.9.1`. New internal packages (e.g. `forge_bridge/comprehension/`, `forge_bridge/corpus/`) carry their own `__all__` and do NOT touch the top-level 19. No new external libraries.
 - The CR.1 comprehension corpus (`forge_bridge/comprehension/`) is a **distinct instrument** from the v1.6 divergence corpus (`forge_bridge/corpus/`) — mirror the atomic-append-JSONL + versioned-schema pattern, never couple schemas or gates, and keep the two named distinctly forever.
 - Writer's-room cadence persists: framing → discuss → plan → execute, cross-voice review (DT grounding / Creative experience / Orch synthesis), grounded against live file reads.
 
