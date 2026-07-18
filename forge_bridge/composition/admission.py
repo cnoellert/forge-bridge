@@ -401,6 +401,16 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         state_owner="read_only",
     ),
     AdmissionRecord(
+        operator_id="pipeline.shot_resource.stream_promotion.validate",
+        resolved_class="pipeline.shot_resource.stream_promotion.validate",
+        dispatch_kind="operation",
+        synchronous=True,
+        returns_reference=False,
+        no_state_mutation=True,
+        idempotent_result=True,
+        state_owner="read_only",
+    ),
+    AdmissionRecord(
         operator_id="pipeline.host_graph.inspect",
         resolved_class="pipeline.host_graph.inspect",
         dispatch_kind="operation",
