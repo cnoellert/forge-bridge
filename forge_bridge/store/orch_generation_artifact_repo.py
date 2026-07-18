@@ -144,6 +144,23 @@ class GenerationArtifactRepo:
             return None
         return self.__model__.from_entity(entity)
 
+    async def get_by_id_for_update(
+        self,
+        artifact_id: uuid.UUID,
+    ) -> DBOrchGenerationArtifact | None:
+        """Lock one artifact row while an external authority decision is recorded."""
+
+        result = await self.session.execute(
+            select(DBEntity)
+            .where(
+                DBEntity.id == artifact_id,
+                DBEntity.entity_type == self.__entity_type__,
+            )
+            .with_for_update()
+        )
+        entity = result.scalar_one_or_none()
+        return self.__model__.from_entity(entity) if entity is not None else None
+
     async def get_by_content_hash(
         self,
         content_hash: str,

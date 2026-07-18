@@ -20,6 +20,7 @@ from forge_contracts.references import ArtifactRef
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from forge_bridge import __version__
+from forge_bridge.core.traits import Relationship
 from forge_bridge.orchestration.author_driver import OllamaAuthorDriver
 from forge_bridge.orchestration.authoring_targets import resolve_authoring_target
 from forge_bridge.orchestration.discovery import (
@@ -41,7 +42,11 @@ from forge_bridge.orchestration.errors import PlannerRefusalError
 from forge_bridge.orchestration.lineage_graph import InMemoryLineageGraph
 from forge_bridge.orchestration.planner import Planner
 from forge_bridge.orchestration.registration import ToolRegistry
-from forge_bridge.orchestration.replay import ReconstructionRequest, ReplayEngine
+from forge_bridge.orchestration.replay import (
+    RUN_LINEAGE_REL_KEYS,
+    ReconstructionRequest,
+    ReplayEngine,
+)
 from forge_bridge.orchestration.worker import GenerationPoller
 from forge_bridge.store.orch_execution_plan_repo import ExecutionPlanRepo
 from forge_bridge.store.orch_capability_snapshot_repo import CapabilitySnapshotRepo
@@ -59,6 +64,7 @@ from forge_bridge.store.orch_rule_snapshot_repo import RuleSnapshotRepo
 from forge_bridge.store.orch_spec_convergence_trace_repo import (
     SpecConvergenceTraceRepo,
 )
+from forge_bridge.store.repo import RelationshipRepo
 from forge_bridge.store.session import get_async_session_factory
 
 AUTHOR_OPERATOR_ID = "author_prompt"
@@ -75,6 +81,7 @@ class ManualQCResult:
     lifecycle_stage: str
     lifecycle_status: str
     authoring_target: dict[str, Any] | None = None
+    conditioning_artifact_ids: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         body = asdict(self)
@@ -132,6 +139,7 @@ async def start_author(
     authoring_target: AuthoringTarget | dict[str, Any] | None = None,
     target_operator: str | None = None,
     target_backend: str | None = None,
+    conditioning_references: list[ArtifactRef | dict[str, Any]] | None = None,
     tool_registry: ToolRegistry | None = None,
 ) -> ManualQCResult:
     """Create, dispatch, poll, and pause a single ``author_prompt`` run."""
@@ -144,6 +152,7 @@ async def start_author(
     if target_backend is not None and target_operator is None:
         raise ValueError("target_backend requires target_operator")
     target = _normalize_authoring_target(authoring_target)
+    conditioning = _normalize_references(conditioning_references)
 
     runtime = await _runtime(
         session_factory=session_factory,
@@ -166,7 +175,11 @@ async def start_author(
 
     async with runtime.session_factory() as session:
         intent_row = await LockedIntentRepo(session).insert_if_absent(
-            _locked_intent_body(clean_intent, target=target_wire)
+            _locked_intent_body(
+                clean_intent,
+                target=target_wire,
+                conditioning_references=conditioning,
+            )
         )
         rule = await RuleSnapshotRepo(session).insert_if_absent(_rule_snapshot_body())
         capability = await CapabilitySnapshotRepo(session).insert_if_absent(
@@ -221,6 +234,7 @@ async def start_author(
                 intent=clean_intent,
                 data_root=data_root,
                 target=target_wire,
+                conditioning_references=conditioning,
             )
         )
 
@@ -258,6 +272,7 @@ async def revise(
     session_factory: async_sessionmaker[AsyncSession] | None = None,
     driver_registry: GenerationDriverRegistry | None = None,
     event_appender: Callable[[str, dict], Awaitable[None]] | None = None,
+    source_generation_artifact_id: uuid.UUID | str | None = None,
 ) -> ManualQCResult:
     """Mint a derived authoring run with a typed ``qc_correction`` reference."""
 
@@ -265,6 +280,11 @@ async def revise(
     clean_note = qc_note.strip()
     if not clean_note:
         raise ValueError("qc_note must be a non-empty string")
+    source_generation_id = (
+        _parse_uuid(source_generation_artifact_id, "source_generation_artifact_id")
+        if source_generation_artifact_id is not None
+        else None
+    )
 
     runtime = await _runtime(
         session_factory=session_factory,
@@ -273,27 +293,7 @@ async def revise(
     )
 
     async with runtime.session_factory() as session:
-        replay = ReplayEngine(
-            session,
-            graph_engine=GraphEngine(session),
-            planner=Planner(
-                session,
-                tool_registry=ToolRegistry(),
-                platform_uuid_registry=None,  # type: ignore[arg-type]
-                trained_identity_registry=None,  # type: ignore[arg-type]
-                lineage_graph=InMemoryLineageGraph(),
-            ),
-        )
-        # D6: derived-run GenerationGrant inheritance point; ReplayEngine must
-        # carry source_run.grant_id onto this remediation run when grants land.
-        lifecycle = await replay.reconstruct(
-            ReconstructionRequest(
-                request_id=uuid.uuid4(),
-                kind="remediation",
-                source_run_id=source_run_id,
-                remediation_entry="new_attempt_same_plan",
-            )
-        )
+        lifecycle = await _derive_author_remediation_run(session, source_run_id)
         source_plan = await ExecutionPlanRepo(session).get_by_id(lifecycle.plan_id)
         if source_plan is None:
             raise PlannerRefusalError(
@@ -306,6 +306,7 @@ async def revise(
                 clean_note,
                 source_run_id,
                 lifecycle.run_id,
+                source_generation_artifact_id=source_generation_id,
             )
         )
         await GraphEngine(session).transition(
@@ -336,6 +337,111 @@ async def revise(
         plan_id=revised_plan.id,
         grant_id=derived_grant_id,
     )
+
+
+async def _derive_author_remediation_run(
+    session: AsyncSession,
+    source_run_id: uuid.UUID,
+):
+    """Create a corrected author run from paused or already-approved text.
+
+    ReplayEngine owns general replay eligibility and intentionally rejects an
+    ``audit/active`` source. A post-render visual correction necessarily starts
+    from exactly that state, so the manual author workflow derives the same-plan
+    run explicitly without broadening ReplayEngine's contract.
+    """
+
+    source_lifecycle = await OrchestrationLifecycleStateRepo(session).get_by_run_id(
+        source_run_id
+    )
+    if source_lifecycle is None:
+        raise PlannerRefusalError(
+            "source_run_incomplete",
+            f"source author run {source_run_id} has no lifecycle state",
+        )
+    approved_source = (
+        source_lifecycle.current_stage == "audit"
+        and source_lifecycle.status == "active"
+        and source_lifecycle.block is None
+    )
+    if not approved_source:
+        replay = ReplayEngine(
+            session,
+            graph_engine=GraphEngine(session),
+            planner=Planner(
+                session,
+                tool_registry=ToolRegistry(),
+                platform_uuid_registry=None,  # type: ignore[arg-type]
+                trained_identity_registry=None,  # type: ignore[arg-type]
+                lineage_graph=InMemoryLineageGraph(),
+            ),
+        )
+        return await replay.reconstruct(
+            ReconstructionRequest(
+                request_id=uuid.uuid4(),
+                kind="remediation",
+                source_run_id=source_run_id,
+                remediation_entry="new_attempt_same_plan",
+            )
+        )
+
+    if source_lifecycle.plan_id is None or source_lifecycle.intent_id is None:
+        raise PlannerRefusalError(
+            "source_run_incomplete",
+            f"source author run {source_run_id} has no plan or intent",
+        )
+    source_run = await PipelineRunRepo(session).get_by_id(source_run_id)
+    if source_run is None:
+        raise PlannerRefusalError(
+            "source_run_incomplete",
+            f"source author run {source_run_id} is missing",
+        )
+    new_run = await PipelineRunRepo(session).insert_if_absent(
+        {
+            "run_kind": "manual_qc_post_generation_remediation",
+            "intent_id": str(source_lifecycle.intent_id),
+            "source_run_id": str(source_run_id),
+            "spec_convergence_trace_id": source_run.attributes.get(
+                "spec_convergence_trace_id"
+            ),
+            "authored_at": datetime.now(timezone.utc).isoformat(),
+            "remediation_entry": "new_attempt_same_plan",
+        }
+    )
+    await RelationshipRepo(session).save(
+        Relationship(
+            source_id=new_run.id,
+            target_id=source_run_id,
+            rel_key=RUN_LINEAGE_REL_KEYS["remediates_run"],
+            metadata={"source": "manual_generation_review"},
+        )
+    )
+    engine = GraphEngine(session)
+    await engine.create_run(
+        run_id=new_run.id,
+        shot_id=source_lifecycle.shot_id,
+        intent_id=source_lifecycle.intent_id,
+    )
+    await engine.transition(new_run.id, to_stage="spec_convergence")
+    await engine.apply_decision_event(
+        new_run.id,
+        "lock_intent",
+        {
+            "intent_id": str(source_lifecycle.intent_id),
+            "source": "manual_generation_review",
+        },
+    )
+    await engine.transition(
+        new_run.id,
+        to_stage="execution",
+        plan_id=source_lifecycle.plan_id,
+        intent_id=source_lifecycle.intent_id,
+    )
+    lifecycle = await OrchestrationLifecycleStateRepo(session).get_by_run_id(
+        new_run.id
+    )
+    assert lifecycle is not None
+    return lifecycle
 
 
 async def approve(
@@ -451,6 +557,7 @@ async def make_approved(
                 "authored_prompt_missing",
                 f"author artifact {artifact_id} has no terminal prompt text",
             )
+        carried_references = _make_references_from_plan(plan.attributes)
 
     triple = target.backend_identity_triple.model_dump(mode="json")
     backend_id = backend_id_from_identity_triple(triple)
@@ -467,7 +574,7 @@ async def make_approved(
             artifact_id,
             prompt=prompt,
             scalars=scalars,
-            references=references,
+            references=[*carried_references, *(references or [])],
         ),
         backend_identity_triple=triple,
     )
@@ -490,6 +597,9 @@ async def make_approved(
                 "artifact_id": str(dispatch.artifact_id),
                 "operator_id": target.operator_id,
                 "backend_id": backend_id,
+                "conditioning_artifact_ids": [
+                    ref.artifact_id for ref in carried_references
+                ],
             },
         )
     return ManualQCMakeResult(
@@ -603,6 +713,9 @@ async def _dispatch_poll_and_pause(
         lifecycle_stage=lifecycle.current_stage,
         lifecycle_status=lifecycle.status,
         authoring_target=_authoring_target_from_plan(plan.attributes),
+        conditioning_artifact_ids=_conditioning_artifact_ids_from_plan(
+            plan.attributes
+        ),
     )
 
 
@@ -624,9 +737,17 @@ def _locked_intent_body(
     intent: str,
     *,
     target: str | dict[str, Any] = AUTHOR_TARGET,
+    conditioning_references: list[ArtifactRef] | None = None,
 ) -> dict[str, Any]:
+    conditioning_ids = [
+        ref.artifact_id for ref in (conditioning_references or [])
+    ]
     return {
-        "source_read": {"kind": "manual_qc_author", "intent": intent},
+        "source_read": {
+            "kind": "manual_qc_author",
+            "intent": intent,
+            "conditioning_artifact_ids": conditioning_ids,
+        },
         "change_manifest": [],
         "success_criteria": [
             {
@@ -643,6 +764,7 @@ def _locked_intent_body(
             "medium": "text",
             "operator_id": AUTHOR_OPERATOR_ID,
             "target": target,
+            "conditioning_artifact_ids": conditioning_ids,
         },
     }
 
@@ -692,7 +814,12 @@ def _plan_body(
     intent: str,
     data_root: Path,
     target: str | dict[str, Any] = AUTHOR_TARGET,
+    conditioning_references: list[ArtifactRef] | None = None,
 ) -> dict[str, Any]:
+    conditioning_inputs = [
+        ref.model_dump(mode="json", exclude_none=True)
+        for ref in (conditioning_references or [])
+    ]
     return {
         "operator_sequence": [
             {
@@ -710,7 +837,8 @@ def _plan_body(
                                 "target": target,
                             },
                         },
-                    }
+                    },
+                    *conditioning_inputs,
                 ],
                 "output_artifact_id": str(uuid.uuid4()),
             }
@@ -738,6 +866,8 @@ def _plan_body_with_qc(
     qc_note: str,
     source_run_id: uuid.UUID,
     new_run_id: uuid.UUID,
+    *,
+    source_generation_artifact_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     body = dict(source_body)
     steps = [dict(step) for step in body.get("operator_sequence") or []]
@@ -752,6 +882,15 @@ def _plan_body_with_qc(
                 "role": "editorial",
                 "qc_correction": qc_note,
                 "source_run_id": str(source_run_id),
+                **(
+                    {
+                        "source_generation_artifact_id": str(
+                            source_generation_artifact_id
+                        )
+                    }
+                    if source_generation_artifact_id is not None
+                    else {}
+                ),
             },
         }
     )
@@ -765,6 +904,15 @@ def _plan_body_with_qc(
     body["manual_qc"] = {
         "source_run_id": str(source_run_id),
         "qc_correction": qc_note,
+        **(
+            {
+                "source_generation_artifact_id": str(
+                    source_generation_artifact_id
+                )
+            }
+            if source_generation_artifact_id is not None
+            else {}
+        ),
     }
     return body
 
@@ -812,6 +960,33 @@ def _make_inputs(
         update={"metadata": {**dict(first.metadata), **metadata_patch}}
     )
     return normalized
+
+
+def _normalize_references(
+    references: list[ArtifactRef | dict[str, Any]] | None,
+) -> list[ArtifactRef]:
+    try:
+        return [ArtifactRef.model_validate(ref) for ref in (references or [])]
+    except (TypeError, ValueError) as exc:
+        raise ValueError("conditioning_references must contain ArtifactRef values") from exc
+
+
+def _make_references_from_plan(plan_body: dict[str, Any]) -> list[ArtifactRef]:
+    steps = plan_body.get("operator_sequence") or []
+    if not steps:
+        return []
+    carried: list[ArtifactRef] = []
+    for raw_ref in steps[0].get("inputs") or []:
+        metadata = raw_ref.get("metadata") if isinstance(raw_ref, dict) else None
+        if isinstance(metadata, dict) and metadata.get("carry_to_make") is True:
+            carried.append(ArtifactRef.model_validate(raw_ref))
+    return carried
+
+
+def _conditioning_artifact_ids_from_plan(
+    plan_body: dict[str, Any],
+) -> tuple[str, ...]:
+    return tuple(ref.artifact_id for ref in _make_references_from_plan(plan_body))
 
 
 def _normalize_authoring_target(
