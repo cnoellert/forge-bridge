@@ -72,6 +72,22 @@ The reads front uses the same stop reason. Unsupported grouping fields are
 classified by Bridge's deterministic reads fence; a model cannot map an unknown
 field to a nearby supported grouping and present that substitution as the answer.
 
+## Deterministic list rendering
+
+Pure requests to list every shot name use a validated presentation declaration:
+
+```json
+{"kind": "list", "entity": "shot", "field": "name", "scope": "all"}
+```
+
+After `forge_list_shots` executes, Bridge validates that the chain contains one
+complete shot population and renders the names directly. This skips the second
+model narration pass, preserves source order, does not truncate after a sample,
+and reports unnamed rows instead of silently dropping them. The response includes
+`deterministic_render` evidence with source-step, total, rendered, and missing
+counts. Invalid declarations, extra chain evidence, failed reads, or count
+mismatches retain the normal narrator fallback.
+
 ## Regimes
 
 | Regime | Stop reason | Meaning |
