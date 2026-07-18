@@ -45,7 +45,7 @@ from typing import AsyncGenerator, Callable
 
 import websockets
 import websockets.asyncio.client as ws_asyncio
-from websockets.connection import State as WsState
+from websockets.protocol import State as WsState
 
 from forge_bridge.server.protocol import (
     Message, MsgType, ErrorCode,
