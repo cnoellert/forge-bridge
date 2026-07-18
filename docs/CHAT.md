@@ -40,6 +40,38 @@ raw API consumers need to set it. This split is intentional (#71): the
 deterministic path owns mutations and the planner path owns NL reads — they are
 not interchangeable.
 
+Mutating operation authoring can opt into the curated operation planner with
+`?operation_front=true` or `X-Forge-Operation: v1`. This front currently authors
+Flame reel, reel-group, and library creation previews; it never applies them
+without ratification.
+
+## Clarification vs capability gap
+
+The planner fronts distinguish missing information from missing capability:
+
+- `clarification_needed` means Bridge supports the request but needs a concrete
+  referent or required value before it can proceed.
+- `capability_gap` means the requested result is outside the capabilities
+  available on that front. Bridge declines without executing a nearby tool,
+  broadening the read, or creating an assent record.
+
+Capability-gap responses carry the normalized request and the supported boundary:
+
+```json
+{
+  "final_text": "I can't rename shots in this operation pass yet. I can create a Flame reel, reel group, or library.",
+  "stop_reason": "capability_gap",
+  "capability_gap": {
+    "requested": "rename shots",
+    "supported": ["create_reel", "create_reel_group", "create_library"]
+  }
+}
+```
+
+The reads front uses the same stop reason. Unsupported grouping fields are
+classified by Bridge's deterministic reads fence; a model cannot map an unknown
+field to a nearby supported grouping and present that substitution as the answer.
+
 ## Regimes
 
 | Regime | Stop reason | Meaning |
@@ -49,6 +81,8 @@ not interchangeable.
 | `chain_aborted` | `chain_aborted` | A compiled or applied chain failed during execution. |
 | `compile_error` | `compile_error` | The message could not be compiled into a valid chain. |
 | `ratified_apply` | `apply_complete` | A previously ratified graph-intent was applied from storage. |
+| planner front | `clarification_needed` | The request is supported but needs another operator answer. |
+| planner front | `capability_gap` | The requested read or operation is unavailable; nothing was substituted or executed. |
 
 ## Preview Shape
 

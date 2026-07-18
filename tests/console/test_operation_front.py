@@ -245,6 +245,7 @@ async def test_operation_front_prompt_uses_concrete_example_not_name_placeholder
     assert '"library_name": "plates"' in _OPERATION_SYSTEM
     assert '"reel_name": "<name>"' not in _OPERATION_SYSTEM
     assert "Never output a literal placeholder" in _OPERATION_SYSTEM
+    assert '"capability_gap": {"requested":' in _OPERATION_SYSTEM
 
 
 async def test_required_operation_arg_validator_rejects_empty_and_placeholder():
@@ -279,6 +280,7 @@ async def test_required_operation_arg_validator_generalizes_unchanged(
 async def test_operation_front_missing_name_uses_clarify_channel(session_factory):
     router = SimpleNamespace(
         acomplete=AsyncMock(return_value=json.dumps({
+            "operation": "create_reel",
             "clarify": "What should the new reel be called?",
         })),
     )
@@ -292,6 +294,110 @@ async def test_operation_front_missing_name_uses_clarify_channel(session_factory
     assert body["stop_reason"] == "clarification_needed"
     assert "preview" not in body
     assert "graph_intent_id" not in body
+    assert await _assent_count(session_factory) == 0
+
+
+async def test_operation_front_rejects_unbound_menu_clarification_as_gap(
+    session_factory,
+):
+    router = SimpleNamespace(
+        acomplete=AsyncMock(return_value=json.dumps({
+            "clarify": "Do you want to create a reel, reel group, or library?",
+        })),
+    )
+
+    body = await run_operation_front(
+        [{"role": "user", "content": "rename shot tst_010 to hero_010"}],
+        router=router,
+        session_factory=session_factory,
+    )
+
+    assert body["stop_reason"] == "capability_gap"
+    assert "Do you want" not in body["final_text"]
+    assert body["final_text"].startswith("I can't plan that operation")
+    assert await _assent_count(session_factory) == 0
+
+
+async def test_operation_front_declines_uncurated_rename_without_deflection(
+    session_factory,
+):
+    router = SimpleNamespace(
+        acomplete=AsyncMock(return_value=json.dumps({
+            "capability_gap": {"requested": "rename shots"},
+        })),
+    )
+
+    body = await run_operation_front(
+        [{"role": "user", "content": "rename shot tst_010 to hero_010"}],
+        router=router,
+        session_factory=session_factory,
+    )
+
+    assert body["stop_reason"] == "capability_gap"
+    assert body["capability_gap"] == {
+        "requested": "rename shots",
+        "supported": ["create_reel", "create_reel_group", "create_library"],
+    }
+    assert body["final_text"].startswith("I can't rename shots")
+    assert "I can create a Flame reel, reel group, or library" in body["final_text"]
+    assert "preview" not in body
+    assert "graph_intent_id" not in body
+    assert await _assent_count(session_factory) == 0
+
+
+async def test_operation_front_malformed_unknown_output_fails_to_generic_gap(
+    session_factory,
+):
+    router = SimpleNamespace(acomplete=AsyncMock(return_value="{}"))
+
+    body = await run_operation_front(
+        [{"role": "user", "content": "perform an unsupported operation"}],
+        router=router,
+        session_factory=session_factory,
+    )
+
+    assert body["stop_reason"] == "capability_gap"
+    assert body["capability_gap"]["requested"] == "unsupported operation"
+    assert body["final_text"].startswith("I can't plan that operation")
+    assert await _assent_count(session_factory) == 0
+
+
+async def test_operation_front_unknown_operation_id_becomes_readable_gap(
+    session_factory,
+):
+    router = SimpleNamespace(acomplete=AsyncMock(return_value=json.dumps({
+        "operation": "rename_shots",
+        "args": {"old_name": "tst_010", "new_name": "hero_010"},
+    })))
+
+    body = await run_operation_front(
+        [{"role": "user", "content": "rename shot tst_010 to hero_010"}],
+        router=router,
+        session_factory=session_factory,
+    )
+
+    assert body["stop_reason"] == "capability_gap"
+    assert body["capability_gap"]["requested"] == "rename shots"
+    assert body["final_text"].startswith("I can't rename shots")
+    assert await _assent_count(session_factory) == 0
+
+
+async def test_operation_front_known_operation_without_args_still_clarifies(
+    session_factory,
+):
+    router = SimpleNamespace(acomplete=AsyncMock(return_value=json.dumps({
+        "operation": "create_reel",
+    })))
+
+    body = await run_operation_front(
+        [{"role": "user", "content": "create a reel"}],
+        router=router,
+        session_factory=session_factory,
+    )
+
+    assert body["stop_reason"] == "clarification_needed"
+    assert body["final_text"] == "What should the new reel be called?"
+    assert "capability_gap" not in body
     assert await _assent_count(session_factory) == 0
 
 
@@ -545,3 +651,39 @@ async def test_operation_front_http_branch_returns_preview(session_factory):
     assert body["stop_reason"] == "preview_emitted"
     assert body["preview"]["graph_intent_id"] == body["graph_intent_id"]
     assert body["preview"]["steps"][0]["args_preview"]["reel_name"] == "dailies"
+
+
+async def test_operation_front_http_branch_preserves_capability_gap(session_factory):
+    router = SimpleNamespace(
+        acomplete=AsyncMock(return_value=json.dumps({
+            "capability_gap": {"requested": "rename shots"},
+        })),
+    )
+    api = ConsoleReadAPI(
+        execution_log=MagicMock(),
+        manifest_service=ManifestService(),
+        llm_router=router,
+        session_factory=session_factory,
+    )
+    api._execution_log.snapshot.return_value = ([], 0)
+    app = build_console_app(api, session_factory=session_factory)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://testserver",
+    ) as client:
+        response = await client.post(
+            "/api/v1/chat?operation_front=true",
+            json={"messages": [{
+                "role": "user",
+                "content": "rename shot tst_010 to hero_010",
+            }]},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.headers["X-Request-ID"]
+    body = response.json()
+    assert body["stop_reason"] == "capability_gap"
+    assert body["capability_gap"]["requested"] == "rename shots"
+    assert body["request_id"] == response.headers["X-Request-ID"]
+    assert await _assent_count(session_factory) == 0

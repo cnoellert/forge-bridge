@@ -68,9 +68,9 @@ _PLANNER_SYSTEM = (
     "alongside plan/filters: {\"intent\": \"max_by_count|min_by_count|count|"
     "count_by\", \"group_by\": \"<verbatim group phrase>\", \"group_field\": "
     "\"<claimed field>\", \"over\": \"shot\"}. If no aggregation is asked, "
-    "use null. The group phrase must be grounded in the vocabulary; if you "
-    "cannot tell whether the user means status, sequence, role, or another "
-    "field, ask for clarification instead of guessing.\n"
+    "use null. Preserve the user's group phrase verbatim in the aggregation "
+    "object; never map an unknown field to a nearby known one. Bridge will "
+    "decide whether the field is supported.\n"
     "Filtering/selecting terms must be grounded before you plan. If a term "
     "maps to one defined status, role, alias, or tool purpose in the grounding, "
     "use that meaning. If it maps to more than one concept or layer, ask which "
@@ -84,7 +84,10 @@ _PLANNER_SYSTEM = (
     "MORE THAN ONE entry in PROJECTS — do NOT guess. Ask, naming the "
     "candidates:\n"
     '{"clarify": "<a short question that lists the candidate project names>"}\n'
-    "Output ONLY one JSON object (either a plan or a clarify), no prose."
+    "If the request is clear but NONE of the available read-only tools can "
+    "answer it, decline instead of redirecting to a nearby capability:\n"
+    '{"capability_gap": {"requested": "<concise requested result>"}}\n'
+    "Output ONLY one JSON object (a plan, clarify, or capability_gap), no prose."
 )
 
 
@@ -219,8 +222,9 @@ def _last_user(messages: list[dict]) -> str:
 
 def _response(text: str, messages: list[dict], *, plan: list | None = None,
               chain: list | None = None, stop: str = "planner_front",
-              grounded: int = 0) -> dict:
-    return {
+              grounded: int = 0,
+              capability_gap: dict[str, Any] | None = None) -> dict:
+    body = {
         "final_text": text,
         "stop_reason": stop,
         "plan": plan or [],
@@ -228,6 +232,46 @@ def _response(text: str, messages: list[dict], *, plan: list | None = None,
         "grounded_projects": grounded,
         "messages": list(messages) + [{"role": "assistant", "content": text}],
     }
+    if capability_gap is not None:
+        body["capability_gap"] = capability_gap
+    return body
+
+
+def _requested_capability_gap(value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    requested = value.get("requested")
+    if not isinstance(requested, str):
+        return None
+    return " ".join(requested.split()).strip(" .:;!?\t\r\n")[:120] or None
+
+
+def _read_capability_gap_response(
+    requested: str | None,
+    messages: list[dict],
+    *,
+    grounded: int,
+    supported: list[str],
+) -> dict:
+    text = (
+        f"I can't complete the request to {requested} with the read capabilities "
+        "available in this session. I won't substitute a different query."
+        if requested
+        else (
+            "I can't complete that request with the read capabilities available "
+            "in this session. I won't substitute a different query."
+        )
+    )
+    return _response(
+        text,
+        messages,
+        stop="capability_gap",
+        grounded=grounded,
+        capability_gap={
+            "requested": requested or "unsupported read",
+            "supported": supported,
+        },
+    )
 
 
 def _slim_entity(x: Any) -> Any:
@@ -338,6 +382,18 @@ async def run_planner_front(messages: list[dict], *, router: Any, mcp: Any,
                          messages, stop="planner_error")
 
     parsed = _parse_planner_output(plan_raw)
+    if "capability_gap" in parsed:
+        supported = sorted({
+            str(getattr(getattr(tool, "annotations", None), "title", None)
+                or tool.name)
+            for tool in read_tools
+        })
+        return _read_capability_gap_response(
+            _requested_capability_gap(parsed.get("capability_gap")),
+            messages,
+            grounded=len(projects),
+            supported=supported,
+        )
     clarify = parsed.get("clarify")
     if isinstance(clarify, str) and clarify.strip():
         return _response(clarify.strip(), messages, stop="clarification_needed",
@@ -358,8 +414,19 @@ async def run_planner_front(messages: list[dict], *, router: Any, mcp: Any,
         parsed.get("aggregation"),
     )
     if aggregation_fence is not None:
-        return _response(aggregation_fence, messages,
-                         stop="clarification_needed", grounded=len(projects))
+        gap_payload = None
+        if aggregation_fence.stop_reason == "capability_gap":
+            gap_payload = {
+                "requested": aggregation_fence.requested or "unsupported aggregation",
+                "supported": list(aggregation_fence.supported),
+            }
+        return _response(
+            aggregation_fence.message,
+            messages,
+            stop=aggregation_fence.stop_reason,
+            grounded=len(projects),
+            capability_gap=gap_payload,
+        )
 
     chain: list[dict] = []
     for step in plan:

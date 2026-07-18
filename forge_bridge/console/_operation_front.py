@@ -28,8 +28,11 @@ _OPERATION_SYSTEM = (
     '{"operation": "create_reel_group", "args": {"reel_group_name": "client"}}\n'
     '{"operation": "create_library", "args": {"library_name": "plates"}}\n'
     "If a reel target container is omitted, use target_type=library and omit "
-    "target_name. If a required name is missing or intent is outside these "
-    "operations, return {\"clarify\": \"<short question>\"}. Never output a literal "
+    "target_name. If a required name is missing, return the supported operation "
+    "with its question, e.g. {\"operation\": \"create_reel\", "
+    "\"clarify\": \"What should the new reel be called?\"}. If the request is clear but outside "
+    "these operations, return {\"capability_gap\": {\"requested\": "
+    "\"<concise requested action>\"}}. Never output a literal "
     "placeholder or angle-bracketed token as a value; if a required value is "
     "not supplied, clarify. Do not invent other operations. "
     "Never execute; only author operation intent for preview and ratification."
@@ -189,6 +192,7 @@ def _response(
     stop: str,
     preview: Optional[dict] = None,
     graph_intent_id: Optional[str] = None,
+    capability_gap: Optional[dict[str, Any]] = None,
 ) -> dict:
     body = {
         "final_text": text,
@@ -199,7 +203,38 @@ def _response(
         body["preview"] = preview
     if graph_intent_id is not None:
         body["graph_intent_id"] = graph_intent_id
+    if capability_gap is not None:
+        body["capability_gap"] = capability_gap
     return body
+
+
+def _requested_capability_gap(value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    requested = value.get("requested")
+    if not isinstance(requested, str):
+        return None
+    return " ".join(requested.split()).strip(" .:;!?\t\r\n")[:120] or None
+
+
+def _operation_capability_gap_response(
+    requested: str | None,
+    messages: list[dict],
+) -> dict:
+    phrase = f" {requested}" if requested else " plan that operation"
+    text = (
+        f"I can't{phrase} in this operation pass yet. I can create a Flame "
+        "reel, reel group, or library."
+    )
+    return _response(
+        text,
+        messages,
+        stop="capability_gap",
+        capability_gap={
+            "requested": requested or "unsupported operation",
+            "supported": list(_OPERATION_SPECS),
+        },
+    )
 
 
 async def run_operation_front(
@@ -232,20 +267,29 @@ async def run_operation_front(
         )
 
     parsed = _parse_operation_output(raw)
+    if "capability_gap" in parsed:
+        return _operation_capability_gap_response(
+            _requested_capability_gap(parsed.get("capability_gap")),
+            messages,
+        )
     clarify = parsed.get("clarify")
     if isinstance(clarify, str) and clarify.strip():
+        clarify_operation = parsed.get("operation")
+        if clarify_operation not in _OPERATION_SPECS:
+            return _operation_capability_gap_response(None, messages)
         return _response(clarify.strip(), messages, stop="clarification_needed")
 
     operation = parsed.get("operation")
     spec = _OPERATION_SPECS.get(operation) if isinstance(operation, str) else None
-    if spec is None or not isinstance(parsed.get("args"), dict):
-        return _response(
-            "I can only plan creating a Flame reel, reel group, or library in this operation pass.",
-            messages,
-            stop="clarification_needed",
+    if spec is None:
+        requested = (
+            operation.replace("_", " ").strip()
+            if isinstance(operation, str) and operation.strip()
+            else None
         )
+        return _operation_capability_gap_response(requested, messages)
 
-    args = parsed["args"]
+    args = parsed.get("args") if isinstance(parsed.get("args"), dict) else {}
     if validate_required_operation_args(args, spec.required) is not None:
         return _response(
             spec.clarify_question,
