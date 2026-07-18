@@ -80,6 +80,6 @@ def test_capture_rejects_malformed_payload(client, tmp_path, monkeypatch, bad):
 
 
 def test_capture_rejects_non_json(client):
-    r = client.post("/api/v1/context-capture", data="not json",
+    r = client.post("/api/v1/context-capture", content="not json",
                     headers={"Content-Type": "application/json"})
     assert r.status_code == 400
