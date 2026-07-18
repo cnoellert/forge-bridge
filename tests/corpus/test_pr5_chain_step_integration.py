@@ -235,8 +235,8 @@ def test_chain_step_arbitration_invariant_under_capture_state(
             _make_test_tool(name="forge_alpha_probe"),
             _make_test_tool(name="forge_beta_probe"),
         ]
-        expected_step_count = 0  # chain aborts at step 0 (multi-match)
-        expected_status = "error"
+        expected_step_count = 0  # chain pauses at step 0 (multi-match)
+        expected_status = "clarification_needed"
     else:
         raise AssertionError(f"unknown prompt_kind: {prompt_kind!r}")
 

@@ -31,10 +31,11 @@ def _reset_rate_limit():
 
 def _make_test_tool():
     """A non-empty Tool so chat_handler's empty-registry guard does not fire."""
-    from mcp.types import Tool
+    from mcp.types import Tool, ToolAnnotations
     return Tool(
         name="forge_test_probe",
         description="Test probe tool for chat handler unit tests.",
+        annotations=ToolAnnotations(readOnlyHint=True),
         inputSchema={"type": "object", "properties": {}, "required": []},
     )
 
@@ -80,7 +81,7 @@ def chat_client():
         "forge_bridge.console.handlers.filter_tools_by_reachable_backends",
         side_effect=_passthrough_filter,
     ), patch(
-        "forge_bridge.console._chat_compile.run_chain_steps",
+        "forge_bridge.console._chat_compile.run_chain_steps_with_shadow",
         new=AsyncMock(return_value={
             "status": "success",
             "request_id": "test-request",
@@ -252,14 +253,18 @@ def test_chat_filters_unreachable_backends(chat_client):
     Patches forge_bridge.console.handlers.filter_tools_by_reachable_backends
     (the module-top import binding) to simulate no Flame backend reachable.
     """
-    from mcp.types import Tool
+    from mcp.types import Tool, ToolAnnotations
 
     client, mock_router = chat_client
 
     fake_tools = [
-        Tool(name="forge_test", description="x", inputSchema={"type": "object"}),
-        Tool(name="flame_test", description="x", inputSchema={"type": "object"}),
-        Tool(name="synth_test", description="x", inputSchema={"type": "object"}),
+        Tool(
+            name=name,
+            description="x",
+            annotations=ToolAnnotations(readOnlyHint=True),
+            inputSchema={"type": "object"},
+        )
+        for name in ("forge_test", "flame_test", "synth_test")
     ]
 
     async def fake_filter(tools):
@@ -327,14 +332,20 @@ def test_chat_logs_tools_offered_count_on_success(chat_client, caplog):
     Verifies that after filtering, the chat ok log entry records both
     tool_call_count (existing Phase 16 contract) and tools_offered_count (new).
     """
-    from mcp.types import Tool
+    from mcp.types import Tool, ToolAnnotations
 
     client, mock_router = chat_client
 
     fake_tools = [
-        Tool(name="synth_a", description="x", inputSchema={"type": "object"}),
-        Tool(name="synth_b", description="x", inputSchema={"type": "object"}),
+        Tool(
+            name=name,
+            description="x",
+            annotations=ToolAnnotations(readOnlyHint=True),
+            inputSchema={"type": "object"},
+        )
+        for name in ("synth_a", "synth_b")
     ]
+    mock_router.compile_intent.return_value = ["synth_a"]
 
     async def fake_filter_two(tools):
         return tools  # return all 2 tools

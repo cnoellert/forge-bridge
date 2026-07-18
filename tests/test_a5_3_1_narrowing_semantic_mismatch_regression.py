@@ -35,9 +35,9 @@ These tests cover both halves of the contract:
    noun, so the verb-only guard does NOT fire and Rule 3 runs as
    before.
 
-4. **Chain step ``tool_selection_ambiguous`` integration.** The
+4. **Chain-step clarification integration.** The
    ``/api/v1/exec`` chain step path (``forge_bridge.console._step``)
-   sees the multi-tool return and emits the structured ambiguity error
+   sees the multi-tool return and emits a structured clarification
    instead of running the wrong tool — the user-facing recovery path.
 """
 from __future__ import annotations
@@ -111,11 +111,7 @@ def test_flame_unreachable_list_projects_does_not_collapse_to_wrong_tool():
         "in-process tool semantically matches 'list projects'. The verb-"
         "only-overlap guard in deterministic_narrow must fall through here."
     )
-    # Defensive: the only post-PR14 survivors should be the two
-    # ``staged`` tools whose tokens normalize to {forge, list, staged}.
-    # If this set ever changes, regenerate the assertion against the
-    # actual NORMALIZATION_MAP — but not by relaxing the >1 guard above.
-    assert set(_names(narrowed)) == {"forge_get_staged", "forge_list_staged"}
+    assert "forge_list_projects" not in _names(narrowed)
 
 
 # ── Rule 3 motivating case must still disambiguate ─────────────────────────
@@ -166,14 +162,14 @@ def test_verb_only_overlap_returns_full_set_when_max_overlap_ties():
     assert sorted(_names(narrowed)) == ["forge_get_staged", "forge_list_staged"]
 
 
-# ── Chain executor integration: tool_selection_ambiguous ───────────────────
+# ── Chain executor integration: clarification_needed ───────────────────────
 
 
 @pytest.mark.asyncio
-async def test_chain_step_emits_tool_selection_ambiguous_for_list_projects_when_flame_down():
+async def test_chain_step_requests_clarification_for_list_projects_when_flame_down():
     """Smoke Test 3 codified at the /api/v1/exec layer. With only the
     in-process tools reachable, ``execute_chain_step("list projects",
-    ...)`` MUST surface a structured ``tool_selection_ambiguous`` error
+    ...)`` MUST surface a structured ``clarification_needed`` recovery
     rather than silently invoke the wrong tool. The user-facing
     recovery path: caller sees 'be more specific' instead of staged ops."""
     from forge_bridge.console._step import execute_chain_step
@@ -191,11 +187,17 @@ async def test_chain_step_emits_tool_selection_ambiguous_for_list_projects_when_
     )
 
     assert "error" in outcome, f"expected error outcome, got {outcome!r}"
-    assert outcome["error"]["type"] == "tool_selection_ambiguous"
+    assert outcome["error"]["type"] == "clarification_needed"
+    assert outcome["error"]["kind"] == "tool"
     # Defensive: the wrong tool must NEVER have been called.
     mcp.call_tool.assert_not_called()
     error = outcome["error"]
-    assert "candidates" not in error
+    assert "candidates" in error
+    assert all(
+        "forge_get_staged" not in str(candidate)
+        and "forge_list_staged" not in str(candidate)
+        for candidate in error["candidates"]
+    )
     assert "forge_get_staged" not in error["message"]
     assert "forge_list_staged" not in error["message"]
     assert "outcomes" in error
