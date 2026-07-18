@@ -1,10 +1,11 @@
 """V1 planner-front: LLM authors the plan, substrate executes, LLM narrates.
 
 The deliberate inversion (see CONVERSATIONAL-RECOVERY → planner-front arc):
-the model owns comprehension — read the human, resolve the referent, choose
-the tools, narrate the result — and the deterministic substrate executes what
-the model authored. NO deterministic narrowing, NO per-step resolver, NO
-recovery machinery in this path.
+the model owns comprehension, tool choice, and narration while the deterministic
+substrate executes what the model authored. A directly named, unique project is
+grounded by exact registry-name match before planning; all inferred referents stay
+with the model. There is no fuzzy narrowing, per-step resolver, or recovery
+machinery in this path.
 
 V1 scope (deliberately thin): reads only; live entity grounding (projects);
 no pattern memory, no retrieval, no learning. Authors the plan from scratch
@@ -22,6 +23,10 @@ import asyncio
 from forge_bridge.console._read_presentation import (
     ground_read_presentation,
     render_read_presentation,
+)
+from forge_bridge.console._project_referent import (
+    ExactProjectReferent,
+    resolve_exact_project_referent,
 )
 from forge_bridge.console._reads_fence import (
     AggregationResult,
@@ -53,6 +58,9 @@ _PLANNER_SYSTEM = (
     "pronouns and back-references (\"it\", \"that project\", \"those shots\") "
     "from earlier turns. Pass tool arguments FLAT (e.g. {\"project_id\": "
     "\"<id>\"}); resolve any project the user names to its id from PROJECTS.\n"
+    "When EXACT_PROJECT_REFERENT is present, Bridge has already resolved that "
+    "directly named project. Use its id and do not ask which project the user "
+    "means. This does not resolve any other ambiguity in the request.\n"
     "If you can proceed, output the MINIMAL plan:\n"
     '{"plan": [{"tool": "<tool_name>", "args": {<flat args>}}], '
     '"filters": [], "aggregation": null, "presentation": null}\n'
@@ -151,6 +159,31 @@ def _tool_line(tool: Any) -> str:
         args.append(f"{name}{'' if name in req else '?'}{suffix}")
     arg_str = ", ".join(args) if args else "(none)"
     return f"- {tool.name}({arg_str}) — {title or (tool.description or '').splitlines()[0]}"
+
+
+def _bind_exact_project(
+    plan: list[dict],
+    referent: ExactProjectReferent | None,
+    read_tools: list,
+) -> list[dict]:
+    """Apply a substrate-grounded project id to project-aware read steps."""
+    if referent is None:
+        return plan
+    project_aware = {
+        tool.name
+        for tool in read_tools
+        if "project_id" in ((_inner_param_schema(tool).get("properties")) or {})
+    }
+    bound: list[dict] = []
+    for step in plan:
+        next_step = dict(step)
+        if step.get("tool") in project_aware:
+            args = step.get("args")
+            next_args = dict(args) if isinstance(args, dict) else {}
+            next_args["project_id"] = referent.id
+            next_step["args"] = next_args
+        bound.append(next_step)
+    return bound
 
 
 class ProjectGroundingUnavailable(RuntimeError):
@@ -377,11 +410,23 @@ async def run_planner_front(messages: list[dict], *, router: Any, mcp: Any,
         )
     user_message = _last_user(messages)
     convo = _conversation(messages) or f"user: {user_message}"
+    exact_project = resolve_exact_project_referent(user_message, projects)
+    planner_projects = (
+        [exact_project.as_project()] if exact_project is not None else projects
+    )
+    exact_project_block = (
+        "EXACT_PROJECT_REFERENT:\n"
+        + json.dumps(exact_project.as_project(), ensure_ascii=False)
+        + "\n\n"
+        if exact_project is not None
+        else ""
+    )
 
     grounding = (
         "CONVERSATION:\n" + convo + "\n\n"
         + planner_vocabulary_digest() + "\n\n"
-        + "PROJECTS:\n" + json.dumps(projects, ensure_ascii=False) + "\n\n"
+        + exact_project_block
+        + "PROJECTS:\n" + json.dumps(planner_projects, ensure_ascii=False) + "\n\n"
         + "TOOLS:\n" + "\n".join(_tool_line(t) for t in read_tools) + "\n\n"
         "Respond to the LAST user message."
     )
@@ -413,6 +458,7 @@ async def run_planner_front(messages: list[dict], *, router: Any, mcp: Any,
 
     plan = [s for s in (parsed.get("plan") or [])
             if isinstance(s, dict) and s.get("tool")]
+    plan = _bind_exact_project(plan, exact_project, read_tools)
 
     # Reads grounding fence (deterministic twin of the op-front gate): the
     # model declared its filter grounding; code re-derives it against the real
