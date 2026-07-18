@@ -162,6 +162,22 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         no_state_mutation=True,
         idempotent_result=False,
     ),
+    *(
+        AdmissionRecord(
+            operator_id=tool_name,
+            resolved_class="mcp.host_mutation_discover",
+            dispatch_kind="mcp",
+            synchronous=True,
+            returns_reference=False,
+            no_state_mutation=True,
+            idempotent_result=True,
+            state_owner="read_only",
+        )
+        for tool_name in (
+            "forge_load_shot_resources",
+            "forge_load_sequence_resources",
+        )
+    ),
     AdmissionRecord(
         operator_id="traffik.editorial.apply_steps",
         resolved_class="pipeline.traffik.editorial.apply_steps",
@@ -469,6 +485,8 @@ _MUTATION_COUNTERPART_RECORDS = (
             "forge_apply_segment_start_frame_delta",
             "forge_apply_segment_temporal_delta",
             "forge_apply_host_graph_plan",
+            "forge_load_shot_resources",
+            "forge_load_sequence_resources",
         )
     ),
 )
