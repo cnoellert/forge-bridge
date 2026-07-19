@@ -401,7 +401,7 @@ async def test_preview_builder_refuses_tampered_discovery() -> None:
 
 
 @pytest.mark.asyncio
-async def test_held_position_candidate_cannot_mint_trusted_discovery() -> None:
+async def test_blocked_position_realization_cannot_mint_trusted_discovery() -> None:
     calls: list[str] = []
 
     async def run_operation(operation_type: str, **_kwargs):

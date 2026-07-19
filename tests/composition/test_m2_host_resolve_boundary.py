@@ -419,7 +419,7 @@ async def test_host_resolve_rejects_untrusted_executor():
 
 
 @pytest.mark.asyncio
-async def test_host_resolve_refuses_position_candidate_before_live_proof():
+async def test_host_resolve_routes_live_proven_position_executor():
     calls: list[dict] = []
 
     async def run_discover(tool_name: str, *, request: dict):
@@ -435,10 +435,19 @@ async def test_host_resolve_refuses_position_candidate_before_live_proof():
         },
     )
 
-    assert result.status == "error"
-    assert result.reason_code == HOST_DISCOVER_FAILED
-    assert "not trusted" in (result.message or "")
-    assert calls == []
+    assert result.status == "ok"
+    assert result.output["apply_counterpart"]["tool"] == (
+        "forge_apply_segment_position_delta"
+    )
+    assert calls == [
+        {
+            "tool_name": "forge_apply_segment_position_delta",
+            "request": {
+                "sequence_name": "seq_001",
+                "entries": [_entry()],
+            },
+        }
+    ]
 
 
 @pytest.mark.asyncio
