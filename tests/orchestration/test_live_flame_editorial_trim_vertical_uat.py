@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from forge_core.operations.protocol import OperationRequest
+from forge_core.traffik.core.objects import TraffickFrame, TraffickFrameRate
 from forge_core.traffik.editorial_step_capability_operation import (
     TraffikEditorialStepCapabilitiesOperator,
 )
@@ -30,10 +31,16 @@ from scripts.live_flame_editorial_trim_vertical_uat import (
 
 
 class _FakeLiveTrimRuntime:
-    def __init__(self, *, fail_ratified_apply_number: int | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        fail_ratified_apply_number: int | None = None,
+        stale_source_timecode_after_apply: bool = False,
+    ) -> None:
         self.current_record_out = 86424
         self.current_source_out = 1024
         self.fail_ratified_apply_number = fail_ratified_apply_number
+        self.stale_source_timecode_after_apply = stale_source_timecode_after_apply
         self.targets: dict[str, int] = {}
         self.preview_count = 0
         self.ratified_apply_count = 0
@@ -52,6 +59,20 @@ class _FakeLiveTrimRuntime:
         segment = data["versions"][0]["tracks"][0]["segments"][0]
         segment["record_out"] = self.current_record_out
         segment["source_out"] = self.current_source_out
+        source_timecode_frame = (
+            1024
+            if self.stale_source_timecode_after_apply
+            and self.current_source_out != 1024
+            else self.current_source_out
+        )
+        source_out_tc = TraffickFrame(
+            source_timecode_frame,
+            TraffickFrameRate.FPS_24,
+        ).to_timecode()
+        segment["source_out_tc"] = (
+            f"{source_out_tc.hours:02d}:{source_out_tc.minutes:02d}:"
+            f"{source_out_tc.seconds:02d}+{source_out_tc.frames:02d}"
+        )
         return data
 
     async def runner(self, operation_type: str, **kwargs):
@@ -171,7 +192,9 @@ async def test_live_trim_uat_elevates_exact_delta_and_restores_state() -> None:
         "assent_illegal_state"
     )
     assert evidence["forward_verification"]["status"] == "passed"
+    assert evidence["forward_verification"]["observed_source_out"]["number"] == 1023
     assert evidence["final_verification"]["matches_initial_state"] is True
+    assert evidence["final_verification"]["observed_source_out"]["number"] == 1024
     assert evidence["mutation"] == {
         "forward_applied": True,
         "inverse_applied": True,
@@ -215,3 +238,25 @@ async def test_live_trim_uat_recovers_after_inverse_apply_failure() -> None:
     assert runtime.ratified_apply_count == 3
     assert runtime.current_record_out == 86424
     assert runtime.current_source_out == 1024
+
+
+@pytest.mark.asyncio
+async def test_live_trim_uat_refuses_stale_source_timecode_evidence() -> None:
+    runtime = _FakeLiveTrimRuntime(stale_source_timecode_after_apply=True)
+
+    with pytest.raises(LiveEditorialTrimUATError) as raised:
+        await run_live_uat(
+            sequence_name="FORGE_UAT_HOST_APPLY_20260624",
+            reel_names=["Testing"],
+            actor="phase115-test",
+            runner=runtime.runner,
+            session_factory=object(),
+            mcp=object(),
+            preview_fn=runtime.preview,
+            apply_fn=runtime.apply,
+        )
+
+    evidence = raised.value.evidence
+    assert evidence["mutation"]["forward_applied"] is True
+    assert evidence["mutation"]["residue_free"] is False
+    assert "source_out timecode disagrees" in evidence["error"]["message"]

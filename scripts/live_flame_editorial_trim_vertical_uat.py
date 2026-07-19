@@ -98,6 +98,7 @@ async def run_live_uat(
         "recovery": {"attempted": False, "status": "not_needed"},
     }
     original_frame_out: Any | None = None
+    original_source_out: Any | None = None
     stable_segment_id: str | None = None
     initial_fingerprint: str | None = None
 
@@ -115,11 +116,13 @@ async def run_live_uat(
             segment_id=segment_id,
         )
         original_frame_out = segment.frame_out
+        original_source_out = _segment_source_out(segment)
         stable_segment_id = segment.id
         initial_fingerprint = initial["read_evidence"]["result"][
             "state_fingerprint"
         ]
         target_frame_out = original_frame_out - trim_frames
+        target_source_out = original_source_out - trim_frames
         if target_frame_out <= segment.frame_in:
             raise RuntimeError(
                 "trim_frames would collapse or invert the selected segment"
@@ -132,6 +135,8 @@ async def run_live_uat(
             "original_frame_in": segment.frame_in.to_dict(),
             "original_frame_out": original_frame_out.to_dict(),
             "temporary_frame_out": target_frame_out.to_dict(),
+            "original_source_out": original_source_out.to_dict(),
+            "temporary_source_out": target_source_out.to_dict(),
             "initial_state_fingerprint": initial_fingerprint,
         }
 
@@ -173,6 +178,11 @@ async def run_live_uat(
             )
         if changed_segment.frame_in != segment.frame_in:
             raise RuntimeError("trim_tail changed the selected segment head")
+        changed_source_out = _segment_source_out(changed_segment)
+        if changed_source_out != target_source_out:
+            raise RuntimeError(
+                "independent forward verification did not observe trimmed source tail"
+            )
         if changed_segment.id != stable_segment_id:
             raise RuntimeError("segment identity changed after trim")
         evidence["forward_verification"] = {
@@ -181,6 +191,7 @@ async def run_live_uat(
             "track_id": changed_track.id,
             "segment_id": changed_segment.id,
             "observed_frame_out": changed_segment.frame_out.to_dict(),
+            "observed_source_out": changed_source_out.to_dict(),
             "state_fingerprint": changed["read_evidence"]["result"][
                 "state_fingerprint"
             ],
@@ -223,6 +234,9 @@ async def run_live_uat(
         ]
         if final_segment.frame_out != original_frame_out:
             raise RuntimeError("final verification did not restore frame_out")
+        final_source_out = _segment_source_out(final_segment)
+        if final_source_out != original_source_out:
+            raise RuntimeError("final verification did not restore source_out")
         if final_segment.id != stable_segment_id:
             raise RuntimeError("final verification observed segment identity drift")
         if final_fingerprint != initial_fingerprint:
@@ -234,6 +248,7 @@ async def run_live_uat(
             "status": "passed",
             "segment_id": final_segment.id,
             "observed_frame_out": final_segment.frame_out.to_dict(),
+            "observed_source_out": final_source_out.to_dict(),
             "state_fingerprint": final_fingerprint,
             "matches_initial_state": True,
         }
@@ -248,7 +263,11 @@ async def run_live_uat(
             "type": type(exc).__name__,
             "message": str(exc),
         }
-        if original_frame_out is not None and stable_segment_id is not None:
+        if (
+            original_frame_out is not None
+            and original_source_out is not None
+            and stable_segment_id is not None
+        ):
             evidence["recovery"] = await _attempt_recovery(
                 evidence=evidence,
                 runner=operation_runner,
@@ -261,6 +280,7 @@ async def run_live_uat(
                 project_id=project_id,
                 segment_id=stable_segment_id,
                 original_frame_out=original_frame_out,
+                original_source_out=original_source_out,
                 actor=decided_by,
                 read_timeout_seconds=read_timeout_seconds,
                 receipt_dir=receipt_dir,
@@ -469,6 +489,19 @@ def _select_segment(state: Any, *, segment_id: str | None):
     raise RuntimeError("live EditState active sequence has no editable segment")
 
 
+def _segment_source_out(segment: Any):
+    from forge_core.traffik.core.objects import TraffickFrame
+
+    value = segment.metadata.custom.get("source_out")
+    if not isinstance(value, Mapping):
+        raise RuntimeError("selected segment has no canonical source_out frame")
+    source_out = TraffickFrame.from_dict(dict(value))
+    source_tc_out = segment.metadata.source_tc_out
+    if source_tc_out is not None and source_tc_out.to_frame() != source_out:
+        raise RuntimeError("selected segment source_out timecode disagrees with source_out")
+    return source_out
+
+
 async def _attempt_recovery(
     *,
     evidence: Mapping[str, Any],
@@ -482,6 +515,7 @@ async def _attempt_recovery(
     project_id: str | None,
     segment_id: str,
     original_frame_out: Any,
+    original_source_out: Any,
     actor: str,
     read_timeout_seconds: float,
     receipt_dir: str | Path | None,
@@ -501,6 +535,7 @@ async def _attempt_recovery(
             segment_id=segment_id,
         )
         recovery["observed_frame_out"] = segment.frame_out.to_dict()
+        recovery["observed_source_out"] = _segment_source_out(segment).to_dict()
         if segment.frame_out != original_frame_out:
             recovery["apply"] = await _execute_trim(
                 runner,
@@ -533,6 +568,9 @@ async def _attempt_recovery(
         )
         if final_segment.frame_out != original_frame_out:
             raise RuntimeError("recovery did not restore original frame_out")
+        final_source_out = _segment_source_out(final_segment)
+        if final_source_out != original_source_out:
+            raise RuntimeError("recovery did not restore original source_out")
         final_fingerprint = final["read_evidence"]["result"][
             "state_fingerprint"
         ]
@@ -548,6 +586,7 @@ async def _attempt_recovery(
         recovery.update(
             status="passed",
             final_frame_out=final_segment.frame_out.to_dict(),
+            final_source_out=final_source_out.to_dict(),
             final_state_fingerprint=final_fingerprint,
             matches_initial_state=(
                 final_fingerprint == expected_fingerprint
