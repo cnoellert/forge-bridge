@@ -188,6 +188,16 @@ def test_segment_position_is_a_live_proven_commit_only_counterpart():
     assert tool_name in MUTATION_COUNTERPART_TABLE
 
 
+def test_segment_split_candidate_is_not_admitted_before_live_proof():
+    tool_name = "forge_apply_segment_split_delta"
+
+    with pytest.raises(AdmissionRejected, match="not admitted"):
+        admit_mutation_counterpart(tool_name)
+
+    assert tool_name not in ADMISSION_TABLE
+    assert tool_name not in MUTATION_COUNTERPART_TABLE
+
+
 @pytest.mark.parametrize(
     "tool_name",
     [

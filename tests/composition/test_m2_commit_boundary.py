@@ -121,6 +121,21 @@ class _AdvertisedPositionMCP(_RenameMCP):
         raise AssertionError(mode)
 
 
+class _AdvertisedSplitMCP(_RenameMCP):
+    def __init__(self, *, fresh_manifest: dict):
+        super().__init__(fresh_manifest=fresh_manifest)
+        self.list_count = 0
+
+    async def list_tools(self):
+        self.list_count += 1
+        return [
+            SimpleNamespace(
+                name="forge_apply_segment_split_delta",
+                inputSchema={"type": "object", "properties": {}, "required": []},
+            )
+        ]
+
+
 def _identity_key(identity: dict) -> tuple:
     return (
         identity.get("sequence_name"),
@@ -395,6 +410,27 @@ async def test_commit_boundary_runs_live_proven_position_counterpart():
         ("forge_apply_segment_position_delta", "verify"),
         ("forge_apply_segment_position_delta", "apply"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_commit_boundary_refuses_callable_split_candidate_before_live_proof():
+    held = _held_manifest_dict()
+    held["originating_capability"] = "forge_apply_segment_split_delta"
+    held["apply_counterpart"]["tool"] = "forge_apply_segment_split_delta"
+    mcp = _AdvertisedSplitMCP(fresh_manifest=held)
+    dispatch = UnifiedDispatch(
+        commit_boundary=CommitBoundary(mcp=mcp),
+        assent_record=_ratified_assent(),
+    )
+
+    result = (await GraphExecutor(dispatch.dispatch).run(_commit_graph(held)))["commit"]
+
+    assert result.status == "error"
+    assert result.reason_code == CommitError.APPLY_COUNTERPART_NOT_DECLARED
+    assert "forge_apply_segment_split_delta" in (result.message or "")
+    assert "not admitted" in (result.message or "")
+    assert mcp.list_count == 0
+    assert mcp.calls == []
 
 
 def test_mutation_manifest_normalization_ignores_capture_metadata_only():
