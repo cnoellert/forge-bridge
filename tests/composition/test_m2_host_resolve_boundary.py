@@ -446,6 +446,22 @@ async def test_host_resolve_routes_live_proven_sequence_marker_executor():
 
 
 @pytest.mark.asyncio
+async def test_host_resolve_holds_segment_marker_executor_before_live_proof():
+    tool_name = "forge_apply_segment_marker_delta"
+
+    result = await HostResolveBoundary(
+        run_discover=lambda *a, **k: _manifest_dict(apply_tool=tool_name)
+    ).dispatch(
+        _delta_node(),
+        {"deltas": _upstream_result(executor=tool_name)},
+    )
+
+    assert result.status == "error"
+    assert result.reason_code == HOST_DISCOVER_FAILED
+    assert f"executor {tool_name!r} not trusted" in (result.message or "")
+
+
+@pytest.mark.asyncio
 async def test_host_resolve_routes_live_proven_position_executor():
     calls: list[dict] = []
 
