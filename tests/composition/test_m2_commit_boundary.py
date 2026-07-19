@@ -161,6 +161,17 @@ class _AdvertisedSequenceMarkerMCP(_RenameMCP):
             )
         ]
 
+    async def call_tool(self, name: str, arguments: dict):
+        self.calls.append((name, copy.deepcopy(arguments)))
+        if name != "forge_apply_sequence_marker_delta":
+            raise AssertionError(name)
+        mode = arguments["mode"]
+        if mode == "verify":
+            return copy.deepcopy(self._fresh_manifest)
+        if mode == "apply":
+            return self._apply(arguments["resolved_plan"])
+        raise AssertionError(mode)
+
 
 def _identity_key(identity: dict) -> tuple:
     return (
@@ -414,7 +425,7 @@ async def test_commit_boundary_rejects_discovered_but_unreviewed_counterpart():
 
 
 @pytest.mark.asyncio
-async def test_commit_boundary_holds_advertised_sequence_marker_before_live_proof():
+async def test_commit_boundary_runs_live_proven_sequence_marker_counterpart():
     tool_name = "forge_apply_sequence_marker_delta"
     held = _held_manifest_dict()
     held["originating_capability"] = tool_name
@@ -427,11 +438,16 @@ async def test_commit_boundary_holds_advertised_sequence_marker_before_live_proo
 
     result = (await GraphExecutor(dispatch.dispatch).run(_commit_graph(held)))["commit"]
 
-    assert result.status == "error"
-    assert result.reason_code == CommitError.APPLY_COUNTERPART_NOT_DECLARED
-    assert "not admitted" in (result.message or "")
-    assert mcp.list_count == 0
-    assert mcp.calls == []
+    assert result.status == "ok", (
+        result.reason_code,
+        result.message,
+        result.output,
+    )
+    assert mcp.list_count == 1
+    assert [(name, args["mode"]) for name, args in mcp.calls] == [
+        (tool_name, "verify"),
+        (tool_name, "apply"),
+    ]
 
 
 @pytest.mark.asyncio

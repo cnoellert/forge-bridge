@@ -29,6 +29,7 @@ _TRUSTED_EXECUTORS = frozenset({
     "forge_apply_segment_delta",
     "forge_apply_segment_insert_delta",
     "forge_apply_segment_position_delta",
+    "forge_apply_sequence_marker_delta",
     "forge_apply_segment_split_delta",
     "forge_apply_segment_start_frame_delta",
     "forge_apply_segment_temporal_delta",
