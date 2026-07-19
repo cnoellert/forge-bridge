@@ -254,6 +254,25 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         state_owner="peer_owned",
     ),
     AdmissionRecord(
+        operator_id="traffik.editorial.step_capabilities",
+        resolved_class="pipeline.traffik.editorial.step_capabilities",
+        dispatch_kind="operation",
+        synchronous=True,
+        returns_reference=False,
+        no_state_mutation=True,
+        idempotent_result=True,
+    ),
+    AdmissionRecord(
+        operator_id="flame.editorial.read_edit_state",
+        resolved_class="pipeline.flame.editorial.read_edit_state",
+        dispatch_kind="operation",
+        synchronous=True,
+        returns_reference=False,
+        no_state_mutation=True,
+        idempotent_result=True,
+        state_owner="dcc_host",
+    ),
+    AdmissionRecord(
         operator_id="traffik.flame_delta.host_resolve",
         resolved_class="pipeline.traffik.flame_delta.host_resolve",
         dispatch_kind="operation",
@@ -268,7 +287,7 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         dispatch_kind="operation",
         synchronous=True,
         returns_reference=False,
-        # sibling-contractual: ingest reads live Flame -> EditState, writes nothing.
+        # Pure conversion of caller-supplied Flame extraction data; no live read.
         no_state_mutation=True,
         idempotent_result=True,
     ),

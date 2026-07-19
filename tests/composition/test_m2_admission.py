@@ -40,6 +40,22 @@ def test_admission_accepts_slice_one_operator_ids():
     assert editorial.no_state_mutation is False
     assert editorial.idempotent_result is False
     assert editorial.state_owner == "peer_owned"
+    step_capabilities = admit_operator("traffik.editorial.step_capabilities")
+    assert step_capabilities.resolved_class == (
+        "pipeline.traffik.editorial.step_capabilities"
+    )
+    assert step_capabilities.dispatch_kind == "operation"
+    assert step_capabilities.no_state_mutation is True
+    assert step_capabilities.idempotent_result is True
+    assert step_capabilities.state_owner == "read_only"
+    live_read = admit_operator("flame.editorial.read_edit_state")
+    assert live_read.resolved_class == "pipeline.flame.editorial.read_edit_state"
+    assert live_read.dispatch_kind == "operation"
+    assert live_read.synchronous is True
+    assert live_read.returns_reference is False
+    assert live_read.no_state_mutation is True
+    assert live_read.idempotent_result is True
+    assert live_read.state_owner == "dcc_host"
     for operation_id in (
         "traffik.editorial.resolve_top_video_layer",
         "traffik.editorial.mark_timecode_range",
@@ -273,6 +289,8 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "forge_inspect_shot_resource_publish_transaction",
         "forge_abort_shot_resource_publish_transaction",
         "traffik.editorial.apply_steps",
+        "traffik.editorial.step_capabilities",
+        "flame.editorial.read_edit_state",
         "traffik.editorial.resolve_top_video_layer",
         "traffik.editorial.mark_timecode_range",
         "traffik.editorial.overwrite_insert",
