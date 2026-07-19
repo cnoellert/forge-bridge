@@ -147,6 +147,21 @@ class _AdvertisedSplitMCP(_RenameMCP):
         raise AssertionError(mode)
 
 
+class _AdvertisedSequenceMarkerMCP(_RenameMCP):
+    def __init__(self, *, fresh_manifest: dict):
+        super().__init__(fresh_manifest=fresh_manifest)
+        self.list_count = 0
+
+    async def list_tools(self):
+        self.list_count += 1
+        return [
+            SimpleNamespace(
+                name="forge_apply_sequence_marker_delta",
+                inputSchema={"type": "object", "properties": {}, "required": []},
+            )
+        ]
+
+
 def _identity_key(identity: dict) -> tuple:
     return (
         identity.get("sequence_name"),
@@ -395,6 +410,27 @@ async def test_commit_boundary_rejects_discovered_but_unreviewed_counterpart():
     assert result.status == "error"
     assert result.reason_code == CommitError.APPLY_COUNTERPART_NOT_DECLARED
     assert "not admitted" in (result.message or "")
+    assert mcp.calls == []
+
+
+@pytest.mark.asyncio
+async def test_commit_boundary_holds_advertised_sequence_marker_before_live_proof():
+    tool_name = "forge_apply_sequence_marker_delta"
+    held = _held_manifest_dict()
+    held["originating_capability"] = tool_name
+    held["apply_counterpart"]["tool"] = tool_name
+    mcp = _AdvertisedSequenceMarkerMCP(fresh_manifest=held)
+    dispatch = UnifiedDispatch(
+        commit_boundary=CommitBoundary(mcp=mcp),
+        assent_record=_ratified_assent(),
+    )
+
+    result = (await GraphExecutor(dispatch.dispatch).run(_commit_graph(held)))["commit"]
+
+    assert result.status == "error"
+    assert result.reason_code == CommitError.APPLY_COUNTERPART_NOT_DECLARED
+    assert "not admitted" in (result.message or "")
+    assert mcp.list_count == 0
     assert mcp.calls == []
 
 
