@@ -473,6 +473,33 @@ async def test_host_resolve_routes_live_proven_segment_marker_executor():
 
 
 @pytest.mark.asyncio
+async def test_host_resolve_routes_live_proven_transition_executor():
+    tool_name = "forge_apply_transition_delta"
+    calls: list[dict] = []
+
+    async def run_discover(name: str, *, request: dict):
+        calls.append({"tool_name": name, "request": request})
+        return _manifest_dict(apply_tool=name)
+
+    result = await HostResolveBoundary(run_discover=run_discover).dispatch(
+        _delta_node(),
+        {"deltas": _upstream_result(executor=tool_name)},
+    )
+
+    assert result.status == "ok"
+    assert result.output["apply_counterpart"]["tool"] == tool_name
+    assert calls == [
+        {
+            "tool_name": tool_name,
+            "request": {
+                "sequence_name": "seq_001",
+                "entries": [_entry()],
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_host_resolve_routes_live_proven_position_executor():
     calls: list[dict] = []
 
