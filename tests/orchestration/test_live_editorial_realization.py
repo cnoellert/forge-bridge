@@ -449,7 +449,7 @@ async def test_blocked_position_realization_cannot_mint_trusted_discovery() -> N
 
 
 @pytest.mark.asyncio
-async def test_held_split_candidate_cannot_mint_trusted_discovery() -> None:
+async def test_blocked_split_realization_cannot_mint_trusted_discovery() -> None:
     calls: list[str] = []
 
     async def run_operation(operation_type: str, **_kwargs):
