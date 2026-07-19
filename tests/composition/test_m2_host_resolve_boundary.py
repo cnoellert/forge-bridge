@@ -419,6 +419,29 @@ async def test_host_resolve_rejects_untrusted_executor():
 
 
 @pytest.mark.asyncio
+async def test_host_resolve_refuses_position_candidate_before_live_proof():
+    calls: list[dict] = []
+
+    async def run_discover(tool_name: str, *, request: dict):
+        calls.append({"tool_name": tool_name, "request": request})
+        return _manifest_dict(apply_tool=tool_name)
+
+    result = await HostResolveBoundary(run_discover=run_discover).dispatch(
+        _delta_node(),
+        {
+            "deltas": _upstream_result(
+                executor="forge_apply_segment_position_delta"
+            )
+        },
+    )
+
+    assert result.status == "error"
+    assert result.reason_code == HOST_DISCOVER_FAILED
+    assert "not trusted" in (result.message or "")
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_host_resolve_reports_held_for_review_before_homogeneity():
     held_output = _projected_host_resolve_payload()
     held_output["deltas"] = []

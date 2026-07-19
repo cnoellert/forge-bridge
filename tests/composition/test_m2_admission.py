@@ -174,6 +174,16 @@ def test_grouped_host_graph_apply_is_a_reviewed_commit_only_counterpart():
     assert "forge_apply_host_graph_plan" in MUTATION_COUNTERPART_TABLE
 
 
+def test_segment_position_candidate_is_not_admitted_before_live_proof():
+    tool_name = "forge_apply_segment_position_delta"
+
+    with pytest.raises(AdmissionRejected, match="not admitted"):
+        admit_mutation_counterpart(tool_name)
+
+    assert tool_name not in ADMISSION_TABLE
+    assert tool_name not in MUTATION_COUNTERPART_TABLE
+
+
 @pytest.mark.parametrize(
     "tool_name",
     [

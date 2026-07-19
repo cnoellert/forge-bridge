@@ -95,6 +95,21 @@ class _TransportFailureMCP(_RenameMCP):
         return self._apply(arguments["resolved_plan"])
 
 
+class _AdvertisedPositionMCP(_RenameMCP):
+    def __init__(self, *, fresh_manifest: dict):
+        super().__init__(fresh_manifest=fresh_manifest)
+        self.list_count = 0
+
+    async def list_tools(self):
+        self.list_count += 1
+        return [
+            SimpleNamespace(
+                name="forge_apply_segment_position_delta",
+                inputSchema={"type": "object", "properties": {}, "required": []},
+            )
+        ]
+
+
 def _identity_key(identity: dict) -> tuple:
     return (
         identity.get("sequence_name"),
@@ -343,6 +358,27 @@ async def test_commit_boundary_rejects_discovered_but_unreviewed_counterpart():
     assert result.status == "error"
     assert result.reason_code == CommitError.APPLY_COUNTERPART_NOT_DECLARED
     assert "not admitted" in (result.message or "")
+    assert mcp.calls == []
+
+
+@pytest.mark.asyncio
+async def test_commit_boundary_refuses_callable_position_candidate_before_live_proof():
+    held = _held_manifest_dict()
+    held["originating_capability"] = "forge_apply_segment_position_delta"
+    held["apply_counterpart"]["tool"] = "forge_apply_segment_position_delta"
+    mcp = _AdvertisedPositionMCP(fresh_manifest=held)
+    dispatch = UnifiedDispatch(
+        commit_boundary=CommitBoundary(mcp=mcp),
+        assent_record=_ratified_assent(),
+    )
+
+    result = (await GraphExecutor(dispatch.dispatch).run(_commit_graph(held)))["commit"]
+
+    assert result.status == "error"
+    assert result.reason_code == CommitError.APPLY_COUNTERPART_NOT_DECLARED
+    assert "forge_apply_segment_position_delta" in (result.message or "")
+    assert "not admitted" in (result.message or "")
+    assert mcp.list_count == 0
     assert mcp.calls == []
 
 
