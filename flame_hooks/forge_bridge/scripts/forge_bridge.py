@@ -1347,5 +1347,7 @@ output.appendChild(welcome);
 """
 
 # Compatibility with builds expecting camelCase hooks
+appInitialized = app_initialized
+projectChanged = project_changed
 getCustomUIActions = get_custom_ui_actions
 customUIAction = custom_ui_action
