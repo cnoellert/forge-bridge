@@ -36,6 +36,7 @@ UI_ROUTES_TO_TEST = [
     "/ui/manifest",    # ui_manifest_handler
     "/ui/health",      # ui_health_view_handler
     "/ui/chat",        # ui_chat_handler (Phase 16)
+    "/ui/actions",     # ui_actions_index_handler (exec verb renderer #2)
 ]
 
 

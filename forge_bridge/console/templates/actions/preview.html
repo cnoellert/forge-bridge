@@ -1,0 +1,30 @@
+{# htmx fragment: domain-language preview (resolved with NO assent, NO apply).
+   The Stage button persists a PROPOSED graph-intent; it does NOT apply. #}
+<section class="graph-intent-preview" role="region" aria-label="Action preview">
+  <header class="graph-intent-preview__header">
+    <span class="graph-intent-preview__taxon">Preview</span>
+    <span class="graph-intent-preview__sub">resolved against the live timeline — nothing applied yet</span>
+  </header>
+
+  <p class="actions-preview__line">
+    Will {{ verb.name }} {{ plan_count }} segment in Flame:
+    <strong>{{ seg_name }}</strong>:
+    <code>{{ change_summary }}</code>
+  </p>
+  <p class="graph-intent-preview__sub">reversible · ratified · nothing else touched</p>
+
+  <form class="graph-intent-preview__actions">
+    <input type="hidden" name="sequence" value="{{ sequence }}">
+    <input type="hidden" name="segment_index" value="{{ segment_index }}">
+    <input type="hidden" name="value" value="{{ value_raw }}">
+    <button class="btn chat-send"
+            hx-post="/ui/actions/{{ verb.name }}/stage"
+            hx-include="closest form"
+            hx-target="#actions-result"
+            hx-swap="innerHTML">Stage for ratification</button>
+    <p class="graph-intent-preview__note">
+      Staging proposes the change only — it never applies. You ratify it
+      separately.
+    </p>
+  </form>
+</section>

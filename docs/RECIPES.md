@@ -76,7 +76,7 @@ This is the workflow framing around [`INSTALL.md`](INSTALL.md). INSTALL.md is th
 5. **Install the Flame hook (Track A only)** — `./scripts/install-flame-hook.sh`, then **relaunch Flame**. The hook auto-starts an HTTP server on `:9999` inside Flame. Reference: INSTALL.md Step 4.
 6. **Confirm both daemons are running** — on Linux, `sudo systemctl status forge-bridge forge-bridge-server`; on macOS, `sudo launchctl print system/com.cnoellert.forge-bridge`. Both should be `active`/`running`. Reference: INSTALL.md Step 6.
 7. **Run the post-install doctor** — `fbridge doctor`. Exit 0 means all surfaces are healthy. Exit 1 means at least one check failed; the output names which one. Reference: INSTALL.md Step 8.
-8. **Smoke-test the surfaces** — open `http://localhost:9996/ui/` in a browser, confirm the five views render (tools, execs, manifest, health, chat), and use the chat tab to send `hello`. On a cold Ollama the first response can take 30-60s as the model loads; subsequent calls are sub-10s. Reference: INSTALL.md Step 7.
+8. **Smoke-test the surfaces** — open `http://localhost:9996/ui/` in a browser, confirm the six views render (tools, execs, manifest, health, actions, chat), and use the chat tab to send `hello`. On a cold Ollama the first response can take 30-60s as the model loads; subsequent calls are sub-10s. Reference: INSTALL.md Step 7.
 
 ### Verification
 
