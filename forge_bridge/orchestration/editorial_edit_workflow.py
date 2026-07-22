@@ -19,10 +19,15 @@ delta, manifest, or AssentRecord body.
 
 Boundary discipline (handoff §2/§13): Bridge owns graph composition, assent,
 commit, replay, and restore ORCHESTRATION. It does NOT own editorial semantics.
-The exact editorial inverse-step derivation for ``restore`` is therefore an
-INJECTED callable (``build_inverse_step_plan``); split restore is gated on a
-Pipeline-owned version-fork counterpart (§10) and returns
-``editorial_workflow_restore_unavailable`` until wired.
+The exact editorial inverse-step derivation for a TRIM ``restore`` is therefore
+an INJECTED callable (``build_inverse_step_plan``). SPLIT ``restore`` (#237) is
+wired: the forward split apply's closed ``recovery`` token is persisted
+byte-for-byte, and restore discovers/commits the Pipeline-owned
+``forge_apply_segment_split_restore`` counterpart (admitted in the trusted
+executor table) through the same verify-before-apply ``CommitBoundary``. Bridge
+never reconstructs the token or computes version indices. A missing token or an
+undiscovered counterpart still fails closed with
+``editorial_workflow_restore_unavailable``.
 """
 
 from __future__ import annotations
@@ -284,6 +289,17 @@ class SessionFactoryEditorialEditWorkflowStore:
 PreviewFn = Callable[..., Awaitable[dict[str, Any]]]
 ApplyFn = Callable[..., Awaitable[dict[str, Any]]]
 BuildInverseFn = Callable[..., Awaitable[Mapping[str, Any]]]
+SplitRestorePreviewFn = Callable[..., Awaitable[dict[str, Any]]]
+
+SPLIT_RESTORE_TOOL = "forge_apply_segment_split_restore"
+
+
+class _SplitRestoreUnavailable(Exception):
+    """Internal: counterpart not discoverable / no commit rail => fail closed."""
+
+
+class _SplitRestoreDrift(Exception):
+    """Internal: discover manifest / token / sequence mismatch => drift."""
 
 
 class EditorialEditWorkflowAPI:
@@ -297,6 +313,7 @@ class EditorialEditWorkflowAPI:
         apply_fn: ApplyFn,
         store: EditorialEditWorkflowStore,
         build_inverse_step_plan: Optional[BuildInverseFn] = None,
+        split_restore_preview_fn: Optional[SplitRestorePreviewFn] = None,
         clock: Optional[Callable[[], str]] = None,
     ) -> None:
         self._run_operation = run_operation
@@ -304,6 +321,7 @@ class EditorialEditWorkflowAPI:
         self._apply_fn = apply_fn
         self._store = store
         self._build_inverse = build_inverse_step_plan
+        self._split_restore_preview_fn = split_restore_preview_fn
         self._clock = clock or _utc_now_iso
         # ponytail: per-process async lock keyed by proposal_id serializes
         # ratify_apply/restore. Multi-worker deployments need a DB advisory
@@ -452,6 +470,19 @@ class EditorialEditWorkflowAPI:
                 patch["forward_commit_fingerprint"] = canonical_fingerprint(
                     outcome["commit_result"]
                 )
+                if _forward_operation(workflow) in _SPLIT_OPERATIONS:
+                    # Persist the split apply's closed recovery token verbatim so
+                    # restore can hand it back (#237). A missing/invalid token
+                    # never fails the forward apply — the host mutation already
+                    # happened — it only leaves split restore unavailable.
+                    recovery = _extract_split_recovery(
+                        outcome, workflow["proposal"].get("sequence_name")
+                    )
+                    if recovery is not None:
+                        patch["forward_split_recovery"] = recovery
+                        patch[
+                            "forward_split_recovery_fingerprint"
+                        ] = canonical_fingerprint(recovery)
                 stored = await self._store.update(proposal_id, patch)
                 return _build_receipt("ratify_apply", stored)
 
@@ -523,13 +554,11 @@ class EditorialEditWorkflowAPI:
             return changed
 
         operation = _forward_operation(workflow)
-        if operation in _SPLIT_OPERATIONS:
-            # Split restore is gated on the Pipeline version-fork counterpart
-            # (§10). Never perform an ungoverned cleanup.
+        is_split = operation in _SPLIT_OPERATIONS
+        is_trim = operation in _TRIM_OPERATIONS
+        if not (is_split or is_trim):
             return _refuse("restore", workflow, REASON_RESTORE_UNAVAILABLE)
-        if operation not in _TRIM_OPERATIONS:
-            return _refuse("restore", workflow, REASON_RESTORE_UNAVAILABLE)
-        if self._build_inverse is None:
+        if is_trim and self._build_inverse is None:
             # Trim inverse derivation is editorial semantics — must be injected
             # by the semantic owner (§2/§13). Not wired => gated, never guessed.
             return _refuse("restore", workflow, REASON_RESTORE_UNAVAILABLE)
@@ -540,76 +569,151 @@ class EditorialEditWorkflowAPI:
                 raise EditorialEditWorkflowError(
                     REASON_PROPOSAL_NOT_FOUND, "workflow disappeared"
                 )
+            if workflow["status"] == "restored":
+                # Idempotent: a trusted restore already committed. Return the
+                # persisted restored receipt; never dispatch a second mutation.
+                return _build_receipt("restore", workflow)
             if workflow["status"] != "applied":
-                # proposed / failed / already-restored never restore (§8).
+                # proposed / failed never restore (§8).
                 return _refuse("restore", workflow, REASON_RESTORE_UNAVAILABLE)
 
-            try:
-                inverse_plan = await _maybe_await(
-                    self._build_inverse(
-                        workflow=workflow, run_operation=self._run_operation
-                    )
+            if is_split:
+                return await self._restore_split(workflow, requested_by)
+            return await self._restore_trim(workflow, requested_by)
+
+    async def _restore_trim(
+        self, workflow: dict[str, Any], requested_by: str
+    ) -> dict[str, Any]:
+        """Trim restore: injected inverse step-plan through discover→commit."""
+        proposal_id = workflow["proposal_id"]
+        try:
+            inverse_plan = await _maybe_await(
+                self._build_inverse(
+                    workflow=workflow, run_operation=self._run_operation
                 )
-            except LiveEditorialVerticalError:
-                return _refuse("restore", workflow, REASON_RESTORE_DRIFT)
-
-            try:
-                inverse_discovery = await self._discover(
-                    workflow["proposal"], step_plan=inverse_plan
-                )
-            except EditorialEditWorkflowError:
-                # Fresh host no longer supports the exact inverse => drift (§7.5).
-                return _refuse("restore", workflow, REASON_RESTORE_DRIFT)
-
-            inverse_preview = await self._preview(
-                workflow["proposal"],
-                inverse_discovery,
-                step_plan=inverse_plan,
-                display="Phase 149 restore inverse",
             )
-            inverse_realization = inverse_discovery["realization_discovery"]
-            inverse_manifest_fp = canonical_fingerprint(
-                inverse_preview["manifest"]
-            )
+        except LiveEditorialVerticalError:
+            return _refuse("restore", workflow, REASON_RESTORE_DRIFT)
 
-            outcome = await self._apply_fn(
-                graph_intent_id=inverse_preview["graph_intent_id"],
-                requested_by=requested_by,
+        try:
+            inverse_discovery = await self._discover(
+                workflow["proposal"], step_plan=inverse_plan
             )
-            now = self._clock()
-            restore_record = {
-                "graph_intent_id": inverse_preview["graph_intent_id"],
-                "assent_record_id": inverse_preview["assent_record_id"],
-                "assent_status": outcome.get("assent_status"),
-                "manifest_fingerprint": inverse_manifest_fp,
-                "live_state_fingerprint": inverse_discovery[
-                    "live_state_fingerprint"
-                ],
-                "realization_plan_fingerprint": inverse_realization[
-                    "realization_plan_fingerprint"
-                ],
-                "delta_fingerprint": inverse_realization["delta_fingerprint"],
-                "commit_fingerprint": None,
-            }
-            patch: dict[str, Any] = {
-                "timestamps": {**workflow["timestamps"], "restore": now},
-                "actors": {**workflow["actors"], "restore": requested_by},
-            }
-            if outcome["outcome"] == "applied":
-                restore_record["commit_fingerprint"] = canonical_fingerprint(
-                    outcome["commit_result"]
-                )
-                patch["status"] = "restored"
-                patch["reason_code"] = None
-                patch["restore"] = restore_record
-                stored = await self._store.update(proposal_id, patch)
-                return _build_receipt("restore", stored)
+        except EditorialEditWorkflowError:
+            # Fresh host no longer supports the exact inverse => drift (§7.5).
+            return _refuse("restore", workflow, REASON_RESTORE_DRIFT)
 
-            patch["status"] = "applied"  # forward apply still stands
-            patch["reason_code"] = REASON_RESTORE_FAILED
+        inverse_preview = await self._preview(
+            workflow["proposal"],
+            inverse_discovery,
+            step_plan=inverse_plan,
+            display="Phase 149 restore inverse",
+        )
+        inverse_realization = inverse_discovery["realization_discovery"]
+        inverse_manifest_fp = canonical_fingerprint(inverse_preview["manifest"])
+
+        outcome = await self._apply_fn(
+            graph_intent_id=inverse_preview["graph_intent_id"],
+            requested_by=requested_by,
+        )
+        restore_record = {
+            "graph_intent_id": inverse_preview["graph_intent_id"],
+            "assent_record_id": inverse_preview["assent_record_id"],
+            "assent_status": outcome.get("assent_status"),
+            "manifest_fingerprint": inverse_manifest_fp,
+            "live_state_fingerprint": inverse_discovery["live_state_fingerprint"],
+            "realization_plan_fingerprint": inverse_realization[
+                "realization_plan_fingerprint"
+            ],
+            "delta_fingerprint": inverse_realization["delta_fingerprint"],
+            "commit_fingerprint": None,
+        }
+        return await self._finalize_restore(
+            proposal_id, workflow, restore_record, outcome, requested_by
+        )
+
+    async def _restore_split(
+        self, workflow: dict[str, Any], requested_by: str
+    ) -> dict[str, Any]:
+        """Split restore (#237): replay the persisted recovery token through the
+        admitted ``forge_apply_segment_split_restore`` counterpart. Bridge never
+        reconstructs the token or computes version indices."""
+        proposal_id = workflow["proposal_id"]
+        if self._split_restore_preview_fn is None:
+            return _refuse("restore", workflow, REASON_RESTORE_UNAVAILABLE)
+        recovery = workflow.get("forward_split_recovery")
+        recovery_fp = workflow.get("forward_split_recovery_fingerprint")
+        if not recovery or not recovery_fp:
+            # No trusted token captured at forward apply => fail closed.
+            return _refuse("restore", workflow, REASON_RESTORE_UNAVAILABLE)
+        if canonical_fingerprint(recovery) != recovery_fp:
+            # Persisted token tampered/altered => drift, never dispatch.
+            return _refuse("restore", workflow, REASON_RESTORE_DRIFT)
+
+        sequence_name = workflow["proposal"].get("sequence_name")
+        try:
+            preview = await self._split_restore_preview_fn(
+                sequence_name=sequence_name,
+                recovery=recovery,
+                display="Phase 149 split restore",
+            )
+        except _SplitRestoreUnavailable:
+            return _refuse("restore", workflow, REASON_RESTORE_UNAVAILABLE)
+        except _SplitRestoreDrift:
+            return _refuse("restore", workflow, REASON_RESTORE_DRIFT)
+
+        manifest_fp = canonical_fingerprint(preview["manifest"])
+        outcome = await self._apply_fn(
+            graph_intent_id=preview["graph_intent_id"],
+            requested_by=requested_by,
+        )
+        restore_record = {
+            "graph_intent_id": preview["graph_intent_id"],
+            "assent_record_id": preview["assent_record_id"],
+            "assent_status": outcome.get("assent_status"),
+            "manifest_fingerprint": manifest_fp,
+            # Split restore has no editorial live-state/realization/delta fps;
+            # the recovery token is its held authority.
+            "live_state_fingerprint": None,
+            "realization_plan_fingerprint": None,
+            "delta_fingerprint": None,
+            "recovery_fingerprint": recovery_fp,
+            "commit_fingerprint": None,
+        }
+        return await self._finalize_restore(
+            proposal_id, workflow, restore_record, outcome, requested_by
+        )
+
+    async def _finalize_restore(
+        self,
+        proposal_id: str,
+        workflow: dict[str, Any],
+        restore_record: dict[str, Any],
+        outcome: Mapping[str, Any],
+        requested_by: str,
+    ) -> dict[str, Any]:
+        """Persist restore evidence + linkage. Root forward fingerprints stay
+        untouched — restore is a separately governed inverse, not a rewrite."""
+        now = self._clock()
+        patch: dict[str, Any] = {
+            "timestamps": {**workflow["timestamps"], "restore": now},
+            "actors": {**workflow["actors"], "restore": requested_by},
+        }
+        if outcome["outcome"] == "applied":
+            restore_record["commit_fingerprint"] = canonical_fingerprint(
+                outcome["commit_result"]
+            )
+            patch["status"] = "restored"
+            patch["reason_code"] = None
             patch["restore"] = restore_record
             stored = await self._store.update(proposal_id, patch)
-            return _refuse("restore", stored, REASON_RESTORE_FAILED)
+            return _build_receipt("restore", stored)
+
+        patch["status"] = "applied"  # forward apply still stands
+        patch["reason_code"] = REASON_RESTORE_FAILED
+        patch["restore"] = restore_record
+        stored = await self._store.update(proposal_id, patch)
+        return _refuse("restore", stored, REASON_RESTORE_FAILED)
 
     # -- internals --------------------------------------------------------- #
     async def _discover(
@@ -681,6 +785,7 @@ def make_editorial_edit_workflow_api(
     preview_fn: PreviewFn | None = None,
     apply_fn: ApplyFn | None = None,
     build_inverse_step_plan: BuildInverseFn | None = None,
+    split_restore_preview_fn: SplitRestorePreviewFn | None = None,
     clock: Callable[[], str] | None = None,
 ) -> EditorialEditWorkflowAPI:
     """Construct the workflow API.
@@ -699,12 +804,17 @@ def make_editorial_edit_workflow_api(
         preview_fn = _default_preview_fn(session_factory, mcp)
     if apply_fn is None:
         apply_fn = _default_apply_fn(session_factory, mcp)
+    if split_restore_preview_fn is None and session_factory is not None:
+        split_restore_preview_fn = _default_split_restore_preview_fn(
+            session_factory, mcp
+        )
     return EditorialEditWorkflowAPI(
         run_operation=run_operation,
         preview_fn=preview_fn,
         apply_fn=apply_fn,
         store=store,
         build_inverse_step_plan=build_inverse_step_plan,
+        split_restore_preview_fn=split_restore_preview_fn,
         clock=clock,
     )
 
@@ -739,6 +849,164 @@ def _default_apply_fn(session_factory: Any, mcp: Any) -> ApplyFn:
         )
 
     return apply_fn
+
+
+def _default_split_restore_preview_fn(
+    session_factory: Any, mcp: Any
+) -> SplitRestorePreviewFn:
+    if session_factory is None:
+        raise ValueError(
+            "session_factory is required for the default split_restore_preview_fn"
+        )
+
+    async def split_restore_preview_fn(
+        *, sequence_name: str, recovery: Mapping[str, Any], display: str
+    ) -> dict[str, Any]:
+        return await _preview_split_restore_for_ratification(
+            sequence_name=sequence_name,
+            recovery=recovery,
+            session_factory=session_factory,
+            mcp=mcp,
+            display=display,
+        )
+
+    return split_restore_preview_fn
+
+
+async def _preview_split_restore_for_ratification(
+    *,
+    sequence_name: str,
+    recovery: Mapping[str, Any],
+    session_factory: Any,
+    mcp: Any,
+    display: str,
+) -> dict[str, Any]:
+    """Discover the split-restore counterpart with the held token and persist a
+    proposed AssentRecord holding its manifest.
+
+    Mirrors ``preview_editorial_delta_for_ratification`` but sources the held
+    manifest from a direct ``forge_apply_segment_split_restore`` discover call
+    rather than an editorial graph. Bridge passes the token back untouched.
+    """
+    from forge_bridge.composition.boundary import (
+        _extract_payload,
+        _maybe_list_tools,
+    )
+    from forge_bridge.graph.mutation import (
+        MutationManifest,
+        MutationManifestError,
+    )
+    from forge_bridge.orchestration.apply_editorial_delta import (
+        GRAPH_REPLAY_METADATA_KEY,
+        build_graph_replay_metadata,
+    )
+    from forge_bridge.store.assent_record_repo import AssentRecordRepo
+
+    if mcp is None:
+        raise _SplitRestoreUnavailable("no commit rail for split restore")
+
+    try:
+        available = await _maybe_list_tools(mcp)
+    except Exception as exc:  # noqa: BLE001 - transport boundary evidence
+        raise _SplitRestoreDrift("tool discovery failed") from exc
+    if available is not None and SPLIT_RESTORE_TOOL not in _available_tool_names(
+        available
+    ):
+        raise _SplitRestoreUnavailable("split restore counterpart not declared")
+
+    arguments = {
+        "sequence_name": sequence_name,
+        "recovery": dict(recovery),
+        "mode": "discover",
+        "resolved_plan": None,
+    }
+    try:
+        payload = _extract_payload(
+            await mcp.call_tool(SPLIT_RESTORE_TOOL, arguments=arguments)
+        )
+    except Exception as exc:  # noqa: BLE001 - transport boundary evidence
+        raise _SplitRestoreDrift("split restore discover failed") from exc
+
+    try:
+        manifest = MutationManifest.from_dict(payload)
+    except (MutationManifestError, KeyError, TypeError) as exc:
+        raise _SplitRestoreDrift("split restore manifest invalid") from exc
+
+    if manifest.apply_counterpart.get("tool") != SPLIT_RESTORE_TOOL:
+        raise _SplitRestoreDrift("split restore manifest tool mismatch")
+    intent = manifest.intent_parameters
+    if intent.get("sequence_name") != sequence_name:
+        raise _SplitRestoreDrift("split restore sequence mismatch")
+    if intent.get("recovery") != dict(recovery):
+        raise _SplitRestoreDrift("split restore token mismatch")
+
+    held_manifest = payload if isinstance(payload, dict) else manifest.to_dict()
+    graph_replay = build_graph_replay_metadata(
+        held_manifest=held_manifest, display=display
+    )
+    async with session_factory() as session:
+        repo = AssentRecordRepo(session)
+        record = await repo.propose(
+            [f"split_restore:{sequence_name}"],
+            metadata={GRAPH_REPLAY_METADATA_KEY: graph_replay},
+        )
+        await session.commit()
+
+    return {
+        "graph_intent_id": record.graph_intent_id,
+        "assent_record_id": str(record.id),
+        "manifest": held_manifest,
+    }
+
+
+def _available_tool_names(available: Any) -> set[str]:
+    return {
+        str(getattr(tool, "name", None))
+        for tool in available
+        if getattr(tool, "name", None)
+    }
+
+
+def _extract_split_recovery(
+    outcome: Mapping[str, Any], sequence_name: Optional[str]
+) -> Optional[dict[str, Any]]:
+    """Pull the single closed recovery token from a forward split apply result.
+
+    Returns ``None`` (never raises) if the shape is not exactly one valid
+    schema-1 token for this sequence — the forward apply still stands.
+    """
+    commit_result = outcome.get("commit_result")
+    if not isinstance(commit_result, dict):
+        return None
+    apply_result = commit_result.get("apply_result")
+    if not isinstance(apply_result, dict):
+        return None
+    results = apply_result.get("results")
+    if not isinstance(results, list) or len(results) != 1:
+        return None
+    first = results[0]
+    if not isinstance(first, dict):
+        return None
+    recovery = first.get("recovery")
+    if not _is_valid_recovery_token(recovery, sequence_name):
+        return None
+    return dict(recovery)
+
+
+def _is_valid_recovery_token(
+    recovery: Any, sequence_name: Optional[str]
+) -> bool:
+    if not isinstance(recovery, dict):
+        return False
+    if recovery.get("schema_version") != 1:
+        return False
+    if not recovery.get("method"):
+        return False
+    if recovery.get("sequence_name") != sequence_name:
+        return False
+    if "created_version_index" not in recovery:
+        return False
+    return True
 
 
 async def _ratify_and_commit_graph_replay(
