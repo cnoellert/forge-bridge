@@ -216,6 +216,10 @@ ENTITY_TYPES = frozenset({
     # Fitted-model consent latch (#161) — a person's asset-bound authorization
     # to fit + replay their likeness; withdrawal propagates to asset revocation.
     "consent_grant",
+    # Editorial-edit workflow correlation (#235 / Phase 149) — durable
+    # propose->apply->replay->restore authority for one bounded Traffik edit,
+    # indexed by proposal_id; every field in the JSONB attributes dict.
+    "editorial_edit_workflow",
     # Phase 4B orchestration discriminators — PHASE-4B-ORCHESTRATION-DESIGN.md §4
     "orch_pipeline_run",
     "orch_inputs_catalog",
