@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 from types import SimpleNamespace
 
 import pytest
@@ -12,9 +11,6 @@ from forge_core.traffik.editorial_step_capability_operation import (
     TraffikEditorialStepCapabilitiesOperator,
 )
 from forge_core.traffik.plugin import TraffikPlugin
-from forge_core.traffik.tests.test_editing_federation import (
-    _flame_sequence_data,
-)
 from forge_flame.operators.editorial_read_edit_state import (
     FlameEditorialReadEditStateOperator,
 )
@@ -22,6 +18,9 @@ from forge_flame.plugin import FlamePlugin
 from scripts.live_flame_editorial_rename_vertical_uat import (
     LiveEditorialUATError,
     run_live_uat,
+)
+from tests.orchestration.flame_editorial_live_fixture import (
+    trusted_live_flame_sequence_data,
 )
 
 
@@ -39,7 +38,7 @@ class _FakeLiveRuntime:
         )
 
     def _sequence_data(self) -> dict:
-        data = copy.deepcopy(_flame_sequence_data())
+        data = trusted_live_flame_sequence_data()
         data["name"] = "FORGE_UAT_HOST_APPLY_20260624"
         data["reel_name"] = "Testing"
         data["versions"][0]["tracks"][0]["segments"][0]["name"] = (

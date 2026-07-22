@@ -174,6 +174,20 @@ def test_grouped_host_graph_apply_is_a_reviewed_commit_only_counterpart():
     assert "forge_apply_host_graph_plan" in MUTATION_COUNTERPART_TABLE
 
 
+def test_segment_position_is_a_live_proven_commit_only_counterpart():
+    tool_name = "forge_apply_segment_position_delta"
+
+    record = admit_mutation_counterpart(tool_name)
+
+    assert record.state_owner == "dcc_host"
+    assert record.synchronous is True
+    assert record.verify_before_apply is True
+    assert record.assent_required is True
+    assert record.idempotent_apply is True
+    assert tool_name not in ADMISSION_TABLE
+    assert tool_name in MUTATION_COUNTERPART_TABLE
+
+
 @pytest.mark.parametrize(
     "tool_name",
     [

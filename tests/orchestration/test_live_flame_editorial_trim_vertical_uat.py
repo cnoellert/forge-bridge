@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 from types import SimpleNamespace
 
 import pytest
@@ -14,9 +13,6 @@ from forge_core.traffik.editorial_step_capability_operation import (
 )
 from forge_core.traffik.execution import TraffikEditorialOperator
 from forge_core.traffik.plugin import TraffikPlugin
-from forge_core.traffik.tests.test_editing_federation import (
-    _flame_sequence_data,
-)
 from forge_flame.operators.editorial_delta_realization import (
     FlameEditorialDeltaRealizationOperator,
 )
@@ -27,6 +23,9 @@ from forge_flame.plugin import FlamePlugin
 from scripts.live_flame_editorial_trim_vertical_uat import (
     LiveEditorialTrimUATError,
     run_live_uat,
+)
+from tests.orchestration.flame_editorial_live_fixture import (
+    trusted_live_flame_sequence_data,
 )
 
 
@@ -53,17 +52,20 @@ class _FakeLiveTrimRuntime:
         self.realization_operator = FlameEditorialDeltaRealizationOperator()
 
     def _sequence_data(self) -> dict:
-        data = copy.deepcopy(_flame_sequence_data())
+        data = trusted_live_flame_sequence_data()
         data["name"] = "FORGE_UAT_HOST_APPLY_20260624"
         data["reel_name"] = "Testing"
         segment = data["versions"][0]["tracks"][0]["segments"][0]
-        segment["record_out"] = self.current_record_out
-        segment["source_out"] = self.current_source_out
+        segment["record_out"] = self.current_record_out - 1
+        segment["record_duration_frames"] = (
+            self.current_record_out - segment["record_in"]
+        )
+        segment["source_out"] = self.current_source_out - 1
         source_timecode_frame = (
-            1024
+            1023
             if self.stale_source_timecode_after_apply
             and self.current_source_out != 1024
-            else self.current_source_out
+            else self.current_source_out - 1
         )
         source_out_tc = TraffickFrame(
             source_timecode_frame,

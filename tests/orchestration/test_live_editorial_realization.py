@@ -398,3 +398,51 @@ async def test_preview_builder_refuses_tampered_discovery() -> None:
             step_plan=_step_plan(),
             realization_discovery=tampered,
         )
+
+
+@pytest.mark.asyncio
+async def test_blocked_position_realization_cannot_mint_trusted_discovery() -> None:
+    calls: list[str] = []
+
+    async def run_operation(operation_type: str, **_kwargs):
+        calls.append(operation_type)
+        if operation_type == EDITORIAL_STEP_CAPABILITIES_OPERATION_TYPE:
+            return {"status": "succeeded", "data": _semantic_data()}
+        if operation_type == LIVE_FLAME_READ_OPERATION_TYPE:
+            return {
+                "status": "succeeded",
+                "data": {"project": {"id": "project-1"}, "session": {}},
+            }
+        if operation_type == EDITORIAL_APPLY_STEPS_OPERATION_TYPE:
+            return {"status": "succeeded", "data": _apply_result()}
+        if operation_type == FLAME_EDITORIAL_DELTA_REALIZATION_OPERATION_TYPE:
+            held = _realization_data()
+            held.update(
+                status="blocked",
+                trust_status="review_required",
+                allowed=False,
+            )
+            held["realization_plan"] = {
+                **held["realization_plan"],
+                "executor": "forge_apply_segment_position_delta",
+            }
+            return {"status": "succeeded", "data": held}
+        raise AssertionError(operation_type)
+
+    with pytest.raises(
+        LiveEditorialVerticalError,
+        match="exact realization is not trusted",
+    ):
+        await discover_live_flame_realization(
+            _step_plan(),
+            sequence_name="FORGE_UAT_HOST_APPLY_20260624",
+            run_operation=run_operation,
+            authorization_id="phase117-position-hold",
+        )
+
+    assert calls == [
+        EDITORIAL_STEP_CAPABILITIES_OPERATION_TYPE,
+        LIVE_FLAME_READ_OPERATION_TYPE,
+        EDITORIAL_APPLY_STEPS_OPERATION_TYPE,
+        FLAME_EDITORIAL_DELTA_REALIZATION_OPERATION_TYPE,
+    ]
