@@ -273,6 +273,16 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         state_owner="dcc_host",
     ),
     AdmissionRecord(
+        operator_id="flame.editorial.delta_realization",
+        resolved_class="pipeline.flame.editorial.delta_realization",
+        dispatch_kind="operation",
+        synchronous=True,
+        returns_reference=False,
+        no_state_mutation=True,
+        idempotent_result=True,
+        state_owner="read_only",
+    ),
+    AdmissionRecord(
         operator_id="traffik.flame_delta.host_resolve",
         resolved_class="pipeline.traffik.flame_delta.host_resolve",
         dispatch_kind="operation",

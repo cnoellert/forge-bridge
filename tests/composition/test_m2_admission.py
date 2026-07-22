@@ -56,6 +56,14 @@ def test_admission_accepts_slice_one_operator_ids():
     assert live_read.no_state_mutation is True
     assert live_read.idempotent_result is True
     assert live_read.state_owner == "dcc_host"
+    realization = admit_operator("flame.editorial.delta_realization")
+    assert realization.resolved_class == (
+        "pipeline.flame.editorial.delta_realization"
+    )
+    assert realization.dispatch_kind == "operation"
+    assert realization.no_state_mutation is True
+    assert realization.idempotent_result is True
+    assert realization.state_owner == "read_only"
     for operation_id in (
         "traffik.editorial.resolve_top_video_layer",
         "traffik.editorial.mark_timecode_range",
@@ -291,6 +299,7 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "traffik.editorial.apply_steps",
         "traffik.editorial.step_capabilities",
         "flame.editorial.read_edit_state",
+        "flame.editorial.delta_realization",
         "traffik.editorial.resolve_top_video_layer",
         "traffik.editorial.mark_timecode_range",
         "traffik.editorial.overwrite_insert",
