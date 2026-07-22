@@ -26,7 +26,7 @@ projekt-forge pins specific forge-bridge versions and builds production workflow
 
 ## Current Status
 
-Shipped at **v1.9.8** (2026-07-18). Conversational Reads now distinguishes missing information from missing capability, renders complete pure shot-name lists without a second model pass, and grounds directly named projects to exact registry identities. The v1.9.1 patch normalizes quoted prefixes and Flame reel names; v1.9.2 keeps current `websockets` compatibility; v1.9.3-v1.9.4 admit Pipeline load, refresh, and version-switch commit counterparts; v1.9.5 adds reviewed peer-owned stream-promotion copies; v1.9.6 composes the post-copy validation and registration plan into a separate verify-before-apply, assent-required Bridge-owned catalog commit; v1.9.7 admits Pipeline's atomic publish transaction under explicit federated transaction authority; and v1.9.8 adds read-only transaction status plus held, peer-owned safe abort. Milestones v1.5 Legibility (install + concept docs + recipes + diagnostics), v1.6 Operability (graph-native operational runtime, doctor observability, chat-layer convergence), v1.7 Artist Readiness (NL → compile → preview → ratify → apply authority chain), and v1.8 Console Authority (ratification projection onto the Console) have all shipped since the v1.4.1 baseline. Public `forge_bridge.__all__` remains **19 symbols** — the surface has stayed stable while behavior deepened.
+Shipped at **v1.9.9** (2026-07-22). v1.9.9 adds the closed editorial-edit workflow API (Phase 149): one durable propose → ratify_apply → status → replay → restore product surface over the exact-realization + AssentRecord + commit machinery, returning path-free, canonically-fingerprinted receipts (split restore gated on the Pipeline version-fork counterpart). Conversational Reads distinguishes missing information from missing capability, renders complete pure shot-name lists without a second model pass, and grounds directly named projects to exact registry identities. The v1.9.1 patch normalizes quoted prefixes and Flame reel names; v1.9.2 keeps current `websockets` compatibility; v1.9.3-v1.9.4 admit Pipeline load, refresh, and version-switch commit counterparts; v1.9.5 adds reviewed peer-owned stream-promotion copies; v1.9.6 composes the post-copy validation and registration plan into a separate verify-before-apply, assent-required Bridge-owned catalog commit; v1.9.7 admits Pipeline's atomic publish transaction under explicit federated transaction authority; and v1.9.8 adds read-only transaction status plus held, peer-owned safe abort. Milestones v1.5 Legibility (install + concept docs + recipes + diagnostics), v1.6 Operability (graph-native operational runtime, doctor observability, chat-layer convergence), v1.7 Artist Readiness (NL → compile → preview → ratify → apply authority chain), and v1.8 Console Authority (ratification projection onto the Console) have all shipped since the v1.4.1 baseline. Public `forge_bridge.__all__` remains **19 symbols** — the surface has stayed stable while behavior deepened.
 
 | Component | Status |
 |-----------|--------|
@@ -98,10 +98,10 @@ Python 3.10 is the minimum supported version (per `pyproject.toml`); the `forge`
 ./scripts/install-flame-hook.sh
 
 # Or standalone on any Flame workstation — no clone required:
-curl -fsSL https://raw.githubusercontent.com/cnoellert/forge-bridge/v1.9.8/scripts/install-flame-hook.sh | bash
+curl -fsSL https://raw.githubusercontent.com/cnoellert/forge-bridge/v1.9.9/scripts/install-flame-hook.sh | bash
 ```
 
-The installer copies `forge_bridge.py` into `/opt/Autodesk/shared/python/forge_bridge/scripts/` and sanity-checks the result. Override `FORGE_BRIDGE_VERSION` (default `v1.9.8`) or `FORGE_BRIDGE_HOOK_DIR` (default the Flame shared-python path) as needed.
+The installer copies `forge_bridge.py` into `/opt/Autodesk/shared/python/forge_bridge/scripts/` and sanity-checks the result. Override `FORGE_BRIDGE_VERSION` (default `v1.9.9`) or `FORGE_BRIDGE_HOOK_DIR` (default the Flame shared-python path) as needed.
 
 Flame will load the hook automatically on next launch. The bridge starts on `http://127.0.0.1:9999/` by default.
 
