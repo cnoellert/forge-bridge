@@ -29,6 +29,14 @@ from forge_bridge.orchestration.drivers import (
     GenerationDriverRegistry,
     resolve_backend_id,
 )
+from forge_bridge.orchestration.editorial_edit_workflow import (
+    EditorialEditWorkflowAPI,
+    EditorialEditWorkflowError,
+    EditorialEditWorkflowStore,
+    InMemoryEditorialEditWorkflowStore,
+    SessionFactoryEditorialEditWorkflowStore,
+    make_editorial_edit_workflow_api,
+)
 from forge_bridge.orchestration.engine import GraphEngine, UNSET
 from forge_bridge.orchestration.errors import (
     AmendedIntentLineageError,
@@ -103,6 +111,12 @@ from forge_bridge.orchestration.worker import GenerationPoller, PollPassResult
 __all__ = [
     "GraphEngine",
     "UNSET",
+    "EditorialEditWorkflowAPI",
+    "EditorialEditWorkflowError",
+    "EditorialEditWorkflowStore",
+    "InMemoryEditorialEditWorkflowStore",
+    "SessionFactoryEditorialEditWorkflowStore",
+    "make_editorial_edit_workflow_api",
     "GenerationPoller",
     "PollPassResult",
     "InvocationEnvelope",
