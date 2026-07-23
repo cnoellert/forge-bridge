@@ -1201,8 +1201,14 @@ def _build_receipt(
             "forward_manifest_fingerprint"
         ]
         receipt["assent_record_id"] = workflow["forward_assent_record_id"]
-        receipt["assent_status"] = workflow["forward_assent_status"]
-        receipt["commit_fingerprint"] = workflow["forward_commit_fingerprint"]
+        if action == "propose":
+            # An exact duplicate propose returns the immutable original receipt,
+            # even after the durable workflow advances to a terminal state.
+            receipt["assent_status"] = "proposed"
+            receipt["commit_fingerprint"] = None
+        else:
+            receipt["assent_status"] = workflow["forward_assent_status"]
+            receipt["commit_fingerprint"] = workflow["forward_commit_fingerprint"]
 
     flags = _receipt_flags(status)
     receipt.update(flags)
