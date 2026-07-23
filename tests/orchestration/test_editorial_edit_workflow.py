@@ -260,6 +260,33 @@ async def test_exact_duplicate_propose_is_idempotent(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_exact_duplicate_propose_retains_original_receipt_after_failure(
+    monkeypatch,
+):
+    api, rec, _ = build_api(monkeypatch)
+    proposal = make_proposal()
+    proposed = await _proposed(api, proposal)
+    rec.apply_outcome = {
+        "outcome": "failed",
+        "assent_status": "failed",
+        "reason_code": eew.REASON_COMMIT_FAILED,
+        "commit_result": {"type": "commit_failed"},
+    }
+
+    failed = await api.ratify_apply(
+        proposal_id=proposed["proposal_id"],
+        expected_proposal_fingerprint=proposed["proposal_fingerprint"],
+        requested_by="ratifier@example",
+    )
+    duplicate = await api.propose(proposal)
+
+    assert failed["status"] == "failed"
+    assert duplicate == proposed
+    assert rec.preview_calls == 1
+    assert rec.apply_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_preview_authority_collision_refuses(monkeypatch):
     api, _, store = build_api(monkeypatch)
     a = make_proposal(tag="a")
