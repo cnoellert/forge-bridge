@@ -223,8 +223,14 @@ def test_typed_workfile_lifecycle_runs_via_flame_adapter(
     adapter_module = ModuleType("forge_flame.workfile_adapter")
 
     class FlameWorkfileAdapter:
-        def __init__(self, *, flame_module: object) -> None:
+        def __init__(
+            self,
+            *,
+            flame_module: object,
+            context: dict[str, object],
+        ) -> None:
             self.flame_module = flame_module
+            self.context = context
 
     adapter_module.FlameWorkfileAdapter = FlameWorkfileAdapter
     flame_namespace = object()
@@ -252,6 +258,7 @@ def test_typed_workfile_lifecycle_runs_via_flame_adapter(
     adapter = plugin.workfile_adapter()
     assert isinstance(adapter, FlameWorkfileAdapter)
     assert adapter.flame_module is flame_namespace
+    assert adapter.context == {"already_on_main_thread": True}
 
 
 def test_bootstrap_adds_source_and_conda_runtime(

@@ -336,6 +336,7 @@ def _execute_typed_workfile_lifecycle(params):
     plugin = FlamePlugin()
     plugin.workfile_adapter = lambda: FlameWorkfileAdapter(  # type: ignore[method-assign]
         flame_module=_namespace.get("flame"),
+        context={"already_on_main_thread": True},
     )
     return execute_workfile_host_dispatch(params, plugins=[plugin])
 
