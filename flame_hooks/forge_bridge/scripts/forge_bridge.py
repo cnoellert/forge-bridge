@@ -326,6 +326,20 @@ def _execute_typed_host_graph_mutation(params):
     return execute_host_graph_mutation_dispatch(params, plugins=[FlamePlugin()])
 
 
+def _execute_typed_workfile_lifecycle(params):
+    """Execute one exact Flame Batch workfile save/open in the host process."""
+    _bootstrap_forge_runtime()
+    from forge_core.workfile.host_dispatch import execute_workfile_host_dispatch
+    from forge_flame.plugin import FlamePlugin
+    from forge_flame.workfile_adapter import FlameWorkfileAdapter
+
+    plugin = FlamePlugin()
+    plugin.workfile_adapter = lambda: FlameWorkfileAdapter(  # type: ignore[method-assign]
+        flame_module=_namespace.get("flame"),
+    )
+    return execute_workfile_host_dispatch(params, plugins=[plugin])
+
+
 def _bootstrap_forge_runtime():
     """Make an installed or source Forge runtime importable inside Flame."""
     repo_root = os.environ.get("FORGE_REPO_ROOT", "").strip()
@@ -427,6 +441,15 @@ def _exec_typed_host_graph_mutation_on_main_thread(params, timeout=None):
         timeout=timeout,
     )
 
+
+def _exec_typed_workfile_lifecycle_on_main_thread(params, timeout=None):
+    """Run a typed workfile save/open on Flame's main thread."""
+    return _exec_typed_operation_on_main_thread(
+        _execute_typed_workfile_lifecycle,
+        params,
+        timeout=timeout,
+    )
+
 # ========================================================================== #
 # HTTP Server
 # ========================================================================== #
@@ -515,6 +538,7 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             "host_graph_mutation",
             "host_graph_read",
             "shot_resource_load",
+            "workfile_lifecycle",
         }:
             self._send_json(400, {"error": "Unknown operation"})
             return
@@ -529,6 +553,11 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             return
         if op_name == "shot_resource_load":
             result = _exec_typed_host_load_on_main_thread(
+                params,
+                timeout=timeout,
+            )
+        elif op_name == "workfile_lifecycle":
+            result = _exec_typed_workfile_lifecycle_on_main_thread(
                 params,
                 timeout=timeout,
             )
