@@ -37,6 +37,11 @@ from forge_bridge.orchestration.editorial_edit_workflow import (
     SessionFactoryEditorialEditWorkflowStore,
     make_editorial_edit_workflow_api,
 )
+from forge_bridge.orchestration.editorial_workspace_publish_workflow import (
+    EditorialWorkspacePublishWorkflowAPI,
+    EditorialWorkspacePublishWorkflowError,
+    make_editorial_workspace_publish_workflow_api,
+)
 from forge_bridge.orchestration.engine import GraphEngine, UNSET
 from forge_bridge.orchestration.errors import (
     AmendedIntentLineageError,
@@ -117,6 +122,9 @@ __all__ = [
     "InMemoryEditorialEditWorkflowStore",
     "SessionFactoryEditorialEditWorkflowStore",
     "make_editorial_edit_workflow_api",
+    "EditorialWorkspacePublishWorkflowAPI",
+    "EditorialWorkspacePublishWorkflowError",
+    "make_editorial_workspace_publish_workflow_api",
     "GenerationPoller",
     "PollPassResult",
     "InvocationEnvelope",
