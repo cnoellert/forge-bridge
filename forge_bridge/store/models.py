@@ -220,6 +220,11 @@ ENTITY_TYPES = frozenset({
     # propose->apply->replay->restore authority for one bounded Traffik edit,
     # indexed by proposal_id; every field in the JSONB attributes dict.
     "editorial_edit_workflow",
+    # Generic durable product-workflow correlation (#242) — ONE row family
+    # shared by several workflow kinds via the JSONB `kind` discriminator, so a
+    # new workflow family needs no further migration. Indexed by
+    # (kind, proposal_id).
+    "orch_workflow_record",
     # Phase 4B orchestration discriminators — PHASE-4B-ORCHESTRATION-DESIGN.md §4
     "orch_pipeline_run",
     "orch_inputs_catalog",
@@ -341,6 +346,19 @@ class DBEntity(Base):
             postgresql_where=text(
                 "entity_type = 'orch_generation_artifact' "
                 "AND attributes ? 'idempotency_key'"
+            ),
+        ),
+        # #242 migration 0016 — one durable workflow authority row per
+        # (kind, proposal_id); a duplicate propose can never create a second.
+        Index(
+            "uq_entities_orch_workflow_record_kind_proposal_id",
+            text("(attributes ->> 'kind')"),
+            text("(attributes ->> 'proposal_id')"),
+            unique=True,
+            postgresql_where=text(
+                "entity_type = 'orch_workflow_record' "
+                "AND attributes ? 'kind' "
+                "AND attributes ? 'proposal_id'"
             ),
         ),
         # GIN index on JSONB attributes for fast containment queries
