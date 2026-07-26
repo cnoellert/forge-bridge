@@ -306,6 +306,87 @@ def commit_error(commit_result: Any) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
+# Host-generated recovery tokens
+# --------------------------------------------------------------------------- #
+# A host mutation that ships its own inverse hands back ONE closed recovery
+# token on the forward apply. Bridge persists it byte-for-byte and hands it
+# straight back to the host's recovery counterpart — it never reconstructs the
+# token or computes any index inside it. #235/#237 (split restore) is the first
+# consumer; #241 (temporal transaction restore) is the second. The token BODIES
+# differ per host mutation, so the per-key expectations are parameters, not
+# assumptions baked in here.
+def is_valid_recovery_token(
+    recovery: Any,
+    sequence_name: Optional[str],
+    *,
+    schema_version: int = 1,
+    kind: Optional[str] = None,
+    truthy_keys: tuple[str, ...] = ("method",),
+    required_keys: tuple[str, ...] = (),
+) -> bool:
+    """Is this exactly one valid recovery token for this sequence?
+
+    ``kind`` is only checked when supplied — #235's shipped split token carries
+    no ``kind`` field, so requiring one would reject live tokens.
+    """
+    if not isinstance(recovery, dict):
+        return False
+    if kind is not None and recovery.get("kind") != kind:
+        return False
+    if recovery.get("schema_version") != schema_version:
+        return False
+    for key in truthy_keys:
+        if not recovery.get(key):
+            return False
+    if recovery.get("sequence_name") != sequence_name:
+        return False
+    for key in required_keys:
+        if key not in recovery:
+            return False
+    return True
+
+
+def extract_recovery_token(
+    outcome: Mapping[str, Any],
+    sequence_name: Optional[str],
+    *,
+    results_index: Optional[int] = 0,
+    **checks: Any,
+) -> Optional[dict[str, Any]]:
+    """Pull the single closed recovery token out of a forward apply result.
+
+    Hosts hand the token back at different depths. ``results_index=0`` is
+    #235/#237's member-scoped path (``apply_result.results[0].recovery``,
+    which additionally requires exactly one result row); ``results_index=None``
+    is the aggregate path (``apply_result.recovery``), where ``results``
+    carries one row per transaction member and the token sits beside them.
+
+    Returns ``None`` (never raises) if the shape is not exactly one valid token
+    for this sequence — a missing or malformed token never rewrites the forward
+    apply's success, it only leaves the restore rail unavailable.
+    """
+    commit_result = outcome.get("commit_result")
+    if not isinstance(commit_result, dict):
+        return None
+    apply_result = commit_result.get("apply_result")
+    if not isinstance(apply_result, dict):
+        return None
+    if results_index is None:
+        recovery = apply_result.get("recovery")
+    else:
+        results = apply_result.get("results")
+        if not isinstance(results, list) or len(results) != 1:
+            return None
+        first = results[0]
+        if not isinstance(first, dict):
+            return None
+        recovery = first.get("recovery")
+    if not is_valid_recovery_token(recovery, sequence_name, **checks):
+        return None
+    return dict(recovery)
+
+
+# --------------------------------------------------------------------------- #
 # Small shared helpers
 # --------------------------------------------------------------------------- #
 def is_sha256(value: Any) -> bool:
@@ -349,10 +430,12 @@ __all__ = [
     "assent_failure_reason",
     "canonical_fingerprint",
     "commit_error",
+    "extract_recovery_token",
     "finalize_receipt",
     "fingerprint_refusal",
     "held_manifest_from_record",
     "is_sha256",
+    "is_valid_recovery_token",
     "maybe_await",
     "refuse",
     "sanitize",

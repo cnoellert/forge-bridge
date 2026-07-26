@@ -53,6 +53,7 @@ from forge_bridge.orchestration.workflow_core import (
     assent_failure_reason as _assent_failure_reason,
     canonical_fingerprint,
     commit_error as _commit_error,
+    extract_recovery_token as _extract_recovery_token,
     finalize_receipt,
     fingerprint_refusal as _core_fingerprint_refusal,
     held_manifest_from_record as _held_manifest_from_record,
@@ -908,6 +909,17 @@ def _available_tool_names(available: Any) -> set[str]:
     }
 
 
+# The split token's own shape (#237): schema 1, a truthy ``method``, this
+# sequence, and the created version index the restore counterpart replays.
+# The extraction mechanics live in ``workflow_core``; only these per-token
+# expectations are #235's.
+_SPLIT_RECOVERY_CHECKS = {
+    "schema_version": 1,
+    "truthy_keys": ("method",),
+    "required_keys": ("created_version_index",),
+}
+
+
 def _extract_split_recovery(
     outcome: Mapping[str, Any], sequence_name: Optional[str]
 ) -> Optional[dict[str, Any]]:
@@ -916,38 +928,9 @@ def _extract_split_recovery(
     Returns ``None`` (never raises) if the shape is not exactly one valid
     schema-1 token for this sequence — the forward apply still stands.
     """
-    commit_result = outcome.get("commit_result")
-    if not isinstance(commit_result, dict):
-        return None
-    apply_result = commit_result.get("apply_result")
-    if not isinstance(apply_result, dict):
-        return None
-    results = apply_result.get("results")
-    if not isinstance(results, list) or len(results) != 1:
-        return None
-    first = results[0]
-    if not isinstance(first, dict):
-        return None
-    recovery = first.get("recovery")
-    if not _is_valid_recovery_token(recovery, sequence_name):
-        return None
-    return dict(recovery)
-
-
-def _is_valid_recovery_token(
-    recovery: Any, sequence_name: Optional[str]
-) -> bool:
-    if not isinstance(recovery, dict):
-        return False
-    if recovery.get("schema_version") != 1:
-        return False
-    if not recovery.get("method"):
-        return False
-    if recovery.get("sequence_name") != sequence_name:
-        return False
-    if "created_version_index" not in recovery:
-        return False
-    return True
+    return _extract_recovery_token(
+        outcome, sequence_name, **_SPLIT_RECOVERY_CHECKS
+    )
 
 
 async def _ratify_and_commit_graph_replay(
