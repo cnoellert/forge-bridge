@@ -202,6 +202,83 @@ def test_segment_split_is_a_live_proven_commit_only_counterpart():
     assert tool_name in MUTATION_COUNTERPART_TABLE
 
 
+def test_segment_temporal_transaction_is_a_commit_only_counterpart():
+    """#241: the aggregate ordered-command transaction (2-8 commands)."""
+    tool_name = "forge_apply_segment_temporal_transaction"
+
+    record = admit_mutation_counterpart(tool_name)
+
+    assert record.state_owner == "dcc_host"
+    assert record.synchronous is True
+    assert record.verify_before_apply is True
+    assert record.assent_required is True
+    assert record.idempotent_apply is True
+    assert tool_name not in ADMISSION_TABLE
+    assert tool_name in MUTATION_COUNTERPART_TABLE
+
+
+def test_segment_temporal_transaction_restore_is_a_commit_only_counterpart():
+    """#241: the separately discoverable recovery counterpart."""
+    tool_name = "forge_apply_segment_temporal_transaction_restore"
+
+    record = admit_mutation_counterpart(tool_name)
+
+    assert record.state_owner == "dcc_host"
+    assert record.synchronous is True
+    assert record.verify_before_apply is True
+    assert record.assent_required is True
+    assert record.idempotent_apply is True
+    assert tool_name not in ADMISSION_TABLE
+    assert tool_name in MUTATION_COUNTERPART_TABLE
+
+
+def test_transaction_realization_mirrors_the_delta_realization_profile():
+    """#241: the aggregate realization operator, same profile as the single."""
+    transaction = admit_operator("flame.editorial.transaction_realization")
+    single = admit_operator("flame.editorial.delta_realization")
+
+    assert transaction.resolved_class == (
+        "pipeline.flame.editorial.transaction_realization"
+    )
+    assert transaction.dispatch_kind == "operation"
+    assert transaction.synchronous is True
+    assert transaction.returns_reference is False
+    assert transaction.no_state_mutation is True
+    assert transaction.idempotent_result is True
+    assert transaction.state_owner == "read_only"
+    for field in (
+        "dispatch_kind",
+        "synchronous",
+        "returns_reference",
+        "no_state_mutation",
+        "idempotent_result",
+        "state_owner",
+    ):
+        assert getattr(transaction, field) == getattr(single, field), field
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "forge_apply_segment_temporal_transaction",
+        "forge_apply_segment_temporal_transaction_restore",
+    ],
+)
+def test_transaction_counterparts_match_the_split_pair_profile(tool_name):
+    """The split pair is #241's declared precedent — prove they agree."""
+    record = admit_mutation_counterpart(tool_name)
+    split = admit_mutation_counterpart("forge_apply_segment_split_delta")
+
+    for field in (
+        "state_owner",
+        "synchronous",
+        "verify_before_apply",
+        "assent_required",
+        "idempotent_apply",
+    ):
+        assert getattr(record, field) == getattr(split, field), field
+
+
 @pytest.mark.parametrize(
     "tool_name",
     [
@@ -328,6 +405,7 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "traffik.editorial.step_capabilities",
         "flame.editorial.read_edit_state",
         "flame.editorial.delta_realization",
+        "flame.editorial.transaction_realization",
         "traffik.editorial.resolve_top_video_layer",
         "traffik.editorial.mark_timecode_range",
         "traffik.editorial.overwrite_insert",

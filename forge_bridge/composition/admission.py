@@ -283,6 +283,21 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         state_owner="read_only",
     ),
     AdmissionRecord(
+        operator_id="flame.editorial.transaction_realization",
+        resolved_class="pipeline.flame.editorial.transaction_realization",
+        dispatch_kind="operation",
+        synchronous=True,
+        returns_reference=False,
+        # The aggregate (2-8 ordered commands) sibling of
+        # flame.editorial.delta_realization. Its discover mode reads host state
+        # and applies the ordered commands PURELY, emitting held realization
+        # evidence; a downstream commit owns host mutation. Same declared
+        # profile as the single-command realization operator.
+        no_state_mutation=True,
+        idempotent_result=True,
+        state_owner="read_only",
+    ),
+    AdmissionRecord(
         operator_id="traffik.flame_delta.host_resolve",
         resolved_class="pipeline.traffik.flame_delta.host_resolve",
         dispatch_kind="operation",
@@ -635,6 +650,12 @@ _MUTATION_COUNTERPART_RECORDS = (
             "forge_apply_segment_split_restore",
             "forge_apply_segment_start_frame_delta",
             "forge_apply_segment_temporal_delta",
+            # #241: the aggregate ordered-command transaction and its
+            # separately discoverable recovery counterpart. Same commit-only
+            # profile as the split pair above — discovery never reaches the
+            # executor surface, only the verify-before-apply CommitBoundary.
+            "forge_apply_segment_temporal_transaction",
+            "forge_apply_segment_temporal_transaction_restore",
             "forge_apply_host_graph_plan",
             "forge_load_shot_resources",
             "forge_load_sequence_resources",
