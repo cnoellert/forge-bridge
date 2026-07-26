@@ -3,12 +3,26 @@ transaction workflow. Every numbered test maps to one bullet of the handoff's
 "Acceptance Matrix".
 
 Like the #242 matrix (and unlike #235's), these do NOT fake the commit rail:
-the API is built with the REAL verify-before-apply ``CommitBoundary`` driven by
-a fake MCP shaped like the Pipeline transaction callables, and a fake operation
-runner for ``flame.editorial.transaction_realization``. Only Postgres is
-substituted (in-memory workflow store + in-memory AssentRecord gateway), so
+the API is built with the REAL verify-before-apply ``CommitBoundary``, driven by
+a fake MCP that REPLAYS PRODUCTION SHAPES. Only Postgres is substituted
+(in-memory workflow store + in-memory AssentRecord gateway), so
 discover/verify/apply ordering, assent gating, and drift refusal are genuine
 rail proofs.
+
+The shapes in ``fixtures/editorial_transaction_pipeline_shapes.json`` are
+CAPTURED from Pipeline's released Phase 153 code, end to end and coherent:
+
+    FlameEditorialTransactionRealizationOperator (real)
+      -> its ordered realization deltas
+      -> forge_apply_segment_temporal_transaction discover + apply (real)
+      -> the real flame.editorial.temporal_transaction_recovery token
+      -> forge_apply_segment_temporal_transaction_restore discover + apply (real)
+
+Every manifest, apply payload, and token below is Pipeline's own executable
+output at the same tool boundary Bridge's CommitBoundary talks to — a fixture
+that mirrored a mock instead of production is the exact failure mode this file
+exists to prevent. Drift variants are produced by mutating a real shape, never
+by inventing one.
 """
 
 from __future__ import annotations
@@ -36,18 +50,21 @@ from forge_bridge.orchestration.editorial_transaction_workflow import (
     make_editorial_transaction_workflow_api,
 )
 
-SEQ = "FORGE_UAT_TRANSACTION_20260724"
-SEGMENT = "segment-a1"
-SEQUENCE_ID = "sequence-1"
-TRANSACTION_OPERATION_TYPE = etw.TRANSACTION_OPERATION_TYPE
-RESTORE_OPERATION_TYPE = etw.TRANSACTION_RESTORE_OPERATION_TYPE
-REALIZATION_TYPE = etw.TRANSACTION_REALIZATION_OPERATION_TYPE
-
-_FIXTURE = (
-    Path(__file__).parent
-    / "fixtures"
-    / "editorial_transaction_workflow_receipt.json"
+_FIXTURES = Path(__file__).parent / "fixtures"
+_FIXTURE = _FIXTURES / "editorial_transaction_workflow_receipt.json"
+_SHAPES = json.loads(
+    (_FIXTURES / "editorial_transaction_pipeline_shapes.json").read_text()
 )
+
+REALIZATION_TYPE = etw.TRANSACTION_REALIZATION_OPERATION_TYPE
+SEQ = _SHAPES["sequence_name"]
+STEP_PLAN = _SHAPES["step_plan"]
+SEGMENT = STEP_PLAN["steps"][0]["params"]["segment_id"]
+SEQUENCE_ID = STEP_PLAN["steps"][0]["params"]["sequence_id"]
+REALIZATION_PLAN = _SHAPES["realization_discover"]["realization_plan"]
+DELTAS = REALIZATION_PLAN["deltas"]
+# The flat segment CHANGE inside each TimelineDelta — what the callable takes.
+ENTRIES = _SHAPES["entries"]
 
 
 def _fingerprint(value: Any) -> str:
@@ -61,38 +78,51 @@ def _h(seed: str) -> str:
     return _fingerprint(seed)
 
 
+def _real(name: str) -> Any:
+    return copy.deepcopy(_SHAPES[name])
+
+
 # --------------------------------------------------------------------------- #
-# Proposal / realization / manifest fixtures
+# Proposal / realization / manifest fixtures — real shapes, mutated variants
 # --------------------------------------------------------------------------- #
 def make_step_plan(
     *,
-    operations: tuple[str, ...] = ("trim_head", "trim_tail"),
+    operations: tuple[str, ...] | None = None,
     segments: tuple[str, ...] | None = None,
-    sequence_id: str = SEQUENCE_ID,
+    sequence_id: str | None = None,
 ) -> dict[str, Any]:
-    names = segments if segments is not None else (SEGMENT,) * len(operations)
-    return {
-        "plan_id": "phase153-transaction-plan",
-        "steps": [
-            {
-                "operation": operation,
-                "step_id": f"phase153-{index}-{operation}",
-                "node_id": names[index],
-                "params": {
-                    "sequence_id": sequence_id,
-                    "segment_id": names[index],
-                    "frames": 8 + index,
-                },
-            }
-            for index, operation in enumerate(operations)
-        ],
-    }
+    """The REAL Pipeline step plan, or a mutation of it for a drift case."""
+    plan = _real("step_plan")
+    if operations is None and segments is None and sequence_id is None:
+        return plan
+    template = plan["steps"][0]
+    ops = (
+        operations
+        if operations is not None
+        else tuple(step["operation"] for step in plan["steps"])
+    )
+    names = segments if segments is not None else (SEGMENT,) * len(ops)
+    steps = []
+    for index, operation in enumerate(ops):
+        step = copy.deepcopy(template)
+        step["operation"] = operation
+        step["step_id"] = f"editorial-transaction-{index:02d}-{operation}"
+        step["node_id"] = f"editorial-transaction-{index:02d}-{operation}-node"
+        step["params"] = dict(step["params"])
+        step["params"]["segment_id"] = names[index]
+        if sequence_id is not None:
+            step["params"]["sequence_id"] = sequence_id
+        steps.append(step)
+    plan["steps"] = steps
+    return plan
 
 
 def make_proposal(
     *, step_plan: dict[str, Any] | None = None, tag: str = "a", **overrides: Any
 ) -> dict[str, Any]:
+    """A proposal bound to the REAL realization identities."""
     plan = step_plan if step_plan is not None else make_step_plan()
+    realization = _SHAPES["realization_discover"]
     proposal = {
         "kind": PROPOSAL_KIND,
         "schema_version": 1,
@@ -110,10 +140,14 @@ def make_proposal(
         "final_state_fingerprint": _h(f"final-state-{tag}"),
         "step_plan": plan,
         "step_plan_fingerprint": _fingerprint(plan),
-        "semantic_capability_plan_fingerprint": _h(f"semantic-{tag}"),
-        "pure_apply_fingerprint": _h(f"pure-apply-{tag}"),
-        "delta_set_fingerprint": _h(f"delta-set-{tag}"),
-        "realization_plan_fingerprint": _h(f"realization-{tag}"),
+        "semantic_capability_plan_fingerprint": realization[
+            "semantic_capability_plan_fingerprint"
+        ],
+        "pure_apply_fingerprint": realization["apply_result_fingerprint"],
+        "delta_set_fingerprint": realization["delta_set_fingerprint"],
+        "realization_plan_fingerprint": realization[
+            "realization_plan_fingerprint"
+        ],
     }
     proposal.update(overrides)
     body = {
@@ -126,184 +160,105 @@ def make_proposal(
 
 
 def make_realization(proposal: dict[str, Any], **overrides: Any) -> dict[str, Any]:
-    realization = {
-        "operation_type": REALIZATION_TYPE,
-        "mode": "discover",
-        "status": "ready",
-        "trust_status": "trusted",
-        "allowed": True,
-        "dispatch_authorized": False,
-        "drift": False,
-        "read_only": True,
-        "mutation_safe": True,
-        "realization_authority": "forge_flame",
-        "composition_owner": "bridge",
-        "step_plan_fingerprint": proposal["step_plan_fingerprint"],
-        "semantic_capability_plan_fingerprint": proposal[
-            "semantic_capability_plan_fingerprint"
-        ],
-        "apply_result_fingerprint": proposal["pure_apply_fingerprint"],
-        "delta_set_fingerprint": proposal["delta_set_fingerprint"],
-        "final_state_fingerprint": proposal["final_state_fingerprint"],
-        "realization_plan_fingerprint": proposal["realization_plan_fingerprint"],
-        "command_count": len(proposal["step_plan"]["steps"]),
-    }
+    """The REAL realization discover payload, plus the two fields the injected
+    production ``realize_fn`` projects from the verified held preview
+    (``final_state_fingerprint``, ``command_count``) — the operator itself
+    emits neither."""
+    realization = _real("realization_discover")
+    realization["final_state_fingerprint"] = proposal["final_state_fingerprint"]
+    realization["command_count"] = len(proposal["step_plan"]["steps"])
     realization.update(overrides)
     return realization
 
 
 def make_recovery(**overrides: Any) -> dict[str, Any]:
-    token = {
-        "kind": RECOVERY_TOKEN_KIND,
-        "schema_version": 1,
-        "method": "restore_temporal_transaction",
-        "sequence_name": SEQ,
-        "transaction_id": "txn-phase153-1",
-        "segment_id": SEGMENT,
-        "restore_commands": [
-            {"operation": "extend_edit", "side": "tail", "frames": 9},
-            {"operation": "extend_edit", "side": "head", "frames": 8},
-        ],
-    }
+    """The REAL schema-1 recovery token. Overrides re-seal the fingerprint only
+    when asked, so tamper cases stay detectable."""
+    token = _real("recovery")
+    if not overrides:
+        return token
+    reseal = overrides.pop("_reseal", False)
     token.update(overrides)
+    if reseal:
+        body = {k: v for k, v in token.items() if k != "fingerprint"}
+        token["fingerprint"] = _fingerprint(body)
     return token
 
 
-def make_transaction_manifest(
-    proposal: dict[str, Any], **plan_overrides: Any
-) -> dict[str, Any]:
-    steps = proposal["step_plan"]["steps"]
-    plan = {
-        "kind": "pipeline.traffik.editorial.temporal_transaction_plan",
-        "schema_version": 1,
-        "sequence_name": proposal["sequence_name"],
-        "commands": [
-            {"operation": step["operation"], "segment_id": SEGMENT}
-            for step in steps
-        ],
-        "step_plan_fingerprint": proposal["step_plan_fingerprint"],
-        "delta_set_fingerprint": proposal["delta_set_fingerprint"],
-        "realization_plan_fingerprint": proposal["realization_plan_fingerprint"],
-        "final_state_fingerprint": proposal["final_state_fingerprint"],
-    }
-    plan.update(plan_overrides)
-    return {
-        "kind": "pipeline.traffik.editorial.temporal_transaction_result",
-        "schema_version": 1,
-        "type": "mutation_plan",
-        "ok": True,
-        "status": "ready",
-        "trust_status": "trusted",
-        "mutation_safe": True,
-        "state_owner": "dcc_host",
-        "transaction_plan": plan,
-        "intent_parameters": {
-            "sequence_name": proposal["sequence_name"],
-            "step_plan": proposal["step_plan"],
-        },
-        "resolved_plan": [
-            {
-                "identity": {
-                    "operation_type": TRANSACTION_OPERATION_TYPE,
-                    "realization_plan_fingerprint": proposal[
-                        "realization_plan_fingerprint"
-                    ],
-                    "command_count": len(steps),
-                },
-                "payload": {"transaction_plan": plan},
-            }
-        ],
-        "originating_capability": TRANSACTION_TOOL,
-        "apply_counterpart": {
-            "tool": TRANSACTION_TOOL,
-            "parameter_overrides": {},
-        },
-    }
-
-
-def make_restore_manifest(
-    recovery: dict[str, Any] | None = None, **overrides: Any
-) -> dict[str, Any]:
-    token = recovery if recovery is not None else make_recovery()
-    manifest = {
-        "kind": "pipeline.traffik.editorial.temporal_transaction_restore_result",
-        "schema_version": 1,
-        "type": "mutation_plan",
-        "ok": True,
-        "status": "ready",
-        "trust_status": "trusted",
-        "mutation_safe": True,
-        "state_owner": "dcc_host",
-        "intent_parameters": {"sequence_name": SEQ, "recovery": dict(token)},
-        "resolved_plan": [
-            {
-                "identity": {
-                    "operation_type": RESTORE_OPERATION_TYPE,
-                    "transaction_id": token.get("transaction_id"),
-                },
-                "payload": {"recovery": dict(token)},
-            }
-        ],
-        "originating_capability": TRANSACTION_RESTORE_TOOL,
-        "apply_counterpart": {
-            "tool": TRANSACTION_RESTORE_TOOL,
-            "parameter_overrides": {},
-        },
-    }
+def make_transaction_manifest(**overrides: Any) -> dict[str, Any]:
+    manifest = _real("forward_manifest")
     manifest.update(overrides)
     return manifest
+
+
+def make_restore_manifest(**overrides: Any) -> dict[str, Any]:
+    manifest = _real("restore_manifest")
+    manifest.update(overrides)
+    return manifest
+
+
+def make_forward_apply(**overrides: Any) -> dict[str, Any]:
+    payload = _real("forward_apply")
+    payload.update(overrides)
+    return payload
+
+
+def make_restore_apply(**overrides: Any) -> dict[str, Any]:
+    payload = _real("restore_apply")
+    payload.update(overrides)
+    return payload
 
 
 _SCHEMA = {
     "type": "object",
     "properties": {
         "sequence_name": {"type": "string"},
-        "step_plan": {"type": "object"},
+        "entries": {"type": "array"},
         "recovery": {"type": "object"},
         "mode": {"type": "string"},
         "resolved_plan": {"type": "array"},
-        "held_realization_plan_fingerprint": {"type": "string"},
-        "held_delta_set_fingerprint": {"type": "string"},
     },
     "required": ["sequence_name"],
 }
 
 
 class FakeMCP:
-    """Stands in for the Pipeline transaction + restore callables."""
+    """Replays the REAL Pipeline transaction + restore callable shapes."""
 
     def __init__(
         self,
         *,
-        proposal: dict[str, Any] | None = None,
         held: dict[str, Any] | None = None,
         fresh: dict[str, Any] | None = None,
-        recovery: dict[str, Any] | None = -1,  # type: ignore[assignment]
+        apply_payload: dict[str, Any] | None = None,
         apply_ok: bool = True,
         apply_drift: bool = False,
-        transaction_status: str = "committed",
         restore_held: dict[str, Any] | None = None,
         restore_fresh: dict[str, Any] | None = None,
+        restore_apply_payload: dict[str, Any] | None = None,
         restore_apply_ok: bool = True,
-        restore_baseline: str | None = None,
         restore_tool_present: bool = True,
         apply_delay: float = 0.0,
     ) -> None:
-        base = proposal if proposal is not None else make_proposal()
-        self.held = copy.deepcopy(held or make_transaction_manifest(base))
+        self.held = copy.deepcopy(held or make_transaction_manifest())
         self.fresh = copy.deepcopy(fresh if fresh is not None else self.held)
-        self.recovery = make_recovery() if recovery == -1 else recovery
+        self.apply_payload = copy.deepcopy(
+            apply_payload if apply_payload is not None else make_forward_apply()
+        )
         self.apply_ok = apply_ok
         self.apply_drift = apply_drift
-        self.transaction_status = transaction_status
         self.restore_held = copy.deepcopy(
-            restore_held or make_restore_manifest(self.recovery or make_recovery())
+            restore_held or make_restore_manifest()
         )
         self.restore_fresh = copy.deepcopy(
             restore_fresh if restore_fresh is not None else self.restore_held
         )
+        self.restore_apply_payload = copy.deepcopy(
+            restore_apply_payload
+            if restore_apply_payload is not None
+            else make_restore_apply()
+        )
         self.restore_apply_ok = restore_apply_ok
-        self.restore_baseline = restore_baseline
         self.restore_tool_present = restore_tool_present
         self.apply_delay = apply_delay
         self.calls: list[tuple[str, str]] = []
@@ -340,41 +295,29 @@ class FakeMCP:
             if self.apply_delay:
                 await asyncio.sleep(self.apply_delay)
             if self.apply_drift:
+                # The real host drift envelope.
                 return {
-                    "ok": False,
-                    "status": "failed",
-                    "stage": "plan_drift",
                     "drift": True,
-                    "mutation_safe": True,
+                    "error_code": "plan_state_drift",
+                    "reason_code": "plan_state_drift",
+                    "drift_count": 1,
+                    "first_drift_index": 0,
+                    "message": "Plan/state drift detected during apply.",
                 }
             if not self.apply_ok:
-                # A hard native failure: the callable itself reports failure,
-                # so the CommitBoundary discards the payload (see §11 ceiling).
+                # The real compensated-failure envelope: verified host evidence
+                # AND ok=false + error, so CommitBoundary discards the body.
                 return {
                     "ok": False,
-                    "status": "failed",
-                    "stage": "apply",
-                    "mutation_safe": False,
-                    "error": {"code": "temporal_transaction.member_failed"},
+                    "status": "compensated",
+                    "failed_member_index": 1,
+                    "error": {
+                        "code": "segment_temporal_transaction_apply_failed",
+                        "message": "post_state_mismatch",
+                    },
+                    "baseline_mismatches": [],
                 }
-            results: list[dict[str, Any]] = [{"ok": True, "index": 0}]
-            if self.recovery is not None:
-                results = [{"ok": True, "recovery": copy.deepcopy(self.recovery)}]
-            return {
-                "ok": True,
-                "status": "succeeded",
-                "trust_status": "trusted",
-                "mode": "apply",
-                "state_owner": "dcc_host",
-                "transaction_apply": {
-                    "status": self.transaction_status,
-                    "trust_status": "trusted",
-                    "applied_count": 2
-                    if self.transaction_status == "committed"
-                    else 0,
-                },
-                "results": results,
-            }
+            return copy.deepcopy(self.apply_payload)
         raise AssertionError(mode)
 
     async def _restore(self, mode: str, arguments: dict[str, Any]):
@@ -388,33 +331,19 @@ class FakeMCP:
             if not self.restore_apply_ok:
                 return {
                     "ok": False,
-                    "status": "failed",
-                    "stage": "apply",
-                    "mutation_safe": False,
-                    "error": {"code": "temporal_transaction_restore.failed"},
+                    "status": "compensation_failed",
+                    "error": {
+                        "code": "transaction_restore_compensation_failed",
+                        "message": "identity_unresolved",
+                    },
+                    "recovery_fingerprint": _SHAPES["recovery"]["fingerprint"],
                 }
-            restore_apply: dict[str, Any] = {
-                "status": "restored",
-                "trust_status": "trusted",
-            }
-            if self.restore_baseline is not None:
-                restore_apply["terminal_state_fingerprint"] = (
-                    self.restore_baseline
-                )
-            return {
-                "ok": True,
-                "status": "succeeded",
-                "trust_status": "trusted",
-                "mode": "apply",
-                "state_owner": "dcc_host",
-                "restore_apply": restore_apply,
-                "results": [{"ok": True, "restored": True}],
-            }
+            return copy.deepcopy(self.restore_apply_payload)
         raise AssertionError(mode)
 
 
 class FakeOperationRunner:
-    """Stands in for the Pipeline runner behind the realization operator."""
+    """Stands in for the injected store-backed ``realize_fn`` seam."""
 
     def __init__(self, realization: dict[str, Any] | None = None) -> None:
         self.realization = realization
@@ -464,7 +393,7 @@ def build_api(
     ratify_takes: bool = True,
 ):
     base = proposal if proposal is not None else make_proposal()
-    mcp = mcp or FakeMCP(proposal=base)
+    mcp = mcp or FakeMCP()
     runner = FakeOperationRunner(
         realization if realization is not None else make_realization(base)
     )
@@ -492,17 +421,96 @@ def _args(receipt):
 
 async def _applied_workflow(**kwargs):
     proposal = kwargs.pop("proposal", None) or make_proposal()
-    kwargs.setdefault(
-        "mcp",
-        FakeMCP(
-            proposal=proposal,
-            restore_baseline=proposal["source_state_fingerprint"],
-        ),
-    )
     api, mcp, runner, store, gateway = build_api(proposal=proposal, **kwargs)
     proposed = await api.propose(proposal)
     applied = await api.ratify_apply(**_args(proposed), requested_by="artist-1")
     return api, mcp, runner, store, gateway, proposal, proposed, applied
+
+
+# --------------------------------------------------------------------------- #
+# The captured shapes ARE the released Pipeline contract
+# --------------------------------------------------------------------------- #
+def test_00a_bridge_constants_match_the_captured_pipeline_shapes():
+    """Pin every Bridge-side constant against Pipeline's executable output.
+
+    If Pipeline's released shapes move, this fails before anything downstream
+    does — which is the whole point of capturing rather than mocking.
+    """
+    forward, restore = _SHAPES["forward_manifest"], _SHAPES["restore_manifest"]
+
+    # Both manifests are the STANDARD five-key MutationManifest — no ok /
+    # status / trust_status / mutation_safe / state_owner / transaction_plan.
+    for manifest in (forward, restore):
+        assert set(manifest) == {
+            "type",
+            "intent_parameters",
+            "resolved_plan",
+            "originating_capability",
+            "apply_counterpart",
+        }
+        assert manifest["type"] == "mutation_plan"
+        assert manifest["apply_counterpart"]["parameter_overrides"] == {
+            "mode": "apply"
+        }
+    assert forward["originating_capability"] == TRANSACTION_TOOL
+    assert restore["originating_capability"] == TRANSACTION_RESTORE_TOOL
+    assert set(forward["intent_parameters"]) == {"sequence_name", "entries"}
+    assert set(restore["intent_parameters"]) == {"sequence_name", "recovery"}
+
+    # One aggregate callable, TWO ordered host records.
+    assert len(forward["resolved_plan"]) == 2
+    assert len(restore["resolved_plan"]) == 2
+    assert [m["payload"]["method"] for m in forward["resolved_plan"]] == [
+        step["operation"] for step in STEP_PLAN["steps"]
+    ]
+    assert [m["payload"]["source_member_index"] for m in restore["resolved_plan"]] == [
+        1,
+        0,
+    ]
+
+    # entries are the flat segment CHANGES inside the realization deltas.
+    assert forward["intent_parameters"]["entries"] == ENTRIES
+    assert ENTRIES == [delta["changes"][0] for delta in DELTAS]
+    assert _fingerprint(DELTAS) == _SHAPES["realization_discover"][
+        "delta_set_fingerprint"
+    ]
+
+    # Apply dispositions are TOP-LEVEL; there is no transaction_apply wrapper.
+    forward_apply = _SHAPES["forward_apply"]
+    assert "transaction_apply" not in forward_apply
+    assert forward_apply["ok"] is True
+    assert forward_apply["status"] == "applied"
+    assert forward_apply["applied"] == 2
+    assert len(forward_apply["results"]) == 2
+    restore_apply = _SHAPES["restore_apply"]
+    assert restore_apply["status"] == "restored"
+    assert restore_apply["restored"] == 2
+    assert restore_apply["baseline_mismatches"] == []
+    assert "terminal_state_fingerprint" not in restore_apply
+
+    # The token sits BESIDE the member results, not inside results[0].
+    token = forward_apply["recovery"]
+    assert "recovery" not in forward_apply["results"][0]
+    assert token["kind"] == RECOVERY_TOKEN_KIND
+    assert token["schema_version"] == etw.RECOVERY_TOKEN_SCHEMA_VERSION
+    assert set(token) == etw.RECOVERY_TOKEN_FIELDS
+    assert "method" not in token  # its reverse_steps carry the methods
+    assert token["applied_member_count"] == 2
+    assert [step["source_member_index"] for step in token["reverse_steps"]] == [
+        1,
+        0,
+    ]
+    body = {k: v for k, v in token.items() if k != "fingerprint"}
+    assert token["fingerprint"] == _fingerprint(body)
+    # …and that self-fingerprint is what the restore payload echoes.
+    assert restore_apply["recovery_fingerprint"] == token["fingerprint"]
+
+    # The realization operator emits neither projected field.
+    realization = _SHAPES["realization_discover"]
+    assert "command_count" not in realization
+    assert "final_state_fingerprint" not in realization
+    assert "deltas" not in realization  # held inside realization_plan only
+    assert realization["operation_type"] == REALIZATION_TYPE
 
 
 # --------------------------------------------------------------------------- #
@@ -710,17 +718,42 @@ async def test_02c_stale_realization_or_manifest_refuses_before_any_intent():
     assert exc.value.code == etw.REASON_REALIZATION_UNAVAILABLE
     assert gateway.proposed == []
 
-    stale_manifest = make_transaction_manifest(
-        proposal, delta_set_fingerprint=_h("stale-delta-set")
-    )
+    # A host manifest whose intent entries are not the freshly authorized
+    # realization deltas (check 3) — mutate the REAL manifest, never invent one.
+    stale_intent = copy.deepcopy(_SHAPES["forward_manifest"]["intent_parameters"])
+    stale_intent["entries"] = [
+        {**copy.deepcopy(ENTRIES[0]), "object_id": "someone-elses-segment"},
+        copy.deepcopy(ENTRIES[1]),
+    ]
+    stale_manifest = make_transaction_manifest(intent_parameters=stale_intent)
     api, mcp, _runner, _store, gateway = build_api(
-        proposal=proposal, mcp=FakeMCP(proposal=proposal, held=stale_manifest)
+        proposal=proposal, mcp=FakeMCP(held=stale_manifest)
     )
     with pytest.raises(EditorialTransactionWorkflowError) as exc:
         await api.propose(proposal)
     assert exc.value.code == etw.REASON_MANIFEST_DRIFT
     assert [mode for _name, mode in mcp.calls] == ["discover"]
     assert gateway.proposed == []  # no assent for an unverified manifest
+
+    # A proposal whose held delta set is not the realization's (check 4).
+    rebound = make_proposal(tag="stale-delta", delta_set_fingerprint=_h("stale"))
+    api, mcp, _runner, _store, gateway = build_api(proposal=rebound)
+    with pytest.raises(EditorialTransactionWorkflowError) as exc:
+        await api.propose(rebound)
+    assert exc.value.code == etw.REASON_REALIZATION_DRIFT
+    assert gateway.proposed == []
+
+    # A host manifest whose members do not preserve the proposal order
+    # (check 6) — again a mutation of the real resolved plan.
+    reordered = make_transaction_manifest()
+    reordered["resolved_plan"] = list(reversed(reordered["resolved_plan"]))
+    api, mcp, _runner, _store, gateway = build_api(
+        proposal=proposal, mcp=FakeMCP(held=reordered)
+    )
+    with pytest.raises(EditorialTransactionWorkflowError) as exc:
+        await api.propose(proposal)
+    assert exc.value.code == etw.REASON_MANIFEST_INVALID
+    assert gateway.proposed == []
 
 
 @pytest.mark.asyncio
@@ -817,7 +850,7 @@ async def test_04c_concurrent_ratify_apply_dispatches_once():
     proposal = make_proposal()
     api, mcp, _runner, _store, _gateway = build_api(
         proposal=proposal,
-        mcp=FakeMCP(proposal=proposal, apply_delay=0.02),
+        mcp=FakeMCP(apply_delay=0.02),
     )
     proposed = await api.propose(proposal)
     kwargs = dict(**_args(proposed), requested_by="artist-1")
@@ -836,10 +869,15 @@ async def test_04c_concurrent_ratify_apply_dispatches_once():
 @pytest.mark.asyncio
 async def test_04d_fresh_plan_drift_refuses_before_apply():
     proposal = make_proposal()
-    drifted = make_transaction_manifest(proposal)
-    drifted["resolved_plan"][0]["payload"] = {"transaction_plan": "moved"}
+    # Live host state moved between the held discover and the fresh verify:
+    # mutate the REAL member pre-state rather than inventing a shape.
+    drifted = make_transaction_manifest()
+    drifted["resolved_plan"][0]["payload"]["pre_state"] = {
+        **drifted["resolved_plan"][0]["payload"]["pre_state"],
+        "record_in_frame": 999999,
+    }
     api, mcp, _runner, _store, _gateway = build_api(
-        proposal=proposal, mcp=FakeMCP(proposal=proposal, fresh=drifted)
+        proposal=proposal, mcp=FakeMCP(fresh=drifted)
     )
     proposed = await api.propose(proposal)
 
@@ -860,16 +898,23 @@ async def test_04d_fresh_plan_drift_refuses_before_apply():
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 async def test_05_compensated_transaction_is_failed_and_unapplied():
-    """The legible half: the callable returns a successful envelope whose
-    ``transaction_apply.status`` reports a COMPENSATED transaction."""
+    """The LEGIBLE half of the compensation ceiling.
+
+    The released Pipeline path does not reach this branch: its native
+    compensated failure carries ``ok: false`` + ``error`` (proven in
+    ``test_05b``), so ``CommitBoundary`` discards the body. This exercises the
+    reading Bridge WOULD apply if Pipeline ever ships a successful terminal
+    compensation envelope — the real payload with ``status`` moved to
+    ``compensated`` and the recovery token withheld, which is what such an
+    envelope would have to look like.
+    """
     proposal = make_proposal()
+    compensated = make_forward_apply(
+        status="compensated", applied=0, failed_member_index=1
+    )
+    compensated.pop("recovery")
     api, mcp, _runner, store, _gateway = build_api(
-        proposal=proposal,
-        mcp=FakeMCP(
-            proposal=proposal,
-            transaction_status="compensated",
-            recovery=None,
-        ),
+        proposal=proposal, mcp=FakeMCP(apply_payload=compensated)
     )
     proposed = await api.propose(proposal)
 
@@ -906,8 +951,11 @@ async def test_05b_hard_native_failure_stays_unapplied_with_an_evidence_ceiling(
     claiming a compensation it did not observe.
     """
     proposal = make_proposal()
+    # FakeMCP's apply_ok=False replays the REAL compensated-failure envelope:
+    # verified host evidence (status=compensated, empty baseline_mismatches)
+    # AND ok=false + error. This is the path the released Pipeline takes.
     api, mcp, _runner, store, _gateway = build_api(
-        proposal=proposal, mcp=FakeMCP(proposal=proposal, apply_ok=False)
+        proposal=proposal, mcp=FakeMCP(apply_ok=False)
     )
     proposed = await api.propose(proposal)
 
@@ -948,17 +996,32 @@ async def test_06_successful_apply_captures_the_token_byte_for_byte():
 
 @pytest.mark.asyncio
 async def test_06b_missing_or_invalid_token_does_not_rewrite_the_success():
-    for recovery in (
+    """Every token invalidity is a MUTATION of the real schema-1 token."""
+    variants: list[dict[str, Any] | None] = [
         None,
-        make_recovery(schema_version=2),
-        make_recovery(kind="something.else"),
-        make_recovery(sequence_name="OTHER_SEQUENCE"),
-        make_recovery(method=""),
-    ):
+        make_recovery(schema_version=2, _reseal=True),
+        make_recovery(kind="something.else", _reseal=True),
+        make_recovery(sequence_name="OTHER_SEQUENCE", _reseal=True),
+        make_recovery(applied_member_count=3, _reseal=True),
+        # reverse steps that do not undo the members in reverse order
+        make_recovery(
+            reverse_steps=list(reversed(_SHAPES["recovery"]["reverse_steps"])),
+            _reseal=True,
+        ),
+        # a token whose own fingerprint does not seal its body
+        make_recovery(object_id="tampered"),
+        # a token carrying an unknown field breaks the closed key set
+        make_recovery(surprise="nope", _reseal=True),
+    ]
+    for recovery in variants:
+        payload = make_forward_apply()
+        if recovery is None:
+            payload.pop("recovery")
+        else:
+            payload["recovery"] = recovery
         proposal = make_proposal()
         api, mcp, _runner, _store, _gateway = build_api(
-            proposal=proposal,
-            mcp=FakeMCP(proposal=proposal, recovery=recovery),
+            proposal=proposal, mcp=FakeMCP(apply_payload=payload)
         )
         proposed = await api.propose(proposal)
 
@@ -1120,7 +1183,7 @@ async def test_08c_undiscoverable_counterpart_is_restore_unavailable():
     proposal = make_proposal()
     api, mcp, _runner, _store, _gateway = build_api(
         proposal=proposal,
-        mcp=FakeMCP(proposal=proposal, restore_tool_present=False),
+        mcp=FakeMCP(restore_tool_present=False),
     )
     proposed = await api.propose(proposal)
     await api.ratify_apply(**_args(proposed), requested_by="artist-1")
@@ -1137,10 +1200,7 @@ async def test_08d_concurrent_restore_mutates_once():
     proposal = make_proposal()
     api, mcp, _runner, _store, gateway = build_api(
         proposal=proposal,
-        mcp=FakeMCP(
-            proposal=proposal,
-            restore_baseline=proposal["source_state_fingerprint"],
-        ),
+        mcp=FakeMCP(),
     )
     proposed = await api.propose(proposal)
     await api.ratify_apply(**_args(proposed), requested_by="artist-1")
@@ -1161,42 +1221,78 @@ async def test_08d_concurrent_restore_mutates_once():
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 async def test_09_restore_success_reaches_the_pipeline_baseline():
-    _api, _mcp, _runner, store, _gw, proposal, proposed, _applied = (
+    """What the host DOES prove, and the ceiling on what it does not.
+
+    The released restore payload reports ``status="restored"``,
+    ``restored == command_count``, an empty ``baseline_mismatches``, the exact
+    ``baseline_state`` the host verified, and the held token's own fingerprint.
+    Bridge fences on all five. What the host does NOT report is a whole-
+    ``EditState`` readback, so nothing is comparable to the proposal's
+    whole-state ``source_state_fingerprint`` and
+    ``terminal_baseline_verified`` is honestly ``False``.
+    """
+    api, _mcp, _runner, store, _gw, proposal, proposed, _applied = (
         await _applied_workflow()
     )
-    api = _api
 
     restored = await api.restore(**_args(proposed), requested_by="artist-1")
 
-    assert restored["terminal_baseline_fingerprint"] == proposal[
+    assert restored["status"] == "restored"
+    assert restored["transaction_status"] == "restored"
+    # segment-scope evidence the host DID report and verify
+    assert restored["terminal_baseline_fingerprint"] == _fingerprint(
+        _SHAPES["restore_apply"]["baseline_state"]
+    )
+    # …and the honest ceiling on whole-state verification
+    assert restored["terminal_baseline_verified"] is False
+    assert restored["terminal_baseline_fingerprint"] != proposal[
         "source_state_fingerprint"
     ]
-    assert restored["terminal_baseline_verified"] is True
-    assert restored["transaction_status"] == "restored"
+
     row = await store.get_by_proposal_id(proposed["proposal_id"])
-    assert row["terminal_baseline_verified"] is True
+    assert row["terminal_baseline_verified"] is False
+    # the durable row keeps the host-verified segment baseline for operators;
+    # the receipt stays closed at its 41 scalar fields
+    assert row["restore_baseline_state"] == _SHAPES["restore_apply"][
+        "baseline_state"
+    ]
 
 
 @pytest.mark.asyncio
-async def test_09b_unreported_or_mismatched_baseline_is_not_claimed_verified():
-    """Bridge reports what the apply result carries — it never certifies a
-    baseline the host did not report."""
-    for baseline in (None, _h("some-other-state")):
+async def test_09b_restore_success_evidence_must_bind_the_held_token():
+    """Success evidence that does not bind THIS token is not a restore.
+
+    Each variant mutates one field of the REAL success payload.
+    """
+    real = _SHAPES["restore_apply"]
+    for override in (
+        {"status": "applied"},
+        {"restored": 1},
+        {"baseline_mismatches": [{"field": "record_in_frame"}]},
+        {"recovery_fingerprint": _h("someone-elses-token")},
+        {"baseline_state": {}},
+    ):
         proposal = make_proposal()
-        api, _mcp, _runner, _store, _gateway = build_api(
+        payload = make_restore_apply(**override)
+        api, mcp, _runner, store, _gateway = build_api(
             proposal=proposal,
-            mcp=FakeMCP(proposal=proposal, restore_baseline=baseline),
+            mcp=FakeMCP(restore_apply_payload=payload),
         )
         proposed = await api.propose(proposal)
         await api.ratify_apply(**_args(proposed), requested_by="artist-1")
 
-        restored = await api.restore(
+        receipt = await api.restore(
             **_args(proposed), requested_by="artist-1"
         )
 
-        assert restored["status"] == "restored"
-        assert restored["terminal_baseline_verified"] is False
-        assert restored["terminal_baseline_fingerprint"] == baseline
+        assert receipt["status"] == "failed", override
+        assert receipt["reason_code"] == etw.REASON_RESTORE_DRIFT, override
+        assert receipt["restored"] is False
+        assert receipt["terminal_baseline_fingerprint"] is None
+        row = await store.get_by_proposal_id(proposed["proposal_id"])
+        # the forward apply still stands
+        assert row["status"] == "applied", override
+        assert real["recovery_fingerprint"] == _SHAPES["recovery"]["fingerprint"]
 
 
 # --------------------------------------------------------------------------- #
@@ -1207,7 +1303,7 @@ async def test_10_failed_restore_leaves_the_workflow_applied():
     proposal = make_proposal()
     api, mcp, _runner, store, _gateway = build_api(
         proposal=proposal,
-        mcp=FakeMCP(proposal=proposal, restore_apply_ok=False),
+        mcp=FakeMCP(restore_apply_ok=False),
     )
     proposed = await api.propose(proposal)
     applied = await api.ratify_apply(**_args(proposed), requested_by="artist-1")
@@ -1258,17 +1354,45 @@ async def test_11_token_tamper_refuses_before_restore_dispatch():
 
 @pytest.mark.asyncio
 async def test_11b_restore_discovery_drift_refuses_before_dispatch():
+    """Every variant mutates ONE field of the real restore manifest.
+
+    The five-key manifest carries no trust envelope, so the fences are:
+    counterpart identity + admission, the intent's sequence and byte-exact
+    token, and ordered/reversed member evidence bound to the held token.
+    """
+    real_intent = _SHAPES["restore_manifest"]["intent_parameters"]
+    reversed_members = copy.deepcopy(
+        _SHAPES["restore_manifest"]["resolved_plan"]
+    )
+    reversed_members.reverse()
+    unbound_members = copy.deepcopy(
+        _SHAPES["restore_manifest"]["resolved_plan"]
+    )
+    for member in unbound_members:
+        member["payload"]["recovery_fingerprint"] = _h("someone-elses-token")
+
     for mutate in (
         {"originating_capability": "forge_apply_segment_split_restore"},
-        {"trust_status": "review_required"},
-        {"intent_parameters": {"sequence_name": SEQ, "recovery": {"a": 1}}},
-        {"intent_parameters": {"sequence_name": "OTHER", "recovery": {}}},
+        {
+            "apply_counterpart": {
+                "tool": "forge_apply_segment_split_restore",
+                "parameter_overrides": {"mode": "apply"},
+            }
+        },
+        {
+            "intent_parameters": {
+                **real_intent,
+                "recovery": {**real_intent["recovery"], "object_id": "moved"},
+            }
+        },
+        {"intent_parameters": {**real_intent, "sequence_name": "OTHER"}},
+        {"resolved_plan": reversed_members},
+        {"resolved_plan": unbound_members},
     ):
         proposal = make_proposal()
         drifted = make_restore_manifest(**mutate)
         api, mcp, _runner, _store, gateway = build_api(
-            proposal=proposal,
-            mcp=FakeMCP(proposal=proposal, restore_held=drifted),
+            proposal=proposal, mcp=FakeMCP(restore_held=drifted)
         )
         proposed = await api.propose(proposal)
         await api.ratify_apply(**_args(proposed), requested_by="artist-1")
@@ -1294,7 +1418,7 @@ async def test_11c_restore_verify_drift_refuses_at_the_commit_boundary():
     fresh["resolved_plan"][0]["payload"] = {"recovery": "moved"}
     api, mcp, _runner, store, _gateway = build_api(
         proposal=proposal,
-        mcp=FakeMCP(proposal=proposal, restore_fresh=fresh),
+        mcp=FakeMCP(restore_fresh=fresh),
     )
     proposed = await api.propose(proposal)
     await api.ratify_apply(**_args(proposed), requested_by="artist-1")
@@ -1394,7 +1518,7 @@ async def _every_receipt() -> dict[str, dict[str, Any]]:
     fresh_proposal = make_proposal(tag="b")
     bad_api, _m2, _r2, _s2, _g2 = build_api(
         proposal=fresh_proposal,
-        mcp=FakeMCP(proposal=fresh_proposal, apply_ok=False),
+        mcp=FakeMCP(apply_ok=False),
     )
     bad_proposed = await bad_api.propose(fresh_proposal)
     failed = await bad_api.ratify_apply(
