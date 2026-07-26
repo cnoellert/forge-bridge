@@ -349,9 +349,17 @@ def is_valid_recovery_token(
 def extract_recovery_token(
     outcome: Mapping[str, Any],
     sequence_name: Optional[str],
+    *,
+    results_index: Optional[int] = 0,
     **checks: Any,
 ) -> Optional[dict[str, Any]]:
     """Pull the single closed recovery token out of a forward apply result.
+
+    Hosts hand the token back at different depths. ``results_index=0`` is
+    #235/#237's member-scoped path (``apply_result.results[0].recovery``,
+    which additionally requires exactly one result row); ``results_index=None``
+    is the aggregate path (``apply_result.recovery``), where ``results``
+    carries one row per transaction member and the token sits beside them.
 
     Returns ``None`` (never raises) if the shape is not exactly one valid token
     for this sequence — a missing or malformed token never rewrites the forward
@@ -363,13 +371,16 @@ def extract_recovery_token(
     apply_result = commit_result.get("apply_result")
     if not isinstance(apply_result, dict):
         return None
-    results = apply_result.get("results")
-    if not isinstance(results, list) or len(results) != 1:
-        return None
-    first = results[0]
-    if not isinstance(first, dict):
-        return None
-    recovery = first.get("recovery")
+    if results_index is None:
+        recovery = apply_result.get("recovery")
+    else:
+        results = apply_result.get("results")
+        if not isinstance(results, list) or len(results) != 1:
+            return None
+        first = results[0]
+        if not isinstance(first, dict):
+            return None
+        recovery = first.get("recovery")
     if not is_valid_recovery_token(recovery, sequence_name, **checks):
         return None
     return dict(recovery)

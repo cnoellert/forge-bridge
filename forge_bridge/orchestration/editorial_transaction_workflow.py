@@ -80,20 +80,64 @@ is the ``propose`` view, which is pinned to the IMMUTABLE original proposal
 projection so an exact duplicate propose keeps returning byte-identical bytes
 forever.
 
-Evidence ceiling (surfaced, not smoothed): ``CommitBoundary`` discards the host
-apply payload on an error result, so when the host reports a hard native
-failure Bridge can prove only that the workflow stays unapplied — it reports
-``transaction_status="unknown"`` rather than guessing a rollback it did not
-read. A COMPENSATED transaction is legible only when the callable returns a
-successful envelope carrying ``transaction_apply.status == "compensated"``.
-Bridge reports what the apply result carries; it never claims the host rolled
-back on its own authority. See ``_transaction_disposition``.
+--------------------------------------------------------------------------- #
+HOST SHAPES (reconciled against the released Pipeline Phase 153 operator and
+MCP executor — these are read from Pipeline's own executable outputs, not
+assumed):
+
+- The MCP signature is ``sequence_name, entries, mode, resolved_plan``.
+  ``entries`` come from the FRESH realization's ordered deltas, read from
+  ``realization_plan.deltas`` (discover mode intentionally does not surface
+  them as top-level routable output). One unwrap is required and is proven
+  executably, not assumed: a realization delta is a TimelineDelta and the
+  callable takes the flat segment CHANGE inside it — passing the deltas
+  themselves is refused host-side with ``transaction_continuity_mismatch``.
+  See ``transaction_entries``. The delta-set fingerprint is still computed
+  over the TimelineDeltas. Bridge forwards; it never authors.
+- Both manifests are the STANDARD five-key ``MutationManifest``: ``type``,
+  ``intent_parameters``, ``resolved_plan``, ``originating_capability``,
+  ``apply_counterpart``. There is no ``ok`` / ``status`` / ``trust_status`` /
+  ``mutation_safe`` / ``state_owner`` envelope and no ``transaction_plan``
+  block. ``MutationManifest.from_dict`` plus counterpart admission IS the
+  authority fence.
+- One aggregate callable does NOT mean one resolved record: schema 1 emits one
+  ordered host record per command, carrying ordinary Flame segment identity.
+  Aggregate membership is proven by the record payloads (``member_index``,
+  ``transaction_member_count``, ``method``, ``object_id``), not by any
+  synthetic operation type.
+- The forward apply payload is top-level ``{ok, status: "applied",
+  applied: <n>, results: [member, member], recovery: <token>}``; the recovery
+  token sits BESIDE the member results, not inside ``results[0]``.
+- The restore apply payload is top-level ``{ok, status: "restored",
+  restored: <n>, results, baseline_state, baseline_mismatches: [],
+  recovery_fingerprint}``. That echoed fingerprint must be the one Bridge
+  persisted — a real identity fence, checked in ``_restore_evidence``.
+
+Two evidence ceilings (surfaced, not smoothed):
+
+1. **Compensation.** ``CommitBoundary`` discards the host apply payload on an
+   error result, so when the host reports a hard native failure Bridge can
+   prove only that the workflow stays unapplied — it reports
+   ``transaction_status="unknown"`` rather than guessing a rollback it did not
+   read. The released Pipeline path always takes this opaque route: a native
+   compensated failure carries verified host evidence but also ``ok: false`` +
+   ``error``. The legible branch (a successful envelope reporting
+   ``status="compensated"``) is retained as the correct reading if Pipeline
+   ever ships one. ``flame.editorial.transaction_compensation_plan`` is
+   PREFLIGHT authority only and must never be used to infer that compensation
+   actually ran. See ``_transaction_disposition`` / ``_failure_patch``.
+2. **Terminal baseline.** The host verifies the exact SEGMENT baseline before
+   returning restore success and reports it as ``baseline_state``, but there is
+   no whole-``EditState`` readback, so nothing is comparable to the proposal's
+   whole-state ``source_state_fingerprint``. ``terminal_baseline_verified`` is
+   therefore honestly ``False`` on every restore today. See
+   ``_terminal_baseline``.
 """
 
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, Optional
 
 from forge_bridge.orchestration.workflow_core import (
@@ -123,12 +167,6 @@ WORKFLOW_KIND = "bridge.editorial_transaction_workflow"
 TRANSACTION_TOOL = "forge_apply_segment_temporal_transaction"
 TRANSACTION_RESTORE_TOOL = "forge_apply_segment_temporal_transaction_restore"
 TRANSACTION_REALIZATION_OPERATION_TYPE = "flame.editorial.transaction_realization"
-TRANSACTION_OPERATION_TYPE = (
-    "pipeline.traffik.editorial.temporal_transaction.callable"
-)
-TRANSACTION_RESTORE_OPERATION_TYPE = (
-    "pipeline.traffik.editorial.temporal_transaction.restore.callable"
-)
 RECOVERY_TOKEN_KIND = "flame.editorial.temporal_transaction_recovery"
 RECOVERY_TOKEN_SCHEMA_VERSION = 1
 
@@ -560,8 +598,13 @@ def realization_discovery_params(
 ) -> dict[str, Any]:
     """Parameters for the fresh ``flame.editorial.transaction_realization`` run.
 
-    The held fingerprints travel with the request so the OPERATOR can also fail
-    closed; Bridge re-checks every one of them on the way back regardless.
+    INCOMPLETE BY CONSTRUCTION, and deliberately so. The operator additionally
+    requires the full ``semantic_capability_plan`` and pure ``apply_result``
+    BODIES; the public Bridge proposal carries only their fingerprints. That is
+    why ``realize_fn`` is an injection point on the factory rather than a
+    detail: production wiring supplies a store-backed callback that reads those
+    private bodies from the verified held Pipeline preview. This builder is the
+    test/default half of that seam.
     """
     return {
         "mode": mode,
@@ -572,8 +615,6 @@ def realization_discovery_params(
             "semantic_capability_plan_fingerprint"
         ],
         "held_apply_result_fingerprint": proposal["pure_apply_fingerprint"],
-        "held_delta_set_fingerprint": proposal["delta_set_fingerprint"],
-        "held_final_state_fingerprint": proposal["final_state_fingerprint"],
         "held_realization_plan_fingerprint": proposal[
             "realization_plan_fingerprint"
         ],
@@ -581,19 +622,78 @@ def realization_discovery_params(
 
 
 def transaction_discovery_arguments(
-    proposal: Mapping[str, Any],
+    proposal: Mapping[str, Any], entries: Sequence[Mapping[str, Any]]
 ) -> dict[str, Any]:
-    """Arguments for the ONE aggregate transaction manifest discovery."""
+    """Arguments for the ONE aggregate transaction manifest discovery.
+
+    This is the public MCP signature of
+    ``forge_apply_segment_temporal_transaction``
+    (``forge_core/bridge/registry.py``): ``sequence_name``, ``entries``,
+    ``mode``, ``resolved_plan``. ``entries`` are the freshly authorized
+    realization deltas — Bridge forwards them, it never authors them.
+    """
     return {
         "sequence_name": proposal["sequence_name"],
-        "step_plan": proposal["step_plan"],
-        "held_realization_plan_fingerprint": proposal[
-            "realization_plan_fingerprint"
-        ],
-        "held_delta_set_fingerprint": proposal["delta_set_fingerprint"],
+        "entries": [dict(entry) for entry in entries],
         "mode": "discover",
         "resolved_plan": None,
     }
+
+
+def realization_deltas(realization: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The exact ordered TimelineDeltas held inside a fresh realization result.
+
+    The realization operator intentionally does NOT expose them as top-level
+    routable output until authorization, so they are read from
+    ``realization_plan.deltas``. These are the objects the realization's own
+    ``delta_set_fingerprint`` is computed over.
+    """
+    plan = realization.get("realization_plan")
+    deltas = plan.get("deltas") if isinstance(plan, Mapping) else None
+    if not isinstance(deltas, list) or not all(
+        isinstance(delta, Mapping) for delta in deltas
+    ):
+        raise _invalid(
+            "fresh realization carries no ordered deltas",
+            REASON_REALIZATION_UNAVAILABLE,
+        )
+    return [dict(delta) for delta in deltas]
+
+
+def transaction_entries(
+    deltas: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """The flat segment CHANGES the transaction callable takes as ``entries``.
+
+    Layering, proven executably against the released executor: a realization
+    delta is a TimelineDelta (``{type, sequence_id, metadata, changes}``), while
+    ``forge_apply_segment_temporal_transaction`` requires the flat segment
+    change inside it (``{action, object_type, object_id, before, after,
+    metadata}``). Passing the TimelineDeltas themselves is refused host-side
+    with ``transaction_continuity_mismatch``. Schema 1 carries exactly one
+    segment change per delta; anything else fails closed here rather than at
+    the host.
+    """
+    entries: list[dict[str, Any]] = []
+    for delta in deltas:
+        changes = delta.get("changes")
+        if not isinstance(changes, list) or len(changes) != 1:
+            raise _invalid(
+                "a realization delta does not carry exactly one change",
+                REASON_REALIZATION_DRIFT,
+            )
+        change = changes[0]
+        if (
+            not isinstance(change, Mapping)
+            or change.get("object_type") != "segment"
+            or not change.get("object_id")
+        ):
+            raise _invalid(
+                "a realization delta change is not a segment change",
+                REASON_REALIZATION_DRIFT,
+            )
+        entries.append(dict(change))
+    return entries
 
 
 def restore_discovery_arguments(
@@ -664,10 +764,11 @@ class EditorialTransactionWorkflowAPI:
             )
 
         # 2. Fresh realization discovery BEFORE any graph intent exists.
-        await self._realize(normalized)
+        realization = await self._realize(normalized)
 
-        # 3. Exactly ONE aggregate transaction mutation manifest.
-        held_manifest = await self._discover_transaction(normalized)
+        # 3. Exactly ONE aggregate transaction mutation manifest, discovered
+        #    from the freshly authorized deltas that realization just held.
+        held_manifest = await self._discover_transaction(normalized, realization)
 
         # 4. One graph intent, one proposed AssentRecord, one held manifest.
         preview = await self._preview(
@@ -779,7 +880,8 @@ class EditorialTransactionWorkflowAPI:
                 "actors": {**workflow["actors"], "ratify_apply": requested_by},
             }
             if outcome["outcome"] == "applied":
-                disposition = _transaction_disposition(outcome)
+                count = int(workflow["command_count"])
+                disposition = _transaction_disposition(outcome, count)
                 if disposition != "committed":
                     # The commit rail succeeded but the host reports the
                     # transaction did not stand. Never an "applied" receipt.
@@ -806,7 +908,7 @@ class EditorialTransactionWorkflowAPI:
                 # fingerprint. A missing/invalid token never rewrites this
                 # success — it only leaves restore unavailable.
                 recovery = _extract_transaction_recovery(
-                    outcome, workflow["proposal"].get("sequence_name")
+                    outcome, workflow["proposal"].get("sequence_name"), count
                 )
                 if recovery is None:
                     patch["restore_availability"] = "unavailable"
@@ -921,6 +1023,7 @@ class EditorialTransactionWorkflowAPI:
                 return _refuse("restore", workflow, REASON_RESTORE_DRIFT)
 
             sequence_name = workflow["proposal"].get("sequence_name")
+            command_count = int(workflow["command_count"])
             try:
                 held_restore = await self._discover(
                     TRANSACTION_RESTORE_TOOL,
@@ -932,6 +1035,7 @@ class EditorialTransactionWorkflowAPI:
                     held_restore,
                     sequence_name=sequence_name,
                     recovery=recovery,
+                    command_count=command_count,
                 )
             except _DiscoveryUnavailable:
                 return _refuse(
@@ -944,7 +1048,7 @@ class EditorialTransactionWorkflowAPI:
                 held_manifest=held_restore,
                 chain_steps=[
                     f"restore editorial transaction of "
-                    f"{workflow['command_count']} ordered commands",
+                    f"{command_count} ordered commands",
                     "commit",
                 ],
                 display="Phase 153 editorial transaction restore",
@@ -967,15 +1071,29 @@ class EditorialTransactionWorkflowAPI:
                 "timestamps": {**workflow["timestamps"], "restore": now},
                 "actors": {**workflow["actors"], "restore": requested_by},
             }
-            if outcome["outcome"] != "applied":
-                # A failed restore leaves the durable status "applied".
+            evidence = (
+                _restore_evidence(
+                    outcome,
+                    command_count=command_count,
+                    token_fingerprint=recovery.get("fingerprint"),
+                )
+                if outcome["outcome"] == "applied"
+                else None
+            )
+            if outcome["outcome"] != "applied" or evidence is None:
+                # A failed restore — or one whose success evidence does not
+                # bind THIS held token — leaves the durable status "applied".
                 patch["status"] = "applied"
-                patch["reason_code"] = REASON_RESTORE_FAILED
+                patch["reason_code"] = (
+                    REASON_RESTORE_FAILED
+                    if outcome["outcome"] != "applied"
+                    else REASON_RESTORE_DRIFT
+                )
                 patch["restore_availability"] = "available"
                 stored = await self._store.update(proposal_id, patch)
-                return _refuse("restore", stored, REASON_RESTORE_FAILED)
+                return _refuse("restore", stored, patch["reason_code"])
 
-            baseline = _terminal_baseline(outcome)
+            baseline, whole_state = _terminal_baseline(outcome, evidence)
             patch["status"] = "restored"
             patch["reason_code"] = None
             patch["transaction_status"] = "restored"
@@ -983,9 +1101,11 @@ class EditorialTransactionWorkflowAPI:
             patch["restore_commit_fingerprint"] = canonical_fingerprint(
                 outcome["commit_result"]
             )
+            # Durable operator evidence; the receipt stays closed at 41 fields.
+            patch["restore_baseline_state"] = evidence["baseline_state"]
             patch["terminal_baseline_fingerprint"] = baseline
             patch["terminal_baseline_verified"] = bool(
-                baseline is not None
+                whole_state
                 and baseline == workflow["source_state_fingerprint"]
             )
             stored = await self._store.update(proposal_id, patch)
@@ -1033,11 +1153,14 @@ class EditorialTransactionWorkflowAPI:
         return payload
 
     async def _discover_transaction(
-        self, proposal: Mapping[str, Any]
+        self, proposal: Mapping[str, Any], realization: Mapping[str, Any]
     ) -> dict[str, Any]:
+        deltas = realization_deltas(realization)
+        entries = transaction_entries(deltas)
         try:
             payload = await self._discover(
-                TRANSACTION_TOOL, transaction_discovery_arguments(proposal)
+                TRANSACTION_TOOL,
+                transaction_discovery_arguments(proposal, entries),
             )
         except _DiscoveryUnavailable as exc:
             raise EditorialTransactionWorkflowError(
@@ -1049,7 +1172,7 @@ class EditorialTransactionWorkflowAPI:
                 REASON_MANIFEST_INVALID,
                 "transaction discovery was not trusted",
             ) from exc
-        _verify_transaction_manifest(payload, proposal)
+        _verify_transaction_manifest(payload, proposal, deltas, entries)
         return payload
 
     async def _discover(
@@ -1117,9 +1240,14 @@ def make_editorial_transaction_workflow_api(
 ) -> EditorialTransactionWorkflowAPI:
     """Construct the workflow API.
 
-    Pipeline calls this with ``session_factory`` + ``mcp`` + ``run_operation``
-    (the Pipeline operation runner, which reaches the realization operator);
-    the remaining keywords are test seams.
+    ``realize_fn`` is a PRODUCTION injection point, not just a test seam.
+    ``FlameEditorialTransactionRealizationOperator`` requires the full
+    ``semantic_capability_plan`` and pure ``apply_result`` bodies, which the
+    public proposal does not carry (it carries their fingerprints), so
+    production wiring supplies a store-backed callback that reads them from the
+    verified held Pipeline preview and projects ``final_state_fingerprint`` and
+    ``command_count`` onto the result. The default ``run_operation`` argument
+    builder is sufficient only where those bodies are already reachable.
     """
     if store is None:
         if session_factory is None:
@@ -1493,8 +1621,10 @@ _REALIZATION_AGREEMENT = {
     ),
     "apply_result_fingerprint": "pure_apply_fingerprint",
     "delta_set_fingerprint": "delta_set_fingerprint",
-    "final_state_fingerprint": "final_state_fingerprint",
     "realization_plan_fingerprint": "realization_plan_fingerprint",
+    # PROJECTED by the injected realize_fn from the verified held preview —
+    # the realization operator itself emits neither of these two keys.
+    "final_state_fingerprint": "final_state_fingerprint",
 }
 
 
@@ -1519,16 +1649,34 @@ def _verify_realization(
             REASON_REALIZATION_DRIFT,
         )
     if "deltas" in payload:
+        # discover mode holds the deltas inside realization_plan; it must never
+        # surface them as top-level routable output.
         raise _invalid(
             "realization discover mode must not emit routable deltas",
             REASON_REALIZATION_UNAVAILABLE,
         )
+    if len(realization_deltas(payload)) != _command_count(proposal):
+        raise _invalid(
+            "fresh realization does not hold one delta per command",
+            REASON_REALIZATION_DRIFT,
+        )
 
 
-def _verify_transaction_manifest(
-    payload: Mapping[str, Any], proposal: Mapping[str, Any]
-) -> None:
-    """Prove the discovered manifest IS this proposal's ONE transaction."""
+def _admitted_manifest(
+    payload: Mapping[str, Any],
+    tool: str,
+    fail: Callable[[str], Exception],
+) -> Any:
+    """Check 1 — one structurally valid manifest + one admitted counterpart.
+
+    The host manifest is the STANDARD five-key ``MutationManifest``
+    (``type``, ``intent_parameters``, ``resolved_plan``,
+    ``originating_capability``, ``apply_counterpart``). It carries no ``ok`` /
+    ``status`` / ``trust_status`` / ``mutation_safe`` / ``state_owner`` /
+    ``kind`` / ``schema_version`` envelope — ``MutationManifest.from_dict``
+    plus counterpart admission IS the authority fence, matching the shipped
+    mutation-manifest convention.
+    """
     from forge_bridge.composition.admission import (
         AdmissionRejected,
         admit_mutation_counterpart,
@@ -1538,81 +1686,116 @@ def _verify_transaction_manifest(
         MutationManifestError,
     )
 
-    def fail(detail: str) -> EditorialTransactionWorkflowError:
-        return _invalid(detail, REASON_MANIFEST_INVALID)
-
     try:
         manifest = MutationManifest.from_dict(dict(payload))
     except (MutationManifestError, KeyError, TypeError) as exc:
         raise fail("discovered manifest is structurally invalid") from exc
-
-    if payload.get("ok") is not True:
-        raise fail("discovered manifest is not ok")
-    if payload.get("status") != "ready":
-        raise fail("discovered manifest is not ready")
-    if payload.get("trust_status") != "trusted":
-        raise fail("discovered manifest is not trusted")
-    if payload.get("mutation_safe") is not True:
-        raise fail("discovered manifest is not mutation safe")
-    if payload.get("state_owner") != TRANSACTION_STATE_OWNER:
-        raise fail("discovered manifest has the wrong state owner")
-    if payload.get("originating_capability") != TRANSACTION_TOOL:
+    if payload.get("originating_capability") != tool:
         raise fail("discovered manifest has the wrong originating capability")
-    if manifest.apply_counterpart.get("tool") != TRANSACTION_TOOL:
+    if manifest.apply_counterpart.get("tool") != tool:
         raise fail("discovered manifest has the wrong apply counterpart")
     try:
-        counterpart = admit_mutation_counterpart(TRANSACTION_TOOL)
+        counterpart = admit_mutation_counterpart(tool)
     except AdmissionRejected as exc:
         raise fail("apply counterpart is not admitted") from exc
-    if not counterpart.verify_before_apply or not counterpart.assent_required:
+    if (
+        counterpart.state_owner != TRANSACTION_STATE_OWNER
+        or not counterpart.verify_before_apply
+        or not counterpart.assent_required
+    ):
         raise fail("apply counterpart lacks the required commit authority")
+    return manifest
 
-    plan = payload.get("transaction_plan")
-    if not isinstance(plan, Mapping):
-        raise fail("discovered manifest carries no transaction plan")
-    if plan.get("sequence_name") != proposal["sequence_name"]:
-        raise fail("transaction plan targets a different sequence")
-    commands = plan.get("commands")
-    if not isinstance(commands, list) or len(commands) != _command_count(
-        proposal
-    ):
-        raise fail("transaction plan does not cover the ordered commands")
-    for key in (
-        "step_plan_fingerprint",
-        "delta_set_fingerprint",
-        "realization_plan_fingerprint",
-        "final_state_fingerprint",
-    ):
-        if plan.get(key) != proposal[key]:
-            raise _invalid(
-                f"transaction plan {key} drifted from the proposal",
-                REASON_MANIFEST_DRIFT,
-            )
 
-    # Exactly ONE change record: one aggregate transaction, one dispatch.
-    records = payload.get("resolved_plan")
-    if not isinstance(records, list) or len(records) != 1:
-        raise fail("transaction manifest must carry exactly one change record")
-    identity = (
-        records[0].get("identity") if isinstance(records[0], Mapping) else None
-    )
-    if not isinstance(identity, Mapping):
-        raise fail("change record carries no identity")
-    if identity.get("operation_type") != TRANSACTION_OPERATION_TYPE:
-        raise fail("change record operation type is not recognized")
-    if identity.get("realization_plan_fingerprint") != proposal[
-        "realization_plan_fingerprint"
-    ]:
+def _member_payloads(
+    records: Any, count: int, fail: Callable[[str], Exception]
+) -> list[dict[str, Any]]:
+    """Check 5 — one host change record per transaction member, in order."""
+    if not isinstance(records, list) or len(records) != count:
+        raise fail("manifest resolved plan does not cover every member")
+    payloads: list[dict[str, Any]] = []
+    for record in records:
+        payload = record.get("payload") if isinstance(record, Mapping) else None
+        identity = (
+            record.get("identity") if isinstance(record, Mapping) else None
+        )
+        if not isinstance(payload, Mapping) or not isinstance(identity, Mapping):
+            raise fail("manifest change record is structurally invalid")
+        payloads.append(dict(payload))
+    return payloads
+
+
+def _verify_transaction_manifest(
+    payload: Mapping[str, Any],
+    proposal: Mapping[str, Any],
+    deltas: Sequence[Mapping[str, Any]],
+    entries: Sequence[Mapping[str, Any]],
+) -> None:
+    """Prove the discovered manifest IS this proposal's ONE transaction.
+
+    Pipeline's six checks. Aggregate membership is proven by the record
+    PAYLOAD fields the host actually emits (``member_index``,
+    ``transaction_member_count``, ``method``, ``object_id``), not by a
+    synthetic operation type — one aggregate callable does not mean one
+    resolved record.
+    """
+
+    def fail(detail: str) -> EditorialTransactionWorkflowError:
+        return _invalid(detail, REASON_MANIFEST_INVALID)
+
+    # 1. one manifest + one admitted apply counterpart
+    manifest = _admitted_manifest(payload, TRANSACTION_TOOL, fail)
+
+    # 2. exact intent sequence
+    intent = manifest.intent_parameters
+    if intent.get("sequence_name") != proposal["sequence_name"]:
+        raise fail("manifest intent targets a different sequence")
+
+    # 3. intent entries are EXACTLY the freshly authorized realization deltas
+    held_entries = [dict(entry) for entry in entries]
+    if intent.get("entries") != held_entries:
         raise _invalid(
-            "change record realization identity drifted from the proposal",
+            "manifest entries differ from the fresh realization deltas",
             REASON_MANIFEST_DRIFT,
         )
 
-    intent = payload.get("intent_parameters")
-    if not isinstance(intent, Mapping):
-        raise fail("discovered manifest carries no intent parameters")
-    if intent.get("sequence_name") != proposal["sequence_name"]:
-        raise fail("manifest intent targets a different sequence")
+    # 4. those entries came from the proposal's held delta set. The
+    #    delta-set fingerprint is computed over the TimelineDeltas (the
+    #    realization's own arithmetic), not over the unwrapped entries.
+    if canonical_fingerprint(
+        [dict(delta) for delta in deltas]
+    ) != proposal["delta_set_fingerprint"]:
+        raise _invalid(
+            "manifest entries drifted from the held delta set",
+            REASON_MANIFEST_DRIFT,
+        )
+
+    # 5. one host change record per member
+    count = _command_count(proposal)
+    payloads = _member_payloads(payload.get("resolved_plan"), count, fail)
+
+    # 6. ordered membership, matching member counts, proposal method order,
+    #    and one continuous object identity
+    if [member.get("member_index") for member in payloads] != list(range(count)):
+        raise fail("manifest members are not ordered 0..n-1")
+    if any(
+        member.get("transaction_member_count") != count for member in payloads
+    ):
+        raise fail("manifest members disagree on the transaction member count")
+    operations = [
+        str(step["operation"]) for step in proposal["step_plan"]["steps"]
+    ]
+    if [member.get("method") for member in payloads] != operations:
+        raise _invalid(
+            "manifest member methods do not preserve the proposal order",
+            REASON_MANIFEST_DRIFT,
+        )
+    object_ids = {member.get("object_id") for member in payloads}
+    if len(object_ids) != 1 or not next(iter(object_ids)):
+        raise _invalid(
+            "manifest members do not name one continuous object",
+            REASON_MANIFEST_DRIFT,
+        )
 
 
 def _verify_restore_manifest(
@@ -1620,39 +1803,19 @@ def _verify_restore_manifest(
     *,
     sequence_name: Optional[str],
     recovery: Mapping[str, Any],
+    command_count: int,
 ) -> None:
-    """Prove the fresh restore manifest replays THIS persisted token."""
-    from forge_bridge.composition.admission import (
-        AdmissionRejected,
-        admit_mutation_counterpart,
-    )
-    from forge_bridge.graph.mutation import (
-        MutationManifest,
-        MutationManifestError,
-    )
+    """Prove the fresh restore manifest replays THIS persisted token.
 
-    try:
-        manifest = MutationManifest.from_dict(dict(payload))
-    except (MutationManifestError, KeyError, TypeError) as exc:
-        raise _DiscoveryDrift("restore manifest is structurally invalid") from exc
-    if payload.get("ok") is not True:
-        raise _DiscoveryDrift("restore manifest is not ok")
-    if payload.get("status") != "ready":
-        raise _DiscoveryDrift("restore manifest is not ready")
-    if payload.get("trust_status") != "trusted":
-        raise _DiscoveryDrift("restore manifest is not trusted")
-    if payload.get("mutation_safe") is not True:
-        raise _DiscoveryDrift("restore manifest is not mutation safe")
-    if payload.get("originating_capability") != TRANSACTION_RESTORE_TOOL:
-        raise _DiscoveryDrift("restore manifest has the wrong capability")
-    if manifest.apply_counterpart.get("tool") != TRANSACTION_RESTORE_TOOL:
-        raise _DiscoveryDrift("restore manifest has the wrong counterpart")
-    try:
-        counterpart = admit_mutation_counterpart(TRANSACTION_RESTORE_TOOL)
-    except AdmissionRejected as exc:
-        raise _DiscoveryDrift("restore counterpart is not admitted") from exc
-    if not counterpart.verify_before_apply or not counterpart.assent_required:
-        raise _DiscoveryDrift("restore counterpart lacks commit authority")
+    Same standard five-key manifest shape as the forward rail. Its
+    ``resolved_plan`` carries one member record per reverse step, with ordered
+    ``member_index`` and REVERSED ``source_member_index``.
+    """
+
+    def fail(detail: str) -> Exception:
+        return _DiscoveryDrift(detail)
+
+    manifest = _admitted_manifest(payload, TRANSACTION_RESTORE_TOOL, fail)
 
     intent = manifest.intent_parameters
     if intent.get("sequence_name") != sequence_name:
@@ -1661,46 +1824,78 @@ def _verify_restore_manifest(
         # Bridge hands the token back verbatim; anything else is drift.
         raise _DiscoveryDrift("restore manifest token mismatch")
 
-    records = payload.get("resolved_plan")
-    if not isinstance(records, list) or len(records) != 1:
-        raise _DiscoveryDrift("restore manifest must carry one change record")
-    identity = (
-        records[0].get("identity") if isinstance(records[0], Mapping) else None
+    payloads = _member_payloads(
+        payload.get("resolved_plan"), command_count, fail
     )
-    if not isinstance(identity, Mapping):
-        raise _DiscoveryDrift("restore change record carries no identity")
-    if identity.get("operation_type") != TRANSACTION_RESTORE_OPERATION_TYPE:
-        raise _DiscoveryDrift("restore operation type is not recognized")
+    if [member.get("member_index") for member in payloads] != list(
+        range(command_count)
+    ):
+        raise _DiscoveryDrift("restore members are not ordered 0..n-1")
+    if [member.get("source_member_index") for member in payloads] != list(
+        reversed(range(command_count))
+    ):
+        raise _DiscoveryDrift("restore members do not reverse the forward order")
+    if any(
+        member.get("transaction_member_count") != command_count
+        for member in payloads
+    ):
+        raise _DiscoveryDrift("restore members disagree on the member count")
+    if any(
+        member.get("recovery_fingerprint") != recovery.get("fingerprint")
+        for member in payloads
+    ):
+        raise _DiscoveryDrift("restore members do not bind the held token")
 
 
 # --------------------------------------------------------------------------- #
 # Commit-outcome readers
 # --------------------------------------------------------------------------- #
-def _transaction_disposition(outcome: Mapping[str, Any]) -> str:
+def _apply_result(outcome: Mapping[str, Any]) -> Optional[dict[str, Any]]:
+    commit_result = outcome.get("commit_result")
+    if not isinstance(commit_result, Mapping):
+        return None
+    apply_result = commit_result.get("apply_result")
+    return dict(apply_result) if isinstance(apply_result, Mapping) else None
+
+
+def _transaction_disposition(
+    outcome: Mapping[str, Any], command_count: int
+) -> str:
     """What the HOST says happened to the transaction on a successful commit.
+
+    The real successful forward payload is TOP-LEVEL
+    ``{ok: true, status: "applied", applied: <n>, results: [...],
+    recovery: <token>}`` — there is no ``transaction_apply`` wrapper. Host
+    ``status="applied"`` with a full member count maps to workflow
+    ``committed``.
 
     ponytail ceiling (evidence, not inference): Bridge reports only what the
     apply result carries. It cannot re-read the host, so it never certifies a
     rollback on its own authority — ``compensated`` here means "the host
     reported a compensated transaction", nothing stronger. A missing or
     unreadable disposition is ``unknown``, never a silent success.
+
+    NB: the released Pipeline path does not currently reach the ``compensated``
+    branch. A native compensated failure carries verified host evidence but
+    ALSO ``ok: false`` + ``error``, so ``CommitBoundary`` classifies it as an
+    apply failure and discards the body — see ``_failure_patch``. The branch is
+    kept because it is the correct reading if Pipeline ever ships a successful
+    terminal compensation envelope. ``flame.editorial.transaction_compensation_plan``
+    is PREFLIGHT authority only and must never be used to infer that
+    compensation actually ran.
     """
-    commit_result = outcome.get("commit_result")
-    if not isinstance(commit_result, Mapping):
+    apply_result = _apply_result(outcome)
+    if apply_result is None or apply_result.get("ok") is not True:
         return "unknown"
-    apply_result = commit_result.get("apply_result")
-    if not isinstance(apply_result, Mapping):
-        return "unknown"
-    transaction_apply = apply_result.get("transaction_apply")
-    if not isinstance(transaction_apply, Mapping):
-        return "unknown"
-    status = transaction_apply.get("status")
-    if status == "committed":
+    status = apply_result.get("status")
+    if status == "applied":
+        if apply_result.get("applied") != command_count:
+            return "failed"
         return "committed"
     if status == "compensated":
         return "compensated"
-    if status in _TRANSACTION_STATUSES:
-        return str(status)
+    if status == "compensation_failed":
+        return "failed"
     return "unknown"
 
 
@@ -1727,42 +1922,147 @@ def _failure_patch(
     }
 
 
+# The real schema-1 token's exact closed key set.
+RECOVERY_TOKEN_FIELDS: frozenset[str] = frozenset({
+    "kind",
+    "schema_version",
+    "sequence_name",
+    "applied_member_count",
+    "reverse_steps",
+    "baseline_identity",
+    "final_identity",
+    "object_id",
+    "baseline_state",
+    "final_state",
+    "resolved_plan_fingerprint",
+    "fingerprint",
+})
+
+
 def _extract_transaction_recovery(
-    outcome: Mapping[str, Any], sequence_name: Optional[str]
+    outcome: Mapping[str, Any],
+    sequence_name: Optional[str],
+    command_count: int,
 ) -> Optional[dict[str, Any]]:
     """The single closed ``flame.editorial.temporal_transaction_recovery``.
 
-    Schema and sequence are validated; the body is otherwise opaque to Bridge
-    and is persisted byte-for-byte.
+    Returned at TOP-LEVEL ``apply_result.recovery`` — the member ``results``
+    list beside it carries one row per transaction member, so the token is not
+    inside ``results[0]``. The token has NO ``method`` field (its
+    ``reverse_steps`` rows do).
+
+    Kind, schema, sequence, closed key set, member count, reverse-step order,
+    required state/identity fields, and the token's own canonical fingerprint
+    are all validated; the body is otherwise opaque to Bridge and is persisted
+    byte-for-byte. Never reconstructed.
     """
-    return extract_recovery_token(
+    token = extract_recovery_token(
         outcome,
         sequence_name,
+        results_index=None,
         schema_version=RECOVERY_TOKEN_SCHEMA_VERSION,
         kind=RECOVERY_TOKEN_KIND,
-        truthy_keys=("method",),
+        truthy_keys=("object_id", "resolved_plan_fingerprint"),
+        required_keys=tuple(sorted(RECOVERY_TOKEN_FIELDS)),
     )
+    if token is None or not _is_valid_transaction_token(token, command_count):
+        return None
+    return token
 
 
-def _terminal_baseline(outcome: Mapping[str, Any]) -> Optional[str]:
-    """The host-reported terminal state fingerprint after a restore commit."""
-    commit_result = outcome.get("commit_result")
-    if not isinstance(commit_result, Mapping):
+def _is_valid_transaction_token(token: Mapping[str, Any], count: int) -> bool:
+    if set(token) != RECOVERY_TOKEN_FIELDS:
+        return False
+    if token.get("applied_member_count") != count:
+        return False
+    for field in (
+        "baseline_identity",
+        "final_identity",
+        "baseline_state",
+        "final_state",
+    ):
+        if not isinstance(token.get(field), dict) or not token[field]:
+            return False
+    steps = token.get("reverse_steps")
+    if not isinstance(steps, list) or len(steps) != count:
+        return False
+    if not all(isinstance(step, dict) for step in steps):
+        return False
+    # Reverse steps undo the members in reverse order.
+    if [step.get("source_member_index") for step in steps] != list(
+        reversed(range(count))
+    ):
+        return False
+    if any(not step.get("method") for step in steps):
+        return False
+    body = {key: value for key, value in token.items() if key != "fingerprint"}
+    return canonical_fingerprint(body) == token.get("fingerprint")
+
+
+def _restore_evidence(
+    outcome: Mapping[str, Any],
+    *,
+    command_count: int,
+    token_fingerprint: Optional[str],
+) -> Optional[dict[str, Any]]:
+    """Trusted host evidence from a successful restore commit, else ``None``.
+
+    The real successful restore payload is TOP-LEVEL
+    ``{ok: true, status: "restored", restored: <n>, results: [...],
+    baseline_state: {...}, baseline_mismatches: [], recovery_fingerprint: ...}``.
+
+    The echoed ``recovery_fingerprint`` is a real identity fence: it is the
+    token's OWN ``fingerprint`` field (the host's digest over the token minus
+    that field), NOT Bridge's ``recovery_token_fingerprint`` (Bridge's digest
+    over the whole persisted token, which is its separate tamper fence). The
+    two are deliberately different values over different bodies; comparing the
+    wrong pair would fail every honest restore.
+    """
+    apply_result = _apply_result(outcome)
+    if apply_result is None or apply_result.get("ok") is not True:
         return None
-    apply_result = commit_result.get("apply_result")
-    if not isinstance(apply_result, Mapping):
+    if apply_result.get("status") != "restored":
         return None
-    restore_apply = apply_result.get("restore_apply")
-    candidates = (
-        restore_apply.get("terminal_state_fingerprint")
-        if isinstance(restore_apply, Mapping)
-        else None,
-        apply_result.get("terminal_state_fingerprint"),
-    )
-    for candidate in candidates:
-        if is_sha256(candidate):
-            return str(candidate)
-    return None
+    if apply_result.get("restored") != command_count:
+        return None
+    if apply_result.get("baseline_mismatches") != []:
+        return None
+    if apply_result.get("recovery_fingerprint") != token_fingerprint:
+        return None
+    baseline_state = apply_result.get("baseline_state")
+    if not isinstance(baseline_state, dict) or not baseline_state:
+        return None
+    return {
+        "baseline_state": dict(baseline_state),
+        "recovery_fingerprint": apply_result["recovery_fingerprint"],
+    }
+
+
+def _terminal_baseline(
+    outcome: Mapping[str, Any], evidence: Mapping[str, Any]
+) -> tuple[str, bool]:
+    """``(terminal_baseline_fingerprint, is_whole_state)``.
+
+    Only a WHOLE-state digest is comparable to the proposal's
+    ``source_state_fingerprint``; the caller sets
+    ``terminal_baseline_verified`` from that comparison, and never from a
+    segment-scope digest.
+
+    ponytail ceiling: the host verifies the exact SEGMENT baseline before it
+    returns success, and reports that segment state as ``baseline_state``. It
+    does NOT currently report a whole-``EditState`` readback, so there is
+    nothing comparable to the proposal's whole-state ``source_state_fingerprint``
+    and ``terminal_baseline_verified`` is honestly ``False`` on every restore
+    today. The fingerprint field carries the canonical digest of the
+    host-reported segment baseline so a consumer has grounded evidence rather
+    than a null; the boolean is what flips if and when Pipeline ships a fresh
+    whole-state readback (the comparison below is already written for it).
+    """
+    apply_result = _apply_result(outcome) or {}
+    reported = apply_result.get("terminal_state_fingerprint")
+    if is_sha256(reported):
+        return str(reported), True
+    return canonical_fingerprint(evidence["baseline_state"]), False
 
 
 # --------------------------------------------------------------------------- #
@@ -2026,6 +2326,7 @@ def _tool_names(available: Any) -> set[str]:
 
 __all__ = [
     "ADMITTED_COMMAND_SHAPES",
+    "RECOVERY_TOKEN_FIELDS",
     "AssentGateway",
     "EditorialTransactionWorkflowAPI",
     "EditorialTransactionWorkflowError",
@@ -2043,6 +2344,8 @@ __all__ = [
     "TRANSACTION_TOOL",
     "WORKFLOW_KIND",
     "make_editorial_transaction_workflow_api",
+    "transaction_entries",
+    "realization_deltas",
     "realization_discovery_params",
     "restore_discovery_arguments",
     "transaction_discovery_arguments",
