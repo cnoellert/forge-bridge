@@ -519,6 +519,23 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         state_owner="read_only",
     ),
     AdmissionRecord(
+        # #244 / Phase 156: binds the trusted promoted-resource registration
+        # commit to the held main-promotion plan and emits the mutation
+        # manifest whose apply counterpart is
+        # forge_register_editorial_workspace_main_promotion. Planning only —
+        # no catalog state moves until that counterpart commits.
+        operator_id="pipeline.editorial_workspace.main_promotion.registration_plan",
+        resolved_class=(
+            "pipeline.editorial_workspace.main_promotion.registration_plan"
+        ),
+        dispatch_kind="operation",
+        synchronous=True,
+        returns_reference=False,
+        no_state_mutation=True,
+        idempotent_result=True,
+        state_owner="read_only",
+    ),
+    AdmissionRecord(
         operator_id="pipeline.host_graph.inspect",
         resolved_class="pipeline.host_graph.inspect",
         dispatch_kind="operation",
@@ -611,6 +628,18 @@ _MUTATION_COUNTERPART_RECORDS = (
     ),
     MutationCounterpartAdmission(
         tool_name="forge_register_shot_resource_promotion",
+        state_owner="bridge",
+        synchronous=True,
+        verify_before_apply=True,
+        assent_required=True,
+        idempotent_apply=True,
+    ),
+    MutationCounterpartAdmission(
+        # #244 / Phase 156. Bridge-owned, unlike the peer-owned promotion copy:
+        # the immutable main Version + workfile-package Media it registers are
+        # canonical Bridge catalog identities. Idempotent apply is what makes
+        # the promotion workflow's replay forward-completable.
+        tool_name="forge_register_editorial_workspace_main_promotion",
         state_owner="bridge",
         synchronous=True,
         verify_before_apply=True,
