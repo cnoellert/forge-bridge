@@ -978,6 +978,26 @@ async def test_12_replay_forward_completes_without_duplicate_mutation():
     assert replayed["target_main_version_number"] == (
         partial["target_main_version_number"]
     )
+    # Handoff §7 (reconciled at forge-pipeline@cd6abf3e) names ONE dependency
+    # Bridge must preserve: promoted_resource_asset_ids feeds the main plan's
+    # catalog transaction fingerprint, so a replay that re-derived a different
+    # ID set would change the main-plan idempotency keys and make duplicate
+    # main assets reachable. Bridge does not merely "replay to the same IDs" —
+    # once the registration stage is durably `registered` its node is never
+    # re-composed, so the ID set and the exact commit projection the main plan
+    # consumes are frozen, not recomputed.
+    assert replayed["promoted_resource_asset_ids"] == (
+        partial["promoted_resource_asset_ids"]
+    )
+    assert replayed["resource_registration_commit_fingerprint"] == (
+        partial["resource_registration_commit_fingerprint"]
+    )
+    # The resumed main-plan node consumed the PERSISTED registration commit
+    # projection — the registration tool was not called again at all.
+    assert RESOURCE_REGISTER_TOOL not in {name for name, _mode in mcp.calls}
+    assert operations.calls[0][1]["promotion_registration_commit"][
+        "apply_result"
+    ]["created_asset_ids"] == list(PROMOTED_IDS)
 
 
 @pytest.mark.asyncio
