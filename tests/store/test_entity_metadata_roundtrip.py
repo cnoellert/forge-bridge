@@ -48,6 +48,22 @@ def test_arbitrary_pipeline_attributes_survive():
     assert e.metadata.get("role") == "comp"
 
 
+def test_version_name_survives_roundtrip():
+    """The catalog's immutable version label remains visible after a fresh read."""
+    e = _to_core(
+        {
+            "version_number": 1,
+            "parent_type": "sequence",
+            "created_by": "forge",
+        },
+        entity_type="version",
+        name="conform_v001",
+    )
+
+    assert e.name == "conform_v001"
+    assert e.version_number == 1
+
+
 def test_layer_role_key_is_typed_not_metadata():
     """Track roles live on the Layer as a typed role_key, not open metadata."""
     import uuid

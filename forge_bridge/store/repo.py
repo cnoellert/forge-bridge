@@ -22,9 +22,8 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Optional, Sequence
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from forge_bridge.core.entities import (
@@ -407,8 +406,6 @@ class EntityRepo:
                 project_id=project.id,
             )
         """
-        from sqlalchemy import cast
-        from sqlalchemy.dialects.postgresql import JSONB as PGJSONB
         stmt = (
             select(DBEntity)
             .where(DBEntity.entity_type == entity_type)
@@ -529,6 +526,7 @@ class EntityRepo:
         elif t == "version":
             e = Version.__new__(Version)
             BridgeEntity.__init__(e, id=db.id, metadata={})
+            e.name           = db.name
             e.version_number = a.get("version_number", 0)
             e.parent_id  = uuid.UUID(a["parent_id"])  if a.get("parent_id")  else None
             e.parent_type = a.get("parent_type", "shot")

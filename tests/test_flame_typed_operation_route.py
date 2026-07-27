@@ -62,6 +62,10 @@ def _post_once(bridge, payload: object) -> tuple[int, dict]:
             "host_graph_mutation",
             "_exec_typed_host_graph_mutation_on_main_thread",
         ),
+        (
+            "workfile_lifecycle",
+            "_exec_typed_workfile_lifecycle_on_main_thread",
+        ),
     ),
 )
 def test_root_accepts_only_allowlisted_typed_operations(
@@ -195,6 +199,66 @@ def test_typed_host_load_runs_via_flame_plugin(bridge, monkeypatch) -> None:
     assert captured["payload"] == {"mode": "verify"}
     assert len(captured["plugins"]) == 1
     assert isinstance(captured["plugins"][0], FlamePlugin)
+
+
+def test_typed_workfile_lifecycle_runs_via_flame_adapter(
+    bridge,
+    monkeypatch,
+) -> None:
+    captured: dict = {}
+    dispatch_module = ModuleType("forge_core.workfile.host_dispatch")
+
+    def execute(payload: dict, *, plugins: list[object]) -> dict:
+        captured["payload"] = payload
+        captured["plugins"] = plugins
+        return {"kind": "pipeline.workfile.host_dispatch_result"}
+
+    dispatch_module.execute_workfile_host_dispatch = execute
+    plugin_module = ModuleType("forge_flame.plugin")
+
+    class FlamePlugin:
+        pass
+
+    plugin_module.FlamePlugin = FlamePlugin
+    adapter_module = ModuleType("forge_flame.workfile_adapter")
+
+    class FlameWorkfileAdapter:
+        def __init__(
+            self,
+            *,
+            flame_module: object,
+            context: dict[str, object],
+        ) -> None:
+            self.flame_module = flame_module
+            self.context = context
+
+    adapter_module.FlameWorkfileAdapter = FlameWorkfileAdapter
+    flame_namespace = object()
+    bridge._namespace["flame"] = flame_namespace
+    monkeypatch.setattr(bridge, "_bootstrap_forge_runtime", lambda: None)
+    monkeypatch.setitem(
+        sys.modules,
+        "forge_core.workfile.host_dispatch",
+        dispatch_module,
+    )
+    monkeypatch.setitem(sys.modules, "forge_flame.plugin", plugin_module)
+    monkeypatch.setitem(
+        sys.modules,
+        "forge_flame.workfile_adapter",
+        adapter_module,
+    )
+
+    result = bridge._execute_typed_workfile_lifecycle({"action": "save"})
+
+    assert result == {"kind": "pipeline.workfile.host_dispatch_result"}
+    assert captured["payload"] == {"action": "save"}
+    assert len(captured["plugins"]) == 1
+    plugin = captured["plugins"][0]
+    assert isinstance(plugin, FlamePlugin)
+    adapter = plugin.workfile_adapter()
+    assert isinstance(adapter, FlameWorkfileAdapter)
+    assert adapter.flame_module is flame_namespace
+    assert adapter.context == {"already_on_main_thread": True}
 
 
 def test_bootstrap_adds_source_and_conda_runtime(
