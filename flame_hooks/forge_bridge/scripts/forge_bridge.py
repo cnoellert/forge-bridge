@@ -29,6 +29,7 @@ Based on LOGIK-PROJEKT (GPL-3.0) hook patterns.
 # ========================================================================== #
 
 import ast
+import asyncio
 import getpass
 import http.server
 import io
@@ -341,6 +342,19 @@ def _execute_typed_workfile_lifecycle(params):
     return execute_workfile_host_dispatch(params, plugins=[plugin])
 
 
+def _execute_typed_shot_resource_publish_plan(params):
+    """Compile a read-only transaction plan through Flame's live publisher."""
+    _bootstrap_forge_runtime()
+    from forge_core.shot_resources.host_publish_dispatch import (
+        execute_host_publish_plan_dispatch,
+    )
+    from forge_flame.plugin import FlamePlugin
+
+    return asyncio.run(
+        execute_host_publish_plan_dispatch(params, plugins=[FlamePlugin()])
+    )
+
+
 def _bootstrap_forge_runtime():
     """Make an installed or source Forge runtime importable inside Flame."""
     repo_root = os.environ.get("FORGE_REPO_ROOT", "").strip()
@@ -451,6 +465,18 @@ def _exec_typed_workfile_lifecycle_on_main_thread(params, timeout=None):
         timeout=timeout,
     )
 
+
+def _exec_typed_shot_resource_publish_plan_on_main_thread(
+    params,
+    timeout=None,
+):
+    """Compile a typed publish plan on Flame's main thread."""
+    return _exec_typed_operation_on_main_thread(
+        _execute_typed_shot_resource_publish_plan,
+        params,
+        timeout=timeout,
+    )
+
 # ========================================================================== #
 # HTTP Server
 # ========================================================================== #
@@ -539,6 +565,7 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             "host_graph_mutation",
             "host_graph_read",
             "shot_resource_load",
+            "shot_resource_publish_plan",
             "workfile_lifecycle",
         }:
             self._send_json(400, {"error": "Unknown operation"})
@@ -554,6 +581,11 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             return
         if op_name == "shot_resource_load":
             result = _exec_typed_host_load_on_main_thread(
+                params,
+                timeout=timeout,
+            )
+        elif op_name == "shot_resource_publish_plan":
+            result = _exec_typed_shot_resource_publish_plan_on_main_thread(
                 params,
                 timeout=timeout,
             )
