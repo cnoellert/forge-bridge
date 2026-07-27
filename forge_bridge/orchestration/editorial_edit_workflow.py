@@ -32,12 +32,7 @@ undiscovered counterpart still fails closed with
 
 from __future__ import annotations
 
-import asyncio
-import hashlib
-import json
-from collections import defaultdict
 from collections.abc import Awaitable, Callable, Mapping
-from datetime import datetime, timezone
 from typing import Any, Optional, Protocol
 
 from forge_bridge.orchestration.apply_editorial_delta import (
@@ -48,6 +43,26 @@ from forge_bridge.orchestration.live_editorial_vertical import (
     LiveEditorialVerticalError,
     build_live_flame_realization_preview_spec,
     discover_live_flame_realization,
+)
+from forge_bridge.orchestration.workflow_core import (
+    InMemoryWorkflowStore,
+    ProposalTransitionGuard,
+    SessionFactoryWorkflowStore,
+    WorkflowStore,
+    apply_failure_reason as _core_apply_failure_reason,
+    assent_failure_reason as _assent_failure_reason,
+    canonical_fingerprint,
+    commit_error as _commit_error,
+    extract_recovery_token as _extract_recovery_token,
+    finalize_receipt,
+    fingerprint_refusal as _core_fingerprint_refusal,
+    held_manifest_from_record as _held_manifest_from_record,
+    is_sha256 as _is_sha256,
+    maybe_await as _maybe_await,
+    refuse as _core_refuse,
+    sanitize as _sanitize,
+    utc_now_iso as _utc_now_iso,
+    workflow_identifier,
 )
 
 PROPOSAL_KIND = "pipeline.traffik.editorial_edit_bridge_proposal"
@@ -157,73 +172,34 @@ class EditorialEditWorkflowError(Exception):
         super().__init__(f"{code}: {self.message}")
 
 
-def canonical_fingerprint(value: Any) -> str:
-    """sha256 over canonical JSON (handoff §4)."""
-    payload = json.dumps(value, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
 # --------------------------------------------------------------------------- #
 # Durable workflow store
 # --------------------------------------------------------------------------- #
-class EditorialEditWorkflowStore(Protocol):
+# The mechanics live in ``workflow_core``; these keep the shipped #235 names
+# (and this workflow's domain-specific authority lookup) byte-compatible.
+class EditorialEditWorkflowStore(WorkflowStore, Protocol):
     """Durable correlation store keyed by ``proposal_id`` (handoff §6)."""
-
-    async def get_by_proposal_id(
-        self, proposal_id: str
-    ) -> Optional[dict[str, Any]]: ...
 
     async def get_by_preview_authority_fingerprint(
         self, fingerprint: str
     ) -> Optional[dict[str, Any]]: ...
 
-    async def create(self, record: dict[str, Any]) -> dict[str, Any]: ...
 
-    async def update(
-        self, proposal_id: str, patch: dict[str, Any]
-    ) -> dict[str, Any]: ...
-
-
-class InMemoryEditorialEditWorkflowStore:
+class InMemoryEditorialEditWorkflowStore(InMemoryWorkflowStore):
     """Process-local store. NOT durable across restarts — for tests and for a
     stock install without Postgres. Production uses the session-factory store.
-
-    ponytail: a plain dict; the DB store is the authority per handoff §6.
     """
 
     def __init__(self) -> None:
-        self._rows: dict[str, dict[str, Any]] = {}
-
-    async def get_by_proposal_id(
-        self, proposal_id: str
-    ) -> Optional[dict[str, Any]]:
-        row = self._rows.get(proposal_id)
-        return dict(row) if row is not None else None
+        super().__init__(authority_field="preview_authority_fingerprint")
 
     async def get_by_preview_authority_fingerprint(
         self, fingerprint: str
     ) -> Optional[dict[str, Any]]:
-        for row in self._rows.values():
-            if row.get("preview_authority_fingerprint") == fingerprint:
-                return dict(row)
-        return None
-
-    async def create(self, record: dict[str, Any]) -> dict[str, Any]:
-        proposal_id = str(record["proposal_id"])
-        if proposal_id in self._rows:
-            raise ValueError(f"workflow already exists: {proposal_id}")
-        self._rows[proposal_id] = dict(record)
-        return dict(record)
-
-    async def update(
-        self, proposal_id: str, patch: dict[str, Any]
-    ) -> dict[str, Any]:
-        row = self._rows[proposal_id]
-        row.update(patch)
-        return dict(row)
+        return await self.get_by_authority_fingerprint(fingerprint)
 
 
-class SessionFactoryEditorialEditWorkflowStore:
+class SessionFactoryEditorialEditWorkflowStore(SessionFactoryWorkflowStore):
     """Durable store backed by ``EditorialEditWorkflowRepo`` + a session factory.
 
     Opens and commits one session per operation, matching the repo's
@@ -231,56 +207,24 @@ class SessionFactoryEditorialEditWorkflowStore:
     """
 
     def __init__(self, session_factory: Any) -> None:
-        self._session_factory = session_factory
-
-    async def get_by_proposal_id(
-        self, proposal_id: str
-    ) -> Optional[dict[str, Any]]:
-        from forge_bridge.store.editorial_edit_workflow_repo import (
-            EditorialEditWorkflowRepo,
+        super().__init__(
+            session_factory,
+            repo_factory=_editorial_edit_workflow_repo,
+            authority_method="get_by_preview_authority_fingerprint",
         )
-
-        async with self._session_factory() as session:
-            return await EditorialEditWorkflowRepo(session).get_by_proposal_id(
-                proposal_id
-            )
 
     async def get_by_preview_authority_fingerprint(
         self, fingerprint: str
     ) -> Optional[dict[str, Any]]:
-        from forge_bridge.store.editorial_edit_workflow_repo import (
-            EditorialEditWorkflowRepo,
-        )
+        return await self.get_by_authority_fingerprint(fingerprint)
 
-        async with self._session_factory() as session:
-            repo = EditorialEditWorkflowRepo(session)
-            return await repo.get_by_preview_authority_fingerprint(fingerprint)
 
-    async def create(self, record: dict[str, Any]) -> dict[str, Any]:
-        from forge_bridge.store.editorial_edit_workflow_repo import (
-            EditorialEditWorkflowRepo,
-        )
+def _editorial_edit_workflow_repo(session: Any) -> Any:
+    from forge_bridge.store.editorial_edit_workflow_repo import (
+        EditorialEditWorkflowRepo,
+    )
 
-        async with self._session_factory() as session:
-            created = await EditorialEditWorkflowRepo(session).create(record)
-            await session.commit()
-            return created
-
-    async def update(
-        self, proposal_id: str, patch: dict[str, Any]
-    ) -> dict[str, Any]:
-        from forge_bridge.store.editorial_edit_workflow_repo import (
-            EditorialEditWorkflowRepo,
-        )
-
-        async with self._session_factory() as session:
-            repo = EditorialEditWorkflowRepo(session)
-            current = await repo.get_by_proposal_id(proposal_id)
-            merged = dict(current or {})
-            merged.update(patch)
-            updated = await repo.update(proposal_id, merged)
-            await session.commit()
-            return updated
+    return EditorialEditWorkflowRepo(session)
 
 
 # --------------------------------------------------------------------------- #
@@ -323,10 +267,8 @@ class EditorialEditWorkflowAPI:
         self._build_inverse = build_inverse_step_plan
         self._split_restore_preview_fn = split_restore_preview_fn
         self._clock = clock or _utc_now_iso
-        # ponytail: per-process async lock keyed by proposal_id serializes
-        # ratify_apply/restore. Multi-worker deployments need a DB advisory
-        # lock; the durable status guard below is the cross-process backstop.
-        self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        # Per-proposal lock + durable re-read serializes ratify_apply/restore.
+        self._guard = ProposalTransitionGuard(store)
 
     # -- propose ----------------------------------------------------------- #
     async def propose(self, proposal: Mapping[str, Any]) -> dict[str, Any]:
@@ -439,8 +381,8 @@ class EditorialEditWorkflowAPI:
         if changed is not None:
             return changed
 
-        async with self._locks[proposal_id]:
-            workflow = await self._store.get_by_proposal_id(proposal_id)
+        async with self._guard.lock(proposal_id):
+            workflow = await self._guard.reload(proposal_id)
             if workflow is None:
                 raise EditorialEditWorkflowError(
                     REASON_PROPOSAL_NOT_FOUND, "workflow disappeared"
@@ -563,8 +505,8 @@ class EditorialEditWorkflowAPI:
             # by the semantic owner (§2/§13). Not wired => gated, never guessed.
             return _refuse("restore", workflow, REASON_RESTORE_UNAVAILABLE)
 
-        async with self._locks[proposal_id]:
-            workflow = await self._store.get_by_proposal_id(proposal_id)
+        async with self._guard.lock(proposal_id):
+            workflow = await self._guard.reload(proposal_id)
             if workflow is None:
                 raise EditorialEditWorkflowError(
                     REASON_PROPOSAL_NOT_FOUND, "workflow disappeared"
@@ -967,6 +909,17 @@ def _available_tool_names(available: Any) -> set[str]:
     }
 
 
+# The split token's own shape (#237): schema 1, a truthy ``method``, this
+# sequence, and the created version index the restore counterpart replays.
+# The extraction mechanics live in ``workflow_core``; only these per-token
+# expectations are #235's.
+_SPLIT_RECOVERY_CHECKS = {
+    "schema_version": 1,
+    "truthy_keys": ("method",),
+    "required_keys": ("created_version_index",),
+}
+
+
 def _extract_split_recovery(
     outcome: Mapping[str, Any], sequence_name: Optional[str]
 ) -> Optional[dict[str, Any]]:
@@ -975,38 +928,9 @@ def _extract_split_recovery(
     Returns ``None`` (never raises) if the shape is not exactly one valid
     schema-1 token for this sequence — the forward apply still stands.
     """
-    commit_result = outcome.get("commit_result")
-    if not isinstance(commit_result, dict):
-        return None
-    apply_result = commit_result.get("apply_result")
-    if not isinstance(apply_result, dict):
-        return None
-    results = apply_result.get("results")
-    if not isinstance(results, list) or len(results) != 1:
-        return None
-    first = results[0]
-    if not isinstance(first, dict):
-        return None
-    recovery = first.get("recovery")
-    if not _is_valid_recovery_token(recovery, sequence_name):
-        return None
-    return dict(recovery)
-
-
-def _is_valid_recovery_token(
-    recovery: Any, sequence_name: Optional[str]
-) -> bool:
-    if not isinstance(recovery, dict):
-        return False
-    if recovery.get("schema_version") != 1:
-        return False
-    if not recovery.get("method"):
-        return False
-    if recovery.get("sequence_name") != sequence_name:
-        return False
-    if "created_version_index" not in recovery:
-        return False
-    return True
+    return _extract_recovery_token(
+        outcome, sequence_name, **_SPLIT_RECOVERY_CHECKS
+    )
 
 
 async def _ratify_and_commit_graph_replay(
@@ -1216,9 +1140,9 @@ def _build_receipt(
         workflow.get("reason_code") if status in {"refused", "failed"} else None
     )
 
-    ordered = {key: receipt[key] for key in _RECEIPT_KEYS}
-    ordered["fingerprint"] = canonical_fingerprint(ordered)
-    return ordered
+    # #235 fingerprints over EVERY receipt key (kind + schema_version
+    # included). #242 excludes them; the two contracts stay separate.
+    return finalize_receipt(receipt, _RECEIPT_KEYS)
 
 
 def _receipt_status(action: str, workflow: Mapping[str, Any]) -> str:
@@ -1246,9 +1170,7 @@ def _receipt_flags(status: str) -> dict[str, Any]:
 def _refuse(
     action: str, workflow: Mapping[str, Any], reason_code: str
 ) -> dict[str, Any]:
-    refused = dict(workflow)
-    refused["reason_code"] = reason_code
-    return _build_receipt(action, refused, action_status="refused")
+    return _core_refuse(_build_receipt, action, workflow, reason_code)
 
 
 def _fingerprint_refusal(
@@ -1256,9 +1178,13 @@ def _fingerprint_refusal(
     workflow: Mapping[str, Any],
     expected_proposal_fingerprint: str,
 ) -> Optional[dict[str, Any]]:
-    if workflow["proposal_fingerprint"] != expected_proposal_fingerprint:
-        return _refuse(action, workflow, REASON_PROPOSAL_CHANGED)
-    return None
+    return _core_fingerprint_refusal(
+        _build_receipt,
+        action,
+        workflow,
+        expected_proposal_fingerprint,
+        REASON_PROPOSAL_CHANGED,
+    )
 
 
 def _forward_operation(workflow: Mapping[str, Any]) -> Optional[str]:
@@ -1269,42 +1195,12 @@ def _forward_operation(workflow: Mapping[str, Any]) -> Optional[str]:
     return None
 
 
-def _held_manifest_from_record(record: Any) -> Optional[dict[str, Any]]:
-    metadata = getattr(record, "metadata", None)
-    if not isinstance(metadata, dict):
-        return None
-    replay = metadata.get("graph_replay")
-    if not isinstance(replay, dict):
-        return None
-    held = replay.get("held_manifest")
-    return held if isinstance(held, dict) else None
-
-
 def _apply_failure_reason(commit_result: Any) -> str:
-    reason_code = getattr(commit_result, "reason_code", None)
-    if reason_code in {"PLAN_STATE_DRIFT", "VERIFICATION_FAILED"}:
-        return REASON_COMMIT_FAILED
-    if reason_code == "ASSENT_INVALID":
-        return REASON_ASSENT_INVALID
-    return REASON_COMMIT_FAILED
-
-
-def _assent_failure_reason(commit_result: Any) -> str:
-    reason_code = getattr(commit_result, "reason_code", None)
-    if reason_code == "PLAN_STATE_DRIFT":
-        return "drift_invalid"
-    if reason_code == "ASSENT_INVALID":
-        return "assent_invalid"
-    return "chain_aborted"
-
-
-def _commit_error(commit_result: Any) -> dict[str, Any]:
-    output = getattr(commit_result, "output", None)
-    error = output.get("error") if isinstance(output, dict) else None
-    return {
-        "type": getattr(commit_result, "reason_code", None),
-        "detail": error if isinstance(error, dict) else None,
-    }
+    return _core_apply_failure_reason(
+        commit_result,
+        commit_failed=REASON_COMMIT_FAILED,
+        assent_invalid=REASON_ASSENT_INVALID,
+    )
 
 
 def _discovery_reason(message: str) -> str:
@@ -1319,37 +1215,12 @@ def _fence(condition: bool, reason_code: str, message: str) -> None:
         raise EditorialEditWorkflowError(reason_code, message)
 
 
-def _is_sha256(value: Any) -> bool:
-    if not isinstance(value, str) or len(value) != 64:
-        return False
-    try:
-        int(value, 16)
-    except ValueError:
-        return False
-    return True
-
-
 def _proposal_id(proposal_fingerprint: str) -> str:
-    return f"eew_{proposal_fingerprint[:16]}"
+    return workflow_identifier("eew_", proposal_fingerprint)
 
 
 def _workflow_id(proposal_fingerprint: str) -> str:
-    return f"eewf_{proposal_fingerprint[:16]}"
-
-
-def _sanitize(message: str) -> str:
-    # Path-free: never leak filesystem paths in the typed error message.
-    return " ".join(part for part in str(message).split() if "/" not in part)
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-async def _maybe_await(value: Any) -> Any:
-    if hasattr(value, "__await__"):
-        return await value
-    return value
+    return workflow_identifier("eewf_", proposal_fingerprint)
 
 
 __all__ = [

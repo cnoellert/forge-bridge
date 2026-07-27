@@ -1,0 +1,4351 @@
+{
+  "entries": [
+    {
+      "action": "updated",
+      "after": {
+        "frame_in": {
+          "number": 86402,
+          "rate": {
+            "frame_rate": "FPS_24"
+          }
+        },
+        "frame_out": {
+          "number": 86424,
+          "rate": {
+            "frame_rate": "FPS_24"
+          }
+        },
+        "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+        "metadata": {
+          "colour_space": "ACEScg",
+          "custom": {
+            "file_path": "/show/plates/A001C001.mov",
+            "flame_version_index": 0,
+            "flame_version_track_index": 0,
+            "head": 8,
+            "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+            "record_out_model": "exclusive",
+            "segment_index": 0,
+            "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+            "source_duration_frames": 240,
+            "source_in": {
+              "number": 1002,
+              "rate": {
+                "frame_rate": "FPS_24"
+              }
+            },
+            "source_out": {
+              "number": 1024,
+              "rate": {
+                "frame_rate": "FPS_24"
+              }
+            },
+            "tail": 8
+          },
+          "record_tc_in": {
+            "frames": 0,
+            "hours": 1,
+            "minutes": 0,
+            "rate": {
+              "frame_rate": "FPS_24"
+            },
+            "seconds": 0,
+            "string": "01:00:00:00"
+          },
+          "record_tc_out": {
+            "frames": 0,
+            "hours": 1,
+            "minutes": 0,
+            "rate": {
+              "frame_rate": "FPS_24"
+            },
+            "seconds": 1,
+            "string": "01:00:01:00"
+          },
+          "source_clip_name": "A001C001",
+          "source_tc_in": {
+            "frames": 18,
+            "hours": 0,
+            "minutes": 0,
+            "rate": {
+              "frame_rate": "FPS_24"
+            },
+            "seconds": 41,
+            "string": "00:00:41:18"
+          },
+          "source_tc_out": {
+            "frames": 16,
+            "hours": 0,
+            "minutes": 0,
+            "rate": {
+              "frame_rate": "FPS_24"
+            },
+            "seconds": 42,
+            "string": "00:00:42:16"
+          },
+          "tape_name": "A001C001"
+        },
+        "name": "SHOT_A"
+      },
+      "before": {
+        "frame_in": {
+          "number": 86400,
+          "rate": {
+            "frame_rate": "FPS_24"
+          }
+        },
+        "frame_out": {
+          "number": 86424,
+          "rate": {
+            "frame_rate": "FPS_24"
+          }
+        },
+        "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+        "metadata": {
+          "colour_space": "ACEScg",
+          "custom": {
+            "file_path": "/show/plates/A001C001.mov",
+            "flame_version_index": 0,
+            "flame_version_track_index": 0,
+            "head": 8,
+            "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+            "record_out_model": "exclusive",
+            "segment_index": 0,
+            "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+            "source_duration_frames": 240,
+            "source_in": {
+              "number": 1000,
+              "rate": {
+                "frame_rate": "FPS_24"
+              }
+            },
+            "source_out": {
+              "number": 1024,
+              "rate": {
+                "frame_rate": "FPS_24"
+              }
+            },
+            "tail": 8
+          },
+          "record_tc_in": {
+            "frames": 0,
+            "hours": 1,
+            "minutes": 0,
+            "rate": {
+              "frame_rate": "FPS_24"
+            },
+            "seconds": 0,
+            "string": "01:00:00:00"
+          },
+          "record_tc_out": {
+            "frames": 0,
+            "hours": 1,
+            "minutes": 0,
+            "rate": {
+              "frame_rate": "FPS_24"
+            },
+            "seconds": 1,
+            "string": "01:00:01:00"
+          },
+          "source_clip_name": "A001C001",
+          "source_tc_in": {
+            "frames": 16,
+            "hours": 0,
+            "minutes": 0,
+            "rate": {
+              "frame_rate": "FPS_24"
+            },
+            "seconds": 41,
+            "string": "00:00:41:16"
+          },
+          "source_tc_out": {
+            "frames": 16,
+            "hours": 0,
+            "minutes": 0,
+            "rate": {
+              "frame_rate": "FPS_24"
+            },
+            "seconds": 42,
+            "string": "00:00:42:16"
+          },
+          "tape_name": "A001C001"
+        },
+        "name": "SHOT_A"
+      },
+      "metadata": {
+        "delta_action_schema_version": 1,
+        "flame_identity_schema_version": 1,
+        "flame_identity_source": "before_state",
+        "node_id": "editorial-transaction-00-trim_head",
+        "operation": "trim_head",
+        "record_in": "01:00:00:00",
+        "record_in_frame": 86400,
+        "seg_name": "SHOT_A",
+        "sequence_name": "live-cut",
+        "source_name": "A001C001",
+        "step_id": "editorial-transaction-00-trim_head_to_mark_in",
+        "step_index": 0,
+        "track_idx": 0,
+        "version_index": 0,
+        "version_track_idx": 0
+      },
+      "object_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+      "object_type": "segment"
+    },
+    {
+      "action": "updated",
+      "after": {
+        "frame_in": {
+          "number": 86402,
+          "rate": {
+            "frame_rate": "FPS_24"
+          }
+        },
+        "frame_out": {
+          "number": 86422,
+          "rate": {
+            "frame_rate": "FPS_24"
+          }
+        },
+        "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+        "metadata": {
+          "colour_space": "ACEScg",
+          "custom": {
+            "file_path": "/show/plates/A001C001.mov",
+            "flame_version_index": 0,
+            "flame_version_track_index": 0,
+            "head": 8,
+            "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+            "record_out_model": "exclusive",
+            "segment_index": 0,
+            "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+            "source_duration_frames": 240,
+            "source_in": {
+              "number": 1002,
+              "rate": {
+                "frame_rate": "FPS_24"
+              }
+            },
+            "source_out": {
+              "number": 1022,
+              "rate": {
+                "frame_rate": "FPS_24"
+              }
+            },
+            "tail": 8
+          },
+          "record_tc_in": {
+            "frames": 0,
+            "hours": 1,
+            "minutes": 0,
+            "rate": {
+              "frame_rate": "FPS_24"
+            },
+            "seconds": 0,
+            "string": "01:00:00:00"
+          },
+          "record_tc_out": {
+            "frames": 0,
+            "hours": 1,
+            "minutes": 0,
+            "rate": {
+              "frame_rate": "FPS_24"
+            },
+            "seconds": 1,
+            "string": "01:00:01:00"
+          },
+          "source_clip_name": "A001C001",
+          "source_tc_in": {
+            "frames": 18,
+            "hours": 0,
+            "minutes": 0,
+            "rate": {
+              "frame_rate": "FPS_24"
+            },
+            "seconds": 41,
+            "string": "00:00:41:18"
+          },
+          "source_tc_out": {
+            "frames": 14,
+            "hours": 0,
+            "minutes": 0,
+            "rate": {
+              "frame_rate": "FPS_24"
+            },
+            "seconds": 42,
+            "string": "00:00:42:14"
+          },
+          "tape_name": "A001C001"
+        },
+        "name": "SHOT_A"
+      },
+      "before": {
+        "frame_in": {
+          "number": 86402,
+          "rate": {
+            "frame_rate": "FPS_24"
+          }
+        },
+        "frame_out": {
+          "number": 86424,
+          "rate": {
+            "frame_rate": "FPS_24"
+          }
+        },
+        "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+        "metadata": {
+          "colour_space": "ACEScg",
+          "custom": {
+            "file_path": "/show/plates/A001C001.mov",
+            "flame_version_index": 0,
+            "flame_version_track_index": 0,
+            "head": 8,
+            "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+            "record_out_model": "exclusive",
+            "segment_index": 0,
+            "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+            "source_duration_frames": 240,
+            "source_in": {
+              "number": 1002,
+              "rate": {
+                "frame_rate": "FPS_24"
+              }
+            },
+            "source_out": {
+              "number": 1024,
+              "rate": {
+                "frame_rate": "FPS_24"
+              }
+            },
+            "tail": 8
+          },
+          "record_tc_in": {
+            "frames": 0,
+            "hours": 1,
+            "minutes": 0,
+            "rate": {
+              "frame_rate": "FPS_24"
+            },
+            "seconds": 0,
+            "string": "01:00:00:00"
+          },
+          "record_tc_out": {
+            "frames": 0,
+            "hours": 1,
+            "minutes": 0,
+            "rate": {
+              "frame_rate": "FPS_24"
+            },
+            "seconds": 1,
+            "string": "01:00:01:00"
+          },
+          "source_clip_name": "A001C001",
+          "source_tc_in": {
+            "frames": 18,
+            "hours": 0,
+            "minutes": 0,
+            "rate": {
+              "frame_rate": "FPS_24"
+            },
+            "seconds": 41,
+            "string": "00:00:41:18"
+          },
+          "source_tc_out": {
+            "frames": 16,
+            "hours": 0,
+            "minutes": 0,
+            "rate": {
+              "frame_rate": "FPS_24"
+            },
+            "seconds": 42,
+            "string": "00:00:42:16"
+          },
+          "tape_name": "A001C001"
+        },
+        "name": "SHOT_A"
+      },
+      "metadata": {
+        "delta_action_schema_version": 1,
+        "flame_identity_schema_version": 1,
+        "flame_identity_source": "before_state",
+        "node_id": "editorial-transaction-01-trim_tail",
+        "operation": "trim_tail",
+        "record_in": "01:00:00:02",
+        "record_in_frame": 86402,
+        "seg_name": "SHOT_A",
+        "sequence_name": "live-cut",
+        "source_name": "A001C001",
+        "step_id": "editorial-transaction-01-trim_tail_to_mark_out",
+        "step_index": 1,
+        "track_idx": 0,
+        "version_index": 0,
+        "version_track_idx": 0
+      },
+      "object_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+      "object_type": "segment"
+    }
+  ],
+  "final_live_segment": {
+    "available_reel_names": [
+      "sequences"
+    ],
+    "effect_count": 0,
+    "effect_witness": [],
+    "head": 10,
+    "record_duration_frame": 20,
+    "record_in": "01:00:00:00",
+    "record_in_frame": 86402,
+    "record_out": "01:00:01:00",
+    "record_out_frame": 86421,
+    "seg_name": "SHOT_A",
+    "segment_index": 0,
+    "sequence_name": "live-cut",
+    "sequence_reel_name": "sequences",
+    "source_duration_frame": 240,
+    "source_in_frame": 1002,
+    "source_name": "A001C001",
+    "source_out_frame": 1021,
+    "start_frame": 1003,
+    "tail": 10,
+    "track_idx": 0,
+    "track_name": "V1",
+    "track_transition_count": 0,
+    "track_transition_witness": [],
+    "version_index": 0,
+    "version_track_idx": 0
+  },
+  "forward_apply": {
+    "applied": 2,
+    "final_state": {
+      "comment": "",
+      "effect_count": 0,
+      "effect_witness": [],
+      "head": 10,
+      "record_duration_frame": 20,
+      "record_in": "86402",
+      "record_in_frame": 86402,
+      "record_out": "86421",
+      "record_out_frame": 86421,
+      "seg_name": "SHOT_A",
+      "segment_index": 0,
+      "sequence_name": "live-cut",
+      "shot_name": "",
+      "source_duration_frame": 240,
+      "source_in_frame": 1002,
+      "source_name": "A001C001",
+      "source_out_frame": 1021,
+      "start_frame": 1003,
+      "tail": 10,
+      "track_idx": 0,
+      "track_name": "V1",
+      "track_transition_count": 0,
+      "track_transition_witness": [],
+      "version_index": 0,
+      "version_track_idx": 0
+    },
+    "final_state_mismatches": [],
+    "ok": true,
+    "recovery": {
+      "applied_member_count": 2,
+      "baseline_identity": {
+        "record_in": "01:00:00:00",
+        "record_in_frame": 86400,
+        "seg_name": "SHOT_A",
+        "segment_index": 0,
+        "sequence_name": "live-cut",
+        "source_name": "A001C001",
+        "track_idx": 0,
+        "version_index": 0,
+        "version_track_idx": 0
+      },
+      "baseline_state": {
+        "head": 8,
+        "record_duration_frame": 24,
+        "record_in_frame": 86400,
+        "record_out_frame": 86423,
+        "source_duration_frame": 240,
+        "source_in_frame": 1000,
+        "source_out_frame": 1023,
+        "start_frame": 1001,
+        "tail": 8
+      },
+      "final_identity": {
+        "record_in": "01:00:00:00",
+        "record_in_frame": 86402,
+        "seg_name": "SHOT_A",
+        "segment_index": 0,
+        "sequence_name": "live-cut",
+        "source_name": "A001C001",
+        "track_idx": 0,
+        "version_index": 0,
+        "version_track_idx": 0
+      },
+      "final_state": {
+        "head": 10,
+        "record_duration_frame": 20,
+        "record_in_frame": 86402,
+        "record_out_frame": 86421,
+        "source_duration_frame": 240,
+        "source_in_frame": 1002,
+        "source_out_frame": 1021,
+        "start_frame": 1003,
+        "tail": 10
+      },
+      "fingerprint": "efd5ea1b8bf3b3dc3dfaaa2ffdc8fe35cf313dbff3a5e5d5be283748319942bf",
+      "kind": "flame.editorial.temporal_transaction_recovery",
+      "object_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+      "resolved_plan_fingerprint": "a95e54ac50ec8c389e6da4c6d63a2e1d4457b922df110290fd896d14287c7ccb",
+      "reverse_steps": [
+        {
+          "expected_after_state": {
+            "head": 10,
+            "record_duration_frame": 22,
+            "record_in_frame": 86402,
+            "record_out_frame": 86423,
+            "source_duration_frame": 240,
+            "source_in_frame": 1002,
+            "source_out_frame": 1023,
+            "start_frame": 1003,
+            "tail": 8
+          },
+          "expected_before_state": {
+            "head": 10,
+            "record_duration_frame": 20,
+            "record_in_frame": 86402,
+            "record_out_frame": 86421,
+            "source_duration_frame": 240,
+            "source_in_frame": 1002,
+            "source_out_frame": 1021,
+            "start_frame": 1003,
+            "tail": 10
+          },
+          "method": "trim_tail",
+          "offset": -2,
+          "source_member_index": 1
+        },
+        {
+          "expected_after_state": {
+            "head": 8,
+            "record_duration_frame": 24,
+            "record_in_frame": 86400,
+            "record_out_frame": 86423,
+            "source_duration_frame": 240,
+            "source_in_frame": 1000,
+            "source_out_frame": 1023,
+            "start_frame": 1001,
+            "tail": 8
+          },
+          "expected_before_state": {
+            "head": 10,
+            "record_duration_frame": 22,
+            "record_in_frame": 86402,
+            "record_out_frame": 86423,
+            "source_duration_frame": 240,
+            "source_in_frame": 1002,
+            "source_out_frame": 1023,
+            "start_frame": 1003,
+            "tail": 8
+          },
+          "method": "trim_head",
+          "offset": -2,
+          "source_member_index": 0
+        }
+      ],
+      "schema_version": 1,
+      "sequence_name": "live-cut"
+    },
+    "results": [
+      {
+        "error": "",
+        "expected_post_state": {
+          "head": 10,
+          "record_duration_frame": 22,
+          "record_in_frame": 86402,
+          "record_out_frame": 86423,
+          "source_duration_frame": 240,
+          "source_in_frame": 1002,
+          "source_out_frame": 1023,
+          "start_frame": 1003,
+          "tail": 8
+        },
+        "member_index": 0,
+        "method": "trim_head",
+        "method_return": false,
+        "offset": 2,
+        "ok": true,
+        "post_state": {
+          "comment": "",
+          "effect_count": 0,
+          "effect_witness": [],
+          "head": 10,
+          "record_duration_frame": 22,
+          "record_in": "86402",
+          "record_in_frame": 86402,
+          "record_out": "86423",
+          "record_out_frame": 86423,
+          "seg_name": "SHOT_A",
+          "segment_index": 0,
+          "sequence_name": "live-cut",
+          "shot_name": "",
+          "source_duration_frame": 240,
+          "source_in_frame": 1002,
+          "source_name": "A001C001",
+          "source_out_frame": 1023,
+          "start_frame": 1003,
+          "tail": 8,
+          "track_idx": 0,
+          "track_name": "V1",
+          "track_transition_count": 0,
+          "track_transition_witness": [],
+          "version_index": 0,
+          "version_track_idx": 0
+        },
+        "post_state_mismatches": [],
+        "pre_state": {
+          "comment": "",
+          "effect_count": 0,
+          "effect_witness": [],
+          "head": 8,
+          "record_duration_frame": 24,
+          "record_in": "86400",
+          "record_in_frame": 86400,
+          "record_out": "86423",
+          "record_out_frame": 86423,
+          "seg_name": "SHOT_A",
+          "segment_index": 0,
+          "sequence_name": "live-cut",
+          "shot_name": "",
+          "source_duration_frame": 240,
+          "source_in_frame": 1000,
+          "source_name": "A001C001",
+          "source_out_frame": 1023,
+          "start_frame": 1001,
+          "tail": 8,
+          "track_idx": 0,
+          "track_name": "V1",
+          "track_transition_count": 0,
+          "track_transition_witness": [],
+          "version_index": 0,
+          "version_track_idx": 0
+        }
+      },
+      {
+        "error": "",
+        "expected_post_state": {
+          "head": 10,
+          "record_duration_frame": 20,
+          "record_in_frame": 86402,
+          "record_out_frame": 86421,
+          "source_duration_frame": 240,
+          "source_in_frame": 1002,
+          "source_out_frame": 1021,
+          "start_frame": 1003,
+          "tail": 10
+        },
+        "member_index": 1,
+        "method": "trim_tail",
+        "method_return": false,
+        "offset": 2,
+        "ok": true,
+        "post_state": {
+          "comment": "",
+          "effect_count": 0,
+          "effect_witness": [],
+          "head": 10,
+          "record_duration_frame": 20,
+          "record_in": "86402",
+          "record_in_frame": 86402,
+          "record_out": "86421",
+          "record_out_frame": 86421,
+          "seg_name": "SHOT_A",
+          "segment_index": 0,
+          "sequence_name": "live-cut",
+          "shot_name": "",
+          "source_duration_frame": 240,
+          "source_in_frame": 1002,
+          "source_name": "A001C001",
+          "source_out_frame": 1021,
+          "start_frame": 1003,
+          "tail": 10,
+          "track_idx": 0,
+          "track_name": "V1",
+          "track_transition_count": 0,
+          "track_transition_witness": [],
+          "version_index": 0,
+          "version_track_idx": 0
+        },
+        "post_state_mismatches": [],
+        "pre_state": {
+          "comment": "",
+          "effect_count": 0,
+          "effect_witness": [],
+          "head": 10,
+          "record_duration_frame": 22,
+          "record_in": "86402",
+          "record_in_frame": 86402,
+          "record_out": "86423",
+          "record_out_frame": 86423,
+          "seg_name": "SHOT_A",
+          "segment_index": 0,
+          "sequence_name": "live-cut",
+          "shot_name": "",
+          "source_duration_frame": 240,
+          "source_in_frame": 1002,
+          "source_name": "A001C001",
+          "source_out_frame": 1023,
+          "start_frame": 1003,
+          "tail": 8,
+          "track_idx": 0,
+          "track_name": "V1",
+          "track_transition_count": 0,
+          "track_transition_witness": [],
+          "version_index": 0,
+          "version_track_idx": 0
+        }
+      }
+    ],
+    "status": "applied"
+  },
+  "forward_manifest": {
+    "apply_counterpart": {
+      "parameter_overrides": {
+        "mode": "apply"
+      },
+      "tool": "forge_apply_segment_temporal_transaction"
+    },
+    "intent_parameters": {
+      "entries": [
+        {
+          "action": "updated",
+          "after": {
+            "frame_in": {
+              "number": 86402,
+              "rate": {
+                "frame_rate": "FPS_24"
+              }
+            },
+            "frame_out": {
+              "number": 86424,
+              "rate": {
+                "frame_rate": "FPS_24"
+              }
+            },
+            "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+            "metadata": {
+              "colour_space": "ACEScg",
+              "custom": {
+                "file_path": "/show/plates/A001C001.mov",
+                "flame_version_index": 0,
+                "flame_version_track_index": 0,
+                "head": 8,
+                "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+                "record_out_model": "exclusive",
+                "segment_index": 0,
+                "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+                "source_duration_frames": 240,
+                "source_in": {
+                  "number": 1002,
+                  "rate": {
+                    "frame_rate": "FPS_24"
+                  }
+                },
+                "source_out": {
+                  "number": 1024,
+                  "rate": {
+                    "frame_rate": "FPS_24"
+                  }
+                },
+                "tail": 8
+              },
+              "record_tc_in": {
+                "frames": 0,
+                "hours": 1,
+                "minutes": 0,
+                "rate": {
+                  "frame_rate": "FPS_24"
+                },
+                "seconds": 0,
+                "string": "01:00:00:00"
+              },
+              "record_tc_out": {
+                "frames": 0,
+                "hours": 1,
+                "minutes": 0,
+                "rate": {
+                  "frame_rate": "FPS_24"
+                },
+                "seconds": 1,
+                "string": "01:00:01:00"
+              },
+              "source_clip_name": "A001C001",
+              "source_tc_in": {
+                "frames": 18,
+                "hours": 0,
+                "minutes": 0,
+                "rate": {
+                  "frame_rate": "FPS_24"
+                },
+                "seconds": 41,
+                "string": "00:00:41:18"
+              },
+              "source_tc_out": {
+                "frames": 16,
+                "hours": 0,
+                "minutes": 0,
+                "rate": {
+                  "frame_rate": "FPS_24"
+                },
+                "seconds": 42,
+                "string": "00:00:42:16"
+              },
+              "tape_name": "A001C001"
+            },
+            "name": "SHOT_A"
+          },
+          "before": {
+            "frame_in": {
+              "number": 86400,
+              "rate": {
+                "frame_rate": "FPS_24"
+              }
+            },
+            "frame_out": {
+              "number": 86424,
+              "rate": {
+                "frame_rate": "FPS_24"
+              }
+            },
+            "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+            "metadata": {
+              "colour_space": "ACEScg",
+              "custom": {
+                "file_path": "/show/plates/A001C001.mov",
+                "flame_version_index": 0,
+                "flame_version_track_index": 0,
+                "head": 8,
+                "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+                "record_out_model": "exclusive",
+                "segment_index": 0,
+                "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+                "source_duration_frames": 240,
+                "source_in": {
+                  "number": 1000,
+                  "rate": {
+                    "frame_rate": "FPS_24"
+                  }
+                },
+                "source_out": {
+                  "number": 1024,
+                  "rate": {
+                    "frame_rate": "FPS_24"
+                  }
+                },
+                "tail": 8
+              },
+              "record_tc_in": {
+                "frames": 0,
+                "hours": 1,
+                "minutes": 0,
+                "rate": {
+                  "frame_rate": "FPS_24"
+                },
+                "seconds": 0,
+                "string": "01:00:00:00"
+              },
+              "record_tc_out": {
+                "frames": 0,
+                "hours": 1,
+                "minutes": 0,
+                "rate": {
+                  "frame_rate": "FPS_24"
+                },
+                "seconds": 1,
+                "string": "01:00:01:00"
+              },
+              "source_clip_name": "A001C001",
+              "source_tc_in": {
+                "frames": 16,
+                "hours": 0,
+                "minutes": 0,
+                "rate": {
+                  "frame_rate": "FPS_24"
+                },
+                "seconds": 41,
+                "string": "00:00:41:16"
+              },
+              "source_tc_out": {
+                "frames": 16,
+                "hours": 0,
+                "minutes": 0,
+                "rate": {
+                  "frame_rate": "FPS_24"
+                },
+                "seconds": 42,
+                "string": "00:00:42:16"
+              },
+              "tape_name": "A001C001"
+            },
+            "name": "SHOT_A"
+          },
+          "metadata": {
+            "delta_action_schema_version": 1,
+            "flame_identity_schema_version": 1,
+            "flame_identity_source": "before_state",
+            "node_id": "editorial-transaction-00-trim_head",
+            "operation": "trim_head",
+            "record_in": "01:00:00:00",
+            "record_in_frame": 86400,
+            "seg_name": "SHOT_A",
+            "sequence_name": "live-cut",
+            "source_name": "A001C001",
+            "step_id": "editorial-transaction-00-trim_head_to_mark_in",
+            "step_index": 0,
+            "track_idx": 0,
+            "version_index": 0,
+            "version_track_idx": 0
+          },
+          "object_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+          "object_type": "segment"
+        },
+        {
+          "action": "updated",
+          "after": {
+            "frame_in": {
+              "number": 86402,
+              "rate": {
+                "frame_rate": "FPS_24"
+              }
+            },
+            "frame_out": {
+              "number": 86422,
+              "rate": {
+                "frame_rate": "FPS_24"
+              }
+            },
+            "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+            "metadata": {
+              "colour_space": "ACEScg",
+              "custom": {
+                "file_path": "/show/plates/A001C001.mov",
+                "flame_version_index": 0,
+                "flame_version_track_index": 0,
+                "head": 8,
+                "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+                "record_out_model": "exclusive",
+                "segment_index": 0,
+                "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+                "source_duration_frames": 240,
+                "source_in": {
+                  "number": 1002,
+                  "rate": {
+                    "frame_rate": "FPS_24"
+                  }
+                },
+                "source_out": {
+                  "number": 1022,
+                  "rate": {
+                    "frame_rate": "FPS_24"
+                  }
+                },
+                "tail": 8
+              },
+              "record_tc_in": {
+                "frames": 0,
+                "hours": 1,
+                "minutes": 0,
+                "rate": {
+                  "frame_rate": "FPS_24"
+                },
+                "seconds": 0,
+                "string": "01:00:00:00"
+              },
+              "record_tc_out": {
+                "frames": 0,
+                "hours": 1,
+                "minutes": 0,
+                "rate": {
+                  "frame_rate": "FPS_24"
+                },
+                "seconds": 1,
+                "string": "01:00:01:00"
+              },
+              "source_clip_name": "A001C001",
+              "source_tc_in": {
+                "frames": 18,
+                "hours": 0,
+                "minutes": 0,
+                "rate": {
+                  "frame_rate": "FPS_24"
+                },
+                "seconds": 41,
+                "string": "00:00:41:18"
+              },
+              "source_tc_out": {
+                "frames": 14,
+                "hours": 0,
+                "minutes": 0,
+                "rate": {
+                  "frame_rate": "FPS_24"
+                },
+                "seconds": 42,
+                "string": "00:00:42:14"
+              },
+              "tape_name": "A001C001"
+            },
+            "name": "SHOT_A"
+          },
+          "before": {
+            "frame_in": {
+              "number": 86402,
+              "rate": {
+                "frame_rate": "FPS_24"
+              }
+            },
+            "frame_out": {
+              "number": 86424,
+              "rate": {
+                "frame_rate": "FPS_24"
+              }
+            },
+            "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+            "metadata": {
+              "colour_space": "ACEScg",
+              "custom": {
+                "file_path": "/show/plates/A001C001.mov",
+                "flame_version_index": 0,
+                "flame_version_track_index": 0,
+                "head": 8,
+                "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+                "record_out_model": "exclusive",
+                "segment_index": 0,
+                "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+                "source_duration_frames": 240,
+                "source_in": {
+                  "number": 1002,
+                  "rate": {
+                    "frame_rate": "FPS_24"
+                  }
+                },
+                "source_out": {
+                  "number": 1024,
+                  "rate": {
+                    "frame_rate": "FPS_24"
+                  }
+                },
+                "tail": 8
+              },
+              "record_tc_in": {
+                "frames": 0,
+                "hours": 1,
+                "minutes": 0,
+                "rate": {
+                  "frame_rate": "FPS_24"
+                },
+                "seconds": 0,
+                "string": "01:00:00:00"
+              },
+              "record_tc_out": {
+                "frames": 0,
+                "hours": 1,
+                "minutes": 0,
+                "rate": {
+                  "frame_rate": "FPS_24"
+                },
+                "seconds": 1,
+                "string": "01:00:01:00"
+              },
+              "source_clip_name": "A001C001",
+              "source_tc_in": {
+                "frames": 18,
+                "hours": 0,
+                "minutes": 0,
+                "rate": {
+                  "frame_rate": "FPS_24"
+                },
+                "seconds": 41,
+                "string": "00:00:41:18"
+              },
+              "source_tc_out": {
+                "frames": 16,
+                "hours": 0,
+                "minutes": 0,
+                "rate": {
+                  "frame_rate": "FPS_24"
+                },
+                "seconds": 42,
+                "string": "00:00:42:16"
+              },
+              "tape_name": "A001C001"
+            },
+            "name": "SHOT_A"
+          },
+          "metadata": {
+            "delta_action_schema_version": 1,
+            "flame_identity_schema_version": 1,
+            "flame_identity_source": "before_state",
+            "node_id": "editorial-transaction-01-trim_tail",
+            "operation": "trim_tail",
+            "record_in": "01:00:00:02",
+            "record_in_frame": 86402,
+            "seg_name": "SHOT_A",
+            "sequence_name": "live-cut",
+            "source_name": "A001C001",
+            "step_id": "editorial-transaction-01-trim_tail_to_mark_out",
+            "step_index": 1,
+            "track_idx": 0,
+            "version_index": 0,
+            "version_track_idx": 0
+          },
+          "object_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+          "object_type": "segment"
+        }
+      ],
+      "sequence_name": "live-cut"
+    },
+    "originating_capability": "forge_apply_segment_temporal_transaction",
+    "resolved_plan": [
+      {
+        "identity": {
+          "record_in": "01:00:00:00",
+          "record_in_frame": 86400,
+          "seg_name": "SHOT_A",
+          "segment_index": 0,
+          "sequence_name": "live-cut",
+          "source_name": "A001C001",
+          "track_idx": 0,
+          "version_index": 0,
+          "version_track_idx": 0
+        },
+        "payload": {
+          "action": "updated",
+          "after_frame": 86402,
+          "before_frame": 86400,
+          "before_matches_live": true,
+          "compensation": {
+            "expected_after_state": {
+              "available_reel_names": [
+                "sequences"
+              ],
+              "effect_count": 0,
+              "effect_witness": [],
+              "head": 8,
+              "record_duration_frame": 24,
+              "record_in": "01:00:00:00",
+              "record_in_frame": 86400,
+              "record_out": "01:00:01:00",
+              "record_out_frame": 86423,
+              "seg_name": "SHOT_A",
+              "segment_index": 0,
+              "sequence_name": "live-cut",
+              "sequence_reel_name": "sequences",
+              "source_duration_frame": 240,
+              "source_in_frame": 1000,
+              "source_name": "A001C001",
+              "source_out_frame": 1023,
+              "start_frame": 1001,
+              "tail": 8,
+              "track_idx": 0,
+              "track_name": "V1",
+              "track_transition_count": 0,
+              "track_transition_witness": [],
+              "version_index": 0,
+              "version_track_idx": 0
+            },
+            "method": "trim_head",
+            "offset": -2
+          },
+          "current_before_frame": 86400,
+          "current_native_before_frame": 86400,
+          "expected_post_state": {
+            "head": 10,
+            "record_duration_frame": 22,
+            "record_in_frame": 86402,
+            "record_out_frame": 86423,
+            "source_duration_frame": 240,
+            "source_in_frame": 1002,
+            "source_out_frame": 1023,
+            "start_frame": 1003,
+            "tail": 8
+          },
+          "field": "frame_in",
+          "member_index": 0,
+          "method": "trim_head",
+          "object_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+          "object_type": "segment",
+          "offset": 2,
+          "pre_state": {
+            "available_reel_names": [
+              "sequences"
+            ],
+            "effect_count": 0,
+            "effect_witness": [],
+            "head": 8,
+            "record_duration_frame": 24,
+            "record_in": "01:00:00:00",
+            "record_in_frame": 86400,
+            "record_out": "01:00:01:00",
+            "record_out_frame": 86423,
+            "seg_name": "SHOT_A",
+            "segment_index": 0,
+            "sequence_name": "live-cut",
+            "sequence_reel_name": "sequences",
+            "source_duration_frame": 240,
+            "source_in_frame": 1000,
+            "source_name": "A001C001",
+            "source_out_frame": 1023,
+            "start_frame": 1001,
+            "tail": 8,
+            "track_idx": 0,
+            "track_name": "V1",
+            "track_transition_count": 0,
+            "track_transition_witness": [],
+            "version_index": 0,
+            "version_track_idx": 0
+          },
+          "source_edge_change": {
+            "after": 1002,
+            "before": 1000,
+            "delta_frames": 2,
+            "field": "source_in",
+            "rate": {
+              "frame_rate": "FPS_24"
+            },
+            "timecode_field": "source_tc_in"
+          },
+          "success_policy": "validate_post_state_not_method_return",
+          "transaction_member_count": 2
+        }
+      },
+      {
+        "identity": {
+          "record_in": "01:00:00:00",
+          "record_in_frame": 86402,
+          "seg_name": "SHOT_A",
+          "segment_index": 0,
+          "sequence_name": "live-cut",
+          "source_name": "A001C001",
+          "track_idx": 0,
+          "version_index": 0,
+          "version_track_idx": 0
+        },
+        "payload": {
+          "action": "updated",
+          "after_frame": 86422,
+          "before_frame": 86424,
+          "before_matches_live": true,
+          "compensation": {
+            "expected_after_state": {
+              "available_reel_names": [
+                "sequences"
+              ],
+              "effect_count": 0,
+              "effect_witness": [],
+              "head": 10,
+              "record_duration_frame": 22,
+              "record_in": "01:00:00:00",
+              "record_in_frame": 86402,
+              "record_out": "01:00:01:00",
+              "record_out_frame": 86423,
+              "seg_name": "SHOT_A",
+              "segment_index": 0,
+              "sequence_name": "live-cut",
+              "sequence_reel_name": "sequences",
+              "source_duration_frame": 240,
+              "source_in_frame": 1002,
+              "source_name": "A001C001",
+              "source_out_frame": 1023,
+              "start_frame": 1003,
+              "tail": 8,
+              "track_idx": 0,
+              "track_name": "V1",
+              "track_transition_count": 0,
+              "track_transition_witness": [],
+              "version_index": 0,
+              "version_track_idx": 0
+            },
+            "method": "trim_tail",
+            "offset": -2
+          },
+          "current_before_frame": 86424,
+          "current_native_before_frame": 86423,
+          "expected_post_state": {
+            "head": 10,
+            "record_duration_frame": 20,
+            "record_in_frame": 86402,
+            "record_out_frame": 86421,
+            "source_duration_frame": 240,
+            "source_in_frame": 1002,
+            "source_out_frame": 1021,
+            "start_frame": 1003,
+            "tail": 10
+          },
+          "field": "frame_out",
+          "member_index": 1,
+          "method": "trim_tail",
+          "object_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+          "object_type": "segment",
+          "offset": 2,
+          "pre_state": {
+            "available_reel_names": [
+              "sequences"
+            ],
+            "effect_count": 0,
+            "effect_witness": [],
+            "head": 10,
+            "record_duration_frame": 22,
+            "record_in": "01:00:00:00",
+            "record_in_frame": 86402,
+            "record_out": "01:00:01:00",
+            "record_out_frame": 86423,
+            "seg_name": "SHOT_A",
+            "segment_index": 0,
+            "sequence_name": "live-cut",
+            "sequence_reel_name": "sequences",
+            "source_duration_frame": 240,
+            "source_in_frame": 1002,
+            "source_name": "A001C001",
+            "source_out_frame": 1023,
+            "start_frame": 1003,
+            "tail": 8,
+            "track_idx": 0,
+            "track_name": "V1",
+            "track_transition_count": 0,
+            "track_transition_witness": [],
+            "version_index": 0,
+            "version_track_idx": 0
+          },
+          "source_edge_change": {
+            "after": 1022,
+            "before": 1024,
+            "delta_frames": -2,
+            "field": "source_out",
+            "rate": {
+              "frame_rate": "FPS_24"
+            },
+            "timecode_field": "source_tc_out"
+          },
+          "success_policy": "validate_post_state_not_method_return",
+          "transaction_member_count": 2
+        }
+      }
+    ],
+    "type": "mutation_plan"
+  },
+  "live_segment": {
+    "available_reel_names": [
+      "sequences"
+    ],
+    "effect_count": 0,
+    "effect_witness": [],
+    "head": 8,
+    "record_duration_frame": 24,
+    "record_in": "01:00:00:00",
+    "record_in_frame": 86400,
+    "record_out": "01:00:01:00",
+    "record_out_frame": 86423,
+    "seg_name": "SHOT_A",
+    "segment_index": 0,
+    "sequence_name": "live-cut",
+    "sequence_reel_name": "sequences",
+    "source_duration_frame": 240,
+    "source_in_frame": 1000,
+    "source_name": "A001C001",
+    "source_out_frame": 1023,
+    "start_frame": 1001,
+    "tail": 8,
+    "track_idx": 0,
+    "track_name": "V1",
+    "track_transition_count": 0,
+    "track_transition_witness": [],
+    "version_index": 0,
+    "version_track_idx": 0
+  },
+  "realization_discover": {
+    "allowed": true,
+    "apply_result_fingerprint": "2ea3145f122b99a88cf44ea579af82c3411a595b06ba7c8ac71632792435b832",
+    "composition_owner": "bridge",
+    "delta_set_fingerprint": "492063c513fda1b6d2f5bc32b75c2751696b857dcb020382a72628d30228a100",
+    "dispatch_authorized": false,
+    "drift": false,
+    "kind": "flame.editorial.transaction_realization_result",
+    "lowerer_contract_fingerprint": "7712151781d2ae4c2e4ed251435a734e46541941eb9ff7f351f10ae3e7f5b5b3",
+    "mode": "discover",
+    "mutation_safe": true,
+    "operation_type": "flame.editorial.transaction_realization",
+    "read_only": true,
+    "realization_authority": "forge_flame",
+    "realization_plan": {
+      "allowed": true,
+      "apply_result_fingerprint": "2ea3145f122b99a88cf44ea579af82c3411a595b06ba7c8ac71632792435b832",
+      "compensation_plan": {
+        "baseline_fingerprint": "3dd5a59d5b0ed798b76f694b464ea77e983ae8cdb3f0f5f5dac34059757c24e4",
+        "composition_owner": "bridge",
+        "final_fingerprint": "2805d8071bb0838348e14f96d2fe99ac39cc4d92104e9ec13cefdef20f99deb9",
+        "fingerprint": "29f7b65f922dd0ac970cc775f4d639a18eab86f14530b66a134f843e0c9004c2",
+        "kind": "flame.editorial.transaction_compensation_plan",
+        "members": [
+          {
+            "compensation_index": 0,
+            "expected_after_fingerprint": "43d22bd0aeefa1199774ef521efbc92447ef5b2fa7d251ef99b29fe2fa9532f3",
+            "expected_before_fingerprint": "2805d8071bb0838348e14f96d2fe99ac39cc4d92104e9ec13cefdef20f99deb9",
+            "fingerprint": "6a77e11fb6c43c76c2c65e58614859a573d0353818f3e5e308f0763fe912851a",
+            "method": "trim_tail",
+            "object_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+            "offset": -2,
+            "operation": "trim_tail",
+            "source_member_index": 1
+          },
+          {
+            "compensation_index": 1,
+            "expected_after_fingerprint": "3dd5a59d5b0ed798b76f694b464ea77e983ae8cdb3f0f5f5dac34059757c24e4",
+            "expected_before_fingerprint": "43d22bd0aeefa1199774ef521efbc92447ef5b2fa7d251ef99b29fe2fa9532f3",
+            "fingerprint": "bfa7cb83c092f01030883407f9cfde8c36f9a2aa937721fffc34851b09d9c003",
+            "method": "trim_head",
+            "object_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+            "offset": -2,
+            "operation": "trim_head",
+            "source_member_index": 0
+          }
+        ],
+        "policy": "reverse_applied_members_then_verify_baseline",
+        "schema_version": 1,
+        "status": "ready",
+        "trust_status": "trusted"
+      },
+      "delta_set_fingerprint": "492063c513fda1b6d2f5bc32b75c2751696b857dcb020382a72628d30228a100",
+      "deltas": [
+        {
+          "changes": [
+            {
+              "action": "updated",
+              "after": {
+                "frame_in": {
+                  "number": 86402,
+                  "rate": {
+                    "frame_rate": "FPS_24"
+                  }
+                },
+                "frame_out": {
+                  "number": 86424,
+                  "rate": {
+                    "frame_rate": "FPS_24"
+                  }
+                },
+                "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                "metadata": {
+                  "colour_space": "ACEScg",
+                  "custom": {
+                    "file_path": "/show/plates/A001C001.mov",
+                    "flame_version_index": 0,
+                    "flame_version_track_index": 0,
+                    "head": 8,
+                    "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+                    "record_out_model": "exclusive",
+                    "segment_index": 0,
+                    "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+                    "source_duration_frames": 240,
+                    "source_in": {
+                      "number": 1002,
+                      "rate": {
+                        "frame_rate": "FPS_24"
+                      }
+                    },
+                    "source_out": {
+                      "number": 1024,
+                      "rate": {
+                        "frame_rate": "FPS_24"
+                      }
+                    },
+                    "tail": 8
+                  },
+                  "record_tc_in": {
+                    "frames": 0,
+                    "hours": 1,
+                    "minutes": 0,
+                    "rate": {
+                      "frame_rate": "FPS_24"
+                    },
+                    "seconds": 0,
+                    "string": "01:00:00:00"
+                  },
+                  "record_tc_out": {
+                    "frames": 0,
+                    "hours": 1,
+                    "minutes": 0,
+                    "rate": {
+                      "frame_rate": "FPS_24"
+                    },
+                    "seconds": 1,
+                    "string": "01:00:01:00"
+                  },
+                  "source_clip_name": "A001C001",
+                  "source_tc_in": {
+                    "frames": 18,
+                    "hours": 0,
+                    "minutes": 0,
+                    "rate": {
+                      "frame_rate": "FPS_24"
+                    },
+                    "seconds": 41,
+                    "string": "00:00:41:18"
+                  },
+                  "source_tc_out": {
+                    "frames": 16,
+                    "hours": 0,
+                    "minutes": 0,
+                    "rate": {
+                      "frame_rate": "FPS_24"
+                    },
+                    "seconds": 42,
+                    "string": "00:00:42:16"
+                  },
+                  "tape_name": "A001C001"
+                },
+                "name": "SHOT_A"
+              },
+              "before": {
+                "frame_in": {
+                  "number": 86400,
+                  "rate": {
+                    "frame_rate": "FPS_24"
+                  }
+                },
+                "frame_out": {
+                  "number": 86424,
+                  "rate": {
+                    "frame_rate": "FPS_24"
+                  }
+                },
+                "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                "metadata": {
+                  "colour_space": "ACEScg",
+                  "custom": {
+                    "file_path": "/show/plates/A001C001.mov",
+                    "flame_version_index": 0,
+                    "flame_version_track_index": 0,
+                    "head": 8,
+                    "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+                    "record_out_model": "exclusive",
+                    "segment_index": 0,
+                    "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+                    "source_duration_frames": 240,
+                    "source_in": {
+                      "number": 1000,
+                      "rate": {
+                        "frame_rate": "FPS_24"
+                      }
+                    },
+                    "source_out": {
+                      "number": 1024,
+                      "rate": {
+                        "frame_rate": "FPS_24"
+                      }
+                    },
+                    "tail": 8
+                  },
+                  "record_tc_in": {
+                    "frames": 0,
+                    "hours": 1,
+                    "minutes": 0,
+                    "rate": {
+                      "frame_rate": "FPS_24"
+                    },
+                    "seconds": 0,
+                    "string": "01:00:00:00"
+                  },
+                  "record_tc_out": {
+                    "frames": 0,
+                    "hours": 1,
+                    "minutes": 0,
+                    "rate": {
+                      "frame_rate": "FPS_24"
+                    },
+                    "seconds": 1,
+                    "string": "01:00:01:00"
+                  },
+                  "source_clip_name": "A001C001",
+                  "source_tc_in": {
+                    "frames": 16,
+                    "hours": 0,
+                    "minutes": 0,
+                    "rate": {
+                      "frame_rate": "FPS_24"
+                    },
+                    "seconds": 41,
+                    "string": "00:00:41:16"
+                  },
+                  "source_tc_out": {
+                    "frames": 16,
+                    "hours": 0,
+                    "minutes": 0,
+                    "rate": {
+                      "frame_rate": "FPS_24"
+                    },
+                    "seconds": 42,
+                    "string": "00:00:42:16"
+                  },
+                  "tape_name": "A001C001"
+                },
+                "name": "SHOT_A"
+              },
+              "metadata": {
+                "delta_action_schema_version": 1,
+                "flame_identity_schema_version": 1,
+                "flame_identity_source": "before_state",
+                "node_id": "editorial-transaction-00-trim_head",
+                "operation": "trim_head",
+                "record_in": "01:00:00:00",
+                "record_in_frame": 86400,
+                "seg_name": "SHOT_A",
+                "sequence_name": "live-cut",
+                "source_name": "A001C001",
+                "step_id": "editorial-transaction-00-trim_head_to_mark_in",
+                "step_index": 0,
+                "track_idx": 0,
+                "version_index": 0,
+                "version_track_idx": 0
+              },
+              "object_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+              "object_type": "segment"
+            }
+          ],
+          "metadata": {
+            "delta_action_schema_version": 1,
+            "node_id": "editorial-transaction-00-trim_head",
+            "operation": "trim_head",
+            "step_id": "editorial-transaction-00-trim_head_to_mark_in",
+            "step_index": 0
+          },
+          "sequence_id": "sequence-b5ef5ada-dce5-5548-9502-a36b8173dedc",
+          "type": "timeline_delta"
+        },
+        {
+          "changes": [
+            {
+              "action": "updated",
+              "after": {
+                "frame_in": {
+                  "number": 86402,
+                  "rate": {
+                    "frame_rate": "FPS_24"
+                  }
+                },
+                "frame_out": {
+                  "number": 86422,
+                  "rate": {
+                    "frame_rate": "FPS_24"
+                  }
+                },
+                "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                "metadata": {
+                  "colour_space": "ACEScg",
+                  "custom": {
+                    "file_path": "/show/plates/A001C001.mov",
+                    "flame_version_index": 0,
+                    "flame_version_track_index": 0,
+                    "head": 8,
+                    "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+                    "record_out_model": "exclusive",
+                    "segment_index": 0,
+                    "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+                    "source_duration_frames": 240,
+                    "source_in": {
+                      "number": 1002,
+                      "rate": {
+                        "frame_rate": "FPS_24"
+                      }
+                    },
+                    "source_out": {
+                      "number": 1022,
+                      "rate": {
+                        "frame_rate": "FPS_24"
+                      }
+                    },
+                    "tail": 8
+                  },
+                  "record_tc_in": {
+                    "frames": 0,
+                    "hours": 1,
+                    "minutes": 0,
+                    "rate": {
+                      "frame_rate": "FPS_24"
+                    },
+                    "seconds": 0,
+                    "string": "01:00:00:00"
+                  },
+                  "record_tc_out": {
+                    "frames": 0,
+                    "hours": 1,
+                    "minutes": 0,
+                    "rate": {
+                      "frame_rate": "FPS_24"
+                    },
+                    "seconds": 1,
+                    "string": "01:00:01:00"
+                  },
+                  "source_clip_name": "A001C001",
+                  "source_tc_in": {
+                    "frames": 18,
+                    "hours": 0,
+                    "minutes": 0,
+                    "rate": {
+                      "frame_rate": "FPS_24"
+                    },
+                    "seconds": 41,
+                    "string": "00:00:41:18"
+                  },
+                  "source_tc_out": {
+                    "frames": 14,
+                    "hours": 0,
+                    "minutes": 0,
+                    "rate": {
+                      "frame_rate": "FPS_24"
+                    },
+                    "seconds": 42,
+                    "string": "00:00:42:14"
+                  },
+                  "tape_name": "A001C001"
+                },
+                "name": "SHOT_A"
+              },
+              "before": {
+                "frame_in": {
+                  "number": 86402,
+                  "rate": {
+                    "frame_rate": "FPS_24"
+                  }
+                },
+                "frame_out": {
+                  "number": 86424,
+                  "rate": {
+                    "frame_rate": "FPS_24"
+                  }
+                },
+                "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                "metadata": {
+                  "colour_space": "ACEScg",
+                  "custom": {
+                    "file_path": "/show/plates/A001C001.mov",
+                    "flame_version_index": 0,
+                    "flame_version_track_index": 0,
+                    "head": 8,
+                    "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+                    "record_out_model": "exclusive",
+                    "segment_index": 0,
+                    "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+                    "source_duration_frames": 240,
+                    "source_in": {
+                      "number": 1002,
+                      "rate": {
+                        "frame_rate": "FPS_24"
+                      }
+                    },
+                    "source_out": {
+                      "number": 1024,
+                      "rate": {
+                        "frame_rate": "FPS_24"
+                      }
+                    },
+                    "tail": 8
+                  },
+                  "record_tc_in": {
+                    "frames": 0,
+                    "hours": 1,
+                    "minutes": 0,
+                    "rate": {
+                      "frame_rate": "FPS_24"
+                    },
+                    "seconds": 0,
+                    "string": "01:00:00:00"
+                  },
+                  "record_tc_out": {
+                    "frames": 0,
+                    "hours": 1,
+                    "minutes": 0,
+                    "rate": {
+                      "frame_rate": "FPS_24"
+                    },
+                    "seconds": 1,
+                    "string": "01:00:01:00"
+                  },
+                  "source_clip_name": "A001C001",
+                  "source_tc_in": {
+                    "frames": 18,
+                    "hours": 0,
+                    "minutes": 0,
+                    "rate": {
+                      "frame_rate": "FPS_24"
+                    },
+                    "seconds": 41,
+                    "string": "00:00:41:18"
+                  },
+                  "source_tc_out": {
+                    "frames": 16,
+                    "hours": 0,
+                    "minutes": 0,
+                    "rate": {
+                      "frame_rate": "FPS_24"
+                    },
+                    "seconds": 42,
+                    "string": "00:00:42:16"
+                  },
+                  "tape_name": "A001C001"
+                },
+                "name": "SHOT_A"
+              },
+              "metadata": {
+                "delta_action_schema_version": 1,
+                "flame_identity_schema_version": 1,
+                "flame_identity_source": "before_state",
+                "node_id": "editorial-transaction-01-trim_tail",
+                "operation": "trim_tail",
+                "record_in": "01:00:00:02",
+                "record_in_frame": 86402,
+                "seg_name": "SHOT_A",
+                "sequence_name": "live-cut",
+                "source_name": "A001C001",
+                "step_id": "editorial-transaction-01-trim_tail_to_mark_out",
+                "step_index": 1,
+                "track_idx": 0,
+                "version_index": 0,
+                "version_track_idx": 0
+              },
+              "object_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+              "object_type": "segment"
+            }
+          ],
+          "metadata": {
+            "delta_action_schema_version": 1,
+            "node_id": "editorial-transaction-01-trim_tail",
+            "operation": "trim_tail",
+            "step_id": "editorial-transaction-01-trim_tail_to_mark_out",
+            "step_index": 1
+          },
+          "sequence_id": "sequence-b5ef5ada-dce5-5548-9502-a36b8173dedc",
+          "type": "timeline_delta"
+        }
+      ],
+      "executor": "forge_apply_segment_temporal_transaction",
+      "fingerprint": "855b3cb8b22f913b63ae3988c7a7c670e505230d51396755f1262a4a5674701d",
+      "host_mode": "flame",
+      "kind": "flame.editorial.transaction_realization_plan",
+      "lowerer_contract_fingerprint": "7712151781d2ae4c2e4ed251435a734e46541941eb9ff7f351f10ae3e7f5b5b3",
+      "members": [
+        {
+          "delta_fingerprint": "a7a3253d8b50374f27ece72915971cde8ac16f94fd5ddc7a34049ed945c1e100",
+          "entry_indices": [
+            0
+          ],
+          "fingerprint": "79c922e3e82c845d71c282f6215470e214064e72ee9fba2e9a0051a1dda08328",
+          "lowered_executor": "forge_apply_segment_temporal_delta",
+          "lowered_group_key": "forge_apply_segment_temporal_delta:updated_segment_trim",
+          "lowering_plan": {
+            "candidates": [
+              {
+                "command": {
+                  "executor": "forge_apply_segment_temporal_delta",
+                  "mode": "discover",
+                  "params": {
+                    "entries": [
+                      {
+                        "action": "updated",
+                        "after": {
+                          "frame_in": {
+                            "number": 86402,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            }
+                          },
+                          "frame_out": {
+                            "number": 86424,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            }
+                          },
+                          "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                          "metadata": {
+                            "colour_space": "ACEScg",
+                            "custom": {
+                              "file_path": "/show/plates/A001C001.mov",
+                              "flame_version_index": 0,
+                              "flame_version_track_index": 0,
+                              "head": 8,
+                              "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+                              "record_out_model": "exclusive",
+                              "segment_index": 0,
+                              "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+                              "source_duration_frames": 240,
+                              "source_in": {
+                                "number": 1002,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                }
+                              },
+                              "source_out": {
+                                "number": 1024,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                }
+                              },
+                              "tail": 8
+                            },
+                            "record_tc_in": {
+                              "frames": 0,
+                              "hours": 1,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 0,
+                              "string": "01:00:00:00"
+                            },
+                            "record_tc_out": {
+                              "frames": 0,
+                              "hours": 1,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 1,
+                              "string": "01:00:01:00"
+                            },
+                            "source_clip_name": "A001C001",
+                            "source_tc_in": {
+                              "frames": 18,
+                              "hours": 0,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 41,
+                              "string": "00:00:41:18"
+                            },
+                            "source_tc_out": {
+                              "frames": 16,
+                              "hours": 0,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 42,
+                              "string": "00:00:42:16"
+                            },
+                            "tape_name": "A001C001"
+                          },
+                          "name": "SHOT_A"
+                        },
+                        "before": {
+                          "frame_in": {
+                            "number": 86400,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            }
+                          },
+                          "frame_out": {
+                            "number": 86424,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            }
+                          },
+                          "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                          "metadata": {
+                            "colour_space": "ACEScg",
+                            "custom": {
+                              "file_path": "/show/plates/A001C001.mov",
+                              "flame_version_index": 0,
+                              "flame_version_track_index": 0,
+                              "head": 8,
+                              "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+                              "record_out_model": "exclusive",
+                              "segment_index": 0,
+                              "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+                              "source_duration_frames": 240,
+                              "source_in": {
+                                "number": 1000,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                }
+                              },
+                              "source_out": {
+                                "number": 1024,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                }
+                              },
+                              "tail": 8
+                            },
+                            "record_tc_in": {
+                              "frames": 0,
+                              "hours": 1,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 0,
+                              "string": "01:00:00:00"
+                            },
+                            "record_tc_out": {
+                              "frames": 0,
+                              "hours": 1,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 1,
+                              "string": "01:00:01:00"
+                            },
+                            "source_clip_name": "A001C001",
+                            "source_tc_in": {
+                              "frames": 16,
+                              "hours": 0,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 41,
+                              "string": "00:00:41:16"
+                            },
+                            "source_tc_out": {
+                              "frames": 16,
+                              "hours": 0,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 42,
+                              "string": "00:00:42:16"
+                            },
+                            "tape_name": "A001C001"
+                          },
+                          "name": "SHOT_A"
+                        },
+                        "metadata": {
+                          "delta_action_schema_version": 1,
+                          "flame_identity_schema_version": 1,
+                          "flame_identity_source": "before_state",
+                          "node_id": "editorial-transaction-00-trim_head",
+                          "operation": "trim_head",
+                          "record_in": "01:00:00:00",
+                          "record_in_frame": 86400,
+                          "seg_name": "SHOT_A",
+                          "sequence_name": "live-cut",
+                          "source_name": "A001C001",
+                          "step_id": "editorial-transaction-00-trim_head_to_mark_in",
+                          "step_index": 0,
+                          "track_idx": 0,
+                          "version_index": 0,
+                          "version_track_idx": 0
+                        },
+                        "object_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                        "object_type": "segment"
+                      }
+                    ],
+                    "sequence_name": "live-cut"
+                  }
+                },
+                "entry_indices": [
+                  0
+                ],
+                "executor": "forge_apply_segment_temporal_delta",
+                "group_key": "forge_apply_segment_temporal_delta:updated_segment_trim",
+                "kind": "ready_executor_group",
+                "mode": "discover",
+                "params": {
+                  "entries": [
+                    {
+                      "action": "updated",
+                      "after": {
+                        "frame_in": {
+                          "number": 86402,
+                          "rate": {
+                            "frame_rate": "FPS_24"
+                          }
+                        },
+                        "frame_out": {
+                          "number": 86424,
+                          "rate": {
+                            "frame_rate": "FPS_24"
+                          }
+                        },
+                        "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                        "metadata": {
+                          "colour_space": "ACEScg",
+                          "custom": {
+                            "file_path": "/show/plates/A001C001.mov",
+                            "flame_version_index": 0,
+                            "flame_version_track_index": 0,
+                            "head": 8,
+                            "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+                            "record_out_model": "exclusive",
+                            "segment_index": 0,
+                            "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+                            "source_duration_frames": 240,
+                            "source_in": {
+                              "number": 1002,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              }
+                            },
+                            "source_out": {
+                              "number": 1024,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              }
+                            },
+                            "tail": 8
+                          },
+                          "record_tc_in": {
+                            "frames": 0,
+                            "hours": 1,
+                            "minutes": 0,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            },
+                            "seconds": 0,
+                            "string": "01:00:00:00"
+                          },
+                          "record_tc_out": {
+                            "frames": 0,
+                            "hours": 1,
+                            "minutes": 0,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            },
+                            "seconds": 1,
+                            "string": "01:00:01:00"
+                          },
+                          "source_clip_name": "A001C001",
+                          "source_tc_in": {
+                            "frames": 18,
+                            "hours": 0,
+                            "minutes": 0,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            },
+                            "seconds": 41,
+                            "string": "00:00:41:18"
+                          },
+                          "source_tc_out": {
+                            "frames": 16,
+                            "hours": 0,
+                            "minutes": 0,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            },
+                            "seconds": 42,
+                            "string": "00:00:42:16"
+                          },
+                          "tape_name": "A001C001"
+                        },
+                        "name": "SHOT_A"
+                      },
+                      "before": {
+                        "frame_in": {
+                          "number": 86400,
+                          "rate": {
+                            "frame_rate": "FPS_24"
+                          }
+                        },
+                        "frame_out": {
+                          "number": 86424,
+                          "rate": {
+                            "frame_rate": "FPS_24"
+                          }
+                        },
+                        "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                        "metadata": {
+                          "colour_space": "ACEScg",
+                          "custom": {
+                            "file_path": "/show/plates/A001C001.mov",
+                            "flame_version_index": 0,
+                            "flame_version_track_index": 0,
+                            "head": 8,
+                            "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+                            "record_out_model": "exclusive",
+                            "segment_index": 0,
+                            "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+                            "source_duration_frames": 240,
+                            "source_in": {
+                              "number": 1000,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              }
+                            },
+                            "source_out": {
+                              "number": 1024,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              }
+                            },
+                            "tail": 8
+                          },
+                          "record_tc_in": {
+                            "frames": 0,
+                            "hours": 1,
+                            "minutes": 0,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            },
+                            "seconds": 0,
+                            "string": "01:00:00:00"
+                          },
+                          "record_tc_out": {
+                            "frames": 0,
+                            "hours": 1,
+                            "minutes": 0,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            },
+                            "seconds": 1,
+                            "string": "01:00:01:00"
+                          },
+                          "source_clip_name": "A001C001",
+                          "source_tc_in": {
+                            "frames": 16,
+                            "hours": 0,
+                            "minutes": 0,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            },
+                            "seconds": 41,
+                            "string": "00:00:41:16"
+                          },
+                          "source_tc_out": {
+                            "frames": 16,
+                            "hours": 0,
+                            "minutes": 0,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            },
+                            "seconds": 42,
+                            "string": "00:00:42:16"
+                          },
+                          "tape_name": "A001C001"
+                        },
+                        "name": "SHOT_A"
+                      },
+                      "metadata": {
+                        "delta_action_schema_version": 1,
+                        "flame_identity_schema_version": 1,
+                        "flame_identity_source": "before_state",
+                        "node_id": "editorial-transaction-00-trim_head",
+                        "operation": "trim_head",
+                        "record_in": "01:00:00:00",
+                        "record_in_frame": 86400,
+                        "seg_name": "SHOT_A",
+                        "sequence_name": "live-cut",
+                        "source_name": "A001C001",
+                        "step_id": "editorial-transaction-00-trim_head_to_mark_in",
+                        "step_index": 0,
+                        "track_idx": 0,
+                        "version_index": 0,
+                        "version_track_idx": 0
+                      },
+                      "object_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                      "object_type": "segment"
+                    }
+                  ],
+                  "sequence_name": "live-cut"
+                },
+                "sequence_name": "live-cut"
+              }
+            ],
+            "message": "TimelineDelta can be dispatched to Flame apply executors.",
+            "metadata": {
+              "bridge_imported": false,
+              "bridge_wrapping": "payload_for_future_node_result",
+              "classifier_schema_version": 24,
+              "execution_owner": "forge_core.traffik.editing.flame_apply",
+              "plan_kind": "traffik.flame_delta_apply_plan",
+              "review_boundary_kind": "traffik.flame_delta_apply_review",
+              "schema_version": 25
+            },
+            "output": {
+              "blocked_groups": [],
+              "classification": {
+                "delta_sequence_id": "sequence-b5ef5ada-dce5-5548-9502-a36b8173dedc",
+                "invalid": [],
+                "review_required": [],
+                "schema_version": 24,
+                "summary": {
+                  "can_apply_without_review": true,
+                  "entry_count": 1,
+                  "invalid_count": 0,
+                  "review_required_count": 0,
+                  "supported_count": 1
+                },
+                "supported": [
+                  {
+                    "action": "updated",
+                    "changed_fields": [
+                      "frame_in",
+                      "metadata"
+                    ],
+                    "entry_index": 0,
+                    "executor": "forge_apply_segment_temporal_delta",
+                    "group_key": "forge_apply_segment_temporal_delta:updated_segment_trim",
+                    "identity": {
+                      "record_in": "01:00:00:00",
+                      "record_in_frame": 86400,
+                      "seg_name": "SHOT_A",
+                      "sequence_name": "live-cut",
+                      "source_name": "A001C001",
+                      "track_idx": 0,
+                      "version_index": 0,
+                      "version_track_idx": 0
+                    },
+                    "message": "Single-edge segment timing trim can be lowered to forge_apply_segment_temporal_delta.",
+                    "object_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                    "object_type": "segment",
+                    "reason_code": "supported_by_forge_apply_segment_temporal_delta",
+                    "status": "supported",
+                    "temporal_delta": {
+                      "changed_fields": [
+                        "frame_in"
+                      ],
+                      "field_changes": [
+                        {
+                          "after": 86402,
+                          "before": 86400,
+                          "delta_frames": 2,
+                          "field": "frame_in"
+                        }
+                      ],
+                      "review_kind": "segment_temporal",
+                      "source_edge_change": {
+                        "after": 1002,
+                        "before": 1000,
+                        "delta_frames": 2,
+                        "field": "source_in",
+                        "rate": {
+                          "frame_rate": "FPS_24"
+                        },
+                        "timecode_field": "source_tc_in"
+                      }
+                    }
+                  }
+                ],
+                "supported_groups": [
+                  {
+                    "entry_indices": [
+                      0
+                    ],
+                    "executor": "forge_apply_segment_temporal_delta",
+                    "group_key": "forge_apply_segment_temporal_delta:updated_segment_trim"
+                  }
+                ],
+                "type": "flame_delta_apply_classification"
+              },
+              "delta_sequence_id": "sequence-b5ef5ada-dce5-5548-9502-a36b8173dedc",
+              "dispatch_policy": {
+                "default": "whole_delta_only",
+                "dispatch_ready_groups_when_held_entries_exist": false,
+                "maximum_ready_groups_without_review": 1,
+                "partial_fanout_requires_explicit_approval": true
+              },
+              "held_entries": [],
+              "plan_kind": "traffik.flame_delta_apply_plan",
+              "ready_groups": [
+                {
+                  "command": {
+                    "executor": "forge_apply_segment_temporal_delta",
+                    "mode": "discover",
+                    "params": {
+                      "entries": [
+                        {
+                          "action": "updated",
+                          "after": {
+                            "frame_in": {
+                              "number": 86402,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              }
+                            },
+                            "frame_out": {
+                              "number": 86424,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              }
+                            },
+                            "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                            "metadata": {
+                              "colour_space": "ACEScg",
+                              "custom": {
+                                "file_path": "/show/plates/A001C001.mov",
+                                "flame_version_index": 0,
+                                "flame_version_track_index": 0,
+                                "head": 8,
+                                "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+                                "record_out_model": "exclusive",
+                                "segment_index": 0,
+                                "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+                                "source_duration_frames": 240,
+                                "source_in": {
+                                  "number": 1002,
+                                  "rate": {
+                                    "frame_rate": "FPS_24"
+                                  }
+                                },
+                                "source_out": {
+                                  "number": 1024,
+                                  "rate": {
+                                    "frame_rate": "FPS_24"
+                                  }
+                                },
+                                "tail": 8
+                              },
+                              "record_tc_in": {
+                                "frames": 0,
+                                "hours": 1,
+                                "minutes": 0,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                },
+                                "seconds": 0,
+                                "string": "01:00:00:00"
+                              },
+                              "record_tc_out": {
+                                "frames": 0,
+                                "hours": 1,
+                                "minutes": 0,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                },
+                                "seconds": 1,
+                                "string": "01:00:01:00"
+                              },
+                              "source_clip_name": "A001C001",
+                              "source_tc_in": {
+                                "frames": 18,
+                                "hours": 0,
+                                "minutes": 0,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                },
+                                "seconds": 41,
+                                "string": "00:00:41:18"
+                              },
+                              "source_tc_out": {
+                                "frames": 16,
+                                "hours": 0,
+                                "minutes": 0,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                },
+                                "seconds": 42,
+                                "string": "00:00:42:16"
+                              },
+                              "tape_name": "A001C001"
+                            },
+                            "name": "SHOT_A"
+                          },
+                          "before": {
+                            "frame_in": {
+                              "number": 86400,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              }
+                            },
+                            "frame_out": {
+                              "number": 86424,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              }
+                            },
+                            "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                            "metadata": {
+                              "colour_space": "ACEScg",
+                              "custom": {
+                                "file_path": "/show/plates/A001C001.mov",
+                                "flame_version_index": 0,
+                                "flame_version_track_index": 0,
+                                "head": 8,
+                                "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+                                "record_out_model": "exclusive",
+                                "segment_index": 0,
+                                "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+                                "source_duration_frames": 240,
+                                "source_in": {
+                                  "number": 1000,
+                                  "rate": {
+                                    "frame_rate": "FPS_24"
+                                  }
+                                },
+                                "source_out": {
+                                  "number": 1024,
+                                  "rate": {
+                                    "frame_rate": "FPS_24"
+                                  }
+                                },
+                                "tail": 8
+                              },
+                              "record_tc_in": {
+                                "frames": 0,
+                                "hours": 1,
+                                "minutes": 0,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                },
+                                "seconds": 0,
+                                "string": "01:00:00:00"
+                              },
+                              "record_tc_out": {
+                                "frames": 0,
+                                "hours": 1,
+                                "minutes": 0,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                },
+                                "seconds": 1,
+                                "string": "01:00:01:00"
+                              },
+                              "source_clip_name": "A001C001",
+                              "source_tc_in": {
+                                "frames": 16,
+                                "hours": 0,
+                                "minutes": 0,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                },
+                                "seconds": 41,
+                                "string": "00:00:41:16"
+                              },
+                              "source_tc_out": {
+                                "frames": 16,
+                                "hours": 0,
+                                "minutes": 0,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                },
+                                "seconds": 42,
+                                "string": "00:00:42:16"
+                              },
+                              "tape_name": "A001C001"
+                            },
+                            "name": "SHOT_A"
+                          },
+                          "metadata": {
+                            "delta_action_schema_version": 1,
+                            "flame_identity_schema_version": 1,
+                            "flame_identity_source": "before_state",
+                            "node_id": "editorial-transaction-00-trim_head",
+                            "operation": "trim_head",
+                            "record_in": "01:00:00:00",
+                            "record_in_frame": 86400,
+                            "seg_name": "SHOT_A",
+                            "sequence_name": "live-cut",
+                            "source_name": "A001C001",
+                            "step_id": "editorial-transaction-00-trim_head_to_mark_in",
+                            "step_index": 0,
+                            "track_idx": 0,
+                            "version_index": 0,
+                            "version_track_idx": 0
+                          },
+                          "object_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                          "object_type": "segment"
+                        }
+                      ],
+                      "sequence_name": "live-cut"
+                    }
+                  },
+                  "entry_indices": [
+                    0
+                  ],
+                  "executor": "forge_apply_segment_temporal_delta",
+                  "group_key": "forge_apply_segment_temporal_delta:updated_segment_trim",
+                  "mode": "discover",
+                  "params": {
+                    "entries": [
+                      {
+                        "action": "updated",
+                        "after": {
+                          "frame_in": {
+                            "number": 86402,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            }
+                          },
+                          "frame_out": {
+                            "number": 86424,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            }
+                          },
+                          "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                          "metadata": {
+                            "colour_space": "ACEScg",
+                            "custom": {
+                              "file_path": "/show/plates/A001C001.mov",
+                              "flame_version_index": 0,
+                              "flame_version_track_index": 0,
+                              "head": 8,
+                              "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+                              "record_out_model": "exclusive",
+                              "segment_index": 0,
+                              "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+                              "source_duration_frames": 240,
+                              "source_in": {
+                                "number": 1002,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                }
+                              },
+                              "source_out": {
+                                "number": 1024,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                }
+                              },
+                              "tail": 8
+                            },
+                            "record_tc_in": {
+                              "frames": 0,
+                              "hours": 1,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 0,
+                              "string": "01:00:00:00"
+                            },
+                            "record_tc_out": {
+                              "frames": 0,
+                              "hours": 1,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 1,
+                              "string": "01:00:01:00"
+                            },
+                            "source_clip_name": "A001C001",
+                            "source_tc_in": {
+                              "frames": 18,
+                              "hours": 0,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 41,
+                              "string": "00:00:41:18"
+                            },
+                            "source_tc_out": {
+                              "frames": 16,
+                              "hours": 0,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 42,
+                              "string": "00:00:42:16"
+                            },
+                            "tape_name": "A001C001"
+                          },
+                          "name": "SHOT_A"
+                        },
+                        "before": {
+                          "frame_in": {
+                            "number": 86400,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            }
+                          },
+                          "frame_out": {
+                            "number": 86424,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            }
+                          },
+                          "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                          "metadata": {
+                            "colour_space": "ACEScg",
+                            "custom": {
+                              "file_path": "/show/plates/A001C001.mov",
+                              "flame_version_index": 0,
+                              "flame_version_track_index": 0,
+                              "head": 8,
+                              "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+                              "record_out_model": "exclusive",
+                              "segment_index": 0,
+                              "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+                              "source_duration_frames": 240,
+                              "source_in": {
+                                "number": 1000,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                }
+                              },
+                              "source_out": {
+                                "number": 1024,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                }
+                              },
+                              "tail": 8
+                            },
+                            "record_tc_in": {
+                              "frames": 0,
+                              "hours": 1,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 0,
+                              "string": "01:00:00:00"
+                            },
+                            "record_tc_out": {
+                              "frames": 0,
+                              "hours": 1,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 1,
+                              "string": "01:00:01:00"
+                            },
+                            "source_clip_name": "A001C001",
+                            "source_tc_in": {
+                              "frames": 16,
+                              "hours": 0,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 41,
+                              "string": "00:00:41:16"
+                            },
+                            "source_tc_out": {
+                              "frames": 16,
+                              "hours": 0,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 42,
+                              "string": "00:00:42:16"
+                            },
+                            "tape_name": "A001C001"
+                          },
+                          "name": "SHOT_A"
+                        },
+                        "metadata": {
+                          "delta_action_schema_version": 1,
+                          "flame_identity_schema_version": 1,
+                          "flame_identity_source": "before_state",
+                          "node_id": "editorial-transaction-00-trim_head",
+                          "operation": "trim_head",
+                          "record_in": "01:00:00:00",
+                          "record_in_frame": 86400,
+                          "seg_name": "SHOT_A",
+                          "sequence_name": "live-cut",
+                          "source_name": "A001C001",
+                          "step_id": "editorial-transaction-00-trim_head_to_mark_in",
+                          "step_index": 0,
+                          "track_idx": 0,
+                          "version_index": 0,
+                          "version_track_idx": 0
+                        },
+                        "object_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                        "object_type": "segment"
+                      }
+                    ],
+                    "sequence_name": "live-cut"
+                  },
+                  "sequence_name": "live-cut"
+                }
+              ],
+              "schema_version": 25,
+              "summary": {
+                "can_dispatch_without_review": true,
+                "entry_count": 1,
+                "held_entry_count": 0,
+                "invalid_count": 0,
+                "ready_entry_count": 1,
+                "ready_group_count": 1,
+                "review_required_count": 0
+              }
+            },
+            "reason_code": "flame_delta_apply_plan_ready",
+            "status": "ok",
+            "warnings": []
+          },
+          "lowering_plan_fingerprint": "e1c5734289337ff94bb557ac6c90e33c6ba7b7367fee7acdcbb2fb86806fc7e6",
+          "member_index": 0,
+          "node_id": "editorial-transaction-00-trim_head",
+          "operation": "trim_head",
+          "semantic_decision_fingerprint": "618608ec0caba1c4c3e60fa9641ebfe1e70a0a01c2206b40fe7ff6b20f8d363f",
+          "step_id": "editorial-transaction-00-trim_head_to_mark_in",
+          "temporal_method": "trim_head",
+          "temporal_offset": 2
+        },
+        {
+          "delta_fingerprint": "fe11495f5fb4c181f955c69b5e39323dbbf157016ff343a6fe021d2def9f9dfc",
+          "entry_indices": [
+            0
+          ],
+          "fingerprint": "de039d38ff729530ff922bbf1bce1fa4a01c9168327de61a122af26858d26b73",
+          "lowered_executor": "forge_apply_segment_temporal_delta",
+          "lowered_group_key": "forge_apply_segment_temporal_delta:updated_segment_trim",
+          "lowering_plan": {
+            "candidates": [
+              {
+                "command": {
+                  "executor": "forge_apply_segment_temporal_delta",
+                  "mode": "discover",
+                  "params": {
+                    "entries": [
+                      {
+                        "action": "updated",
+                        "after": {
+                          "frame_in": {
+                            "number": 86402,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            }
+                          },
+                          "frame_out": {
+                            "number": 86422,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            }
+                          },
+                          "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                          "metadata": {
+                            "colour_space": "ACEScg",
+                            "custom": {
+                              "file_path": "/show/plates/A001C001.mov",
+                              "flame_version_index": 0,
+                              "flame_version_track_index": 0,
+                              "head": 8,
+                              "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+                              "record_out_model": "exclusive",
+                              "segment_index": 0,
+                              "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+                              "source_duration_frames": 240,
+                              "source_in": {
+                                "number": 1002,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                }
+                              },
+                              "source_out": {
+                                "number": 1022,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                }
+                              },
+                              "tail": 8
+                            },
+                            "record_tc_in": {
+                              "frames": 0,
+                              "hours": 1,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 0,
+                              "string": "01:00:00:00"
+                            },
+                            "record_tc_out": {
+                              "frames": 0,
+                              "hours": 1,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 1,
+                              "string": "01:00:01:00"
+                            },
+                            "source_clip_name": "A001C001",
+                            "source_tc_in": {
+                              "frames": 18,
+                              "hours": 0,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 41,
+                              "string": "00:00:41:18"
+                            },
+                            "source_tc_out": {
+                              "frames": 14,
+                              "hours": 0,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 42,
+                              "string": "00:00:42:14"
+                            },
+                            "tape_name": "A001C001"
+                          },
+                          "name": "SHOT_A"
+                        },
+                        "before": {
+                          "frame_in": {
+                            "number": 86402,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            }
+                          },
+                          "frame_out": {
+                            "number": 86424,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            }
+                          },
+                          "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                          "metadata": {
+                            "colour_space": "ACEScg",
+                            "custom": {
+                              "file_path": "/show/plates/A001C001.mov",
+                              "flame_version_index": 0,
+                              "flame_version_track_index": 0,
+                              "head": 8,
+                              "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+                              "record_out_model": "exclusive",
+                              "segment_index": 0,
+                              "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+                              "source_duration_frames": 240,
+                              "source_in": {
+                                "number": 1002,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                }
+                              },
+                              "source_out": {
+                                "number": 1024,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                }
+                              },
+                              "tail": 8
+                            },
+                            "record_tc_in": {
+                              "frames": 0,
+                              "hours": 1,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 0,
+                              "string": "01:00:00:00"
+                            },
+                            "record_tc_out": {
+                              "frames": 0,
+                              "hours": 1,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 1,
+                              "string": "01:00:01:00"
+                            },
+                            "source_clip_name": "A001C001",
+                            "source_tc_in": {
+                              "frames": 18,
+                              "hours": 0,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 41,
+                              "string": "00:00:41:18"
+                            },
+                            "source_tc_out": {
+                              "frames": 16,
+                              "hours": 0,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 42,
+                              "string": "00:00:42:16"
+                            },
+                            "tape_name": "A001C001"
+                          },
+                          "name": "SHOT_A"
+                        },
+                        "metadata": {
+                          "delta_action_schema_version": 1,
+                          "flame_identity_schema_version": 1,
+                          "flame_identity_source": "before_state",
+                          "node_id": "editorial-transaction-01-trim_tail",
+                          "operation": "trim_tail",
+                          "record_in": "01:00:00:02",
+                          "record_in_frame": 86402,
+                          "seg_name": "SHOT_A",
+                          "sequence_name": "live-cut",
+                          "source_name": "A001C001",
+                          "step_id": "editorial-transaction-01-trim_tail_to_mark_out",
+                          "step_index": 1,
+                          "track_idx": 0,
+                          "version_index": 0,
+                          "version_track_idx": 0
+                        },
+                        "object_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                        "object_type": "segment"
+                      }
+                    ],
+                    "sequence_name": "live-cut"
+                  }
+                },
+                "entry_indices": [
+                  0
+                ],
+                "executor": "forge_apply_segment_temporal_delta",
+                "group_key": "forge_apply_segment_temporal_delta:updated_segment_trim",
+                "kind": "ready_executor_group",
+                "mode": "discover",
+                "params": {
+                  "entries": [
+                    {
+                      "action": "updated",
+                      "after": {
+                        "frame_in": {
+                          "number": 86402,
+                          "rate": {
+                            "frame_rate": "FPS_24"
+                          }
+                        },
+                        "frame_out": {
+                          "number": 86422,
+                          "rate": {
+                            "frame_rate": "FPS_24"
+                          }
+                        },
+                        "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                        "metadata": {
+                          "colour_space": "ACEScg",
+                          "custom": {
+                            "file_path": "/show/plates/A001C001.mov",
+                            "flame_version_index": 0,
+                            "flame_version_track_index": 0,
+                            "head": 8,
+                            "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+                            "record_out_model": "exclusive",
+                            "segment_index": 0,
+                            "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+                            "source_duration_frames": 240,
+                            "source_in": {
+                              "number": 1002,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              }
+                            },
+                            "source_out": {
+                              "number": 1022,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              }
+                            },
+                            "tail": 8
+                          },
+                          "record_tc_in": {
+                            "frames": 0,
+                            "hours": 1,
+                            "minutes": 0,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            },
+                            "seconds": 0,
+                            "string": "01:00:00:00"
+                          },
+                          "record_tc_out": {
+                            "frames": 0,
+                            "hours": 1,
+                            "minutes": 0,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            },
+                            "seconds": 1,
+                            "string": "01:00:01:00"
+                          },
+                          "source_clip_name": "A001C001",
+                          "source_tc_in": {
+                            "frames": 18,
+                            "hours": 0,
+                            "minutes": 0,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            },
+                            "seconds": 41,
+                            "string": "00:00:41:18"
+                          },
+                          "source_tc_out": {
+                            "frames": 14,
+                            "hours": 0,
+                            "minutes": 0,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            },
+                            "seconds": 42,
+                            "string": "00:00:42:14"
+                          },
+                          "tape_name": "A001C001"
+                        },
+                        "name": "SHOT_A"
+                      },
+                      "before": {
+                        "frame_in": {
+                          "number": 86402,
+                          "rate": {
+                            "frame_rate": "FPS_24"
+                          }
+                        },
+                        "frame_out": {
+                          "number": 86424,
+                          "rate": {
+                            "frame_rate": "FPS_24"
+                          }
+                        },
+                        "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                        "metadata": {
+                          "colour_space": "ACEScg",
+                          "custom": {
+                            "file_path": "/show/plates/A001C001.mov",
+                            "flame_version_index": 0,
+                            "flame_version_track_index": 0,
+                            "head": 8,
+                            "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+                            "record_out_model": "exclusive",
+                            "segment_index": 0,
+                            "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+                            "source_duration_frames": 240,
+                            "source_in": {
+                              "number": 1002,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              }
+                            },
+                            "source_out": {
+                              "number": 1024,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              }
+                            },
+                            "tail": 8
+                          },
+                          "record_tc_in": {
+                            "frames": 0,
+                            "hours": 1,
+                            "minutes": 0,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            },
+                            "seconds": 0,
+                            "string": "01:00:00:00"
+                          },
+                          "record_tc_out": {
+                            "frames": 0,
+                            "hours": 1,
+                            "minutes": 0,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            },
+                            "seconds": 1,
+                            "string": "01:00:01:00"
+                          },
+                          "source_clip_name": "A001C001",
+                          "source_tc_in": {
+                            "frames": 18,
+                            "hours": 0,
+                            "minutes": 0,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            },
+                            "seconds": 41,
+                            "string": "00:00:41:18"
+                          },
+                          "source_tc_out": {
+                            "frames": 16,
+                            "hours": 0,
+                            "minutes": 0,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            },
+                            "seconds": 42,
+                            "string": "00:00:42:16"
+                          },
+                          "tape_name": "A001C001"
+                        },
+                        "name": "SHOT_A"
+                      },
+                      "metadata": {
+                        "delta_action_schema_version": 1,
+                        "flame_identity_schema_version": 1,
+                        "flame_identity_source": "before_state",
+                        "node_id": "editorial-transaction-01-trim_tail",
+                        "operation": "trim_tail",
+                        "record_in": "01:00:00:02",
+                        "record_in_frame": 86402,
+                        "seg_name": "SHOT_A",
+                        "sequence_name": "live-cut",
+                        "source_name": "A001C001",
+                        "step_id": "editorial-transaction-01-trim_tail_to_mark_out",
+                        "step_index": 1,
+                        "track_idx": 0,
+                        "version_index": 0,
+                        "version_track_idx": 0
+                      },
+                      "object_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                      "object_type": "segment"
+                    }
+                  ],
+                  "sequence_name": "live-cut"
+                },
+                "sequence_name": "live-cut"
+              }
+            ],
+            "message": "TimelineDelta can be dispatched to Flame apply executors.",
+            "metadata": {
+              "bridge_imported": false,
+              "bridge_wrapping": "payload_for_future_node_result",
+              "classifier_schema_version": 24,
+              "execution_owner": "forge_core.traffik.editing.flame_apply",
+              "plan_kind": "traffik.flame_delta_apply_plan",
+              "review_boundary_kind": "traffik.flame_delta_apply_review",
+              "schema_version": 25
+            },
+            "output": {
+              "blocked_groups": [],
+              "classification": {
+                "delta_sequence_id": "sequence-b5ef5ada-dce5-5548-9502-a36b8173dedc",
+                "invalid": [],
+                "review_required": [],
+                "schema_version": 24,
+                "summary": {
+                  "can_apply_without_review": true,
+                  "entry_count": 1,
+                  "invalid_count": 0,
+                  "review_required_count": 0,
+                  "supported_count": 1
+                },
+                "supported": [
+                  {
+                    "action": "updated",
+                    "changed_fields": [
+                      "frame_out",
+                      "metadata"
+                    ],
+                    "entry_index": 0,
+                    "executor": "forge_apply_segment_temporal_delta",
+                    "group_key": "forge_apply_segment_temporal_delta:updated_segment_trim",
+                    "identity": {
+                      "record_in": "01:00:00:02",
+                      "record_in_frame": 86402,
+                      "seg_name": "SHOT_A",
+                      "sequence_name": "live-cut",
+                      "source_name": "A001C001",
+                      "track_idx": 0,
+                      "version_index": 0,
+                      "version_track_idx": 0
+                    },
+                    "message": "Single-edge segment timing trim can be lowered to forge_apply_segment_temporal_delta.",
+                    "object_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                    "object_type": "segment",
+                    "reason_code": "supported_by_forge_apply_segment_temporal_delta",
+                    "status": "supported",
+                    "temporal_delta": {
+                      "changed_fields": [
+                        "frame_out"
+                      ],
+                      "field_changes": [
+                        {
+                          "after": 86422,
+                          "before": 86424,
+                          "delta_frames": -2,
+                          "field": "frame_out"
+                        }
+                      ],
+                      "review_kind": "segment_temporal",
+                      "source_edge_change": {
+                        "after": 1022,
+                        "before": 1024,
+                        "delta_frames": -2,
+                        "field": "source_out",
+                        "rate": {
+                          "frame_rate": "FPS_24"
+                        },
+                        "timecode_field": "source_tc_out"
+                      }
+                    }
+                  }
+                ],
+                "supported_groups": [
+                  {
+                    "entry_indices": [
+                      0
+                    ],
+                    "executor": "forge_apply_segment_temporal_delta",
+                    "group_key": "forge_apply_segment_temporal_delta:updated_segment_trim"
+                  }
+                ],
+                "type": "flame_delta_apply_classification"
+              },
+              "delta_sequence_id": "sequence-b5ef5ada-dce5-5548-9502-a36b8173dedc",
+              "dispatch_policy": {
+                "default": "whole_delta_only",
+                "dispatch_ready_groups_when_held_entries_exist": false,
+                "maximum_ready_groups_without_review": 1,
+                "partial_fanout_requires_explicit_approval": true
+              },
+              "held_entries": [],
+              "plan_kind": "traffik.flame_delta_apply_plan",
+              "ready_groups": [
+                {
+                  "command": {
+                    "executor": "forge_apply_segment_temporal_delta",
+                    "mode": "discover",
+                    "params": {
+                      "entries": [
+                        {
+                          "action": "updated",
+                          "after": {
+                            "frame_in": {
+                              "number": 86402,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              }
+                            },
+                            "frame_out": {
+                              "number": 86422,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              }
+                            },
+                            "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                            "metadata": {
+                              "colour_space": "ACEScg",
+                              "custom": {
+                                "file_path": "/show/plates/A001C001.mov",
+                                "flame_version_index": 0,
+                                "flame_version_track_index": 0,
+                                "head": 8,
+                                "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+                                "record_out_model": "exclusive",
+                                "segment_index": 0,
+                                "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+                                "source_duration_frames": 240,
+                                "source_in": {
+                                  "number": 1002,
+                                  "rate": {
+                                    "frame_rate": "FPS_24"
+                                  }
+                                },
+                                "source_out": {
+                                  "number": 1022,
+                                  "rate": {
+                                    "frame_rate": "FPS_24"
+                                  }
+                                },
+                                "tail": 8
+                              },
+                              "record_tc_in": {
+                                "frames": 0,
+                                "hours": 1,
+                                "minutes": 0,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                },
+                                "seconds": 0,
+                                "string": "01:00:00:00"
+                              },
+                              "record_tc_out": {
+                                "frames": 0,
+                                "hours": 1,
+                                "minutes": 0,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                },
+                                "seconds": 1,
+                                "string": "01:00:01:00"
+                              },
+                              "source_clip_name": "A001C001",
+                              "source_tc_in": {
+                                "frames": 18,
+                                "hours": 0,
+                                "minutes": 0,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                },
+                                "seconds": 41,
+                                "string": "00:00:41:18"
+                              },
+                              "source_tc_out": {
+                                "frames": 14,
+                                "hours": 0,
+                                "minutes": 0,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                },
+                                "seconds": 42,
+                                "string": "00:00:42:14"
+                              },
+                              "tape_name": "A001C001"
+                            },
+                            "name": "SHOT_A"
+                          },
+                          "before": {
+                            "frame_in": {
+                              "number": 86402,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              }
+                            },
+                            "frame_out": {
+                              "number": 86424,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              }
+                            },
+                            "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                            "metadata": {
+                              "colour_space": "ACEScg",
+                              "custom": {
+                                "file_path": "/show/plates/A001C001.mov",
+                                "flame_version_index": 0,
+                                "flame_version_track_index": 0,
+                                "head": 8,
+                                "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+                                "record_out_model": "exclusive",
+                                "segment_index": 0,
+                                "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+                                "source_duration_frames": 240,
+                                "source_in": {
+                                  "number": 1002,
+                                  "rate": {
+                                    "frame_rate": "FPS_24"
+                                  }
+                                },
+                                "source_out": {
+                                  "number": 1024,
+                                  "rate": {
+                                    "frame_rate": "FPS_24"
+                                  }
+                                },
+                                "tail": 8
+                              },
+                              "record_tc_in": {
+                                "frames": 0,
+                                "hours": 1,
+                                "minutes": 0,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                },
+                                "seconds": 0,
+                                "string": "01:00:00:00"
+                              },
+                              "record_tc_out": {
+                                "frames": 0,
+                                "hours": 1,
+                                "minutes": 0,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                },
+                                "seconds": 1,
+                                "string": "01:00:01:00"
+                              },
+                              "source_clip_name": "A001C001",
+                              "source_tc_in": {
+                                "frames": 18,
+                                "hours": 0,
+                                "minutes": 0,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                },
+                                "seconds": 41,
+                                "string": "00:00:41:18"
+                              },
+                              "source_tc_out": {
+                                "frames": 16,
+                                "hours": 0,
+                                "minutes": 0,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                },
+                                "seconds": 42,
+                                "string": "00:00:42:16"
+                              },
+                              "tape_name": "A001C001"
+                            },
+                            "name": "SHOT_A"
+                          },
+                          "metadata": {
+                            "delta_action_schema_version": 1,
+                            "flame_identity_schema_version": 1,
+                            "flame_identity_source": "before_state",
+                            "node_id": "editorial-transaction-01-trim_tail",
+                            "operation": "trim_tail",
+                            "record_in": "01:00:00:02",
+                            "record_in_frame": 86402,
+                            "seg_name": "SHOT_A",
+                            "sequence_name": "live-cut",
+                            "source_name": "A001C001",
+                            "step_id": "editorial-transaction-01-trim_tail_to_mark_out",
+                            "step_index": 1,
+                            "track_idx": 0,
+                            "version_index": 0,
+                            "version_track_idx": 0
+                          },
+                          "object_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                          "object_type": "segment"
+                        }
+                      ],
+                      "sequence_name": "live-cut"
+                    }
+                  },
+                  "entry_indices": [
+                    0
+                  ],
+                  "executor": "forge_apply_segment_temporal_delta",
+                  "group_key": "forge_apply_segment_temporal_delta:updated_segment_trim",
+                  "mode": "discover",
+                  "params": {
+                    "entries": [
+                      {
+                        "action": "updated",
+                        "after": {
+                          "frame_in": {
+                            "number": 86402,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            }
+                          },
+                          "frame_out": {
+                            "number": 86422,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            }
+                          },
+                          "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                          "metadata": {
+                            "colour_space": "ACEScg",
+                            "custom": {
+                              "file_path": "/show/plates/A001C001.mov",
+                              "flame_version_index": 0,
+                              "flame_version_track_index": 0,
+                              "head": 8,
+                              "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+                              "record_out_model": "exclusive",
+                              "segment_index": 0,
+                              "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+                              "source_duration_frames": 240,
+                              "source_in": {
+                                "number": 1002,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                }
+                              },
+                              "source_out": {
+                                "number": 1022,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                }
+                              },
+                              "tail": 8
+                            },
+                            "record_tc_in": {
+                              "frames": 0,
+                              "hours": 1,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 0,
+                              "string": "01:00:00:00"
+                            },
+                            "record_tc_out": {
+                              "frames": 0,
+                              "hours": 1,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 1,
+                              "string": "01:00:01:00"
+                            },
+                            "source_clip_name": "A001C001",
+                            "source_tc_in": {
+                              "frames": 18,
+                              "hours": 0,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 41,
+                              "string": "00:00:41:18"
+                            },
+                            "source_tc_out": {
+                              "frames": 14,
+                              "hours": 0,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 42,
+                              "string": "00:00:42:14"
+                            },
+                            "tape_name": "A001C001"
+                          },
+                          "name": "SHOT_A"
+                        },
+                        "before": {
+                          "frame_in": {
+                            "number": 86402,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            }
+                          },
+                          "frame_out": {
+                            "number": 86424,
+                            "rate": {
+                              "frame_rate": "FPS_24"
+                            }
+                          },
+                          "id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                          "metadata": {
+                            "colour_space": "ACEScg",
+                            "custom": {
+                              "file_path": "/show/plates/A001C001.mov",
+                              "flame_version_index": 0,
+                              "flame_version_track_index": 0,
+                              "head": 8,
+                              "media_asset_id": "asset-8c253d97-61a8-582f-abbc-a88c3c7b0e14",
+                              "record_out_model": "exclusive",
+                              "segment_index": 0,
+                              "source_clip_id": "source-35e96075-01b7-55d5-91a7-3f4a5d1d2e5e",
+                              "source_duration_frames": 240,
+                              "source_in": {
+                                "number": 1002,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                }
+                              },
+                              "source_out": {
+                                "number": 1024,
+                                "rate": {
+                                  "frame_rate": "FPS_24"
+                                }
+                              },
+                              "tail": 8
+                            },
+                            "record_tc_in": {
+                              "frames": 0,
+                              "hours": 1,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 0,
+                              "string": "01:00:00:00"
+                            },
+                            "record_tc_out": {
+                              "frames": 0,
+                              "hours": 1,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 1,
+                              "string": "01:00:01:00"
+                            },
+                            "source_clip_name": "A001C001",
+                            "source_tc_in": {
+                              "frames": 18,
+                              "hours": 0,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 41,
+                              "string": "00:00:41:18"
+                            },
+                            "source_tc_out": {
+                              "frames": 16,
+                              "hours": 0,
+                              "minutes": 0,
+                              "rate": {
+                                "frame_rate": "FPS_24"
+                              },
+                              "seconds": 42,
+                              "string": "00:00:42:16"
+                            },
+                            "tape_name": "A001C001"
+                          },
+                          "name": "SHOT_A"
+                        },
+                        "metadata": {
+                          "delta_action_schema_version": 1,
+                          "flame_identity_schema_version": 1,
+                          "flame_identity_source": "before_state",
+                          "node_id": "editorial-transaction-01-trim_tail",
+                          "operation": "trim_tail",
+                          "record_in": "01:00:00:02",
+                          "record_in_frame": 86402,
+                          "seg_name": "SHOT_A",
+                          "sequence_name": "live-cut",
+                          "source_name": "A001C001",
+                          "step_id": "editorial-transaction-01-trim_tail_to_mark_out",
+                          "step_index": 1,
+                          "track_idx": 0,
+                          "version_index": 0,
+                          "version_track_idx": 0
+                        },
+                        "object_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+                        "object_type": "segment"
+                      }
+                    ],
+                    "sequence_name": "live-cut"
+                  },
+                  "sequence_name": "live-cut"
+                }
+              ],
+              "schema_version": 25,
+              "summary": {
+                "can_dispatch_without_review": true,
+                "entry_count": 1,
+                "held_entry_count": 0,
+                "invalid_count": 0,
+                "ready_entry_count": 1,
+                "ready_group_count": 1,
+                "review_required_count": 0
+              }
+            },
+            "reason_code": "flame_delta_apply_plan_ready",
+            "status": "ok",
+            "warnings": []
+          },
+          "lowering_plan_fingerprint": "7ee491ffad4808a96334f4fc0547276e4fe7a2965ae3ea7cba31747c2567de3e",
+          "member_index": 1,
+          "node_id": "editorial-transaction-01-trim_tail",
+          "operation": "trim_tail",
+          "semantic_decision_fingerprint": "dcdcc9a45fe4bbe010535b1685baa4f7f1c777a37e8de68a5cd34b2328cd0196",
+          "step_id": "editorial-transaction-01-trim_tail_to_mark_out",
+          "temporal_method": "trim_tail",
+          "temporal_offset": 2
+        }
+      ],
+      "message": "Flame may realize the exact ordered head/tail trim transaction through forge_apply_segment_temporal_transaction.",
+      "metadata": {
+        "atomic_apply_required": true,
+        "command_count": 2,
+        "composition_owner": "bridge",
+        "final_state_verification_required": true,
+        "mutation_safe": true,
+        "read_only": true,
+        "realization_authority": "forge_flame",
+        "reverse_compensation_required": true,
+        "semantic_elevation": true,
+        "semantic_reason_codes": [
+          "editorial_step_capability.semantic_blocked",
+          "editorial_step_capability.semantic_blocked"
+        ],
+        "whole_transaction_only": true
+      },
+      "operations": [
+        "trim_head",
+        "trim_tail"
+      ],
+      "reason_code": "flame_editorial_transaction_realization.exact_deltas_elevated",
+      "schema_version": 1,
+      "semantic_allowed": false,
+      "semantic_capability_plan_fingerprint": "ebc496a194b909da585e9e4e1a212b73bd6a3bd6805cff7e815b3de4347f43ea",
+      "semantic_trust_status": "review_required",
+      "source_step_plan_fingerprint": "6a1eaf39b4ea9559fccc11caa199e4022fef2271b90431f79435a05a436b22ac",
+      "target_plugin": "flame",
+      "trust_status": "trusted"
+    },
+    "realization_plan_fingerprint": "855b3cb8b22f913b63ae3988c7a7c670e505230d51396755f1262a4a5674701d",
+    "schema_version": 1,
+    "semantic_authority": "traffik",
+    "semantic_capability_plan_fingerprint": "ebc496a194b909da585e9e4e1a212b73bd6a3bd6805cff7e815b3de4347f43ea",
+    "status": "ready",
+    "step_plan_fingerprint": "6a1eaf39b4ea9559fccc11caa199e4022fef2271b90431f79435a05a436b22ac",
+    "trust_status": "trusted"
+  },
+  "recovery": {
+    "applied_member_count": 2,
+    "baseline_identity": {
+      "record_in": "01:00:00:00",
+      "record_in_frame": 86400,
+      "seg_name": "SHOT_A",
+      "segment_index": 0,
+      "sequence_name": "live-cut",
+      "source_name": "A001C001",
+      "track_idx": 0,
+      "version_index": 0,
+      "version_track_idx": 0
+    },
+    "baseline_state": {
+      "head": 8,
+      "record_duration_frame": 24,
+      "record_in_frame": 86400,
+      "record_out_frame": 86423,
+      "source_duration_frame": 240,
+      "source_in_frame": 1000,
+      "source_out_frame": 1023,
+      "start_frame": 1001,
+      "tail": 8
+    },
+    "final_identity": {
+      "record_in": "01:00:00:00",
+      "record_in_frame": 86402,
+      "seg_name": "SHOT_A",
+      "segment_index": 0,
+      "sequence_name": "live-cut",
+      "source_name": "A001C001",
+      "track_idx": 0,
+      "version_index": 0,
+      "version_track_idx": 0
+    },
+    "final_state": {
+      "head": 10,
+      "record_duration_frame": 20,
+      "record_in_frame": 86402,
+      "record_out_frame": 86421,
+      "source_duration_frame": 240,
+      "source_in_frame": 1002,
+      "source_out_frame": 1021,
+      "start_frame": 1003,
+      "tail": 10
+    },
+    "fingerprint": "efd5ea1b8bf3b3dc3dfaaa2ffdc8fe35cf313dbff3a5e5d5be283748319942bf",
+    "kind": "flame.editorial.temporal_transaction_recovery",
+    "object_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+    "resolved_plan_fingerprint": "a95e54ac50ec8c389e6da4c6d63a2e1d4457b922df110290fd896d14287c7ccb",
+    "reverse_steps": [
+      {
+        "expected_after_state": {
+          "head": 10,
+          "record_duration_frame": 22,
+          "record_in_frame": 86402,
+          "record_out_frame": 86423,
+          "source_duration_frame": 240,
+          "source_in_frame": 1002,
+          "source_out_frame": 1023,
+          "start_frame": 1003,
+          "tail": 8
+        },
+        "expected_before_state": {
+          "head": 10,
+          "record_duration_frame": 20,
+          "record_in_frame": 86402,
+          "record_out_frame": 86421,
+          "source_duration_frame": 240,
+          "source_in_frame": 1002,
+          "source_out_frame": 1021,
+          "start_frame": 1003,
+          "tail": 10
+        },
+        "method": "trim_tail",
+        "offset": -2,
+        "source_member_index": 1
+      },
+      {
+        "expected_after_state": {
+          "head": 8,
+          "record_duration_frame": 24,
+          "record_in_frame": 86400,
+          "record_out_frame": 86423,
+          "source_duration_frame": 240,
+          "source_in_frame": 1000,
+          "source_out_frame": 1023,
+          "start_frame": 1001,
+          "tail": 8
+        },
+        "expected_before_state": {
+          "head": 10,
+          "record_duration_frame": 22,
+          "record_in_frame": 86402,
+          "record_out_frame": 86423,
+          "source_duration_frame": 240,
+          "source_in_frame": 1002,
+          "source_out_frame": 1023,
+          "start_frame": 1003,
+          "tail": 8
+        },
+        "method": "trim_head",
+        "offset": -2,
+        "source_member_index": 0
+      }
+    ],
+    "schema_version": 1,
+    "sequence_name": "live-cut"
+  },
+  "restore_apply": {
+    "baseline_mismatches": [],
+    "baseline_state": {
+      "comment": "",
+      "effect_count": 0,
+      "effect_witness": [],
+      "head": 8,
+      "record_duration_frame": 24,
+      "record_in": "86400",
+      "record_in_frame": 86400,
+      "record_out": "86423",
+      "record_out_frame": 86423,
+      "seg_name": "SHOT_A",
+      "segment_index": 0,
+      "sequence_name": "live-cut",
+      "shot_name": "",
+      "source_duration_frame": 240,
+      "source_in_frame": 1000,
+      "source_name": "A001C001",
+      "source_out_frame": 1023,
+      "start_frame": 1001,
+      "tail": 8,
+      "track_idx": 0,
+      "track_name": "V1",
+      "track_transition_count": 0,
+      "track_transition_witness": [],
+      "version_index": 0,
+      "version_track_idx": 0
+    },
+    "ok": true,
+    "recovery_fingerprint": "efd5ea1b8bf3b3dc3dfaaa2ffdc8fe35cf313dbff3a5e5d5be283748319942bf",
+    "restored": 2,
+    "results": [
+      {
+        "error": "",
+        "expected_post_state": {
+          "head": 10,
+          "record_duration_frame": 22,
+          "record_in_frame": 86402,
+          "record_out_frame": 86423,
+          "source_duration_frame": 240,
+          "source_in_frame": 1002,
+          "source_out_frame": 1023,
+          "start_frame": 1003,
+          "tail": 8
+        },
+        "member_index": 0,
+        "method": "trim_tail",
+        "method_return": false,
+        "offset": -2,
+        "ok": true,
+        "post_state": {
+          "comment": "",
+          "effect_count": 0,
+          "effect_witness": [],
+          "head": 10,
+          "record_duration_frame": 22,
+          "record_in": "86402",
+          "record_in_frame": 86402,
+          "record_out": "86423",
+          "record_out_frame": 86423,
+          "seg_name": "SHOT_A",
+          "segment_index": 0,
+          "sequence_name": "live-cut",
+          "shot_name": "",
+          "source_duration_frame": 240,
+          "source_in_frame": 1002,
+          "source_name": "A001C001",
+          "source_out_frame": 1023,
+          "start_frame": 1003,
+          "tail": 8,
+          "track_idx": 0,
+          "track_name": "V1",
+          "track_transition_count": 0,
+          "track_transition_witness": [],
+          "version_index": 0,
+          "version_track_idx": 0
+        },
+        "post_state_mismatches": [],
+        "pre_state": {
+          "comment": "",
+          "effect_count": 0,
+          "effect_witness": [],
+          "head": 10,
+          "record_duration_frame": 20,
+          "record_in": "86402",
+          "record_in_frame": 86402,
+          "record_out": "86421",
+          "record_out_frame": 86421,
+          "seg_name": "SHOT_A",
+          "segment_index": 0,
+          "sequence_name": "live-cut",
+          "shot_name": "",
+          "source_duration_frame": 240,
+          "source_in_frame": 1002,
+          "source_name": "A001C001",
+          "source_out_frame": 1021,
+          "start_frame": 1003,
+          "tail": 10,
+          "track_idx": 0,
+          "track_name": "V1",
+          "track_transition_count": 0,
+          "track_transition_witness": [],
+          "version_index": 0,
+          "version_track_idx": 0
+        }
+      },
+      {
+        "error": "",
+        "expected_post_state": {
+          "head": 8,
+          "record_duration_frame": 24,
+          "record_in_frame": 86400,
+          "record_out_frame": 86423,
+          "source_duration_frame": 240,
+          "source_in_frame": 1000,
+          "source_out_frame": 1023,
+          "start_frame": 1001,
+          "tail": 8
+        },
+        "member_index": 1,
+        "method": "trim_head",
+        "method_return": false,
+        "offset": -2,
+        "ok": true,
+        "post_state": {
+          "comment": "",
+          "effect_count": 0,
+          "effect_witness": [],
+          "head": 8,
+          "record_duration_frame": 24,
+          "record_in": "86400",
+          "record_in_frame": 86400,
+          "record_out": "86423",
+          "record_out_frame": 86423,
+          "seg_name": "SHOT_A",
+          "segment_index": 0,
+          "sequence_name": "live-cut",
+          "shot_name": "",
+          "source_duration_frame": 240,
+          "source_in_frame": 1000,
+          "source_name": "A001C001",
+          "source_out_frame": 1023,
+          "start_frame": 1001,
+          "tail": 8,
+          "track_idx": 0,
+          "track_name": "V1",
+          "track_transition_count": 0,
+          "track_transition_witness": [],
+          "version_index": 0,
+          "version_track_idx": 0
+        },
+        "post_state_mismatches": [],
+        "pre_state": {
+          "comment": "",
+          "effect_count": 0,
+          "effect_witness": [],
+          "head": 10,
+          "record_duration_frame": 22,
+          "record_in": "86402",
+          "record_in_frame": 86402,
+          "record_out": "86423",
+          "record_out_frame": 86423,
+          "seg_name": "SHOT_A",
+          "segment_index": 0,
+          "sequence_name": "live-cut",
+          "shot_name": "",
+          "source_duration_frame": 240,
+          "source_in_frame": 1002,
+          "source_name": "A001C001",
+          "source_out_frame": 1023,
+          "start_frame": 1003,
+          "tail": 8,
+          "track_idx": 0,
+          "track_name": "V1",
+          "track_transition_count": 0,
+          "track_transition_witness": [],
+          "version_index": 0,
+          "version_track_idx": 0
+        }
+      }
+    ],
+    "status": "restored"
+  },
+  "restore_manifest": {
+    "apply_counterpart": {
+      "parameter_overrides": {
+        "mode": "apply"
+      },
+      "tool": "forge_apply_segment_temporal_transaction_restore"
+    },
+    "intent_parameters": {
+      "recovery": {
+        "applied_member_count": 2,
+        "baseline_identity": {
+          "record_in": "01:00:00:00",
+          "record_in_frame": 86400,
+          "seg_name": "SHOT_A",
+          "segment_index": 0,
+          "sequence_name": "live-cut",
+          "source_name": "A001C001",
+          "track_idx": 0,
+          "version_index": 0,
+          "version_track_idx": 0
+        },
+        "baseline_state": {
+          "head": 8,
+          "record_duration_frame": 24,
+          "record_in_frame": 86400,
+          "record_out_frame": 86423,
+          "source_duration_frame": 240,
+          "source_in_frame": 1000,
+          "source_out_frame": 1023,
+          "start_frame": 1001,
+          "tail": 8
+        },
+        "final_identity": {
+          "record_in": "01:00:00:00",
+          "record_in_frame": 86402,
+          "seg_name": "SHOT_A",
+          "segment_index": 0,
+          "sequence_name": "live-cut",
+          "source_name": "A001C001",
+          "track_idx": 0,
+          "version_index": 0,
+          "version_track_idx": 0
+        },
+        "final_state": {
+          "head": 10,
+          "record_duration_frame": 20,
+          "record_in_frame": 86402,
+          "record_out_frame": 86421,
+          "source_duration_frame": 240,
+          "source_in_frame": 1002,
+          "source_out_frame": 1021,
+          "start_frame": 1003,
+          "tail": 10
+        },
+        "fingerprint": "efd5ea1b8bf3b3dc3dfaaa2ffdc8fe35cf313dbff3a5e5d5be283748319942bf",
+        "kind": "flame.editorial.temporal_transaction_recovery",
+        "object_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+        "resolved_plan_fingerprint": "a95e54ac50ec8c389e6da4c6d63a2e1d4457b922df110290fd896d14287c7ccb",
+        "reverse_steps": [
+          {
+            "expected_after_state": {
+              "head": 10,
+              "record_duration_frame": 22,
+              "record_in_frame": 86402,
+              "record_out_frame": 86423,
+              "source_duration_frame": 240,
+              "source_in_frame": 1002,
+              "source_out_frame": 1023,
+              "start_frame": 1003,
+              "tail": 8
+            },
+            "expected_before_state": {
+              "head": 10,
+              "record_duration_frame": 20,
+              "record_in_frame": 86402,
+              "record_out_frame": 86421,
+              "source_duration_frame": 240,
+              "source_in_frame": 1002,
+              "source_out_frame": 1021,
+              "start_frame": 1003,
+              "tail": 10
+            },
+            "method": "trim_tail",
+            "offset": -2,
+            "source_member_index": 1
+          },
+          {
+            "expected_after_state": {
+              "head": 8,
+              "record_duration_frame": 24,
+              "record_in_frame": 86400,
+              "record_out_frame": 86423,
+              "source_duration_frame": 240,
+              "source_in_frame": 1000,
+              "source_out_frame": 1023,
+              "start_frame": 1001,
+              "tail": 8
+            },
+            "expected_before_state": {
+              "head": 10,
+              "record_duration_frame": 22,
+              "record_in_frame": 86402,
+              "record_out_frame": 86423,
+              "source_duration_frame": 240,
+              "source_in_frame": 1002,
+              "source_out_frame": 1023,
+              "start_frame": 1003,
+              "tail": 8
+            },
+            "method": "trim_head",
+            "offset": -2,
+            "source_member_index": 0
+          }
+        ],
+        "schema_version": 1,
+        "sequence_name": "live-cut"
+      },
+      "sequence_name": "live-cut"
+    },
+    "originating_capability": "forge_apply_segment_temporal_transaction_restore",
+    "resolved_plan": [
+      {
+        "identity": {
+          "record_in": "01:00:00:00",
+          "record_in_frame": 86402,
+          "seg_name": "SHOT_A",
+          "segment_index": 0,
+          "sequence_name": "live-cut",
+          "source_name": "A001C001",
+          "track_idx": 0,
+          "version_index": 0,
+          "version_track_idx": 0
+        },
+        "payload": {
+          "action": "restored",
+          "expected_post_state": {
+            "head": 10,
+            "record_duration_frame": 22,
+            "record_in_frame": 86402,
+            "record_out_frame": 86423,
+            "source_duration_frame": 240,
+            "source_in_frame": 1002,
+            "source_out_frame": 1023,
+            "start_frame": 1003,
+            "tail": 8
+          },
+          "member_index": 0,
+          "method": "trim_tail",
+          "object_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+          "object_type": "segment",
+          "offset": -2,
+          "pre_state": {
+            "head": 10,
+            "record_duration_frame": 20,
+            "record_in_frame": 86402,
+            "record_out_frame": 86421,
+            "source_duration_frame": 240,
+            "source_in_frame": 1002,
+            "source_out_frame": 1021,
+            "start_frame": 1003,
+            "tail": 10
+          },
+          "recovery_fingerprint": "efd5ea1b8bf3b3dc3dfaaa2ffdc8fe35cf313dbff3a5e5d5be283748319942bf",
+          "source_member_index": 1,
+          "success_policy": "validate_post_state_and_compensate_to_final",
+          "transaction_member_count": 2
+        }
+      },
+      {
+        "identity": {
+          "record_in": "01:00:00:00",
+          "record_in_frame": 86402,
+          "seg_name": "SHOT_A",
+          "segment_index": 0,
+          "sequence_name": "live-cut",
+          "source_name": "A001C001",
+          "track_idx": 0,
+          "version_index": 0,
+          "version_track_idx": 0
+        },
+        "payload": {
+          "action": "restored",
+          "expected_post_state": {
+            "head": 8,
+            "record_duration_frame": 24,
+            "record_in_frame": 86400,
+            "record_out_frame": 86423,
+            "source_duration_frame": 240,
+            "source_in_frame": 1000,
+            "source_out_frame": 1023,
+            "start_frame": 1001,
+            "tail": 8
+          },
+          "member_index": 1,
+          "method": "trim_head",
+          "object_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+          "object_type": "segment",
+          "offset": -2,
+          "pre_state": {
+            "head": 10,
+            "record_duration_frame": 22,
+            "record_in_frame": 86402,
+            "record_out_frame": 86423,
+            "source_duration_frame": 240,
+            "source_in_frame": 1002,
+            "source_out_frame": 1023,
+            "start_frame": 1003,
+            "tail": 8
+          },
+          "recovery_fingerprint": "efd5ea1b8bf3b3dc3dfaaa2ffdc8fe35cf313dbff3a5e5d5be283748319942bf",
+          "source_member_index": 0,
+          "success_policy": "validate_post_state_and_compensate_to_final",
+          "transaction_member_count": 2
+        }
+      }
+    ],
+    "type": "mutation_plan"
+  },
+  "sequence_name": "live-cut",
+  "step_plan": {
+    "atom_catalog": {
+      "atom_count": 66,
+      "atom_family": "traffik.editorial",
+      "operation_type": "traffik.editorial.apply_steps",
+      "schema_version": 1
+    },
+    "kind": "traffik.editorial_step_plan",
+    "metadata": {
+      "boundary_kind": "traffik.editorial_step_plan",
+      "bridge_imported": false,
+      "command_count": 2,
+      "composition_owner": "bridge",
+      "execution_owner": "forge_core.traffik.execution",
+      "final_state_fingerprint": "049ed16fb0fc421fe2f3da3da9f72c15a31af18fc532d7dd6dd423b13efe0e2b",
+      "initial_state_fingerprint": "35e835668ac94e7505d87ac25aeb85ed1cca69c1ce2e58eb8f1779188eb44cae",
+      "intent_fingerprint": "9136730d3e5b383f70dd187e4a3403e65739ed8dfbd165e17b86c34d23229c0b",
+      "intent_kind": "traffik.editorial_edit_transaction_intent"
+    },
+    "operation_type": "traffik.editorial.apply_steps",
+    "plan_id": "editorial-transaction-f89e8476535984b2c6a69cf1ec4fc38939b5988ffbc362ce988bceee633781c4",
+    "reason_code": "editorial_step_plan_ready",
+    "schema_version": 1,
+    "status": "ok",
+    "steps": [
+      {
+        "node_id": "editorial-transaction-00-trim_head",
+        "operation": "trim_head",
+        "params": {
+          "new_frame_in": {
+            "number": 86402,
+            "rate": {
+              "frame_rate": "FPS_24"
+            }
+          },
+          "segment_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+          "sequence_id": "sequence-b5ef5ada-dce5-5548-9502-a36b8173dedc",
+          "track_id": "track-289517ef-7620-56f8-9fc6-bd081a12a497"
+        },
+        "step_id": "editorial-transaction-00-trim_head_to_mark_in"
+      },
+      {
+        "node_id": "editorial-transaction-01-trim_tail",
+        "operation": "trim_tail",
+        "params": {
+          "new_frame_out": {
+            "number": 86422,
+            "rate": {
+              "frame_rate": "FPS_24"
+            }
+          },
+          "segment_id": "23886016-2329-5b8a-9a89-7e2405a63477",
+          "sequence_id": "sequence-b5ef5ada-dce5-5548-9502-a36b8173dedc",
+          "track_id": "track-289517ef-7620-56f8-9fc6-bd081a12a497"
+        },
+        "step_id": "editorial-transaction-01-trim_tail_to_mark_out"
+      }
+    ],
+    "validation": {
+      "issue_count": 0,
+      "issues": [],
+      "metadata": {
+        "boundary_kind": "traffik.editorial_step_validation",
+        "bridge_imported": false,
+        "executes_atoms": false,
+        "schema_version": 1
+      },
+      "ok": true,
+      "status": "ok",
+      "step_count": 2
+    }
+  }
+}

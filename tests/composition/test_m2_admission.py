@@ -149,6 +149,7 @@ def test_admission_accepts_slice_one_operator_ids():
         "pipeline.shot_resource.current",
         "pipeline.shot_resource.stream_promotion.validate",
         "pipeline.shot_resource.stream_promotion.registration_plan",
+        "pipeline.editorial_workspace.main_promotion.registration_plan",
         "pipeline.host_graph.inspect",
         "pipeline.host_graph.list_node_types",
         "pipeline.host_graph.describe_node_type",
@@ -200,6 +201,83 @@ def test_segment_split_is_a_live_proven_commit_only_counterpart():
     assert record.idempotent_apply is True
     assert tool_name not in ADMISSION_TABLE
     assert tool_name in MUTATION_COUNTERPART_TABLE
+
+
+def test_segment_temporal_transaction_is_a_commit_only_counterpart():
+    """#241: the aggregate ordered-command transaction (2-8 commands)."""
+    tool_name = "forge_apply_segment_temporal_transaction"
+
+    record = admit_mutation_counterpart(tool_name)
+
+    assert record.state_owner == "dcc_host"
+    assert record.synchronous is True
+    assert record.verify_before_apply is True
+    assert record.assent_required is True
+    assert record.idempotent_apply is True
+    assert tool_name not in ADMISSION_TABLE
+    assert tool_name in MUTATION_COUNTERPART_TABLE
+
+
+def test_segment_temporal_transaction_restore_is_a_commit_only_counterpart():
+    """#241: the separately discoverable recovery counterpart."""
+    tool_name = "forge_apply_segment_temporal_transaction_restore"
+
+    record = admit_mutation_counterpart(tool_name)
+
+    assert record.state_owner == "dcc_host"
+    assert record.synchronous is True
+    assert record.verify_before_apply is True
+    assert record.assent_required is True
+    assert record.idempotent_apply is True
+    assert tool_name not in ADMISSION_TABLE
+    assert tool_name in MUTATION_COUNTERPART_TABLE
+
+
+def test_transaction_realization_mirrors_the_delta_realization_profile():
+    """#241: the aggregate realization operator, same profile as the single."""
+    transaction = admit_operator("flame.editorial.transaction_realization")
+    single = admit_operator("flame.editorial.delta_realization")
+
+    assert transaction.resolved_class == (
+        "pipeline.flame.editorial.transaction_realization"
+    )
+    assert transaction.dispatch_kind == "operation"
+    assert transaction.synchronous is True
+    assert transaction.returns_reference is False
+    assert transaction.no_state_mutation is True
+    assert transaction.idempotent_result is True
+    assert transaction.state_owner == "read_only"
+    for field in (
+        "dispatch_kind",
+        "synchronous",
+        "returns_reference",
+        "no_state_mutation",
+        "idempotent_result",
+        "state_owner",
+    ):
+        assert getattr(transaction, field) == getattr(single, field), field
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "forge_apply_segment_temporal_transaction",
+        "forge_apply_segment_temporal_transaction_restore",
+    ],
+)
+def test_transaction_counterparts_match_the_split_pair_profile(tool_name):
+    """The split pair is #241's declared precedent — prove they agree."""
+    record = admit_mutation_counterpart(tool_name)
+    split = admit_mutation_counterpart("forge_apply_segment_split_delta")
+
+    for field in (
+        "state_owner",
+        "synchronous",
+        "verify_before_apply",
+        "assent_required",
+        "idempotent_apply",
+    ):
+        assert getattr(record, field) == getattr(split, field), field
 
 
 @pytest.mark.parametrize(
@@ -257,6 +335,40 @@ def test_stream_promotion_registration_is_a_bridge_owned_commit_counterpart():
     assert counterpart.verify_before_apply is True
     assert counterpart.assent_required is True
     assert counterpart.idempotent_apply is True
+
+
+def test_main_promotion_registration_is_a_bridge_owned_commit_counterpart():
+    """#244: the ONE new mutation counterpart, plus its planning operator.
+
+    The registration-plan operator is a read-only planning node; the catalog
+    mutation is reachable only through the admitted commit counterpart.
+    """
+    tool_name = "forge_register_editorial_workspace_main_promotion"
+    counterpart = admit_mutation_counterpart(tool_name)
+
+    assert counterpart.state_owner == "bridge"
+    assert counterpart.synchronous is True
+    assert counterpart.verify_before_apply is True
+    assert counterpart.assent_required is True
+    assert counterpart.idempotent_apply is True
+
+    # The apply counterpart is NOT a graph operator: it is reachable only via
+    # CommitBoundary, never dispatchable as a node of its own.
+    with pytest.raises(AdmissionRejected):
+        admit_operator(tool_name)
+
+    plan_operator = admit_operator(
+        "pipeline.editorial_workspace.main_promotion.registration_plan"
+    )
+    assert plan_operator.dispatch_kind == "operation"
+    assert plan_operator.no_state_mutation is True
+    assert plan_operator.idempotent_result is True
+    assert plan_operator.state_owner == "read_only"
+    # Planning operators carry no commit authority of their own.
+    with pytest.raises(AdmissionRejected):
+        admit_mutation_counterpart(
+            "pipeline.editorial_workspace.main_promotion.registration_plan"
+        )
 
 
 def test_publish_transaction_is_a_reviewed_federated_commit_counterpart():
@@ -328,6 +440,7 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "traffik.editorial.step_capabilities",
         "flame.editorial.read_edit_state",
         "flame.editorial.delta_realization",
+        "flame.editorial.transaction_realization",
         "traffik.editorial.resolve_top_video_layer",
         "traffik.editorial.mark_timecode_range",
         "traffik.editorial.overwrite_insert",
@@ -352,6 +465,7 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "pipeline.shot_resource.current",
         "pipeline.shot_resource.stream_promotion.validate",
         "pipeline.shot_resource.stream_promotion.registration_plan",
+        "pipeline.editorial_workspace.main_promotion.registration_plan",
         "pipeline.host_graph.inspect",
         "pipeline.host_graph.list_node_types",
         "pipeline.host_graph.describe_node_type",
