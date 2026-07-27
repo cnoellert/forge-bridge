@@ -149,6 +149,7 @@ def test_admission_accepts_slice_one_operator_ids():
         "pipeline.shot_resource.current",
         "pipeline.shot_resource.stream_promotion.validate",
         "pipeline.shot_resource.stream_promotion.registration_plan",
+        "pipeline.editorial_workspace.main_promotion.registration_plan",
         "pipeline.host_graph.inspect",
         "pipeline.host_graph.list_node_types",
         "pipeline.host_graph.describe_node_type",
@@ -336,6 +337,40 @@ def test_stream_promotion_registration_is_a_bridge_owned_commit_counterpart():
     assert counterpart.idempotent_apply is True
 
 
+def test_main_promotion_registration_is_a_bridge_owned_commit_counterpart():
+    """#244: the ONE new mutation counterpart, plus its planning operator.
+
+    The registration-plan operator is a read-only planning node; the catalog
+    mutation is reachable only through the admitted commit counterpart.
+    """
+    tool_name = "forge_register_editorial_workspace_main_promotion"
+    counterpart = admit_mutation_counterpart(tool_name)
+
+    assert counterpart.state_owner == "bridge"
+    assert counterpart.synchronous is True
+    assert counterpart.verify_before_apply is True
+    assert counterpart.assent_required is True
+    assert counterpart.idempotent_apply is True
+
+    # The apply counterpart is NOT a graph operator: it is reachable only via
+    # CommitBoundary, never dispatchable as a node of its own.
+    with pytest.raises(AdmissionRejected):
+        admit_operator(tool_name)
+
+    plan_operator = admit_operator(
+        "pipeline.editorial_workspace.main_promotion.registration_plan"
+    )
+    assert plan_operator.dispatch_kind == "operation"
+    assert plan_operator.no_state_mutation is True
+    assert plan_operator.idempotent_result is True
+    assert plan_operator.state_owner == "read_only"
+    # Planning operators carry no commit authority of their own.
+    with pytest.raises(AdmissionRejected):
+        admit_mutation_counterpart(
+            "pipeline.editorial_workspace.main_promotion.registration_plan"
+        )
+
+
 def test_publish_transaction_is_a_reviewed_federated_commit_counterpart():
     tool_name = "forge_publish_shot_resource_transaction"
     discovery = admit_operator(tool_name)
@@ -430,6 +465,7 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "pipeline.shot_resource.current",
         "pipeline.shot_resource.stream_promotion.validate",
         "pipeline.shot_resource.stream_promotion.registration_plan",
+        "pipeline.editorial_workspace.main_promotion.registration_plan",
         "pipeline.host_graph.inspect",
         "pipeline.host_graph.list_node_types",
         "pipeline.host_graph.describe_node_type",
