@@ -66,6 +66,10 @@ def _post_once(bridge, payload: object) -> tuple[int, dict]:
             "workfile_lifecycle",
             "_exec_typed_workfile_lifecycle_on_main_thread",
         ),
+        (
+            "shot_resource_publish_plan",
+            "_exec_typed_shot_resource_publish_plan_on_main_thread",
+        ),
     ),
 )
 def test_root_accepts_only_allowlisted_typed_operations(
@@ -259,6 +263,41 @@ def test_typed_workfile_lifecycle_runs_via_flame_adapter(
     assert isinstance(adapter, FlameWorkfileAdapter)
     assert adapter.flame_module is flame_namespace
     assert adapter.context == {"already_on_main_thread": True}
+
+
+def test_typed_publish_plan_runs_via_flame_plugin(
+    bridge,
+    monkeypatch,
+) -> None:
+    captured: dict = {}
+    dispatch_module = ModuleType("forge_core.shot_resources.host_publish_dispatch")
+
+    async def execute(payload: dict, *, plugins: list[object]) -> dict:
+        captured["payload"] = payload
+        captured["plugins"] = plugins
+        return {"kind": "pipeline.shot_resource.publish_host_dispatch"}
+
+    dispatch_module.execute_host_publish_plan_dispatch = execute
+    plugin_module = ModuleType("forge_flame.plugin")
+
+    class FlamePlugin:
+        pass
+
+    plugin_module.FlamePlugin = FlamePlugin
+    monkeypatch.setattr(bridge, "_bootstrap_forge_runtime", lambda: None)
+    monkeypatch.setitem(
+        sys.modules,
+        "forge_core.shot_resources.host_publish_dispatch",
+        dispatch_module,
+    )
+    monkeypatch.setitem(sys.modules, "forge_flame.plugin", plugin_module)
+
+    result = bridge._execute_typed_shot_resource_publish_plan({"dcc": "Flame"})
+
+    assert result == {"kind": "pipeline.shot_resource.publish_host_dispatch"}
+    assert captured["payload"] == {"dcc": "Flame"}
+    assert len(captured["plugins"]) == 1
+    assert isinstance(captured["plugins"][0], FlamePlugin)
 
 
 def test_bootstrap_adds_source_and_conda_runtime(
