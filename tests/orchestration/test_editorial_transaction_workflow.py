@@ -63,7 +63,7 @@ SEGMENT = STEP_PLAN["steps"][0]["params"]["segment_id"]
 SEQUENCE_ID = STEP_PLAN["steps"][0]["params"]["sequence_id"]
 REALIZATION_PLAN = _SHAPES["realization_discover"]["realization_plan"]
 DELTAS = REALIZATION_PLAN["deltas"]
-# The flat segment CHANGE inside each TimelineDelta — what the callable takes.
+# Pipeline's exact ordered Flame host projections — what the callable takes.
 ENTRIES = _SHAPES["entries"]
 
 
@@ -169,6 +169,15 @@ def make_realization(proposal: dict[str, Any], **overrides: Any) -> dict[str, An
     realization["command_count"] = len(proposal["step_plan"]["steps"])
     realization.update(overrides)
     return realization
+
+
+def reseal_realization_plan(realization: dict[str, Any]) -> str:
+    """Recompute only the outer plan seal after an intentional test mutation."""
+    plan = realization["realization_plan"]
+    body = {key: value for key, value in plan.items() if key != "fingerprint"}
+    plan["fingerprint"] = _fingerprint(body)
+    realization["realization_plan_fingerprint"] = plan["fingerprint"]
+    return plan["fingerprint"]
 
 
 def make_recovery(**overrides: Any) -> dict[str, Any]:
@@ -468,9 +477,19 @@ def test_00a_bridge_constants_match_the_captured_pipeline_shapes():
         0,
     ]
 
-    # entries are the flat segment CHANGES inside the realization deltas.
+    # Complete semantic deltas and host entries are distinct authorities.
     assert forward["intent_parameters"]["entries"] == ENTRIES
-    assert ENTRIES == [delta["changes"][0] for delta in DELTAS]
+    assert REALIZATION_PLAN["host_entries"] == ENTRIES
+    assert [len(delta["changes"]) for delta in DELTAS] == [2, 1]
+    assert DELTAS[0]["changes"][1]["object_type"] == "edit_session"
+    assert all(entry["object_type"] == "segment" for entry in ENTRIES)
+    assert [
+        member["host_entry_fingerprint"] for member in REALIZATION_PLAN["members"]
+    ] == [_fingerprint(entry) for entry in ENTRIES]
+    assert REALIZATION_PLAN["metadata"]["host_entries_fingerprint"] == _fingerprint(
+        ENTRIES
+    )
+    assert REALIZATION_PLAN["metadata"]["semantic_side_effect_count"] == 1
     assert _fingerprint(DELTAS) == _SHAPES["realization_discover"][
         "delta_set_fingerprint"
     ]
@@ -753,6 +772,96 @@ async def test_02c_stale_realization_or_manifest_refuses_before_any_intent():
     with pytest.raises(EditorialTransactionWorkflowError) as exc:
         await api.propose(proposal)
     assert exc.value.code == etw.REASON_MANIFEST_INVALID
+    assert gateway.proposed == []
+
+
+@pytest.mark.asyncio
+async def test_02c1_host_entry_fingerprint_drift_refuses_before_host_contact():
+    proposal = make_proposal(tag="host-entry-drift")
+    realization = make_realization(proposal)
+    realization["realization_plan"]["host_entries"][0][
+        "object_id"
+    ] = "other-segment"
+    fingerprint = reseal_realization_plan(realization)
+    proposal = make_proposal(
+        tag="host-entry-drift",
+        realization_plan_fingerprint=fingerprint,
+    )
+    realization["final_state_fingerprint"] = proposal["final_state_fingerprint"]
+    api, mcp, _runner, _store, gateway = build_api(
+        proposal=proposal,
+        realization=realization,
+    )
+
+    with pytest.raises(EditorialTransactionWorkflowError) as exc:
+        await api.propose(proposal)
+
+    assert exc.value.code == etw.REASON_REALIZATION_DRIFT
+    assert mcp.calls == []
+    assert gateway.proposed == []
+
+
+@pytest.mark.asyncio
+async def test_02c2_ordered_host_entry_fingerprint_refuses_reordering():
+    proposal = make_proposal(tag="host-order-drift")
+    realization = make_realization(proposal)
+    plan = realization["realization_plan"]
+    plan["host_entries"].reverse()
+    plan["members"].reverse()
+    fingerprint = reseal_realization_plan(realization)
+    proposal = make_proposal(
+        tag="host-order-drift",
+        realization_plan_fingerprint=fingerprint,
+    )
+    realization["final_state_fingerprint"] = proposal["final_state_fingerprint"]
+    api, mcp, _runner, _store, gateway = build_api(
+        proposal=proposal,
+        realization=realization,
+    )
+
+    with pytest.raises(EditorialTransactionWorkflowError) as exc:
+        await api.propose(proposal)
+
+    assert exc.value.code == etw.REASON_REALIZATION_DRIFT
+    assert mcp.calls == []
+    assert gateway.proposed == []
+
+
+@pytest.mark.asyncio
+async def test_02c3_outer_realization_plan_drift_refuses_before_host_contact():
+    proposal = make_proposal(tag="plan-drift")
+    realization = make_realization(proposal)
+    realization["realization_plan"]["message"] = "changed after realization"
+    api, mcp, _runner, _store, gateway = build_api(
+        proposal=proposal,
+        realization=realization,
+    )
+
+    with pytest.raises(EditorialTransactionWorkflowError) as exc:
+        await api.propose(proposal)
+
+    assert exc.value.code == etw.REASON_REALIZATION_DRIFT
+    assert mcp.calls == []
+    assert gateway.proposed == []
+
+
+@pytest.mark.asyncio
+async def test_02c4_discover_mode_refuses_top_level_host_entries():
+    proposal = make_proposal(tag="routable-host-entries")
+    realization = make_realization(
+        proposal,
+        host_entries=copy.deepcopy(ENTRIES),
+    )
+    api, mcp, _runner, _store, gateway = build_api(
+        proposal=proposal,
+        realization=realization,
+    )
+
+    with pytest.raises(EditorialTransactionWorkflowError) as exc:
+        await api.propose(proposal)
+
+    assert exc.value.code == etw.REASON_REALIZATION_UNAVAILABLE
+    assert mcp.calls == []
     assert gateway.proposed == []
 
 
