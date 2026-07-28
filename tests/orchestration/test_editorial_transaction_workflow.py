@@ -63,8 +63,17 @@ SEGMENT = STEP_PLAN["steps"][0]["params"]["segment_id"]
 SEQUENCE_ID = STEP_PLAN["steps"][0]["params"]["sequence_id"]
 REALIZATION_PLAN = _SHAPES["realization_discover"]["realization_plan"]
 DELTAS = REALIZATION_PLAN["deltas"]
-# The flat segment CHANGE inside each TimelineDelta — what the callable takes.
+# #257: the PLUGIN-OWNED ordered host entries. Bridge forwards this list
+# byte-for-byte; it no longer unwraps `delta["changes"][0]` itself. In the
+# released shape the first delta carries TWO changes (the segment trim plus the
+# exact derived edit_session playhead clamp) and only the segment one is here.
 ENTRIES = _SHAPES["entries"]
+HOST_ENTRIES = REALIZATION_PLAN["host_entries"]
+# The pre-clamp shape (both deltas carrying a single segment change), derived
+# from the released one by dropping the clamp and re-sealing with Pipeline's own
+# arithmetic — proven by strict FlameEditorialTransactionRealizationPlan
+# reconstruction at generation time. It is the #257 regression case.
+SEGMENT_ONLY = "realization_discover_segment_only"
 
 
 def _fingerprint(value: Any) -> str:
@@ -118,11 +127,15 @@ def make_step_plan(
 
 
 def make_proposal(
-    *, step_plan: dict[str, Any] | None = None, tag: str = "a", **overrides: Any
+    *,
+    step_plan: dict[str, Any] | None = None,
+    tag: str = "a",
+    shape: str = "realization_discover",
+    **overrides: Any,
 ) -> dict[str, Any]:
     """A proposal bound to the REAL realization identities."""
     plan = step_plan if step_plan is not None else make_step_plan()
-    realization = _SHAPES["realization_discover"]
+    realization = _SHAPES[shape]
     proposal = {
         "kind": PROPOSAL_KIND,
         "schema_version": 1,
@@ -159,12 +172,17 @@ def make_proposal(
     return proposal
 
 
-def make_realization(proposal: dict[str, Any], **overrides: Any) -> dict[str, Any]:
+def make_realization(
+    proposal: dict[str, Any],
+    *,
+    shape: str = "realization_discover",
+    **overrides: Any,
+) -> dict[str, Any]:
     """The REAL realization discover payload, plus the two fields the injected
     production ``realize_fn`` projects from the verified held preview
     (``final_state_fingerprint``, ``command_count``) — the operator itself
     emits neither."""
-    realization = _real("realization_discover")
+    realization = _real(shape)
     realization["final_state_fingerprint"] = proposal["final_state_fingerprint"]
     realization["command_count"] = len(proposal["step_plan"]["steps"])
     realization.update(overrides)
@@ -1688,3 +1706,327 @@ async def test_17_the_published_fixture_matches_the_live_receipts():
         assert receipt["reason_code"] == live[name]["reason_code"], name
         serialized = json.dumps(receipt, sort_keys=True)
         assert "/" not in serialized, name
+
+
+# --------------------------------------------------------------------------- #
+# #257 — Bridge forwards the PLUGIN-OWNED host entries
+#
+# Pipeline's six acceptance bullets. The shapes below are the released
+# `editorial_transaction_realization.py` / `editorial_delta_projection.py`
+# contract, captured through the real operator; drift variants mutate a real
+# shape and never re-seal, so the tamper stays detectable.
+# --------------------------------------------------------------------------- #
+def _drift_realization(proposal, mutate, *, shape="realization_discover"):
+    """A realization whose PLAN was tampered with after the plugin sealed it.
+
+    The envelope fingerprints are deliberately NOT re-sealed: Bridge must catch
+    the tamper on the realization's own internal arithmetic, not on a proposal
+    comparison it happens to also fail.
+    """
+    realization = make_realization(proposal, shape=shape)
+    mutate(realization["realization_plan"])
+    return realization
+
+
+def test_18a_the_fingerprint_convention_is_byte_identical_to_pipelines():
+    """Pipeline's `_fingerprint` (editorial_transaction_realization.py:739-746)
+    is sha256 over `json.dumps(sort_keys=True, separators=(",", ":"))`. Bridge's
+    `canonical_fingerprint` must be the SAME function — proven not by reading
+    both implementations but by reproducing Pipeline's OWN emitted values."""
+    canonical = etw.canonical_fingerprint
+
+    assert canonical(HOST_ENTRIES) == _fingerprint(HOST_ENTRIES)
+
+    # (2) per-entry: members[i].host_entry_fingerprint over that ONE mapping.
+    assert [member["host_entry_fingerprint"] for member in
+            REALIZATION_PLAN["members"]] == [
+        canonical(entry) for entry in HOST_ENTRIES
+    ]
+    # (3) ordered list: metadata.host_entries_fingerprint over the whole list.
+    assert REALIZATION_PLAN["metadata"]["host_entries_fingerprint"] == canonical(
+        HOST_ENTRIES
+    )
+    # (4) the delta-set fingerprint stays over the COMPLETE TimelineDeltas.
+    assert REALIZATION_PLAN["delta_set_fingerprint"] == canonical(DELTAS)
+    assert REALIZATION_PLAN["delta_set_fingerprint"] != canonical(HOST_ENTRIES)
+
+
+def test_18b_the_released_shape_carries_a_derived_session_side_effect():
+    """The blocker #257 exists for: schema 1's released realization emits a
+    first delta of [segment trim_head, exact edit_session clamp] and a
+    segment-only trim_tail. The pre-#257 `len(changes) == 1` unwrap could not
+    admit it."""
+    assert [len(delta["changes"]) for delta in DELTAS] == [2, 1]
+    assert [change["object_type"] for change in DELTAS[0]["changes"]] == [
+        "segment",
+        "edit_session",
+    ]
+    assert DELTAS[0]["changes"][1]["metadata"]["operation"] == (
+        "clamp_playhead_after_trim"
+    )
+    # One host entry per command, all segments — the clamp is NOT routable.
+    assert [entry["object_type"] for entry in HOST_ENTRIES] == [
+        "segment",
+        "segment",
+    ]
+    assert len(HOST_ENTRIES) == len(STEP_PLAN["steps"])
+    # Informational evidence only; Bridge never recomputes or routes on it.
+    assert REALIZATION_PLAN["metadata"]["semantic_side_effect_count"] == 1
+
+    # The derived regression shape is the same two host entries with no clamp.
+    segment_only = _SHAPES[SEGMENT_ONLY]["realization_plan"]
+    assert [len(delta["changes"]) for delta in segment_only["deltas"]] == [1, 1]
+    assert segment_only["host_entries"] == HOST_ENTRIES
+    assert segment_only["metadata"]["semantic_side_effect_count"] == 0
+    assert segment_only["delta_set_fingerprint"] != REALIZATION_PLAN[
+        "delta_set_fingerprint"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_18c_segment_only_deltas_still_compose_and_dispatch():
+    """REGRESSION: two single-change deltas compose and apply exactly as before
+    #257. Nothing about the pre-clamp shape changed for a consumer."""
+    proposal = make_proposal(shape=SEGMENT_ONLY, tag="segment-only")
+    realization = make_realization(proposal, shape=SEGMENT_ONLY)
+    api, mcp, _runner, _store, gateway = build_api(
+        proposal=proposal, realization=realization
+    )
+
+    proposed = await api.propose(proposal)
+    applied = await api.ratify_apply(**_args(proposed), requested_by="artist-1")
+
+    assert proposed["status"] == "proposed"
+    assert applied["status"] == "applied"
+    assert applied["transaction_status"] == "committed"
+    assert mcp.apply_count == 1
+    assert len(gateway.ratified) == 1
+    # The forwarded entries are the plugin's list, unchanged.
+    assert mcp.arguments[0][1]["entries"] == HOST_ENTRIES
+
+
+@pytest.mark.asyncio
+async def test_18d_a_derived_session_clamp_composes_and_dispatches():
+    """[segment trim_head, exact edit_session clamp] followed by a segment-only
+    trim_tail composes, dispatches, and forwards TWO segment entries — the
+    session clamp never reaches the host."""
+    api, mcp, _runner, _store, gateway = build_api()
+    proposal = make_proposal()
+
+    proposed = await api.propose(proposal)
+    applied = await api.ratify_apply(**_args(proposed), requested_by="artist-1")
+
+    assert applied["status"] == "applied"
+    assert applied["transaction_status"] == "committed"
+    assert applied["command_count"] == 2
+    assert mcp.apply_count == 1
+
+    forwarded = mcp.arguments[0][1]["entries"]
+    assert forwarded == HOST_ENTRIES
+    assert all(entry["object_type"] == "segment" for entry in forwarded)
+    assert not any(
+        entry.get("object_type") == "edit_session" for entry in forwarded
+    )
+    # Every dispatched call carries the same plugin list, never the deltas.
+    for _name, arguments in mcp.arguments:
+        if "entries" in arguments:
+            assert arguments["entries"] == HOST_ENTRIES
+
+
+@pytest.mark.asyncio
+async def test_18e_full_semantic_delta_set_agreement_is_still_required():
+    """The delta-set fingerprint stays over the COMPLETE TimelineDeltas — a
+    proposal that bound the host entries, or the pre-clamp delta set, instead of
+    the semantic one refuses."""
+    for label, wrong in (
+        ("host-entries", _fingerprint(HOST_ENTRIES)),
+        (
+            "pre-clamp-deltas",
+            _SHAPES[SEGMENT_ONLY]["realization_plan"]["delta_set_fingerprint"],
+        ),
+    ):
+        proposal = make_proposal(tag=label, delta_set_fingerprint=wrong)
+        api, mcp, _runner, _store, gateway = build_api(proposal=proposal)
+        with pytest.raises(EditorialTransactionWorkflowError) as exc:
+            await api.propose(proposal)
+        assert exc.value.code == etw.REASON_REALIZATION_DRIFT, label
+        assert mcp.calls == [], label
+        assert gateway.proposed == [], label
+
+
+@pytest.mark.asyncio
+async def test_18f_missing_tampered_or_reordered_host_entries_refuse():
+    """Every way the plugin-provided list can fail to be the plugin's own list
+    refuses BEFORE any MCP dispatch."""
+    proposal = make_proposal()
+
+    def drop(plan):
+        plan.pop("host_entries")
+
+    def empty(plan):
+        plan["host_entries"] = []
+
+    def not_a_list(plan):
+        plan["host_entries"] = plan["host_entries"][0]
+
+    def short(plan):
+        plan["host_entries"] = plan["host_entries"][:1]
+
+    def tamper_entry(plan):
+        plan["host_entries"][1]["object_id"] = "someone-elses-segment"
+
+    def reorder_entries(plan):
+        plan["host_entries"] = list(reversed(plan["host_entries"]))
+
+    def reorder_entries_and_members(plan):
+        plan["host_entries"] = list(reversed(plan["host_entries"]))
+        plan["members"] = list(reversed(plan["members"]))
+
+    def tamper_member_fingerprint(plan):
+        plan["members"][0]["host_entry_fingerprint"] = _h("not-this-entry")
+
+    def tamper_list_fingerprint(plan):
+        plan["metadata"]["host_entries_fingerprint"] = _h("not-this-list")
+
+    def drop_list_fingerprint(plan):
+        plan["metadata"].pop("host_entries_fingerprint")
+
+    cases = (
+        ("missing", drop, etw.REASON_REALIZATION_UNAVAILABLE),
+        ("not-a-list", not_a_list, etw.REASON_REALIZATION_UNAVAILABLE),
+        ("empty", empty, etw.REASON_REALIZATION_DRIFT),
+        ("short", short, etw.REASON_REALIZATION_DRIFT),
+        ("tampered-entry", tamper_entry, etw.REASON_REALIZATION_DRIFT),
+        ("reordered", reorder_entries, etw.REASON_REALIZATION_DRIFT),
+        (
+            "reordered-with-members",
+            reorder_entries_and_members,
+            etw.REASON_REALIZATION_DRIFT,
+        ),
+        (
+            "tampered-member-fingerprint",
+            tamper_member_fingerprint,
+            etw.REASON_REALIZATION_DRIFT,
+        ),
+        (
+            "tampered-list-fingerprint",
+            tamper_list_fingerprint,
+            etw.REASON_REALIZATION_DRIFT,
+        ),
+        (
+            "missing-list-fingerprint",
+            drop_list_fingerprint,
+            etw.REASON_REALIZATION_DRIFT,
+        ),
+    )
+    for label, mutate, code in cases:
+        realization = _drift_realization(proposal, mutate)
+        api, mcp, _runner, _store, gateway = build_api(
+            proposal=proposal, realization=realization
+        )
+        with pytest.raises(EditorialTransactionWorkflowError) as exc:
+            await api.propose(proposal)
+        assert exc.value.code == code, label
+        assert mcp.calls == [], label  # nothing reached the host
+        assert mcp.apply_count == 0, label
+        assert gateway.proposed == [], label  # and no assent exists
+
+
+@pytest.mark.asyncio
+async def test_18g_an_arbitrary_second_semantic_change_is_not_host_routable():
+    """Bridge's HALF of the guarantee, asserted honestly.
+
+    Pipeline proves an arbitrary semantic change never ENTERS `host_entries`
+    (`project_flame_editorial_host_entry` admits one derived side effect and
+    only when it is the exact clamp implied by the trim boundary). Bridge does
+    not police that and does not claim to. What Bridge proves is that only
+    plugin-provided, fingerprint-agreeing entries are ever forwarded.
+    """
+    proposal = make_proposal()
+
+    # (a) A list that grew a third entry — arbitrary or not — cannot be
+    #     forwarded: the count and the sealed fingerprints both refuse.
+    def smuggle_into_host_entries(plan):
+        plan["host_entries"].append(copy.deepcopy(DELTAS[0]["changes"][1]))
+
+    api, mcp, _runner, _store, gateway = build_api(
+        proposal=proposal,
+        realization=_drift_realization(proposal, smuggle_into_host_entries),
+    )
+    with pytest.raises(EditorialTransactionWorkflowError) as exc:
+        await api.propose(proposal)
+    assert exc.value.code == etw.REASON_REALIZATION_DRIFT
+    assert mcp.calls == []
+    assert gateway.proposed == []
+
+    # (b) A delta that grew an arbitrary semantic change while the plugin's
+    #     host entries stayed the same: Bridge forwards ONLY the plugin's two,
+    #     and the semantic drift is still caught by the complete delta-set
+    #     check — before any assent exists.
+    def smuggle_into_the_delta(plan):
+        plan["deltas"][1]["changes"].append(
+            {
+                "action": "updated",
+                "object_type": "edit_session",
+                "object_id": "session",
+                "before": {"playhead": {"number": 1, "rate": {"frame_rate": "FPS_24"}}},
+                "after": {"playhead": {"number": 2, "rate": {"frame_rate": "FPS_24"}}},
+                "metadata": {"operation": "set_playhead"},
+            }
+        )
+
+    api, mcp, _runner, _store, gateway = build_api(
+        proposal=proposal,
+        realization=_drift_realization(proposal, smuggle_into_the_delta),
+    )
+    with pytest.raises(EditorialTransactionWorkflowError) as exc:
+        await api.propose(proposal)
+    assert exc.value.code == etw.REASON_MANIFEST_DRIFT
+    assert [mode for _name, mode in mcp.calls] == ["discover"]
+    assert mcp.arguments[0][1]["entries"] == HOST_ENTRIES  # never the smuggle
+    assert gateway.proposed == []
+
+
+@pytest.mark.asyncio
+async def test_18h_manifest_intent_entries_equal_the_plugin_host_entries():
+    """Byte-for-byte forwarding, proven at both ends of the seam."""
+    # Pipeline's own discover manifest already renders exactly this list.
+    assert _SHAPES["forward_manifest"]["intent_parameters"]["entries"] == (
+        HOST_ENTRIES
+    )
+    assert ENTRIES == HOST_ENTRIES
+
+    api, mcp, _runner, _store, _gateway = build_api()
+    proposal = make_proposal()
+    await api.propose(proposal)
+    assert mcp.arguments[0][1]["entries"] == HOST_ENTRIES
+
+    # A manifest whose intent entries are NOT the plugin's refuses (check 3),
+    # which is what makes the forwarding an equality rather than a hope.
+    for label, entries in (
+        (
+            "mutated",
+            [
+                {**copy.deepcopy(HOST_ENTRIES[0]), "object_id": "elsewhere"},
+                copy.deepcopy(HOST_ENTRIES[1]),
+            ],
+        ),
+        ("reordered", list(reversed(copy.deepcopy(HOST_ENTRIES)))),
+        (
+            "raw-deltas",
+            copy.deepcopy(DELTAS),
+        ),
+    ):
+        intent = copy.deepcopy(
+            _SHAPES["forward_manifest"]["intent_parameters"]
+        )
+        intent["entries"] = entries
+        api, mcp, _runner, _store, gateway = build_api(
+            proposal=proposal,
+            mcp=FakeMCP(held=make_transaction_manifest(intent_parameters=intent)),
+        )
+        with pytest.raises(EditorialTransactionWorkflowError) as exc:
+            await api.propose(proposal)
+        assert exc.value.code == etw.REASON_MANIFEST_DRIFT, label
+        assert mcp.apply_count == 0, label
+        assert gateway.proposed == [], label
