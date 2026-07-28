@@ -86,14 +86,17 @@ MCP executor — these are read from Pipeline's own executable outputs, not
 assumed):
 
 - The MCP signature is ``sequence_name, entries, mode, resolved_plan``.
-  ``entries`` come from the FRESH realization's ordered deltas, read from
-  ``realization_plan.deltas`` (discover mode intentionally does not surface
-  them as top-level routable output). One unwrap is required and is proven
-  executably, not assumed: a realization delta is a TimelineDelta and the
-  callable takes the flat segment CHANGE inside it — passing the deltas
-  themselves is refused host-side with ``transaction_continuity_mismatch``.
-  See ``transaction_entries``. The delta-set fingerprint is still computed
-  over the TimelineDeltas. Bridge forwards; it never authors.
+  ``entries`` are the PLUGIN-OWNED ``realization_plan.host_entries`` — one flat
+  segment change per command, projected and validated by Pipeline's own
+  ``project_flame_editorial_host_entry`` (#257). Bridge FORWARDS that ordered
+  list byte-for-byte; it does not derive it. Deriving it Bridge-side (the
+  pre-#257 ``delta["changes"][0]`` unwrap) is wrong now that a schema-1 delta
+  may legitimately carry a second, derived semantic change — the exact
+  ``edit_session`` playhead clamp — which is Pipeline's to validate and strip.
+  The deltas are still read from ``realization_plan.deltas`` (discover mode
+  intentionally does not surface them as top-level routable output) and the
+  delta-set fingerprint is still computed over those complete TimelineDeltas,
+  never over the host entries. See ``transaction_entries``.
 - Both manifests are the STANDARD five-key ``MutationManifest``: ``type``,
   ``intent_parameters``, ``resolved_plan``, ``originating_capability``,
   ``apply_counterpart``. There is no ``ok`` / ``status`` / ``trust_status`` /
@@ -630,7 +633,7 @@ def transaction_discovery_arguments(
     ``forge_apply_segment_temporal_transaction``
     (``forge_core/bridge/registry.py``): ``sequence_name``, ``entries``,
     ``mode``, ``resolved_plan``. ``entries`` are the freshly authorized
-    realization deltas — Bridge forwards them, it never authors them.
+    plugin-provided host entries — Bridge forwards them, it never authors them.
     """
     return {
         "sequence_name": proposal["sequence_name"],
@@ -661,39 +664,95 @@ def realization_deltas(realization: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 
 def transaction_entries(
-    deltas: Sequence[Mapping[str, Any]],
+    realization: Mapping[str, Any], command_count: int
 ) -> list[dict[str, Any]]:
-    """The flat segment CHANGES the transaction callable takes as ``entries``.
+    """The PLUGIN-OWNED ordered host entries, forwarded byte-for-byte (#257).
 
-    Layering, proven executably against the released executor: a realization
-    delta is a TimelineDelta (``{type, sequence_id, metadata, changes}``), while
-    ``forge_apply_segment_temporal_transaction`` requires the flat segment
-    change inside it (``{action, object_type, object_id, before, after,
-    metadata}``). Passing the TimelineDeltas themselves is refused host-side
-    with ``transaction_continuity_mismatch``. Schema 1 carries exactly one
-    segment change per delta; anything else fails closed here rather than at
-    the host.
+    ``forge_apply_segment_temporal_transaction`` takes flat segment changes
+    (``{action, object_type, object_id, before, after, metadata}``), not the
+    TimelineDeltas — passing the deltas is refused host-side with
+    ``transaction_continuity_mismatch``. Bridge used to produce those entries by
+    unwrapping ``delta["changes"][0]`` and requiring exactly one change per
+    delta. It no longer does, and must not: a schema-1 delta may legitimately
+    carry a SECOND, derived semantic change (the exact ``edit_session`` playhead
+    clamp), and deciding which changes are host-routable is Pipeline's
+    ``project_flame_editorial_host_entry`` projection, not Bridge's. Bridge now
+    READS ``realization_plan.host_entries``.
+
+    Bridge's half of the fence — all of it BEFORE any MCP dispatch:
+
+    1. exactly one host entry per proposal command;
+    2. each entry's canonical fingerprint equals the corresponding
+       ``members[i].host_entry_fingerprint``, IN ORDER — so a reordering that
+       preserves the set still fails;
+    3. the ordered list's canonical fingerprint equals
+       ``metadata.host_entries_fingerprint``.
+
+    Both (2) and (3) are verified; neither is optional. The convention is
+    Pipeline's ``_fingerprint`` (``editorial_transaction_realization.py:739``) —
+    sha256 over ``json.dumps(sort_keys=True, separators=(",", ":"))`` — which is
+    byte-identical to ``canonical_fingerprint``.
+
+    Bridge's guarantee stops exactly there: only plugin-provided,
+    fingerprint-agreeing entries are ever forwarded. That an arbitrary semantic
+    change never BECOMES a host entry is proven by Pipeline's projection, which
+    admits one derived side effect and only when it is the exact clamp implied
+    by the trim boundary. Bridge does not police that and does not claim to.
+
+    ponytail ceiling: ``metadata.semantic_side_effect_count`` is read by nothing
+    here. It is fingerprinted informational evidence; Bridge never recomputes it
+    and never routes on it, because only the plugin inspects full semantic
+    changes.
     """
-    entries: list[dict[str, Any]] = []
-    for delta in deltas:
-        changes = delta.get("changes")
-        if not isinstance(changes, list) or len(changes) != 1:
+    plan = realization.get("realization_plan")
+    if not isinstance(plan, Mapping):
+        raise _invalid(
+            "fresh realization carries no realization plan",
+            REASON_REALIZATION_UNAVAILABLE,
+        )
+    entries = plan.get("host_entries")
+    if not isinstance(entries, list) or not all(
+        isinstance(entry, Mapping) for entry in entries
+    ):
+        raise _invalid(
+            "fresh realization carries no plugin-provided host entries",
+            REASON_REALIZATION_UNAVAILABLE,
+        )
+    if len(entries) != command_count:
+        raise _invalid(
+            "fresh realization does not hold one host entry per command",
+            REASON_REALIZATION_DRIFT,
+        )
+    members = plan.get("members")
+    if not isinstance(members, list) or len(members) != command_count:
+        raise _invalid(
+            "fresh realization does not hold one member per host entry",
+            REASON_REALIZATION_DRIFT,
+        )
+    held = [dict(entry) for entry in entries]
+    for index, (entry, member) in enumerate(zip(held, members)):
+        expected = (
+            member.get("host_entry_fingerprint")
+            if isinstance(member, Mapping)
+            else None
+        )
+        if not is_sha256(expected) or canonical_fingerprint(entry) != expected:
             raise _invalid(
-                "a realization delta does not carry exactly one change",
+                f"host entry {index} disagrees with its realization member",
                 REASON_REALIZATION_DRIFT,
             )
-        change = changes[0]
-        if (
-            not isinstance(change, Mapping)
-            or change.get("object_type") != "segment"
-            or not change.get("object_id")
-        ):
-            raise _invalid(
-                "a realization delta change is not a segment change",
-                REASON_REALIZATION_DRIFT,
-            )
-        entries.append(dict(change))
-    return entries
+    metadata = plan.get("metadata")
+    ordered = (
+        metadata.get("host_entries_fingerprint")
+        if isinstance(metadata, Mapping)
+        else None
+    )
+    if not is_sha256(ordered) or canonical_fingerprint(held) != ordered:
+        raise _invalid(
+            "the ordered host entries disagree with the realization metadata",
+            REASON_REALIZATION_DRIFT,
+        )
+    return held
 
 
 def restore_discovery_arguments(
@@ -1156,7 +1215,9 @@ class EditorialTransactionWorkflowAPI:
         self, proposal: Mapping[str, Any], realization: Mapping[str, Any]
     ) -> dict[str, Any]:
         deltas = realization_deltas(realization)
-        entries = transaction_entries(deltas)
+        # #257: read the plugin-owned host entries and prove them against the
+        # realization's OWN fingerprints before anything reaches the host.
+        entries = transaction_entries(realization, _command_count(proposal))
         try:
             payload = await self._discover(
                 TRANSACTION_TOOL,
@@ -1751,11 +1812,14 @@ def _verify_transaction_manifest(
     if intent.get("sequence_name") != proposal["sequence_name"]:
         raise fail("manifest intent targets a different sequence")
 
-    # 3. intent entries are EXACTLY the freshly authorized realization deltas
+    # 3. intent entries are EXACTLY the plugin-provided host entries. This
+    #    equality is what makes the forwarding byte-for-byte (#257): the held
+    #    list is Pipeline's own, and any manifest that renders anything else
+    #    refuses here.
     held_entries = [dict(entry) for entry in entries]
     if intent.get("entries") != held_entries:
         raise _invalid(
-            "manifest entries differ from the fresh realization deltas",
+            "manifest entries differ from the plugin-provided host entries",
             REASON_MANIFEST_DRIFT,
         )
 
