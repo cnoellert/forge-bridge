@@ -86,14 +86,12 @@ MCP executor — these are read from Pipeline's own executable outputs, not
 assumed):
 
 - The MCP signature is ``sequence_name, entries, mode, resolved_plan``.
-  ``entries`` come from the FRESH realization's ordered deltas, read from
-  ``realization_plan.deltas`` (discover mode intentionally does not surface
-  them as top-level routable output). One unwrap is required and is proven
-  executably, not assumed: a realization delta is a TimelineDelta and the
-  callable takes the flat segment CHANGE inside it — passing the deltas
-  themselves is refused host-side with ``transaction_continuity_mismatch``.
-  See ``transaction_entries``. The delta-set fingerprint is still computed
-  over the TimelineDeltas. Bridge forwards; it never authors.
+  ``entries`` come from the FRESH realization's plugin-owned
+  ``realization_plan.host_entries``. Pipeline fingerprints each flat segment
+  change and the ordered list; Bridge verifies both before forwarding those
+  exact bytes. The complete semantic TimelineDeltas remain separately held in
+  ``realization_plan.deltas`` and retain their own delta-set fingerprint.
+  Bridge never derives host mutations from semantic changes.
 - Both manifests are the STANDARD five-key ``MutationManifest``: ``type``,
   ``intent_parameters``, ``resolved_plan``, ``originating_capability``,
   ``apply_counterpart``. There is no ``ok`` / ``status`` / ``trust_status`` /
@@ -630,7 +628,8 @@ def transaction_discovery_arguments(
     ``forge_apply_segment_temporal_transaction``
     (``forge_core/bridge/registry.py``): ``sequence_name``, ``entries``,
     ``mode``, ``resolved_plan``. ``entries`` are the freshly authorized
-    realization deltas — Bridge forwards them, it never authors them.
+    plugin-owned host projections — Bridge forwards them, it never authors
+    them.
     """
     return {
         "sequence_name": proposal["sequence_name"],
@@ -660,40 +659,51 @@ def realization_deltas(realization: Mapping[str, Any]) -> list[dict[str, Any]]:
     return [dict(delta) for delta in deltas]
 
 
-def transaction_entries(
-    deltas: Sequence[Mapping[str, Any]],
-) -> list[dict[str, Any]]:
-    """The flat segment CHANGES the transaction callable takes as ``entries``.
+def transaction_entries(realization: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Verify and return Pipeline's exact ordered Flame host projections."""
+    plan = realization.get("realization_plan")
+    entries = plan.get("host_entries") if isinstance(plan, Mapping) else None
+    members = plan.get("members") if isinstance(plan, Mapping) else None
+    metadata = plan.get("metadata") if isinstance(plan, Mapping) else None
+    if (
+        not isinstance(entries, list)
+        or not isinstance(members, list)
+        or not isinstance(metadata, Mapping)
+        or len(entries) != len(members)
+    ):
+        raise _invalid(
+            "fresh realization carries no complete ordered host entries",
+            REASON_REALIZATION_DRIFT,
+        )
 
-    Layering, proven executably against the released executor: a realization
-    delta is a TimelineDelta (``{type, sequence_id, metadata, changes}``), while
-    ``forge_apply_segment_temporal_transaction`` requires the flat segment
-    change inside it (``{action, object_type, object_id, before, after,
-    metadata}``). Passing the TimelineDeltas themselves is refused host-side
-    with ``transaction_continuity_mismatch``. Schema 1 carries exactly one
-    segment change per delta; anything else fails closed here rather than at
-    the host.
-    """
-    entries: list[dict[str, Any]] = []
-    for delta in deltas:
-        changes = delta.get("changes")
-        if not isinstance(changes, list) or len(changes) != 1:
-            raise _invalid(
-                "a realization delta does not carry exactly one change",
-                REASON_REALIZATION_DRIFT,
-            )
-        change = changes[0]
+    held_entries: list[dict[str, Any]] = []
+    for index, (entry, member) in enumerate(zip(entries, members, strict=True)):
         if (
-            not isinstance(change, Mapping)
-            or change.get("object_type") != "segment"
-            or not change.get("object_id")
+            not isinstance(entry, Mapping)
+            or entry.get("object_type") != "segment"
+            or not entry.get("object_id")
+            or not isinstance(member, Mapping)
         ):
             raise _invalid(
-                "a realization delta change is not a segment change",
+                "a realization host entry is not a segment change",
                 REASON_REALIZATION_DRIFT,
             )
-        entries.append(dict(change))
-    return entries
+        held = dict(entry)
+        if member.get("host_entry_fingerprint") != canonical_fingerprint(held):
+            raise _invalid(
+                f"realization host entry {index} fingerprint drifted",
+                REASON_REALIZATION_DRIFT,
+            )
+        held_entries.append(held)
+
+    if metadata.get("host_entries_fingerprint") != canonical_fingerprint(
+        held_entries
+    ):
+        raise _invalid(
+            "realization ordered host-entry fingerprint drifted",
+            REASON_REALIZATION_DRIFT,
+        )
+    return held_entries
 
 
 def restore_discovery_arguments(
@@ -1156,7 +1166,7 @@ class EditorialTransactionWorkflowAPI:
         self, proposal: Mapping[str, Any], realization: Mapping[str, Any]
     ) -> dict[str, Any]:
         deltas = realization_deltas(realization)
-        entries = transaction_entries(deltas)
+        entries = transaction_entries(realization)
         try:
             payload = await self._discover(
                 TRANSACTION_TOOL,
@@ -1648,16 +1658,39 @@ def _verify_realization(
             "fresh realization command count drifted from the proposal",
             REASON_REALIZATION_DRIFT,
         )
-    if "deltas" in payload:
-        # discover mode holds the deltas inside realization_plan; it must never
-        # surface them as top-level routable output.
+    if "deltas" in payload or "host_entries" in payload:
+        # Discover mode holds semantic and host material inside the
+        # fingerprinted realization plan; neither may become top-level routing.
         raise _invalid(
-            "realization discover mode must not emit routable deltas",
+            "realization discover mode must not emit routable material",
             REASON_REALIZATION_UNAVAILABLE,
         )
-    if len(realization_deltas(payload)) != _command_count(proposal):
+    plan = payload.get("realization_plan")
+    if not isinstance(plan, Mapping):
+        raise _invalid(
+            "fresh realization carries no realization plan",
+            REASON_REALIZATION_DRIFT,
+        )
+    plan_fingerprint = plan.get("fingerprint")
+    plan_body = {key: value for key, value in plan.items() if key != "fingerprint"}
+    if (
+        plan_fingerprint != canonical_fingerprint(plan_body)
+        or plan_fingerprint != payload.get("realization_plan_fingerprint")
+    ):
+        raise _invalid(
+            "fresh realization plan fingerprint drifted",
+            REASON_REALIZATION_DRIFT,
+        )
+
+    count = _command_count(proposal)
+    if len(realization_deltas(payload)) != count:
         raise _invalid(
             "fresh realization does not hold one delta per command",
+            REASON_REALIZATION_DRIFT,
+        )
+    if len(transaction_entries(payload)) != count:
+        raise _invalid(
+            "fresh realization does not hold one host entry per command",
             REASON_REALIZATION_DRIFT,
         )
 
@@ -1751,17 +1784,16 @@ def _verify_transaction_manifest(
     if intent.get("sequence_name") != proposal["sequence_name"]:
         raise fail("manifest intent targets a different sequence")
 
-    # 3. intent entries are EXACTLY the freshly authorized realization deltas
+    # 3. intent entries are EXACTLY the freshly authorized host projections
     held_entries = [dict(entry) for entry in entries]
     if intent.get("entries") != held_entries:
         raise _invalid(
-            "manifest entries differ from the fresh realization deltas",
+            "manifest entries differ from the fresh realization host entries",
             REASON_MANIFEST_DRIFT,
         )
 
-    # 4. those entries came from the proposal's held delta set. The
-    #    delta-set fingerprint is computed over the TimelineDeltas (the
-    #    realization's own arithmetic), not over the unwrapped entries.
+    # 4. the complete semantic delta set remains bound independently. Its
+    #    fingerprint is computed over TimelineDeltas, not host projections.
     if canonical_fingerprint(
         [dict(delta) for delta in deltas]
     ) != proposal["delta_set_fingerprint"]:
