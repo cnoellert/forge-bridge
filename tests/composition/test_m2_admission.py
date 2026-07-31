@@ -433,6 +433,8 @@ def test_admission_table_is_operator_id_keyed_and_has_no_default():
         "forge_switch_shot_resource_version",
         "forge_promote_shot_resource_stream",
         "forge_register_shot_resource_promotion",
+        "forge_promote_workfile_version",
+        "forge_bind_promoted_workfile_lineage",
         "forge_publish_shot_resource_transaction",
         "forge_inspect_shot_resource_publish_transaction",
         "forge_abort_shot_resource_publish_transaction",
