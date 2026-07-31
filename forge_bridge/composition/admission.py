@@ -214,6 +214,33 @@ _ADMISSION_RECORDS: tuple[AdmissionRecord, ...] = (
         state_owner="read_only",
     ),
     AdmissionRecord(
+        # #261 / Phase 160: discovers the exact-source workfile promotion plan
+        # (next-main allocation, retained package identity). Discovery is
+        # read-only; the peer's filesystem copy happens only at the commit
+        # counterpart below.
+        operator_id="forge_promote_workfile_version",
+        resolved_class="mcp.peer_mutation_discover",
+        dispatch_kind="mcp",
+        synchronous=True,
+        returns_reference=False,
+        no_state_mutation=True,
+        idempotent_result=True,
+        state_owner="read_only",
+    ),
+    AdmissionRecord(
+        # #261 / Phase 160: resolves and cross-checks all FOUR promoted
+        # render/workfile Version authorities. Discovery reads catalog only —
+        # the relationship and metadata edge move at the commit counterpart.
+        operator_id="forge_bind_promoted_workfile_lineage",
+        resolved_class="mcp.bridge_mutation_discover",
+        dispatch_kind="mcp",
+        synchronous=True,
+        returns_reference=False,
+        no_state_mutation=True,
+        idempotent_result=True,
+        state_owner="read_only",
+    ),
+    AdmissionRecord(
         operator_id="forge_publish_shot_resource_transaction",
         resolved_class="mcp.federated_transaction_discover",
         dispatch_kind="mcp",
@@ -640,6 +667,31 @@ _MUTATION_COUNTERPART_RECORDS = (
         # canonical Bridge catalog identities. Idempotent apply is what makes
         # the promotion workflow's replay forward-completable.
         tool_name="forge_register_editorial_workspace_main_promotion",
+        state_owner="bridge",
+        synchronous=True,
+        verify_before_apply=True,
+        assent_required=True,
+        idempotent_apply=True,
+    ),
+    MutationCounterpartAdmission(
+        # #261 / Phase 160. Peer-owned like the render/OpenClip copy: Pipeline
+        # copies and hash-verifies the complete workfile package (for Flame,
+        # the .batch file and its extensionless sidecar directory are ONE
+        # identity) before registering the main Version. Idempotent apply is
+        # what makes the paired workflow's replay forward-completable.
+        tool_name="forge_promote_workfile_version",
+        state_owner="peer_owned",
+        synchronous=True,
+        verify_before_apply=True,
+        assent_required=True,
+        idempotent_apply=True,
+    ),
+    MutationCounterpartAdmission(
+        # #261 / Phase 160. Bridge-owned: the only state this moves is a
+        # canonical `derived_from` relationship plus the readable main-render
+        # metadata that mirrors it. Partial edge/metadata state refuses as
+        # reconciliation-required rather than silently normalizing.
+        tool_name="forge_bind_promoted_workfile_lineage",
         state_owner="bridge",
         synchronous=True,
         verify_before_apply=True,
