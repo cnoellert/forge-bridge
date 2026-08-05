@@ -47,8 +47,11 @@ class ExecutePythonInput(BaseModel):
     )
     main_thread: bool = Field(
         default=False,
-        description="If True, execute on Flame's Qt main thread. Required "
-        "for any write operations (set_value, create, delete).",
+        description="If True, execute on Flame's Qt main thread. Use it for "
+        "any write operation (set_value, create, delete) — that is the "
+        "default discipline, though the blanket 'off-thread writes crash "
+        "Flame' rule was refuted for workspace-object writes on 2027 "
+        "(forge-flame-kb D13).",
     )
 
 
@@ -151,9 +154,15 @@ async def execute_python(code: str, main_thread: bool = False) -> str:
 
     Mutation note. The `main_thread` parameter defaults to False (read-only
     safe — the canonical use cases above all run on the worker thread).
-    Set main_thread=True ONLY for write operations (set_value, create,
-    delete, rename) that require Flame's Qt main thread. For destructive
-    mutations, prefer routing through the staged-ops platform
+    Set main_thread=True for write operations (set_value, create, delete,
+    rename). That is the standing discipline; note the "off-thread writes
+    crash Flame" absolute was refuted for workspace-object writes on 2027
+    (forge-flame-kb D13) — what stays unverified off-thread is GUI /
+    timeline / render-touching access, which is where these writes land.
+    The same caution applies to *heavy reads*: a deep timeline traversal
+    (desktop→reels→sequences→tracks→segments) off-thread crashed a live
+    host on 2026-06-26. Prefer the flame_* read tools for those.
+    For destructive mutations, prefer routing through the staged-ops platform
     (forge_stage_*) so the operator has an approval surface; this tool is
     primarily a discovery interface, not a mutation primitive.
 

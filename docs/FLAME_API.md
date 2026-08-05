@@ -2,6 +2,14 @@
 
 Documented from live exploration of Flame 2026.2.1 via the HTTP bridge.
 
+> **Not the authority.** `forge-flame-kb` is the single source of truth for the
+> Flame Python API — its facts are provenance-graded and re-verified against a
+> running 2026.2.2 / 2027 host. This file is bridge-local field notes kept for
+> the tool-shaped context around them. Where the two disagree, the KB wins and
+> this file is stale. Reconciled against the KB on 2026-08-04 (drift ledger
+> D2/D13); it names this file by name as a drift source, so treat any claim
+> here without a KB cross-reference as unverified.
+
 ---
 
 ## Object Hierarchy
@@ -257,13 +265,16 @@ Layer suffix → role mapping: `L01=primary`, `L02=reference`, `L03=matte`
 
 ## Start Frame Workflow — Key API
 
-**Known limitation (2026-05-20):** `seg.change_start_frame()`
-causes a hard Flame crash on multi-track sequences with the current
-Flame Python API. The method exists and returns the correct value,
-but destabilizes Flame's internal state on sequences with multiple
-versions and tracks. See `flame_set_start_frames` docstring in
-`forge_bridge/tools/timeline.py` for operator guidance and the
-suggested workaround pending verification.
+**Known risk — LATENT, not a demonstrated crash.** A 2026-05-20 field note
+reported `seg.change_start_frame()` hard-crashing Flame on multi-track,
+multi-version sequences. The 2027 live audit (2026-08-04) could **not**
+reproduce it — the call raised a clean `RuntimeError` on a gap segment and
+follow-up writes worked. The media-backed multi-track case is untestable
+without media, so it stays open: unreproduced, not proven either way. Keep
+using `flame_set_start_frames` with care on complex sequences, but don't
+route around it assuming it takes the host down. See the `flame_set_start_frames`
+docstring in `forge_bridge/tools/timeline.py`, and forge-flame-kb drift ledger
+D2 / crash catalog #5.
 
 ```
 seg.head                    → int, head handle frames before cut point
@@ -297,11 +308,21 @@ role = m.group(1) if m and m.group(1) in KNOWN_ROLES else 'source'
 # KNOWN_ROLES = ['graded', 'raw', 'denoised', 'flat', 'external', 'scans', 'stock', 'source']
 ```
 
-### All set operations require main thread
+### Run set operations on the main thread
 
 ```python
-# Must use main_thread=True or schedule_idle_event():
+# Use main_thread=True (or schedule_idle_event) for writes:
 seg.name.set_value(new_name)
 seg.shot_name.set_value(shot_name)
 seg.change_start_frame(n)
 ```
+
+The standing discipline is unchanged, but the *justification* has narrowed.
+The blanket rule "any write off the main thread crashes Flame" was **refuted**
+on 2027 (2026-08-04): `create_library`, rename, `colour` set, and
+`flame.delete(confirm=False)` all succeeded on a verified non-main
+`forge-bridge` thread. Workspace-object writes are thread-safe. What survives
+is narrower — `PyTimelineFX.save_setup` off-thread is a real crash, and
+GUI / timeline / render-touching writes are simply **unverified** off-thread.
+Segment writes like the three above are in that unverified bucket, which is
+why the discipline stands. (forge-flame-kb drift ledger D13, crash catalog #1.)
