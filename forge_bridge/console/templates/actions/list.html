@@ -1,0 +1,26 @@
+{% extends "shell.html" %}
+{% block title %}Actions — Forge Console{% endblock %}
+
+{% block view %}
+<h1 class="view-title">Actions</h1>
+
+<p class="chip-caption">
+  Pick an action to stage an editorial change. Changes are previewed and
+  <strong>staged only</strong> here — nothing is applied. Ratify a staged
+  change from the <a href="/ui/chat">Chat</a> view, or with
+  <code>fbridge ratify &lt;id&gt;</code>.
+</p>
+
+<div class="actions-grid">
+  {% for verb in verbs %}
+  <a class="card actions-card" href="/ui/actions/{{ verb.name }}">
+    <h2 class="actions-card__label">{{ verb.label }}</h2>
+    <p class="actions-card__summary">{{ verb.summary }}</p>
+  </a>
+  {% endfor %}
+</div>
+
+{% if not verbs %}
+<p class="empty-state">No actions are registered.</p>
+{% endif %}
+{% endblock %}

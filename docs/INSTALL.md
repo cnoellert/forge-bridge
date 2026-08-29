@@ -345,8 +345,8 @@ curl -s -X POST http://localhost:9996/api/v1/chat \
   -d '{"messages":[{"role":"user","content":"hello"}]}'
 # → JSON with messages, stop_reason, request_id
 
-# 5. Browser check — open http://localhost:9996/ui/ and confirm the five views
-#    (tools, execs, manifest, health, chat) all render
+# 5. Browser check — open http://localhost:9996/ui/ and confirm the six views
+#    (tools, execs, manifest, health, actions, chat) all render
 ```
 
 First chat call may take 30-60s on a cold Ollama (model load). Subsequent calls are sub-10s.

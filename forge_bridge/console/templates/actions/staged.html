@@ -1,0 +1,26 @@
+{# htmx fragment: STAGED outcome. Nothing was applied — this hands off to the
+   existing CA.1 ratify affordance (Chat view) and the `fbridge ratify` CLI. #}
+<section class="graph-intent-preview ratify-outcome" role="region" aria-label="Staged for ratification">
+  <header class="graph-intent-preview__header">
+    <span class="graph-intent-preview__taxon">Staged — nothing applied</span>
+    <span class="graph-intent-preview__sub">a proposed graph-intent is now awaiting ratification</span>
+  </header>
+
+  <p class="actions-preview__line">
+    {{ verb.label }} of <strong>{{ seg_name }}</strong>
+    (<code>{{ change_summary }}</code>) staged.
+  </p>
+
+  <dl class="graph-intent-preview__summary">
+    <dt>graph_intent_id</dt>
+    <dd><code>{{ graph_intent_id }}</code></dd>
+  </dl>
+
+  <p class="graph-intent-preview__note">
+    No change has been applied to Flame. To enact it, ratify the intent:
+  </p>
+  <ul class="actions-handoff">
+    <li>From the <a href="/ui/chat">Chat</a> view's Ratify &amp; Apply affordance, or</li>
+    <li>From a terminal: <code>fbridge ratify {{ graph_intent_id }}</code></li>
+  </ul>
+</section>
