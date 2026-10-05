@@ -1366,8 +1366,10 @@ async def update_asset(params: UpdateAssetInput) -> str:
         if current.get("entity_type") != "asset":
             return _err(f"Entity {params.asset_id} is not an asset")
 
-        merged_attrs = dict(current.get("metadata") or {})
-        merged_attrs["asset_type"] = current.get("asset_type", "generic")
+        # The router merge-patches attributes onto existing metadata, so only
+        # the caller's changes are sent — replaying stored metadata could
+        # resend keys entity.update rejects (#270).
+        merged_attrs = {"asset_type": current.get("asset_type", "generic")}
         for key, value in (params.attributes or {}).items():
             if key == "entity_type":
                 continue

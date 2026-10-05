@@ -259,3 +259,174 @@ def test_merge_patch_does_not_mutate_target():
     target = {"a": {"x": 1}, "b": 2}
     assert _merge_patch(target, {"a": {"y": 2}, "b": None}) == {"a": {"x": 1, "y": 2}}
     assert target == {"a": {"x": 1}, "b": 2}
+
+
+# ─────────────────────────────────────────────────────────────
+# #270 — attributes allowlist: protected keys, coercion, methods
+# ─────────────────────────────────────────────────────────────
+
+async def _update_error(router, client, entity_id, **kwargs):
+    resp = await router._handle_entity_update(entity_update(entity_id, **kwargs), client)
+    assert resp["type"] == MsgType.ERROR, resp
+    assert resp["code"] == "INVALID", resp
+    return resp
+
+
+async def _snapshot(router, client, entity_id) -> dict:
+    # created_at is not persisted on entities (re-stamped on every load).
+    got = await _get(router, client, entity_id)
+    got.pop("created_at", None)
+    return got
+
+
+async def _entity_count(session_factory) -> int:
+    from sqlalchemy import func, select
+
+    from forge_bridge.store.models import DBEntity
+
+    async with session_factory() as session:
+        return (await session.execute(select(func.count()).select_from(DBEntity))).scalar_one()
+
+
+@pytest.mark.parametrize("key, value", [
+    ("id", str(uuid.uuid4())),
+    ("entity_type", "version"),
+    ("created_at", "2020-01-01T00:00:00"),
+    ("project_id", str(uuid.uuid4())),
+    ("to_dict", 1),
+    ("add_relationship", 1),
+    ("duration", 10),
+    ("_relationships", []),
+])
+async def test_update_rejects_protected_key_and_mutates_nothing(
+    router, client, project_id, key, value,
+):
+    shot_id = await _create(router, client, project_id, "shot", {"cut_in": "01:00:00:00", "a": 1})
+    before = await _snapshot(router, client, shot_id)
+
+    # The rejected key rides with valid changes; none of them may land.
+    resp = await _update_error(router, client, shot_id, name="RENAMED", status="review",
+                               attributes={"b": 2, key: value})
+
+    assert key in resp["message"]
+    assert await _snapshot(router, client, shot_id) == before
+
+
+async def test_update_id_cannot_create_or_clobber_another_entity(router, client, project_id, session_factory):
+    shot_id = await _create(router, client, project_id, "shot", {}, name="SHOT")
+    version_id = await _create(router, client, project_id, "version", {"iteration": 1}, name="VER")
+    version_before = await _snapshot(router, client, version_id)
+    count = await _entity_count(session_factory)
+
+    await _update_error(router, client, shot_id, name="HIJACK", attributes={"id": version_id})
+    await _update_error(router, client, shot_id, name="DUPE", attributes={"id": str(uuid.uuid4())})
+
+    assert await _entity_count(session_factory) == count
+    assert await _snapshot(router, client, version_id) == version_before
+    assert (await _get(router, client, shot_id))["name"] == "SHOT"
+
+
+async def test_update_status_in_attributes_is_validated(router, client, project_id):
+    shot_id = await _create(router, client, project_id, "shot", {})
+
+    await _update_error(router, client, shot_id, attributes={"status": "anything"})
+    assert (await _get(router, client, shot_id))["status"] == "pending"
+
+    await _update(router, client, shot_id, attributes={"status": "hold"})
+    got = await _get(router, client, shot_id)
+    assert got["status"] == "on_hold"
+    assert "status" not in got["metadata"]
+
+
+async def test_update_invalid_top_level_status_is_invalid(router, client, project_id):
+    shot_id = await _create(router, client, project_id, "shot", {})
+    await _update_error(router, client, shot_id, status="anything")
+    assert (await _get(router, client, shot_id))["status"] == "pending"
+
+
+async def test_update_name_in_attributes_applies_like_top_level(router, client, project_id):
+    shot_id = await _create(router, client, project_id, "shot", {}, name="OLD")
+
+    await _update(router, client, shot_id, attributes={"name": "NEW"})
+
+    got = await _get(router, client, shot_id)
+    assert got["name"] == "NEW"
+    assert "name" not in got["metadata"]
+
+
+async def test_update_coerces_shot_typed_fields(router, client, project_id):
+    seq_id = await _create(router, client, project_id, "sequence", {})
+    shot_id = await _create(router, client, project_id, "shot", {"cut_in": "01:00:00:00"})
+
+    await _update(router, client, shot_id, attributes={
+        "cut_in": "01:00:01:00", "cut_out": "01:00:03:00", "sequence_id": seq_id,
+    })
+
+    got = await _get(router, client, shot_id)
+    assert got["cut_in"]["timecode"] == "01:00:01:00"
+    assert got["cut_out"]["timecode"] == "01:00:03:00"
+    assert got["duration_frames"] == 48
+    assert got["sequence_id"] == seq_id
+    assert not {"cut_in", "cut_out", "sequence_id"} & set(got["metadata"])
+
+
+async def test_update_coerces_version_and_media_typed_fields(router, client, project_id):
+    version_id = await _create(router, client, project_id, "version", {"iteration": 1})
+    media_id = await _create(router, client, project_id, "media", {"format": "EXR"})
+
+    await _update(router, client, version_id, attributes={"version_number": "3"})
+    await _update(router, client, media_id, attributes={
+        "frame_range": {"start": 1001, "end": 1100, "fps": "24"}, "version_id": version_id,
+    })
+
+    assert (await _get(router, client, version_id))["version_number"] == 3
+    media = await _get(router, client, media_id)
+    assert media["frame_range"]["start"] == 1001 and media["frame_range"]["end"] == 1100
+    assert media["version_id"] == version_id
+
+
+@pytest.mark.parametrize("entity_type, create_attrs, attributes", [
+    ("shot",     {}, {"cut_in": "not a timecode"}),
+    ("shot",     {}, {"cut_in": 86400}),
+    ("shot",     {}, {"sequence_id": "not-a-uuid"}),
+    ("shot",     {}, {"name": None}),
+    ("version",  {"iteration": 1}, {"version_number": "three"}),
+    ("version",  {"iteration": 1}, {"version_number": True}),
+    ("media",    {"format": "EXR"}, {"frame_range": {"start": 1100, "end": 1001}}),
+    ("media",    {"format": "EXR"}, {"frame_range": "1001-1100"}),
+    ("sequence", {}, {"frame_rate": "fast"}),
+])
+async def test_update_rejects_bad_typed_value(router, client, project_id, entity_type, create_attrs, attributes):
+    entity_id = await _create(router, client, project_id, entity_type, create_attrs)
+    before = await _snapshot(router, client, entity_id)
+
+    resp = await _update_error(router, client, entity_id, attributes=attributes)
+
+    assert next(iter(attributes)) in resp["message"]
+    assert await _snapshot(router, client, entity_id) == before
+
+
+async def test_mcp_update_asset_does_not_replay_protected_metadata_keys(
+    router, client, project_id, monkeypatch,
+):
+    class _RouterClient:
+        async def request(self, msg):
+            resp = await router._dispatch[msg.type](msg, client)
+            assert resp["type"] == MsgType.OK, resp
+            return resp.get("result") or {}
+
+    monkeypatch.setattr(tools, "_client", lambda: _RouterClient())
+    # entity.create keeps unknown keys in metadata, including protected names.
+    asset_id = await _create(router, client, project_id, "asset",
+                             {"asset_type": "vehicle", "created_at": "legacy"})
+
+    result = await tools.update_asset(tools.UpdateAssetInput(asset_id=asset_id, attributes={"b": 2}))
+
+    assert "error" not in result
+    got = await _get(router, client, asset_id)
+    assert got["metadata"] == {"created_at": "legacy", "b": 2}
+
+
+async def test_update_rejects_non_object_attributes(router, client, project_id):
+    shot_id = await _create(router, client, project_id, "shot", {})
+    await _update_error(router, client, shot_id, attributes=["cut_in"])
