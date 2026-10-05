@@ -178,7 +178,29 @@ def _check_install_provenance() -> dict[str, Any]:
     daemon_startup = prov.get("startup_sha")
     daemon_disk = prov.get("disk_sha_now")
 
+    shadow_row, shadow_note, serves_installed = _distribution_shadow(
+        prov, daemon_version=data.get("version"),
+    )
+
     if not daemon_repo or not daemon_startup:
+        # A non-editable (wheel / git+URL) install carries no git metadata.
+        # That is the intended production state, not unknown provenance,
+        # when the daemon is verifiably serving the installed distribution
+        # at the installed version (#251).
+        if serves_installed:
+            inst_version, inst_pkg_dir = serves_installed
+            return {
+                "name": "install_provenance",
+                "ok": True,
+                "status": (
+                    f"daemon serving installed distribution {inst_version} "
+                    f"at {inst_pkg_dir}"
+                ),
+                "url": daemon_path,
+                "fix": "",
+            }
+        if shadow_row:
+            return shadow_row
         return _provenance_warn(
             f"daemon path={daemon_path} (no git metadata — "
             f"detached/unknown provenance)",
@@ -202,10 +224,6 @@ def _check_install_provenance() -> dict[str, Any]:
             "url": daemon_path,
             "fix": "restart the daemon process to pick up the on-disk state",
         }
-
-    shadow_row, shadow_note = _distribution_shadow(
-        prov, daemon_version=data.get("version"),
-    )
 
     cwd_repo, cwd_sha = _operator_repo_context()
 
@@ -275,11 +293,13 @@ def _check_install_provenance() -> dict[str, Any]:
 
 def _distribution_shadow(
     prov: dict[str, Any], *, daemon_version: Optional[str],
-) -> tuple[Optional[dict[str, Any]], str]:
+) -> tuple[Optional[dict[str, Any]], str, Optional[tuple[str, Path]]]:
     """Compare the daemon's import path + version against the installed
-    distribution (#251). Returns ``(warn_row, ok_note)``: a warn row when
-    the daemon is shadowing (or lagging) the installed package, else
-    ``None`` plus a status suffix (empty when the comparison passed).
+    distribution (#251). Returns ``(warn_row, ok_note, serves_installed)``:
+    a warn row when the daemon is shadowing (or lagging) the installed
+    package, else ``None`` plus a status suffix (empty when the comparison
+    passed). ``serves_installed`` is ``(version, package_dir)`` only when
+    the comparison ran AND the daemon reported a matching path and version.
 
     Uses the DOCTOR's ``importlib.metadata`` view, which assumes doctor and
     daemon share a Python env. The daemon reports its ``sys_prefix``; when
@@ -291,11 +311,11 @@ def _distribution_shadow(
         return None, (
             f"; daemon env {daemon_prefix} differs from doctor env "
             f"{sys.prefix} — installed-distribution comparison skipped"
-        )
+        ), None
 
     installed = _installed_distribution()
     if installed is None:
-        return None, ""
+        return None, "", None
     inst_version, inst_pkg_dir, editable = installed
 
     daemon_path = prov.get("import_path")
@@ -314,7 +334,7 @@ def _distribution_shadow(
                 f"installed {inst_pkg_dir} — check the daemon's working "
                 f"directory / PYTHONPATH, then restart it"
             ),
-        ), ""
+        ), "", None
 
     # The daemon's top-level health `version` is importlib.metadata read at
     # daemon import time, so a mismatch here means the distribution was
@@ -325,9 +345,11 @@ def _distribution_shadow(
             f"{inst_version} at {inst_pkg_dir} — restart to load it",
             url=daemon_path or "<unknown>",
             fix="restart the daemon process to load the installed version",
-        ), ""
+        ), "", None
 
-    return None, ""
+    if daemon_path and daemon_version == inst_version:
+        return None, "", (inst_version, inst_pkg_dir)
+    return None, "", None
 
 
 def _installed_distribution() -> Optional[tuple[str, Path, bool]]:

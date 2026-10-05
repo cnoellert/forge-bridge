@@ -993,3 +993,52 @@ def test_installed_distribution_non_editable_uses_locate_file(tmp_path):
         version, pkg_dir, editable = _real_installed_distribution()
     assert editable is False
     assert pkg_dir == (tmp_path / "site-packages" / "forge_bridge").resolve()
+
+
+def _wheel_body(pkg, *, version="1.9.19") -> dict:
+    """Daemon serving a non-editable install: no git metadata at all."""
+    return _shadow_body(pkg, version=version, repo_root=None,
+                        startup_sha=None, disk_sha_now=None)
+
+
+def test_provenance_ok_wheel_install_serving_installed_distribution(tmp_path):
+    pkg = tmp_path / "site-packages" / "forge_bridge"
+    pkg.mkdir(parents=True)
+    row = _run_shadow(_wheel_body(pkg), ("1.9.19", pkg.resolve(), False))
+    assert row["ok"] is True
+    assert row["status"] == (
+        f"daemon serving installed distribution 1.9.19 at {pkg.resolve()}"
+    )
+    assert row["fix"] == ""
+
+
+def test_provenance_warn_wheel_install_version_mismatch(tmp_path):
+    pkg = tmp_path / "site-packages" / "forge_bridge"
+    pkg.mkdir(parents=True)
+    row = _run_shadow(
+        _wheel_body(pkg, version="1.9.18"), ("1.9.19", pkg.resolve(), False),
+    )
+    assert row["ok"] is False
+    assert row["chip"] == "warn"
+    assert "daemon loaded 1.9.18" in row["status"]
+    assert "1.9.19" in row["status"]
+
+
+def test_provenance_warn_wheel_install_no_distribution_found(tmp_path):
+    """No installed distribution visible to doctor: keep the no-git warn."""
+    pkg = tmp_path / "site-packages" / "forge_bridge"
+    pkg.mkdir(parents=True)
+    row = _run_shadow(_wheel_body(pkg), None)
+    assert row["ok"] is False
+    assert "no git metadata" in row["status"]
+
+
+def test_provenance_warn_wheel_install_daemon_env_differs(tmp_path):
+    """Comparison skipped (different env): keep the no-git warn."""
+    pkg = tmp_path / "site-packages" / "forge_bridge"
+    pkg.mkdir(parents=True)
+    body = _wheel_body(pkg)
+    body["data"]["install_provenance"]["sys_prefix"] = str(tmp_path / "other")
+    row = _run_shadow(body, ("1.9.19", pkg.resolve(), False))
+    assert row["ok"] is False
+    assert "no git metadata" in row["status"]
