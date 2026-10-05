@@ -1125,20 +1125,17 @@ async def set_start_frames(params: SetStartFramesInput) -> str:
 
     Runs on Flame's main thread. Returns results per shot.
 
-    Known limitation (empirically observed 2026-05-20):
-    change_start_frame() causes a hard Flame crash on multi-track
-    sequences with the current Flame Python API. The method exists
-    and returns the correct value, but destabilizes Flame's internal
-    state on sequences with multiple versions and tracks.
+    Known risk on multi-track sequences — LATENT, not a demonstrated crash.
+    A 2026-05-20 field note reported change_start_frame() hard-crashing Flame
+    on sequences with multiple versions and tracks. The 2027 live audit
+    (2026-08-04) could NOT reproduce it: the call raised a clean RuntimeError
+    on a gap segment and follow-up writes worked normally. The media-backed
+    multi-track case is untestable without media, so it stays open.
 
-    Until this is resolved upstream or a safer invocation pattern
-    is identified, flame_set_start_frames should be used with
-    caution on complex multi-track sequences. Single-track sequences
-    or sequences opened in the timeline viewer may behave differently.
-
-    Suggested workaround pending verification:
-    use flame_execute_python for start-frame operations on
-    complex sequences until this limitation is understood.
+    Treat this as unreproduced rather than proven either way: keep using
+    flame_set_start_frames with care on complex multi-track sequences, but do
+    not route around it on the assumption that it takes the host down.
+    (forge-flame-kb drift ledger D2, crash catalog #5 [DRIFT/unreproduced].)
     """
     data = await bridge.execute_json(f"""
 import flame, json
@@ -1306,12 +1303,17 @@ class GetSequenceEditingGuide(BaseModel):
     - How to assemble clips into a sequence using overwrite()
     - Which copy method to use (copy_to_media_panel vs import_clips) and why
     - How to handle source timecode / handles correctly
-    - Known crashes and gotchas (flame.delete on active sequences, etc.)
+    - Delete-family risk, re-audited live on 2027 (most of the old crash
+      lore is refuted; the surviving hazard is confirm=True)
     - Openclip version switching and nbTicks
     - Cleanup patterns
 
     Use this tool before writing any sequence assembly code to ensure you
-    follow the correct API patterns and avoid known crashes.
+    follow the correct API patterns.
+
+    Facts here are reconciled against forge-flame-kb (drift ledger D11/D12,
+    crash catalog #2) as of 2026-08-04. That KB is the authority; when the
+    two disagree, it wins and this guide is stale.
     """
     topic: Optional[str] = Field(
         default=None,
@@ -1421,24 +1423,60 @@ async def get_sequence_editing_guide(params: GetSequenceEditingGuide) -> str:
             ),
         },
         "crashes": {
-            "title": "Known Flame 2026 crashes and unsafe operations",
+            "title": (
+                "Flame delete-family risk — re-audited live on 2027 "
+                "(forge-flame-kb, 2026-08-04)"
+            ),
             "crash_list": [
                 {
-                    "operation": "flame.delete(PySegment, confirm=False)",
-                    "context": "Segment is in an active sequence",
-                    "result": "Flame crashes immediately — no exception, hard crash",
-                    "workaround": "Build sequence correctly from start. Never delete segments post-assembly.",
-                },
-                {
-                    "operation": "flame.delete(PyTrack, confirm=False)",
-                    "context": "Track is in an active sequence",
-                    "result": "Flame crashes immediately",
-                    "workaround": "Same — do not attempt track removal on active sequences.",
+                    "operation": "flame.delete(obj)  # i.e. default confirm=True",
+                    "context": "Any headless / bridge-driven call",
+                    "result": (
+                        "Raises a modal nothing can dismiss. The main-thread queue "
+                        "blocks and looks exactly like a crashed host."
+                    ),
+                    "workaround": (
+                        "Always pass confirm=False. If the bridge stops answering "
+                        "even print(1), suspect a modal before a crash."
+                    ),
+                    "provenance": "KB crash-catalog #2 [LIVE, mechanistic]",
                 },
             ],
+            "refuted_lore": [
+                {
+                    "claim": "flame.delete(PySegment) on an active sequence crashes Flame",
+                    "status": "REFUTED on 2027 (2026-08-04) — returned True, no crash.",
+                    "provenance": "KB drift ledger D12 [LIVE]",
+                },
+                {
+                    "claim": "flame.delete(PyTrack) on an active sequence crashes Flame",
+                    "status": (
+                        "REFUTED on 2027 (2026-08-04) — removed the track (3→2), "
+                        "returned True, no crash. Also corrects 'track deletion is "
+                        "not supported via the API'."
+                    ),
+                    "provenance": "KB drift ledger D12 [LIVE]",
+                },
+                {
+                    "claim": "Deleting the currently-open sequence crashes Flame",
+                    "status": (
+                        "REFUTED on 2027 (2026-08-04) — a bare disposable sequence and "
+                        "a 2-track sequence carrying a marker both deleted cleanly "
+                        "while open."
+                    ),
+                    "provenance": "KB drift ledger D11 [LIVE]",
+                },
+            ],
+            "still_untested": (
+                "The 2027 audit did not cover media-backed segments or media-backed "
+                "sequences. Treat delete on locked / media-backed material as unproven "
+                "— refuted-as-a-crash is not the same as proven-safe."
+            ),
             "safe_deletes": [
-                "flame.delete(PyClip, confirm=False)  # scratch reel clips — safe",
-                "flame.delete(PySequence, confirm=False)  # whole sequences — safe",
+                "flame.delete(PyClip, confirm=False)      # scratch reel clips",
+                "flame.delete(PySequence, confirm=False)  # whole sequences",
+                "flame.delete(PySegment, confirm=False)   # active seq — refuted as a crash (D12)",
+                "flame.delete(PyTrack, confirm=False)     # active seq — refuted as a crash (D12)",
             ],
         },
         "cleanup": {

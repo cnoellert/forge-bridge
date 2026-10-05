@@ -306,7 +306,11 @@ class AssemblePublishedSequence(BaseModel):
     - All other _export_tmp_publish seqs are deleted.
 
     Key API constraints discovered in production (Flame 2026):
-    - flame.delete(PySegment/PyTrack) on active sequences CRASHES Flame.
+    - flame.delete(obj) defaults to confirm=True, which raises a modal that
+      hangs a headless bridge — always pass confirm=False. (The older note
+      here, that delete on active-sequence segments/tracks CRASHES Flame, was
+      REFUTED by the 2027 live audit — forge-flame-kb drift ledger D12.
+      Media-backed segments remain untested.)
     - seg.source_in is read-only — can't be set after placement.
     - copy_to_media_panel preserves source_in/handles; import_clips does not.
     - copy_to_media_panel reports 1 version via Python API but the underlying
