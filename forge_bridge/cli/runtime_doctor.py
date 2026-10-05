@@ -110,19 +110,24 @@ def _check_install_provenance() -> dict[str, Any]:
     block from /api/v1/health (added daemon-side in the preceding commit)
     and compares against the operator's CWD repo context.
 
-    Three comparisons feed the verdict:
+    Four comparisons feed the verdict:
 
       drift          daemon.startup_sha vs daemon.disk_sha_now (same path)
       cross-repo     daemon.repo_root  vs operator CWD's repo root
       cross-commit   daemon.startup_sha vs operator CWD's HEAD SHA
+      shadow         daemon.import_path + version vs the installed
+                     distribution (importlib.metadata) — independent of
+                     operator CWD (#251)
 
     Green requires ALL THREE: provenance known, no drift, matches the
     operator's CWD checkout/HEAD. NOT "matches main" — every feature
     branch would otherwise produce a false warning. Warns for: drift
     (daemon stale vs disk), missing git metadata (detached / wheel
     install), cross-checkout state, or same-repo different-commit.
-    Operator CWD outside any git repo: comparison skipped rather than
-    warned (running doctor from ~/ or /tmp shouldn't generate noise).
+    Operator CWD outside any git repo: the CWD comparisons are skipped
+    rather than warned (running doctor from ~/ or /tmp shouldn't generate
+    noise) — the shadow comparison still runs, so the row always keeps one
+    anchor that does not depend on where the operator is standing.
 
     Output preserves raw facts (SHAs short-form + paths) alongside the
     interpreted verdict so operators can reason from underlying state,
@@ -198,15 +203,22 @@ def _check_install_provenance() -> dict[str, Any]:
             "fix": "restart the daemon process to pick up the on-disk state",
         }
 
+    shadow_row, shadow_note = _distribution_shadow(
+        prov, daemon_version=data.get("version"),
+    )
+
     cwd_repo, cwd_sha = _operator_repo_context()
 
     if not cwd_repo or not cwd_sha:
+        if shadow_row:
+            return shadow_row
         return {
             "name": "install_provenance",
             "ok": True,
             "status": (
                 f"daemon {daemon_startup[:8]} @ {daemon_basename} "
                 f"(operator CWD not in a git repo; comparison skipped)"
+                f"{shadow_note}"
             ),
             "url": daemon_path,
             "fix": "",
@@ -247,16 +259,105 @@ def _check_install_provenance() -> dict[str, Any]:
             ),
         }
 
+    if shadow_row:
+        return shadow_row
     return {
         "name": "install_provenance",
         "ok": True,
         "status": (
             f"daemon {daemon_startup[:8]} @ {daemon_basename} matches "
-            f"operator CWD"
+            f"operator CWD{shadow_note}"
         ),
         "url": daemon_path,
         "fix": "",
     }
+
+
+def _distribution_shadow(
+    prov: dict[str, Any], *, daemon_version: Optional[str],
+) -> tuple[Optional[dict[str, Any]], str]:
+    """Compare the daemon's import path + version against the installed
+    distribution (#251). Returns ``(warn_row, ok_note)``: a warn row when
+    the daemon is shadowing (or lagging) the installed package, else
+    ``None`` plus a status suffix (empty when the comparison passed).
+
+    Uses the DOCTOR's ``importlib.metadata`` view, which assumes doctor and
+    daemon share a Python env. The daemon reports its ``sys_prefix``; when
+    that differs from ours the comparison would describe the wrong env, so
+    it is skipped and reported rather than producing a false verdict.
+    """
+    daemon_prefix = prov.get("sys_prefix")
+    if daemon_prefix and Path(daemon_prefix).resolve() != Path(sys.prefix).resolve():
+        return None, (
+            f"; daemon env {daemon_prefix} differs from doctor env "
+            f"{sys.prefix} — installed-distribution comparison skipped"
+        )
+
+    installed = _installed_distribution()
+    if installed is None:
+        return None, ""
+    inst_version, inst_pkg_dir, editable = installed
+
+    daemon_path = prov.get("import_path")
+    daemon_sha = prov.get("startup_sha")
+    at_sha = f" @ {daemon_sha[:8]}" if daemon_sha else ""
+    kind = "editable source" if editable else "distribution"
+
+    if daemon_path and Path(daemon_path).resolve() != inst_pkg_dir:
+        return _provenance_warn(
+            f"daemon serving {daemon_path}{at_sha}; installed {kind} is "
+            f"{inst_version} at {inst_pkg_dir} — daemon is shadowing the "
+            f"installed distribution",
+            url=daemon_path,
+            fix=(
+                f"daemon imports forge_bridge from {daemon_path}, not the "
+                f"installed {inst_pkg_dir} — check the daemon's working "
+                f"directory / PYTHONPATH, then restart it"
+            ),
+        ), ""
+
+    # The daemon's top-level health `version` is importlib.metadata read at
+    # daemon import time, so a mismatch here means the distribution was
+    # (re)installed after the daemon started.
+    if daemon_version and daemon_version != inst_version:
+        return _provenance_warn(
+            f"daemon loaded {daemon_version}; installed {kind} is now "
+            f"{inst_version} at {inst_pkg_dir} — restart to load it",
+            url=daemon_path or "<unknown>",
+            fix="restart the daemon process to load the installed version",
+        ), ""
+
+    return None, ""
+
+
+def _installed_distribution() -> Optional[tuple[str, Path, bool]]:
+    """Resolve the installed ``forge-bridge`` distribution as this
+    interpreter sees it: ``(version, package_dir, editable)``, or ``None``
+    when not installed. For an editable install the package dir is the
+    source tree named in ``direct_url.json`` (flat layout:
+    ``<src>/forge_bridge``) — daemon serving that tree is NOT shadowing.
+    Otherwise it is the distribution's own ``forge_bridge`` location."""
+    from importlib.metadata import PackageNotFoundError, distribution
+    from urllib.parse import unquote, urlparse
+
+    try:
+        dist = distribution("forge-bridge")
+    except PackageNotFoundError:
+        return None
+    try:
+        direct = json.loads(dist.read_text("direct_url.json") or "{}")
+    except ValueError:
+        direct = {}
+    editable_src: Optional[str] = None
+    if (direct.get("dir_info") or {}).get("editable"):
+        url = direct.get("url") or ""
+        if url.startswith("file://"):
+            editable_src = unquote(urlparse(url).path)
+    if editable_src:
+        pkg_dir = Path(editable_src) / "forge_bridge"
+    else:
+        pkg_dir = Path(str(dist.locate_file("forge_bridge")))
+    return dist.version, pkg_dir.resolve(), bool(editable_src)
 
 
 def _provenance_warn(status: str, *, url: str, fix: str) -> dict[str, Any]:

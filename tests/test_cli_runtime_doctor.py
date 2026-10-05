@@ -829,3 +829,167 @@ def test_provenance_row_appears_in_human_output():
     with p1, p2:
         result = runner.invoke(app, ["doctor"])
     assert "install_provenance" in result.output
+
+
+# ── install_provenance shadow comparison (#251) ─────────────────────────────
+#
+# Fourth comparison: daemon import_path + version vs the installed
+# distribution, independent of operator CWD. The autouse fixture below pins
+# `_installed_distribution` to None for every test in this module (each
+# shadow test overrides it) so verdicts don't depend on how the test
+# runner's own env happens to be installed.
+
+from forge_bridge.cli.runtime_doctor import (  # noqa: E402 — real fn, pre-patch
+    _installed_distribution as _real_installed_distribution,
+)
+
+
+@pytest.fixture(autouse=True)
+def _no_installed_distribution():
+    with patch(
+        "forge_bridge.cli.runtime_doctor._installed_distribution",
+        return_value=None,
+    ):
+        yield
+
+
+def _shadow_body(import_path, *, version="1.9.18", **extra) -> dict:
+    prov = {
+        "import_path": str(import_path),
+        "repo_root": str(import_path.parent),
+        "startup_sha": "f" * 40,
+        "disk_sha_now": "f" * 40,
+        "pid": 99999,
+        "started_at": "2026-05-18T22:00:00+00:00",
+        **extra,
+    }
+    body = _health_body_ok(install_provenance=prov)
+    if version is not None:
+        body["data"]["version"] = version
+    return body
+
+
+def _run_shadow(body, installed, *, cwd_context=(None, None)):
+    p1, p2 = _provenance_world(body)
+    with patch(
+        "forge_bridge.cli.runtime_doctor._installed_distribution",
+        return_value=installed,
+    ), patch(
+        "forge_bridge.cli.runtime_doctor._operator_repo_context",
+        return_value=cwd_context,   # default: operator CWD is NOT a git repo
+    ), p1, p2:
+        result = runner.invoke(app, ["doctor", "--json"])
+    return _provenance_row(result.output)
+
+
+def test_provenance_ok_daemon_path_is_installed_location(tmp_path):
+    pkg = tmp_path / "site-packages" / "forge_bridge"
+    pkg.mkdir(parents=True)
+    row = _run_shadow(_shadow_body(pkg), ("1.9.18", pkg.resolve(), False))
+    assert row["ok"] is True
+    assert "comparison skipped" in row["status"]
+
+
+def test_provenance_warn_checkout_shadows_installed_distribution(tmp_path):
+    """The #251 scenario: daemon serves a checkout while a non-editable
+    distribution is installed; operator runs doctor outside any git repo."""
+    site = tmp_path / "site-packages" / "forge_bridge"
+    site.mkdir(parents=True)
+    checkout = tmp_path / "checkout" / "forge_bridge"
+    checkout.mkdir(parents=True)
+    row = _run_shadow(_shadow_body(checkout), ("1.9.14", site.resolve(), False))
+    assert row["ok"] is False
+    assert row["chip"] == "warn"
+    assert str(checkout) in row["status"]
+    assert str(site.resolve()) in row["status"]
+    assert "1.9.14" in row["status"]
+    assert "ffffffff" in row["status"]
+    assert "shadowing the installed distribution" in row["status"]
+
+
+def test_provenance_warn_shadow_overrides_cwd_match(tmp_path):
+    """Shadow verdict also replaces the matches-operator-CWD green."""
+    site = tmp_path / "site-packages" / "forge_bridge"
+    site.mkdir(parents=True)
+    checkout = tmp_path / "checkout" / "forge_bridge"
+    checkout.mkdir(parents=True)
+    row = _run_shadow(
+        _shadow_body(checkout),
+        ("1.9.18", site.resolve(), False),
+        cwd_context=(str(checkout.parent), "f" * 40),
+    )
+    assert row["ok"] is False
+    assert "shadowing" in row["status"]
+
+
+def test_provenance_ok_editable_install_source_is_daemon_path(tmp_path):
+    src = tmp_path / "forge-bridge" / "forge_bridge"
+    src.mkdir(parents=True)
+    row = _run_shadow(_shadow_body(src), ("1.9.18", src.resolve(), True))
+    assert row["ok"] is True
+
+
+def test_provenance_warn_daemon_version_lags_installed(tmp_path):
+    pkg = tmp_path / "site-packages" / "forge_bridge"
+    pkg.mkdir(parents=True)
+    row = _run_shadow(
+        _shadow_body(pkg, version="1.9.13"), ("1.9.14", pkg.resolve(), False),
+    )
+    assert row["ok"] is False
+    assert "daemon loaded 1.9.13" in row["status"]
+    assert "1.9.14" in row["status"]
+
+
+def test_provenance_shadow_skipped_when_daemon_env_differs(tmp_path):
+    """Doctor's importlib.metadata describes a different env than the
+    daemon's — report that instead of a false shadow verdict."""
+    site = tmp_path / "site-packages" / "forge_bridge"
+    site.mkdir(parents=True)
+    checkout = tmp_path / "checkout" / "forge_bridge"
+    checkout.mkdir(parents=True)
+    other_env = tmp_path / "other-env"
+    row = _run_shadow(
+        _shadow_body(checkout, sys_prefix=str(other_env)),
+        ("1.9.18", site.resolve(), False),
+    )
+    assert row["ok"] is True
+    assert "installed-distribution comparison skipped" in row["status"]
+    assert str(other_env) in row["status"]
+
+
+class _FakeDist:
+    version = "1.9.18"
+
+    def __init__(self, direct_url: dict, site):
+        self._direct_url = direct_url
+        self._site = site
+
+    def read_text(self, name):
+        assert name == "direct_url.json"
+        return json.dumps(self._direct_url)
+
+    def locate_file(self, name):
+        return self._site / name
+
+
+def test_installed_distribution_resolves_editable_source(tmp_path):
+    src = tmp_path / "my checkout"
+    dist = _FakeDist(
+        {"url": src.as_uri(), "dir_info": {"editable": True}},
+        tmp_path / "site-packages",
+    )
+    with patch("importlib.metadata.distribution", return_value=dist):
+        version, pkg_dir, editable = _real_installed_distribution()
+    assert (version, editable) == ("1.9.18", True)
+    assert pkg_dir == (src / "forge_bridge").resolve()
+
+
+def test_installed_distribution_non_editable_uses_locate_file(tmp_path):
+    dist = _FakeDist(
+        {"url": "https://example.invalid/x.git", "vcs_info": {"vcs": "git"}},
+        tmp_path / "site-packages",
+    )
+    with patch("importlib.metadata.distribution", return_value=dist):
+        version, pkg_dir, editable = _real_installed_distribution()
+    assert editable is False
+    assert pkg_dir == (tmp_path / "site-packages" / "forge_bridge").resolve()

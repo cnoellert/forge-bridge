@@ -32,6 +32,7 @@ def test_get_provenance_returns_expected_keys():
         "repo_root",
         "startup_sha",
         "pid",
+        "sys_prefix",
         "started_at",
     }
 
