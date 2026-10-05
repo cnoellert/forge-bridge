@@ -279,13 +279,15 @@ class SyncClient:
         attributes: dict | None = None,
         name:       str | None = None,
         status:     str | None = None,
+        note:       str | None = None,
     ) -> None:
-        """Update an entity's fields."""
+        """Update an entity's fields. ``note`` rides on the entity.updated event."""
         self._run(entity_update(
             entity_id=str(entity_id),
             attributes=attributes,
             name=name,
             status=status,
+            note=note,
         ))
 
     def entity_get(self, entity_id: str | uuid.UUID) -> dict:

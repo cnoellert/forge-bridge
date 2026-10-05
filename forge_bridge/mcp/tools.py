@@ -85,6 +85,7 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from forge_bridge.console.handlers import _envelope_json
+from forge_bridge.core.vocabulary import Status
 
 logger = logging.getLogger(__name__)
 
@@ -979,6 +980,12 @@ async def create_project(params: CreateProjectInput) -> str:
 # Shots
 # ─────────────────────────────────────────────────────────────
 
+# Advertised shot-status values, generated from the canonical Status enum so
+# the tool schemas cannot drift from what the router's Status.from_string
+# accepts (#267).
+_SHOT_STATUS_VALUES = ", ".join(s.value for s in Status)
+
+
 class ListShotsInput(BaseModel):
     # PR22 CONTRACT:
     # All tools must be callable with {} so PR20 deterministic execution
@@ -992,7 +999,7 @@ class ListShotsInput(BaseModel):
     project_id: str = Field(..., description="Project UUID")
     status: Optional[str] = Field(
         default=None,
-        description="Filter by status: 'pending', 'in_progress', 'review', 'approved', 'on_hold'"
+        description=f"Filter by status. One of: {_SHOT_STATUS_VALUES}"
     )
 
 
@@ -1170,7 +1177,10 @@ class UpdateShotStatusInput(BaseModel):
     shot_id: str = Field(..., description="Shot UUID")
     status: str = Field(
         ...,
-        description="New status. One of: pending, in_progress, review, approved, on_hold"
+        description=(
+            f"New status. One of: {_SHOT_STATUS_VALUES} "
+            "(common aliases such as wip, hold, done are also accepted)"
+        )
     )
     note: Optional[str] = Field(
         default=None,
@@ -1181,8 +1191,9 @@ class UpdateShotStatusInput(BaseModel):
 async def update_shot_status(params: UpdateShotStatusInput) -> str:
     """Update the status of a shot.
 
-    Valid statuses: pending, in_progress, review, approved, on_hold.
-    All connected clients (Flame, other MCP sessions) receive the
+    Valid statuses are listed on the ``status`` field (the canonical
+    Status vocabulary). An optional ``note`` is carried on the
+    ``entity.updated`` event. All connected clients (Flame, other MCP sessions) receive the
     status change event immediately.
     """
     try:
@@ -1190,6 +1201,7 @@ async def update_shot_status(params: UpdateShotStatusInput) -> str:
         await _client().request(entity_update(
             entity_id=params.shot_id,
             status=params.status,
+            note=params.note,
         ))
         return _ok({
             "updated":  True,

@@ -24,9 +24,16 @@ class Status(str, Enum):
     Pipelines may use different terms (e.g. "work_in_progress" instead
     of "in_progress"). Bridge maps between endpoint-specific terms and
     these canonical values via the vocabulary translation layer.
+
+    These are entity (shot/asset/version/media) lifecycle statuses. They
+    are distinct from forge-contracts task state (``KNOWN_TASK_STATES``,
+    an open set describing a unit of work): a task may be ``complete``
+    while its shot sits in ``review``. The two vocabularies overlap but
+    are not required to match.
     """
     PENDING     = "pending"
     IN_PROGRESS = "in_progress"
+    ON_HOLD     = "on_hold"    # work paused/blocked; resumes to in_progress
     REVIEW      = "review"
     APPROVED    = "approved"
     REJECTED    = "rejected"
@@ -43,6 +50,7 @@ class Status(str, Enum):
             "wip":              cls.IN_PROGRESS,
             "work_in_progress": cls.IN_PROGRESS,
             "ip":               cls.IN_PROGRESS,
+            "hold":             cls.ON_HOLD,
             "pending_review":   cls.REVIEW,
             "for_review":       cls.REVIEW,
             "final":            cls.DELIVERED,
