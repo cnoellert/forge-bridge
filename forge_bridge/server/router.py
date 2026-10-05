@@ -658,9 +658,12 @@ class Router:
                         setattr(entity, k, v)
 
             await repo.save(entity)
+            payload = entity.to_dict()
+            if msg.get("note") is not None:
+                payload["note"] = msg["note"]
             event_repo = EventRepo(session)
             db_event   = await event_repo.append(
-                "entity.updated", entity.to_dict(),
+                "entity.updated", payload,
                 session_id=client.session_id, client_name=client.client_name,
                 entity_id=eid,
             )

@@ -283,15 +283,21 @@ def entity_update(
     attributes: dict | None = None,
     name: str | None = None,
     status: str | None = None,
+    note: str | None = None,
 ) -> Message:
-    return Message({
+    payload = {
         "type":       MsgType.ENTITY_UPDATE,
         "id":         _new_id(),
         "entity_id":  entity_id,
         "name":       name,
         "status":     status,
         "attributes": attributes,
-    })
+    }
+    # Optional free-text note carried onto the entity.updated event (#267).
+    # Omitted when absent so the wire shape is unchanged for existing callers.
+    if note is not None:
+        payload["note"] = note
+    return Message(payload)
 
 
 def entity_get(entity_id: str) -> Message:
