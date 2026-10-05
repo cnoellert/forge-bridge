@@ -144,3 +144,118 @@ async def test_update_without_note_leaves_event_payload_unannotated(router, clie
     await _update(router, client, shot_id, status="review")
 
     assert "note" not in await _last_update_event(session_factory, shot_id)
+
+
+# ─────────────────────────────────────────────────────────────
+# #266 — custom attributes survive create/update; metadata merge-patches
+# ─────────────────────────────────────────────────────────────
+
+# Entity types whose entity.create preserves non-typed attributes in metadata.
+_METADATA_TYPES = {
+    "shot":    {"cut_in": "01:00:00:00", "cut_out": "01:00:04:00"},
+    "asset":   {"asset_type": "vehicle"},
+    "version": {"iteration": 1},
+    "media":   {"format": "EXR"},
+}
+_EXTERNAL_REF = {"system": "nim", "id": 123}
+
+
+@pytest.mark.parametrize("entity_type", sorted(_METADATA_TYPES))
+async def test_create_preserves_extra_attribute(router, client, project_id, entity_type):
+    attrs = {**_METADATA_TYPES[entity_type], "external_ref": _EXTERNAL_REF}
+    entity_id = await _create(router, client, project_id, entity_type, attrs)
+
+    got = await _get(router, client, entity_id)
+    assert got["metadata"]["external_ref"] == _EXTERNAL_REF
+
+
+async def test_create_shot_keeps_typed_fields_out_of_metadata(router, client, project_id):
+    shot_id = await _create(
+        router, client, project_id, "shot",
+        {**_METADATA_TYPES["shot"], "external_ref": _EXTERNAL_REF},
+    )
+    got = await _get(router, client, shot_id)
+    assert not {"cut_in", "cut_out", "sequence_id"} & set(got["metadata"])
+    assert got["cut_in"] is not None
+
+
+@pytest.mark.parametrize("entity_type", sorted(_METADATA_TYPES))
+async def test_update_stores_unknown_attribute(router, client, project_id, entity_type):
+    entity_id = await _create(router, client, project_id, entity_type, _METADATA_TYPES[entity_type])
+
+    await _update(router, client, entity_id, attributes={"external_ref": _EXTERNAL_REF})
+
+    got = await _get(router, client, entity_id)
+    assert got["metadata"]["external_ref"] == _EXTERNAL_REF
+
+
+@pytest.mark.parametrize("entity_type", sorted(_METADATA_TYPES))
+async def test_update_metadata_merges_rather_than_replaces(router, client, project_id, entity_type):
+    entity_id = await _create(
+        router, client, project_id, entity_type, {**_METADATA_TYPES[entity_type], "a": 1},
+    )
+
+    await _update(router, client, entity_id, attributes={"metadata": {"b": 2}})
+
+    got = await _get(router, client, entity_id)
+    assert got["metadata"]["a"] == 1
+    assert got["metadata"]["b"] == 2
+
+
+@pytest.mark.parametrize("entity_type", sorted(_METADATA_TYPES))
+async def test_update_metadata_null_deletes_key(router, client, project_id, entity_type):
+    entity_id = await _create(
+        router, client, project_id, entity_type, {**_METADATA_TYPES[entity_type], "a": 1, "b": 2},
+    )
+
+    await _update(router, client, entity_id, attributes={"metadata": {"a": None}})
+
+    got = await _get(router, client, entity_id)
+    assert "a" not in got["metadata"]
+    assert got["metadata"]["b"] == 2
+
+
+async def test_update_metadata_merges_nested_dicts(router, client, project_id):
+    version_id = await _create(
+        router, client, project_id, "version",
+        {"iteration": 1, "lock": {"locked_by": "alice", "locked_on_machine": "ws-01"}},
+    )
+
+    await _update(router, client, version_id,
+                  attributes={"metadata": {"lock": {"locked_by": "bob", "locked_on_machine": None}}})
+
+    got = await _get(router, client, version_id)
+    assert got["metadata"]["lock"] == {"locked_by": "bob"}
+
+
+async def test_update_rejects_non_object_metadata(router, client, project_id):
+    shot_id = await _create(router, client, project_id, "shot", {})
+    resp = await router._handle_entity_update(
+        entity_update(shot_id, attributes={"metadata": "nope"}), client,
+    )
+    assert resp["type"] == MsgType.ERROR
+
+
+async def test_mcp_update_asset_stores_attributes_through_router(router, client, project_id, monkeypatch):
+    class _RouterClient:
+        async def request(self, msg):
+            resp = await router._dispatch[msg.type](msg, client)
+            assert resp["type"] == MsgType.OK, resp
+            return resp.get("result") or {}
+
+    monkeypatch.setattr(tools, "_client", lambda: _RouterClient())
+    asset_id = await _create(router, client, project_id, "asset", {"asset_type": "vehicle", "a": 1})
+
+    await tools.update_asset(tools.UpdateAssetInput(asset_id=asset_id, attributes={"external_ref": _EXTERNAL_REF}))
+
+    got = await _get(router, client, asset_id)
+    assert got["asset_type"] == "vehicle"
+    assert got["metadata"] == {"a": 1, "external_ref": _EXTERNAL_REF}
+
+
+def test_merge_patch_does_not_mutate_target():
+    from forge_bridge.server.router import _merge_patch
+
+    target = {"a": {"x": 1}, "b": 2}
+    assert _merge_patch(target, {"a": {"y": 2}, "b": None}) == {"a": {"x": 1, "y": 2}}
+    assert target == {"a": {"x": 1}, "b": 2}

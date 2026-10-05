@@ -46,6 +46,23 @@ from forge_bridge.store.session import get_session
 logger = logging.getLogger(__name__)
 
 
+def _merge_patch(target, patch):
+    """Apply an RFC 7386 JSON merge patch and return the result.
+
+    Dict values merge recursively, ``None`` deletes the key, and any other
+    value replaces. ``target`` is never mutated.
+    """
+    if not isinstance(patch, dict):
+        return patch
+    result = dict(target) if isinstance(target, dict) else {}
+    for k, v in patch.items():
+        if v is None:
+            result.pop(k, None)
+        else:
+            result[k] = _merge_patch(result.get(k), v)
+    return result
+
+
 # ─────────────────────────────────────────────────────────────
 # Router
 # ─────────────────────────────────────────────────────────────
@@ -653,9 +670,20 @@ class Router:
             if msg.get("status") is not None and hasattr(entity, "status"):
                 entity.status = Status.from_string(msg["status"])
             if msg.get("attributes"):
+                # Typed fields are set directly. `metadata` is merge-patched
+                # onto the existing dict (RFC 7386) rather than replacing it,
+                # and any other key is stored into metadata with the same
+                # semantics — never silently dropped (#266).
                 for k, v in msg["attributes"].items():
-                    if hasattr(entity, k):
+                    if k == "metadata":
+                        if not isinstance(v, dict):
+                            return error(msg.msg_id, ErrorCode.INVALID,
+                                         "attributes.metadata must be an object")
+                        entity.metadata = _merge_patch(entity.metadata, v)
+                    elif hasattr(entity, k):
                         setattr(entity, k, v)
+                    else:
+                        entity.metadata = _merge_patch(entity.metadata, {k: v})
 
             await repo.save(entity)
             payload = entity.to_dict()
@@ -966,6 +994,9 @@ class Router:
                 cut_in=Timecode.from_string(a["cut_in"])   if a.get("cut_in")  else None,
                 cut_out=Timecode.from_string(a["cut_out"]) if a.get("cut_out") else None,
                 status=status,
+                # Preserve all extra attributes in metadata for JSONB storage
+                metadata={k: v for k, v in a.items()
+                          if k not in ("sequence_id", "cut_in", "cut_out")},
             )
         elif t == "asset":
             return Asset(
@@ -973,6 +1004,7 @@ class Router:
                 asset_type=a.get("asset_type", "generic"),
                 project_id=msg.get("project_id"),
                 status=status,
+                metadata={k: v for k, v in a.items() if k != "asset_type"},
             )
         elif t == "version":
             # Our publish attributes: shot_id, iteration, version_label,
