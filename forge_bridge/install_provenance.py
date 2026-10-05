@@ -16,6 +16,10 @@ Three distinct facts are exposed:
                   Represents the code that a *fresh* import would load.
   pid + started_at  process identity for cross-checking against
                   ps/launchctl/systemctl output.
+  sys_prefix      the daemon interpreter's environment root. Lets the
+                  doctor tell whether its own ``importlib.metadata`` view
+                  of the installed distribution describes the daemon's env
+                  before comparing the two (#251).
 
 The asymmetry between `startup_sha` (frozen) and `disk_sha_now` (live)
 is load-bearing. When they disagree, the daemon's process holds stale
@@ -28,6 +32,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -61,6 +66,7 @@ def get_provenance() -> dict:
         "repo_root": str(repo_root) if repo_root else None,
         "startup_sha": startup_sha,
         "pid": os.getpid(),
+        "sys_prefix": sys.prefix,
         "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
 
