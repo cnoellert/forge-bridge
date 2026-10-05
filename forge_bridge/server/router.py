@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from fractions import Fraction
 from typing import Callable
 
 from forge_bridge.core.entities import (
@@ -31,14 +32,14 @@ from forge_bridge.core.registry import (
     OrphanError, ProtectedEntryError, Registry,
     RegistryError, UnknownNameError,
 )
-from forge_bridge.core.vocabulary import Status
+from forge_bridge.core.vocabulary import FrameRange, Status, Timecode
 from forge_bridge.server.connections import ConnectionManager, ConnectedClient
 from forge_bridge.server.protocol import (
     ErrorCode, Message, MsgType,
     error, ok, pong, welcome,
 )
 from forge_bridge.store.repo import (
-    ClientSessionRepo, EntityRepo, EventRepo,
+    _TYPED_ATTR_KEYS, ClientSessionRepo, EntityRepo, EventRepo,
     LocationRepo, ProjectRepo, RegistryRepo, RelationshipRepo,
 )
 from forge_bridge.store.session import get_session
@@ -665,25 +666,49 @@ class Router:
             if not entity:
                 return error(msg.msg_id, ErrorCode.NOT_FOUND, f"Entity {entity_id} not found")
 
+            # Validate everything first, then apply, so a rejected request
+            # mutates nothing (#270).
+            typed: dict = {}
             if msg.get("name") is not None and hasattr(entity, "name"):
-                entity.name = msg["name"]
+                typed["name"] = msg["name"]
             if msg.get("status") is not None and hasattr(entity, "status"):
-                entity.status = Status.from_string(msg["status"])
-            if msg.get("attributes"):
-                # Typed fields are set directly. `metadata` is merge-patched
-                # onto the existing dict (RFC 7386) rather than replacing it,
-                # and any other key is stored into metadata with the same
-                # semantics — never silently dropped (#266).
-                for k, v in msg["attributes"].items():
-                    if k == "metadata":
-                        if not isinstance(v, dict):
-                            return error(msg.msg_id, ErrorCode.INVALID,
-                                         "attributes.metadata must be an object")
-                        entity.metadata = _merge_patch(entity.metadata, v)
-                    elif hasattr(entity, k):
-                        setattr(entity, k, v)
-                    else:
-                        entity.metadata = _merge_patch(entity.metadata, {k: v})
+                try:
+                    typed["status"] = Status.from_string(msg["status"])
+                except (TypeError, ValueError, AttributeError) as e:
+                    return error(msg.msg_id, ErrorCode.INVALID, f"status: {e}")
+
+            metadata = entity.metadata
+            attributes = msg.get("attributes") or {}
+            if not isinstance(attributes, dict):
+                return error(msg.msg_id, ErrorCode.INVALID, "attributes must be an object")
+            # Allowlisted typed fields are coerced as on create. `metadata` is
+            # merge-patched onto the existing dict (RFC 7386) rather than
+            # replacing it, and any other key is stored into metadata with the
+            # same semantics — never silently dropped (#266). Identity fields,
+            # non-updatable typed fields, methods and properties are rejected.
+            fields = _UPDATABLE_FIELDS.get(entity.entity_type, {})
+            for k, v in attributes.items():
+                if k == "metadata":
+                    if not isinstance(v, dict):
+                        return error(msg.msg_id, ErrorCode.INVALID,
+                                     "attributes.metadata must be an object")
+                    metadata = _merge_patch(metadata, v)
+                elif k in fields:
+                    try:
+                        typed[k] = fields[k](v)
+                    except (TypeError, ValueError, KeyError, ArithmeticError) as e:
+                        return error(msg.msg_id, ErrorCode.INVALID,
+                                     f"attributes.{k}: invalid value {v!r} ({e})")
+                elif _is_protected_attribute(entity, k):
+                    return error(msg.msg_id, ErrorCode.INVALID,
+                                 f"attributes.{k} cannot be updated on a "
+                                 f"{entity.entity_type}")
+                else:
+                    metadata = _merge_patch(metadata, {k: v})
+
+            for k, v in typed.items():
+                setattr(entity, k, v)
+            entity.metadata = metadata
 
             await repo.save(entity)
             payload = entity.to_dict()
@@ -1061,3 +1086,99 @@ class Router:
             return Stack(shot_id=a.get("shot_id"))
         else:
             return None
+
+
+# ─────────────────────────────────────────────────────────────
+# entity.update field policy (#270)
+# ─────────────────────────────────────────────────────────────
+
+def _str(v):
+    if not isinstance(v, str):
+        raise TypeError("expected a string")
+    return v
+
+
+def _opt_str(v):
+    return None if v is None else _str(v)
+
+
+def _int(v):
+    if isinstance(v, bool):
+        raise TypeError("expected an integer")
+    return int(v)
+
+
+def _opt_uuid(v):
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        raise TypeError("expected a UUID string")
+    return uuid.UUID(v)
+
+
+def _status(v):
+    if not isinstance(v, str):
+        raise TypeError("expected a status string")
+    return Status.from_string(v)
+
+
+def _opt_timecode(v):
+    return None if v is None else Timecode.from_string(_str(v))
+
+
+def _frame_rate(v):
+    if isinstance(v, bool) or not isinstance(v, (str, int, float)):
+        raise TypeError("expected a number or numeric string")
+    return Fraction(v).limit_denominator(1001)
+
+
+def _opt_frame_range(v):
+    if v is None:
+        return None
+    if not isinstance(v, dict):
+        raise TypeError("expected an object with start/end/fps")
+    return FrameRange(_int(v["start"]), _int(v["end"]), Fraction(v.get("fps", "24")))
+
+
+def _opt_bit_depth(v):
+    if v is None or (isinstance(v, (str, int)) and not isinstance(v, bool)):
+        return v
+    raise TypeError("expected a string or integer")
+
+
+# Typed fields entity.update may set via `attributes`, per entity type, each
+# with the coercion `_build_entity` applies on create. Any other key either
+# merge-patches into metadata or, if `_is_protected_attribute`, is rejected.
+_UPDATABLE_FIELDS: dict[str, dict[str, Callable]] = {
+    "sequence": {"name": _str, "frame_rate": _frame_rate},
+    "shot":     {"name": _str, "status": _status, "sequence_id": _opt_uuid,
+                 "cut_in": _opt_timecode, "cut_out": _opt_timecode},
+    "asset":    {"name": _str, "status": _status, "asset_type": _str},
+    "version":  {"name": _str, "status": _status, "version_number": _int,
+                 "parent_id": _opt_uuid, "parent_type": _str,
+                 "created_by": _opt_str},
+    "media":    {"name": _opt_str, "status": _status, "format": _str,
+                 "resolution": _opt_str, "colorspace": _opt_str,
+                 "bit_depth": _opt_bit_depth, "frame_range": _opt_frame_range,
+                 "version_id": _opt_uuid},
+    "layer":    {"order": _int, "stack_id": _opt_uuid, "version_id": _opt_uuid},
+    "stack":    {"shot_id": _opt_uuid},
+}
+
+# Identity and ownership. Re-parenting into another project is not an
+# entity.update operation.
+_PROTECTED_KEYS = frozenset({"id", "entity_type", "created_at", "project_id"})
+
+
+def _is_protected_attribute(entity, key: str) -> bool:
+    """True if ``key`` names something on the entity update must not set.
+
+    Covers identity fields, typed storage keys outside the allowlist (they
+    would be silently overwritten by ``_attrs_to_dict`` on save), and any
+    instance attribute, method or property of the entity.
+    """
+    return (
+        key in _PROTECTED_KEYS
+        or key in _TYPED_ATTR_KEYS.get(entity.entity_type, ())
+        or hasattr(entity, key)
+    )
