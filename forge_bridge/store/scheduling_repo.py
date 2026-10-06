@@ -29,6 +29,7 @@ from forge_contracts.scheduling import (
     KNOWN_RESPONSIBILITY_PARTIES,
     RESOURCE_KIND_PERSON,
     SCHEDULING_KIND_BID,
+    SCHEDULING_KIND_BID_LINE,
     SCHEDULING_KIND_BOOKING,
     SCHEDULING_KIND_RESOURCE,
     SCHEDULING_KIND_RESPONSIBILITY,
@@ -41,6 +42,7 @@ from forge_bridge.core.entities import BridgeEntity
 from forge_bridge.core.registry import Registry
 from forge_bridge.core.scheduling import (
     Bid,
+    BidLine,
     Booking,
     Person,
     Resource,
@@ -262,6 +264,46 @@ class SchedulingRepo:
             .where(DBEntity.id.in_(task_ids))
         )
         return sorted(tasks, key=lambda t: (t.task_type, str(t.id)))
+
+    async def tasks_for_owner(self, owner_id: uuid.UUID | str) -> list[Task]:
+        """The tasks of one shot or asset."""
+        tasks = await self._entities(
+            select(DBEntity)
+            .where(DBEntity.entity_type == SCHEDULING_KIND_TASK)
+            .where(DBEntity.attributes.contains({"owner_id": str(uuid.UUID(str(owner_id)))}))
+        )
+        return sorted(tasks, key=lambda t: (t.task_type, str(t.id)))
+
+    async def tasks_for_project(self, project_id: uuid.UUID) -> list[Task]:
+        tasks = await self._entities(
+            select(DBEntity)
+            .where(DBEntity.entity_type == SCHEDULING_KIND_TASK)
+            .where(DBEntity.project_id == project_id)
+        )
+        return sorted(tasks, key=lambda t: (t.task_type, str(t.id)))
+
+    async def bid_lines_for_bids(self, bid_ids: Iterable[uuid.UUID]) -> dict[uuid.UUID, list[BidLine]]:
+        """bid id → its lines (ordered by section, then id)."""
+        out: dict[uuid.UUID, list[BidLine]] = {bid_id: [] for bid_id in bid_ids}
+        if not out:
+            return out
+        lines = await self._entities(
+            select(DBEntity)
+            .where(DBEntity.entity_type == SCHEDULING_KIND_BID_LINE)
+            .where(DBEntity.attributes["bid_id"].astext.in_([str(b) for b in out]))
+        )
+        for line in sorted(lines, key=lambda line: (line.section or "", str(line.id))):
+            out[line.bid_id].append(line)
+        return out
+
+    async def entity_ref(self, entity_id: uuid.UUID) -> Optional[tuple[str, Optional[uuid.UUID]]]:
+        """``(entity_type, project_id)`` of a stored entity, or None if absent.
+
+        For reference checks at the write surface (the store keeps no FKs
+        between scheduling records).
+        """
+        row = await self.session.get(DBEntity, entity_id)
+        return None if row is None else (row.entity_type, row.project_id)
 
     async def bids_for_project(
         self,

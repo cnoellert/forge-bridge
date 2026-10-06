@@ -652,7 +652,9 @@ class Booking(SchedulingRecord):
         **base: Any,
     ):
         if "name" in base:
-            label = base.pop("name") if label is None else label
+            # ``label`` wins when both are given (an update renaming via label).
+            name = base.pop("name")
+            label = name if label is None else label
         super().__init__(name=label, **base)
         self.starts_at = _aware(starts_at, "starts_at")
         self.ends_at = _aware(ends_at, "ends_at")
