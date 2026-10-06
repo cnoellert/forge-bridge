@@ -84,6 +84,18 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from forge_contracts import (
+    KNOWN_DELIVERABLE_TYPES,
+    KNOWN_PROJECT_STATES,
+    KNOWN_TASK_STATES,
+)
+from forge_contracts.scheduling import (
+    KNOWN_BOOKING_STATES,
+    KNOWN_RESOURCE_KINDS,
+    KNOWN_RESPONSIBILITY_PARTIES,
+    KNOWN_TASK_SOURCINGS,
+)
+
 from forge_bridge.console.handlers import _envelope_json
 from forge_bridge.core.vocabulary import Status
 
@@ -1467,6 +1479,534 @@ async def relate_asset(params: RelateAssetInput) -> str:
             "target_id": params.target_id,
             "rel_type": params.rel_type,
         })
+    except Exception as e:
+        return _err(str(e))
+
+
+# ─────────────────────────────────────────────────────────────
+# Scheduling (#274) — tasks, bookings, resources, people, bids
+#
+# Thin wrappers over the slice-2 WS surface (entity.* for the scheduling
+# kinds, query.tasks / query.bookings / query.bids / query.person_by_username,
+# project.update for the lifecycle state). Bridge stores the records; conflict
+# detection, award rules and lifecycle transitions are forge-pipeline's call,
+# so no tool here decides anything.
+#
+# Task, booking and project states are OPEN sets in forge-contracts: the
+# advertised values are generated from the contract sets (never hand-written,
+# #267) and other values are accepted and stored as given.
+#
+# PR22: every handler takes ``params: Optional[...] = None`` and answers ``{}``
+# with a structured error naming the missing input.
+# ─────────────────────────────────────────────────────────────
+
+def _known_values(values) -> str:
+    return ", ".join(sorted(values))
+
+
+_TASK_STATE_VALUES = _known_values(KNOWN_TASK_STATES)
+_BOOKING_STATE_VALUES = _known_values(KNOWN_BOOKING_STATES)
+_PROJECT_STATE_VALUES = _known_values(KNOWN_PROJECT_STATES)
+_RESOURCE_KIND_VALUES = _known_values(KNOWN_RESOURCE_KINDS)
+_OPEN_SET_NOTE = "(open set: other values are accepted and stored as given)"
+
+
+async def _get_typed(client, entity_id: str, entity_type: str) -> tuple[Optional[dict], Optional[str]]:
+    """Fetch an entity and confirm its type: ``(entity, None)`` or ``(None, error)``."""
+    from forge_bridge.server.protocol import entity_get
+    entity = await client.request(entity_get(entity_id))
+    if entity.get("entity_type") != entity_type:
+        return None, _err(f"Entity {entity_id} is not a {entity_type}", "WRONG_ENTITY_TYPE")
+    return entity, None
+
+
+class ListTasksInput(BaseModel):
+    project_id: Optional[str] = Field(default=None, description="Project UUID: every task in the project")
+    owner_id: Optional[str] = Field(default=None, description="Shot or Asset UUID: the tasks that entity owns")
+    party_type: Optional[str] = Field(
+        default=None,
+        description=(
+            "Responsible party type, with party_id. One of: "
+            f"{_known_values(KNOWN_RESPONSIBILITY_PARTIES)}"
+        ),
+    )
+    party_id: Optional[str] = Field(default=None, description="Person or vendor UUID, with party_type")
+    on: Optional[str] = Field(
+        default=None,
+        description="ISO date (YYYY-MM-DD), party queries only: the responsibility must be effective that day",
+    )
+
+
+async def list_tasks(params: Optional[ListTasksInput] = None) -> str:
+    """Forge: list scheduling tasks by project, by owning shot/asset, or by responsible party.
+
+    Reads task records from the forge-bridge scheduling store. Give exactly
+    one selector: project_id, owner_id (a shot or asset UUID), or
+    party_type + party_id (a person or vendor, optionally effective ``on``
+    a date). Each task carries its owner, task_type, sourcing, state,
+    estimate, and target/due dates.
+
+    Use this tool ONLY when:
+    - the user asks what tasks a project, shot, or asset has
+    - the user asks what a person or vendor is assigned / responsible for
+
+    Do NOT use this tool for:
+    - shot workflow status → use forge_list_shots / forge_get_shot
+    - who is booked on which resource when → use forge_list_bookings
+    - changing a task's state → use forge_update_task_status
+    - looking up a person's id → use forge_get_person
+    """
+    if params is None or all(
+        v is None for v in (params.project_id, params.owner_id, params.party_type, params.party_id)
+    ):
+        return _err(
+            "One selector is required: project_id, owner_id, or party_type + party_id.",
+            code="MISSING_ARGUMENTS",
+        )
+    try:
+        from forge_bridge.server.protocol import query_tasks
+        result = await _client().request(query_tasks(
+            party_type=params.party_type,
+            party_id=params.party_id,
+            on=params.on,
+            owner_id=params.owner_id,
+            project_id=params.project_id,
+        ))
+        tasks = result.get("tasks", [])
+        return _ok({"count": len(tasks), "tasks": tasks})
+    except Exception as e:
+        return _err(str(e))
+
+
+class ListBookingsInput(BaseModel):
+    resource_ids: Optional[list[str]] = Field(
+        default=None,
+        description=(
+            "Resource UUIDs (a person's resource_id comes from forge_get_person); "
+            "needs start and end"
+        ),
+    )
+    start: Optional[str] = Field(
+        default=None,
+        description="Range start, timezone-aware ISO datetime e.g. '2026-11-02T09:00:00+00:00' (with resource_ids)",
+    )
+    end: Optional[str] = Field(
+        default=None,
+        description="Range end (exclusive), timezone-aware ISO datetime (with resource_ids)",
+    )
+    project_id: Optional[str] = Field(
+        default=None, description="Project UUID: every booking of the project (instead of resource_ids)",
+    )
+    states: Optional[list[str]] = Field(
+        default=None,
+        description=f"Only bookings in these states. Known values include: {_BOOKING_STATE_VALUES} {_OPEN_SET_NOTE}",
+    )
+
+
+async def list_bookings(params: Optional[ListBookingsInput] = None) -> str:
+    """Forge: list resource bookings on resources over a time range, or for a project.
+
+    Reads booking records from the forge-bridge scheduling store. Either
+    give resource_ids + start + end (bookings overlapping the half-open
+    range) or project_id (all of the project's bookings); ``states``
+    narrows either form. Each booking carries its interval, resources
+    with quantities, state, and optional task / bid line.
+
+    Use this tool ONLY when:
+    - the user asks who or what is booked, and when
+    - the user asks about a person's, room's, or licence's schedule
+
+    Do NOT use this tool for:
+    - the list of bookable resources → use forge_list_resources
+    - task assignments → use forge_list_tasks
+    - creating a booking → use forge_create_booking
+    - conflict checks: Bridge stores bookings, it does not judge them
+    """
+    if params is None or (params.resource_ids is None and params.project_id is None):
+        return _err(
+            "Give resource_ids with start and end, or project_id.",
+            code="MISSING_ARGUMENTS",
+        )
+    try:
+        from forge_bridge.server.protocol import query_bookings
+        result = await _client().request(query_bookings(
+            resource_ids=params.resource_ids,
+            from_=params.start,
+            to=params.end,
+            project_id=params.project_id,
+            states=params.states,
+        ))
+        bookings = result.get("bookings", [])
+        return _ok({"count": len(bookings), "bookings": bookings})
+    except Exception as e:
+        return _err(str(e))
+
+
+class ListResourcesInput(BaseModel):
+    resource_kind: Optional[str] = Field(
+        default=None,
+        description=f"Filter by resource kind. Known values include: {_RESOURCE_KIND_VALUES} {_OPEN_SET_NOTE}",
+    )
+
+
+async def list_resources(params: Optional[ListResourcesInput] = None) -> str:
+    """Forge: list the studio's bookable scheduling resources.
+
+    Reads resource records (studio-scoped, not per project): rooms,
+    workstations, licence pools, and each bookable person's facet. Each
+    resource carries its kind, capacity kind (exclusive | counted),
+    resource_type, linked person_id (person resources), and availability.
+
+    Use this tool ONLY when:
+    - the user asks what rooms, workstations, licences, or people can be booked
+    - the user needs resource UUIDs to query or create bookings
+
+    Do NOT use this tool for:
+    - when a resource is booked → use forge_list_bookings
+    - one person's identity and resource_id → use forge_get_person
+    - pipeline assets → use forge_list_assets
+    """
+    if params is None:
+        params = ListResourcesInput()
+    try:
+        from forge_bridge.server.protocol import entity_list
+        result = await _client().request(entity_list("resource"))
+        resources = result.get("entities", [])
+        if params.resource_kind:
+            resources = [r for r in resources if r.get("resource_kind") == params.resource_kind]
+        return _ok({"count": len(resources), "resources": resources})
+    except Exception as e:
+        return _err(str(e))
+
+
+class GetPersonInput(BaseModel):
+    person_id: Optional[str] = Field(default=None, description="Person UUID (or give username)")
+    username: Optional[str] = Field(default=None, description="A login username linked to the person (or give person_id)")
+
+
+async def get_person(params: Optional[GetPersonInput] = None) -> str:
+    """Forge: get one scheduling person by UUID or username, with their bookable resource_id.
+
+    Reads the person record (display name, email, usernames, external user
+    id) from the forge-bridge scheduling store, plus the UUID of the
+    person's bookable resource (null when the person is not bookable).
+    Give exactly one of person_id or username. An unknown username returns
+    ``person: null``.
+
+    Use this tool ONLY when:
+    - the user names a person (by username or id) and wants their record
+    - the user needs a person's resource_id to query their bookings
+
+    Do NOT use this tool for:
+    - what the person is assigned to → use forge_list_tasks (party_type=person)
+    - when the person is booked → use forge_list_bookings with their resource_id
+    - all bookable resources → use forge_list_resources
+    """
+    if params is None or (params.person_id is None) == (params.username is None):
+        return _err("Give exactly one of person_id or username.", code="MISSING_ARGUMENTS")
+    try:
+        from forge_bridge.server.protocol import entity_list, query_person_by_username
+        client = _client()
+        if params.username is not None:
+            result = await client.request(query_person_by_username(params.username))
+            return _ok({"person": result.get("person"), "resource_id": result.get("resource_id")})
+        person, problem = await _get_typed(client, params.person_id, "person")
+        if problem:
+            return problem
+        # The facet is the one person resource whose person_id is this person.
+        resources = (await client.request(entity_list("resource"))).get("entities", [])
+        facet = next((r for r in resources if r.get("person_id") == person.get("id")), None)
+        return _ok({"person": person, "resource_id": facet.get("id") if facet else None})
+    except Exception as e:
+        return _err(str(e))
+
+
+class ListBidsInput(BaseModel):
+    project_id: str = Field(..., description="Project UUID")
+    active: Optional[bool] = Field(default=None, description="Only bids whose is_active flag equals this")
+    awarded: Optional[bool] = Field(default=None, description="Only bids whose is_awarded flag equals this")
+    include_lines: bool = Field(
+        default=False,
+        description="Attach each bid's lines (kind, qty, rate, task/resource type, vendor) under 'lines'",
+    )
+
+
+async def list_bids(params: Optional[ListBidsInput] = None) -> str:
+    """Forge: list a project's bids, optionally with their full lines and rates.
+
+    Reads bid records from the forge-bridge scheduling store: version,
+    currency, and the is_active / is_awarded flags (a project may hold
+    several awarded bids). With include_lines, every bid carries its
+    lines, including quantities and rates.
+
+    Use this tool ONLY when:
+    - the user asks about a project's bids, bid versions, or awarded bids
+    - the user asks for bid line items, quantities, or rates
+
+    Do NOT use this tool for:
+    - the project's lifecycle state (bidding, awarded, ...) → use forge_get_project
+    - booked time → use forge_list_bookings
+    - task assignments → use forge_list_tasks
+    """
+    if params is None:
+        return _err(
+            "project_id is required. Call forge_list_projects to find one, "
+            "then retry with project_id=<uuid>.",
+            code="MISSING_PROJECT_ID",
+        )
+    try:
+        from forge_bridge.server.protocol import query_bids
+        result = await _client().request(query_bids(
+            params.project_id,
+            active=params.active,
+            awarded=params.awarded,
+            include_lines=params.include_lines,
+        ))
+        bids = result.get("bids", [])
+        return _ok({"project_id": params.project_id, "count": len(bids), "bids": bids})
+    except Exception as e:
+        return _err(str(e))
+
+
+class CreateTaskInput(BaseModel):
+    project_id: str = Field(..., description="Project UUID")
+    owner_id: str = Field(..., description="UUID of the owning shot or asset (same project)")
+    owner_type: str = Field(
+        ..., description=f"Owner kind. One of: {_known_values(KNOWN_DELIVERABLE_TYPES)}",
+    )
+    task_type: str = Field(..., description="Task type, e.g. 'comp', 'roto', 'paint'")
+    sourcing: str = Field(
+        ..., description=f"Who does the work. One of: {_known_values(KNOWN_TASK_SOURCINGS)}",
+    )
+    status: Optional[str] = Field(
+        default=None,
+        description=(
+            f"Initial task state (default pending). Known values include: "
+            f"{_TASK_STATE_VALUES} {_OPEN_SET_NOTE}"
+        ),
+    )
+    name: Optional[str] = Field(default=None, description="Optional display name")
+    estimate: Optional[str] = Field(default=None, description="Optional effort estimate (decimal, e.g. '2.5')")
+    target_date: Optional[str] = Field(default=None, description="Optional target date (YYYY-MM-DD)")
+    due_date: Optional[str] = Field(default=None, description="Optional due date (YYYY-MM-DD)")
+
+
+async def create_task(params: Optional[CreateTaskInput] = None) -> str:
+    """Forge: create a scheduling task owned by a shot or asset.
+
+    Writes a task record to the forge-bridge scheduling store and returns
+    the new task_id. The owner must exist and belong to the same project.
+
+    Use this tool ONLY when:
+    - a producer asks to add a task (comp, roto, ...) to a shot or asset
+
+    Do NOT use this tool for:
+    - changing an existing task's state → use forge_update_task_status
+    - creating a shot → use forge_create_shot
+    - booking time → use forge_create_booking
+    """
+    if params is None:
+        return _err(
+            "project_id, owner_id, owner_type, task_type and sourcing are required.",
+            code="MISSING_ARGUMENTS",
+        )
+    try:
+        from forge_bridge.server.protocol import entity_create
+        attributes = {
+            "owner_id": params.owner_id,
+            "owner_type": params.owner_type,
+            "task_type": params.task_type,
+            "sourcing": params.sourcing,
+        }
+        for key in ("estimate", "target_date", "due_date"):
+            value = getattr(params, key)
+            if value is not None:
+                attributes[key] = value
+        result = await _client().request(entity_create(
+            entity_type="task",
+            project_id=params.project_id,
+            attributes=attributes,
+            name=params.name,
+            status=params.status,
+        ))
+        return _ok({"created": True, "task_id": result["entity_id"], "task_type": params.task_type})
+    except Exception as e:
+        return _err(str(e))
+
+
+class UpdateTaskStatusInput(BaseModel):
+    task_id: str = Field(..., description="Task UUID")
+    status: str = Field(
+        ...,
+        description=f"New task state. Known values include: {_TASK_STATE_VALUES} {_OPEN_SET_NOTE}",
+    )
+    note: Optional[str] = Field(default=None, description="Optional note carried on the entity.updated event")
+
+
+async def update_task_status(params: Optional[UpdateTaskStatusInput] = None) -> str:
+    """Forge: set a scheduling task's state.
+
+    Task states are stored exactly as given (``complete`` stays
+    ``complete``; this is not the shot Status vocabulary). An optional
+    note rides on the ``entity.updated`` event.
+
+    Use this tool ONLY when:
+    - a producer asks to move a task to another state (in_progress, review, ...)
+
+    Do NOT use this tool for:
+    - shot status → use forge_update_shot_status
+    - booking state → use forge_update_booking_state
+    - project lifecycle state → use forge_set_project_state
+    """
+    if params is None:
+        return _err("task_id and status are required.", code="MISSING_ARGUMENTS")
+    try:
+        from forge_bridge.server.protocol import entity_update
+        client = _client()
+        _, problem = await _get_typed(client, params.task_id, "task")
+        if problem:
+            return problem
+        await client.request(entity_update(
+            entity_id=params.task_id, status=params.status, note=params.note,
+        ))
+        return _ok({"updated": True, "task_id": params.task_id, "status": params.status})
+    except Exception as e:
+        return _err(str(e))
+
+
+class BookingResourceInput(BaseModel):
+    resource_id: str = Field(..., description="Resource UUID (from forge_list_resources / forge_get_person)")
+    quantity: int = Field(default=1, description="Units of a counted resource (e.g. licences); 1 otherwise")
+
+
+class CreateBookingInput(BaseModel):
+    project_id: str = Field(..., description="Project UUID the booking is for")
+    resources: list[BookingResourceInput] = Field(
+        ..., description="Booked resources, each {resource_id, quantity}; at least one",
+    )
+    starts_at: str = Field(..., description="Start, timezone-aware ISO datetime e.g. '2026-11-02T09:00:00+00:00'")
+    ends_at: str = Field(..., description="End (after starts_at), timezone-aware ISO datetime")
+    state: Optional[str] = Field(
+        default=None,
+        description=(
+            f"Booking state (default planning). Known values include: "
+            f"{_BOOKING_STATE_VALUES} {_OPEN_SET_NOTE}"
+        ),
+    )
+    task_id: Optional[str] = Field(default=None, description="Optional task UUID (same project)")
+    bid_line_id: Optional[str] = Field(default=None, description="Optional bid line UUID (same project)")
+    label: Optional[str] = Field(default=None, description="Optional display label")
+
+
+async def create_booking(params: Optional[CreateBookingInput] = None) -> str:
+    """Forge: book resources for a project over a time interval.
+
+    Writes a booking record to the forge-bridge scheduling store and
+    returns the new booking_id. Bridge stores the booking as given;
+    overlap and conflict rules belong to forge-pipeline.
+
+    Use this tool ONLY when:
+    - a producer asks to book (or pencil) a person, room, or licence for a project
+
+    Do NOT use this tool for:
+    - changing an existing booking's state → use forge_update_booking_state
+    - reading bookings → use forge_list_bookings
+    - creating a task → use forge_create_task
+    """
+    if params is None:
+        return _err(
+            "project_id, resources, starts_at and ends_at are required.",
+            code="MISSING_ARGUMENTS",
+        )
+    try:
+        from forge_bridge.server.protocol import entity_create
+        attributes = {
+            "starts_at": params.starts_at,
+            "ends_at": params.ends_at,
+            "resources": [r.model_dump() for r in params.resources],
+        }
+        for key in ("task_id", "bid_line_id", "label"):
+            value = getattr(params, key)
+            if value is not None:
+                attributes[key] = value
+        result = await _client().request(entity_create(
+            entity_type="booking",
+            project_id=params.project_id,
+            attributes=attributes,
+            status=params.state,
+        ))
+        return _ok({"created": True, "booking_id": result["entity_id"]})
+    except Exception as e:
+        return _err(str(e))
+
+
+class UpdateBookingStateInput(BaseModel):
+    booking_id: str = Field(..., description="Booking UUID")
+    state: str = Field(
+        ...,
+        description=f"New booking state. Known values include: {_BOOKING_STATE_VALUES} {_OPEN_SET_NOTE}",
+    )
+    note: Optional[str] = Field(default=None, description="Optional note carried on the entity.updated event")
+
+
+async def update_booking_state(params: Optional[UpdateBookingStateInput] = None) -> str:
+    """Forge: set a booking's state (e.g. pencil to confirmed, or cancelled).
+
+    Stores the state exactly as given; an optional note rides on the
+    ``entity.updated`` event.
+
+    Use this tool ONLY when:
+    - a producer asks to confirm, pencil, or cancel an existing booking
+
+    Do NOT use this tool for:
+    - creating a booking → use forge_create_booking
+    - task state → use forge_update_task_status
+    - project lifecycle state → use forge_set_project_state
+    """
+    if params is None:
+        return _err("booking_id and state are required.", code="MISSING_ARGUMENTS")
+    try:
+        from forge_bridge.server.protocol import entity_update
+        client = _client()
+        _, problem = await _get_typed(client, params.booking_id, "booking")
+        if problem:
+            return problem
+        await client.request(entity_update(
+            entity_id=params.booking_id, status=params.state, note=params.note,
+        ))
+        return _ok({"updated": True, "booking_id": params.booking_id, "state": params.state})
+    except Exception as e:
+        return _err(str(e))
+
+
+class SetProjectStateInput(BaseModel):
+    project_id: str = Field(..., description="Project UUID")
+    state: str = Field(
+        ...,
+        description=f"New project lifecycle state. Known values include: {_PROJECT_STATE_VALUES} {_OPEN_SET_NOTE}",
+    )
+
+
+async def set_project_state(params: Optional[SetProjectStateInput] = None) -> str:
+    """Forge: set a pipeline project's lifecycle state (bidding, awarded, active, ...).
+
+    Stores the lifecycle state on the project record. Bridge does not
+    enforce transitions; which moves are allowed is forge-pipeline's call.
+
+    Use this tool ONLY when:
+    - a producer asks to move a project to another lifecycle state
+
+    Do NOT use this tool for:
+    - shot status → use forge_update_shot_status
+    - task state → use forge_update_task_status
+    - reading a project → use forge_get_project
+    """
+    if params is None:
+        return _err("project_id and state are required.", code="MISSING_ARGUMENTS")
+    try:
+        from forge_bridge.server.protocol import project_update
+        await _client().request(project_update(params.project_id, lifecycle_state=params.state))
+        return _ok({"updated": True, "project_id": params.project_id, "lifecycle_state": params.state})
     except Exception as e:
         return _err(str(e))
 

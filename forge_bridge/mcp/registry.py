@@ -455,6 +455,36 @@ def register_builtins(mcp: FastMCP) -> None:
         },
     )
 
+    # ── Scheduling tools (#274) — reads, then producer writes ──
+
+    for fn, name, title in (
+        (tools.list_tasks,     "forge_list_tasks",     "List scheduling tasks"),
+        (tools.list_bookings,  "forge_list_bookings",  "List resource bookings"),
+        (tools.list_resources, "forge_list_resources", "List bookable resources"),
+        (tools.get_person,     "forge_get_person",     "Get a scheduling person"),
+        (tools.list_bids,      "forge_list_bids",      "List project bids"),
+    ):
+        register_tool(
+            mcp, fn,
+            name=name,
+            source="builtin",
+            annotations={"title": title, "readOnlyHint": True, "idempotentHint": True},
+        )
+
+    for fn, name, title, idempotent in (
+        (tools.create_task,          "forge_create_task",          "Create a scheduling task",  False),
+        (tools.update_task_status,   "forge_update_task_status",   "Update task state",         True),
+        (tools.create_booking,       "forge_create_booking",       "Create a resource booking", False),
+        (tools.update_booking_state, "forge_update_booking_state", "Update booking state",      True),
+        (tools.set_project_state,    "forge_set_project_state",    "Set project lifecycle state", True),
+    ):
+        register_tool(
+            mcp, fn,
+            name=name,
+            source="builtin",
+            annotations={"title": title, "readOnlyHint": False, "idempotentHint": idempotent},
+        )
+
     register_tool(
         mcp, tools.list_versions,
         name="forge_list_versions",
