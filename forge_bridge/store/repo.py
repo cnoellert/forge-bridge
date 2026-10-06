@@ -40,6 +40,10 @@ from forge_bridge.store.models import (
     DBRelationship, DBRelationshipType, DBRole, DBSession,
 )
 
+from forge_bridge.store.scheduling_repo import (
+    sync_scheduling_index as _sync_scheduling_index,
+)
+
 from fractions import Fraction
 
 
@@ -261,7 +265,8 @@ class ProjectRepo:
         BridgeEntity.__init__(p, id=db.id, metadata=db.attributes or {})
         p.name = db.name
         p.code = db.code
-        p.lifecycle_state = db.lifecycle_state
+        # getattr: the demo-mode MemoryStore rows predate the column.
+        p.lifecycle_state = getattr(db, "lifecycle_state", None) or "active"
         return p
 
 
@@ -359,7 +364,7 @@ class EntityRepo:
             existing.attributes = attrs
             if project_id:
                 existing.project_id = project_id
-            return existing
+            db_entity = existing
         else:
             db_entity = DBEntity(
                 id=entity.id,
@@ -370,7 +375,12 @@ class EntityRepo:
                 attributes=attrs,
             )
             self.session.add(db_entity)
-            return db_entity
+
+        if scheduling:
+            # The ONLY writer of the derived booking_resource / person_username
+            # rows (#274) — they are rewritten from this save's attributes.
+            await _sync_scheduling_index(self.session, entity)
+        return db_entity
 
     async def get(self, entity_id: uuid.UUID) -> BridgeEntity | None:
         db_entity = await self.session.get(DBEntity, entity_id)
