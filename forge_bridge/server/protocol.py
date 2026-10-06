@@ -117,6 +117,12 @@ class MsgType:
     QUERY_LINEAGE      = "query.lineage"       # full lineage traversal for an entity
     QUERY_SHOT_DEPS    = "query.shot_deps"     # dependency graph for a shot
 
+    # Scheduling queries (#274) — thin reads over the scheduling store
+    QUERY_BOOKINGS           = "query.bookings"            # by resources × range, or by project
+    QUERY_TASKS              = "query.tasks"               # by party, owner, or project
+    QUERY_BIDS               = "query.bids"                # a project's bids (+ lines)
+    QUERY_PERSON_BY_USERNAME = "query.person_by_username"  # username → person
+
     # Media
     MEDIA_SCAN = "media.scan"   # trigger a filesystem scan for a project/role/shot
 
@@ -241,28 +247,55 @@ def unsubscribe(project_id: str, msg_id: str | None = None) -> Message:
 
 
 # Project messages
-def project_create(name: str, code: str, metadata: dict | None = None) -> Message:
-    return Message({
+def project_create(
+    name: str,
+    code: str,
+    metadata: dict | None = None,
+    lifecycle_state: str | None = None,
+) -> Message:
+    payload = {
         "type": MsgType.PROJECT_CREATE,
         "id":   _new_id(),
         "name": name,
         "code": code,
         "metadata": metadata or {},
-    })
+    }
+    # Project lifecycle (#274, open set). Omitted when absent: the server
+    # then stores its default ("active").
+    if lifecycle_state is not None:
+        payload["lifecycle_state"] = lifecycle_state
+    return Message(payload)
+
+
+def project_update(
+    project_id: str,
+    name: str | None = None,
+    code: str | None = None,
+    lifecycle_state: str | None = None,
+) -> Message:
+    payload = {"type": MsgType.PROJECT_UPDATE, "id": _new_id(), "project_id": project_id}
+    for key, value in (("name", name), ("code", code), ("lifecycle_state", lifecycle_state)):
+        if value is not None:
+            payload[key] = value
+    return Message(payload)
 
 
 def project_get(project_id: str) -> Message:
     return Message({"type": MsgType.PROJECT_GET, "id": _new_id(), "project_id": project_id})
 
 
-def project_list() -> Message:
-    return Message({"type": MsgType.PROJECT_LIST, "id": _new_id()})
+def project_list(lifecycle_state: str | list[str] | None = None) -> Message:
+    """List projects, optionally only those in the given lifecycle state(s)."""
+    payload = {"type": MsgType.PROJECT_LIST, "id": _new_id()}
+    if lifecycle_state is not None:
+        payload["lifecycle_state"] = lifecycle_state
+    return Message(payload)
 
 
 # Entity messages
 def entity_create(
     entity_type: str,
-    project_id: str,
+    project_id: str | None,
     attributes: dict,
     name: str | None = None,
     status: str | None = None,
@@ -306,13 +339,16 @@ def entity_get(entity_id: str) -> Message:
 
 def entity_list(
     entity_type: str,
-    project_id: str,
+    project_id: str | None = None,
     *,
     shot_id: str | None = None,
     role: str | None = None,
     source_name: str | None = None,
 ) -> Message:
     """List entities of a given type within a project.
+
+    ``project_id`` is omitted for the studio-scoped scheduling kinds (person,
+    vendor, resource, resource_dependency — #274); every other kind needs it.
 
     Optional narrowing kwargs (keyword-only to preserve backward compat
     with existing 2-arg positional call sites):
@@ -324,8 +360,9 @@ def entity_list(
         "type":        MsgType.ENTITY_LIST,
         "id":          _new_id(),
         "entity_type": entity_type,
-        "project_id":  project_id,
     }
+    if project_id is not None:
+        payload["project_id"] = project_id
     if shot_id is not None:
         payload["shot_id"] = shot_id
     if role is not None:
@@ -408,6 +445,81 @@ def query_shot_deps(shot_id: str) -> Message:
         "type":    MsgType.QUERY_SHOT_DEPS,
         "id":      _new_id(),
         "shot_id": shot_id,
+    })
+
+
+# Scheduling queries (#274)
+def query_bookings(
+    *,
+    resource_ids: list[str] | None = None,
+    from_: str | None = None,
+    to: str | None = None,
+    project_id: str | None = None,
+    states: list[str] | None = None,
+) -> Message:
+    """Bookings on ``resource_ids`` overlapping ``[from_, to)`` (half-open,
+    timezone-aware ISO datetimes), OR every booking of ``project_id``.
+    ``states`` narrows either form by booking state."""
+    payload: dict = {"type": MsgType.QUERY_BOOKINGS, "id": _new_id()}
+    if resource_ids is not None:
+        payload["resource_ids"] = [str(r) for r in resource_ids]
+        payload["from"] = from_
+        payload["to"] = to
+    if project_id is not None:
+        payload["project_id"] = project_id
+    if states is not None:
+        payload["states"] = list(states)
+    return Message(payload)
+
+
+def query_tasks(
+    *,
+    party_type: str | None = None,
+    party_id: str | None = None,
+    on: str | None = None,
+    owner_id: str | None = None,
+    project_id: str | None = None,
+) -> Message:
+    """Tasks a party (person | vendor) is responsible for (``on``: ISO date the
+    responsibility must be effective on), OR a shot/asset's tasks
+    (``owner_id``), OR a project's tasks. Exactly one form per request."""
+    payload: dict = {"type": MsgType.QUERY_TASKS, "id": _new_id()}
+    for key, value in (
+        ("party_type", party_type), ("party_id", party_id), ("on", on),
+        ("owner_id", owner_id), ("project_id", project_id),
+    ):
+        if value is not None:
+            payload[key] = value
+    return Message(payload)
+
+
+def query_bids(
+    project_id: str,
+    *,
+    active: bool | None = None,
+    awarded: bool | None = None,
+    include_lines: bool = False,
+) -> Message:
+    """A project's bids, optionally filtered by the active / awarded flags;
+    ``include_lines`` attaches each bid's lines under ``lines``."""
+    payload: dict = {
+        "type":          MsgType.QUERY_BIDS,
+        "id":            _new_id(),
+        "project_id":    project_id,
+        "include_lines": include_lines,
+    }
+    if active is not None:
+        payload["active"] = active
+    if awarded is not None:
+        payload["awarded"] = awarded
+    return Message(payload)
+
+
+def query_person_by_username(username: str) -> Message:
+    return Message({
+        "type":     MsgType.QUERY_PERSON_BY_USERNAME,
+        "id":       _new_id(),
+        "username": username,
     })
 
 

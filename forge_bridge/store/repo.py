@@ -248,10 +248,12 @@ class ProjectRepo:
         db_proj = result.scalar_one_or_none()
         return self._to_core(db_proj) if db_proj else None
 
-    async def list_all(self) -> list[CoreProject]:
-        result = await self.session.execute(
-            select(DBProject).order_by(DBProject.name)
-        )
+    async def list_all(self, lifecycle_states: list[str] | None = None) -> list[CoreProject]:
+        """All projects by name; ``lifecycle_states`` keeps only those states."""
+        stmt = select(DBProject).order_by(DBProject.name)
+        if lifecycle_states is not None:
+            stmt = stmt.where(DBProject.lifecycle_state.in_(list(lifecycle_states)))
+        result = await self.session.execute(stmt)
         return [self._to_core(p) for p in result.scalars().all()]
 
     async def delete(self, project_id: uuid.UUID) -> None:

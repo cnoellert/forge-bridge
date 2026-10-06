@@ -53,9 +53,10 @@ from forge_bridge.client.async_client import AsyncClient
 from forge_bridge.server.protocol import (
     Message,
     entity_create, entity_update, entity_get, entity_list,
-    project_create, project_get, project_list,
+    project_create, project_get, project_list, project_update,
     relationship_create, location_add,
     query_dependents, query_shot_stack, query_events,
+    query_bookings, query_tasks, query_bids, query_person_by_username,
     role_register, role_rename, role_delete,
     subscribe, unsubscribe,
 )
@@ -241,17 +242,30 @@ class SyncClient:
         name: str,
         code: str,
         metadata: dict | None = None,
+        lifecycle_state: str | None = None,
     ) -> dict:
         """Create a new project. Returns {"project_id": "..."}."""
-        return self._run(project_create(name, code, metadata))
+        return self._run(project_create(name, code, metadata, lifecycle_state=lifecycle_state))
+
+    def project_update(
+        self,
+        project_id: str | uuid.UUID,
+        name: str | None = None,
+        code: str | None = None,
+        lifecycle_state: str | None = None,
+    ) -> None:
+        """Update a project's name, code and/or lifecycle state."""
+        self._run(project_update(
+            str(project_id), name=name, code=code, lifecycle_state=lifecycle_state,
+        ))
 
     def project_get(self, project_id: str | uuid.UUID) -> dict:
         """Fetch a project by ID. Returns the project dict."""
         return self._run(project_get(str(project_id)))
 
-    def project_list(self) -> list[dict]:
-        """Return all projects."""
-        result = self._run(project_list())
+    def project_list(self, lifecycle_state: str | list[str] | None = None) -> list[dict]:
+        """Return all projects, optionally only those in the given state(s)."""
+        result = self._run(project_list(lifecycle_state))
         return result.get("projects", [])
 
     # ── Entities ──────────────────────────────────────────────
@@ -259,15 +273,18 @@ class SyncClient:
     def entity_create(
         self,
         entity_type: str,
-        project_id:  str | uuid.UUID,
+        project_id:  str | uuid.UUID | None,
         attributes:  dict,
         name:        str | None = None,
         status:      str | None = None,
     ) -> dict:
-        """Create an entity. Returns {"entity_id": "..."}."""
+        """Create an entity. Returns {"entity_id": "..."}.
+
+        ``project_id`` is None for the studio-scoped scheduling kinds.
+        """
         return self._run(entity_create(
             entity_type=entity_type,
-            project_id=str(project_id),
+            project_id=str(project_id) if project_id is not None else None,
             attributes=attributes,
             name=name,
             status=status,
@@ -297,13 +314,14 @@ class SyncClient:
     def entity_list(
         self,
         entity_type: str,
-        project_id:  str | uuid.UUID,
+        project_id:  str | uuid.UUID | None = None,
         *,
         shot_id:     str | None = None,
         role:        str | None = None,
         source_name: str | None = None,
     ) -> list[dict]:
-        """List entities of a type in a project.
+        """List entities of a type in a project (no project for the
+        studio-scoped scheduling kinds).
 
         Optional narrowing kwargs (keyword-only so existing 2-arg positional
         calls keep working):
@@ -313,7 +331,7 @@ class SyncClient:
         """
         result = self._run(entity_list(
             entity_type,
-            str(project_id),
+            str(project_id) if project_id is not None else None,
             shot_id=shot_id,
             role=role,
             source_name=source_name,
@@ -378,6 +396,63 @@ class SyncClient:
             limit=limit,
         ))
         return result.get("events", [])
+
+    # ── Scheduling queries (#274) ─────────────────────────────
+
+    def query_bookings(
+        self,
+        *,
+        resource_ids: list[str | uuid.UUID] | None = None,
+        from_: str | None = None,
+        to: str | None = None,
+        project_id: str | uuid.UUID | None = None,
+        states: list[str] | None = None,
+    ) -> list[dict]:
+        """Bookings on resources overlapping [from_, to), or a project's bookings."""
+        result = self._run(query_bookings(
+            resource_ids=[str(r) for r in resource_ids] if resource_ids is not None else None,
+            from_=from_, to=to,
+            project_id=str(project_id) if project_id is not None else None,
+            states=states,
+        ))
+        return result.get("bookings", [])
+
+    def query_tasks(
+        self,
+        *,
+        party_type: str | None = None,
+        party_id: str | uuid.UUID | None = None,
+        on: str | None = None,
+        owner_id: str | uuid.UUID | None = None,
+        project_id: str | uuid.UUID | None = None,
+    ) -> list[dict]:
+        """Tasks by responsible party, by owner (shot/asset), or by project."""
+        result = self._run(query_tasks(
+            party_type=party_type,
+            party_id=str(party_id) if party_id is not None else None,
+            on=on,
+            owner_id=str(owner_id) if owner_id is not None else None,
+            project_id=str(project_id) if project_id is not None else None,
+        ))
+        return result.get("tasks", [])
+
+    def query_bids(
+        self,
+        project_id: str | uuid.UUID,
+        *,
+        active: bool | None = None,
+        awarded: bool | None = None,
+        include_lines: bool = False,
+    ) -> list[dict]:
+        """A project's bids (each with ``lines`` when include_lines)."""
+        result = self._run(query_bids(
+            str(project_id), active=active, awarded=awarded, include_lines=include_lines,
+        ))
+        return result.get("bids", [])
+
+    def person_by_username(self, username: str) -> dict:
+        """{"person": {...} | None, "resource_id": str | None}."""
+        return self._run(query_person_by_username(username))
 
     # ── Registry ──────────────────────────────────────────────
 
