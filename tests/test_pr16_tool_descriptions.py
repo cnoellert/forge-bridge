@@ -41,6 +41,17 @@ _PR16_TOOLS = frozenset({
     "forge_list_roles",
     "forge_list_media",
     "forge_list_published_plates",
+    # Scheduling (#274) — reads and producer writes
+    "forge_list_tasks",
+    "forge_list_bookings",
+    "forge_list_resources",
+    "forge_get_person",
+    "forge_list_bids",
+    "forge_create_task",
+    "forge_update_task_status",
+    "forge_create_booking",
+    "forge_update_booking_state",
+    "forge_set_project_state",
     # In-process forge_* (staged ops + read shims)
     "forge_manifest_read",
     "forge_tools_read",

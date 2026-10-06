@@ -31,6 +31,17 @@ PR22_TOOLS_UNDER_CONTRACT = (
     "list_projects",
     "list_shots",
     "list_versions",
+    # Scheduling (#274): every handler answers {} with a structured error.
+    "list_tasks",
+    "list_bookings",
+    "list_resources",
+    "get_person",
+    "list_bids",
+    "create_task",
+    "update_task_status",
+    "create_booking",
+    "update_booking_state",
+    "set_project_state",
 )
 
 
