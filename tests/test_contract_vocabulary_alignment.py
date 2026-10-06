@@ -28,8 +28,18 @@ from forge_contracts.vocabulary import (
     ROLE_CLASS_TRACK,
 )
 
+from forge_contracts import (
+    KNOWN_CAPACITY_KINDS,
+    KNOWN_RESOURCE_KINDS,
+    KNOWN_RESPONSIBILITY_PARTIES,
+    KNOWN_SCHEDULING_KINDS,
+    KNOWN_TASK_SOURCINGS,
+    KNOWN_TASK_STATES,
+    TASK_STATE_COMPLETE,
+)
+
 from forge_bridge.core.registry import Registry
-from forge_bridge.core.vocabulary import STANDARD_ROLES, Role
+from forge_bridge.core.vocabulary import STANDARD_ROLES, Role, Status
 from forge_bridge.store.models import ENTITY_TYPES
 
 
@@ -104,3 +114,30 @@ def test_bridge_entity_types_remains_a_proper_superset():
     (sequence/version/media/layer/stack + operational types) — they are NOT contract vocabulary,
     and the contract must never swallow bridge's full table."""
     assert set(ENTITY_TYPES) - set(KNOWN_DELIVERABLE_TYPES), "bridge superset collapsed to the axis"
+
+
+# ── Scheduling vocabulary (forge-contracts v0.9 / ADR-012, #274 slice 0) ──────────────────────
+# Task state stays DISTINCT from entity Status, but every task state shares a Status spelling
+# except `complete`, which Status.from_string aliases to `delivered`. Contracts tests this against
+# a literal copy of Status (it cannot import bridge); this is the reverse guard against the real
+# enum — same pattern as the ADR-008 deliverable-type guard above.
+
+def test_task_states_map_onto_status():
+    values = {s.value for s in Status}
+    assert KNOWN_TASK_STATES - {TASK_STATE_COMPLETE} <= values
+    assert Status.from_string(TASK_STATE_COMPLETE) is Status.DELIVERED
+
+
+def test_closed_scheduling_sets_are_frozensets():
+    """The three CLOSED sets are the only scheduling sets bridge may validate against; they must
+    import from the top-level package and be immutable."""
+    for closed in (KNOWN_TASK_SOURCINGS, KNOWN_RESPONSIBILITY_PARTIES, KNOWN_CAPACITY_KINDS):
+        assert isinstance(closed, frozenset)
+        assert closed
+
+
+def test_asset_is_not_a_scheduling_or_resource_kind():
+    """ADR-007 collision guard: `asset` is a deliverable entity type, never a scheduling record
+    kind nor a bookable resource kind."""
+    assert "asset" not in KNOWN_SCHEDULING_KINDS
+    assert "asset" not in KNOWN_RESOURCE_KINDS
