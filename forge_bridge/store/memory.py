@@ -315,6 +315,7 @@ class MemorySession:
                 "name":       str(obj.name),
                 "code":       str(obj.code),
                 "attributes": dict(getattr(obj, "attributes", {}) or {}),
+                "lifecycle_state": getattr(obj, "lifecycle_state", None) or "active",
                 "created_at": str(getattr(obj, "created_at", "")),
             }
 

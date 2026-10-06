@@ -104,14 +104,29 @@ class Project(Versionable, BridgeEntity):
         code: Optional[str] = None,
         id: Optional[uuid.UUID | str] = None,
         metadata: Optional[dict] = None,
+        lifecycle_state: Optional[str] = None,
     ):
         super().__init__(id=id, metadata=metadata)
         self.name: str = name
         self.code: str = code or name
+        # Project lifecycle (#274; forge_contracts KNOWN_PROJECT_STATES, an OPEN
+        # set — any non-empty string). None means "not set by this caller":
+        # ProjectRepo.save leaves the stored value alone (new rows default to
+        # 'active'), so writers that rebuild a Project from name/code alone
+        # never clobber a lifecycle another writer set.
+        if lifecycle_state is not None:
+            if not isinstance(lifecycle_state, str) or not lifecycle_state.strip():
+                raise ValueError("lifecycle_state must be a non-empty string")
+            lifecycle_state = lifecycle_state.strip()
+        self.lifecycle_state: Optional[str] = lifecycle_state
 
     def to_dict(self) -> dict:
         d = super().to_dict()
-        d.update({"name": self.name, "code": self.code})
+        d.update({
+            "name": self.name,
+            "code": self.code,
+            "lifecycle_state": self.lifecycle_state,
+        })
         return d
 
     def __repr__(self) -> str:

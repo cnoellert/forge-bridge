@@ -36,6 +36,9 @@ Schema overview:
   locations                       — file path records (1..n per entity)
   relationships                   — directed edges in the dependency graph
 
+  booking_resource                — derived booking interval index (#274)
+  person_username                 — derived username → person index (#274)
+
   events                          — append-only audit + change log
   sessions                        — connected client tracking (server-managed)
 """
@@ -60,6 +63,17 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from forge_contracts.scheduling import (
+    SCHEDULING_KIND_BID,
+    SCHEDULING_KIND_BID_LINE,
+    SCHEDULING_KIND_BOOKING,
+    SCHEDULING_KIND_PERSON,
+    SCHEDULING_KIND_RESOURCE,
+    SCHEDULING_KIND_RESOURCE_DEPENDENCY,
+    SCHEDULING_KIND_RESPONSIBILITY,
+    SCHEDULING_KIND_TASK,
+    SCHEDULING_KIND_VENDOR,
+)
 from sqlalchemy.orm import DeclarativeBase, relationship
 from sqlalchemy.sql import func
 
@@ -176,6 +190,12 @@ class DBProject(Base):
     name       = Column(String(256), nullable=False)
     code       = Column(String(64),  nullable=False)
     attributes = Column(JSONB, nullable=False, default=dict)
+    # #274 (migration 0017) — project lifecycle (bidding / on_hold / awarded /
+    # active / ...). OPEN set (forge_contracts KNOWN_PROJECT_STATES): no CHECK.
+    # Transitions are Pipeline-owned; Bridge only stores the value.
+    lifecycle_state = Column(
+        String(32), nullable=False, default="active", server_default="active",
+    )
 
     created_at = Column(
         DateTime(timezone=True),
@@ -225,6 +245,19 @@ ENTITY_TYPES = frozenset({
     # new workflow family needs no further migration. Indexed by
     # (kind, proposal_id).
     "orch_workflow_record",
+    # Scheduling records (#274, forge-contracts v0.9) — the nine record kinds,
+    # every one a plain entities row with typed fields in JSONB attributes.
+    # Side tables booking_resource / person_username are derived indexes
+    # written only by EntityRepo.save. Classes: forge_bridge.core.scheduling.
+    SCHEDULING_KIND_TASK,
+    SCHEDULING_KIND_RESPONSIBILITY,
+    SCHEDULING_KIND_PERSON,
+    SCHEDULING_KIND_VENDOR,
+    SCHEDULING_KIND_RESOURCE,
+    SCHEDULING_KIND_RESOURCE_DEPENDENCY,
+    SCHEDULING_KIND_BOOKING,
+    SCHEDULING_KIND_BID,
+    SCHEDULING_KIND_BID_LINE,
     # Phase 4B orchestration discriminators — PHASE-4B-ORCHESTRATION-DESIGN.md §4
     "orch_pipeline_run",
     "orch_inputs_catalog",
@@ -360,6 +393,20 @@ class DBEntity(Base):
                 "AND attributes ? 'kind' "
                 "AND attributes ? 'proposal_id'"
             ),
+        ),
+        # #274 migration 0017 — one person per email, case-insensitively.
+        Index(
+            "uq_entities_person_email_lower",
+            text("lower(attributes ->> 'email')"),
+            unique=True,
+            postgresql_where=text("entity_type = 'person'"),
+        ),
+        # #274 migration 0017 — at most one bookable resource facet per person.
+        Index(
+            "uq_entities_resource_person_id",
+            text("(attributes ->> 'person_id')"),
+            unique=True,
+            postgresql_where=text("entity_type = 'resource'"),
         ),
         # GIN index on JSONB attributes for fast containment queries
         # e.g. WHERE attributes @> '{"sequence_id": "..."}'
@@ -534,6 +581,76 @@ class DBOrchestrationCompromiseLedger(Base):
         ),
         Index("ix_orchestration_compromise_ledger_run_id", "run_id"),
     )
+
+
+# ─────────────────────────────────────────────────────────────
+# Scheduling derived indexes (#274, migration 0017)
+# ─────────────────────────────────────────────────────────────
+# Both tables are DERIVED from scheduling entity rows and written ONLY by
+# EntityRepo.save (delete+insert per save). The JSONB attributes on the entity
+# row remain the source of truth; these exist so interval and username lookups
+# are plain btree queries instead of JSONB scans.
+
+class DBBookingResource(Base):
+    """One row per (booking, resource): the booking's interval and state,
+    denormalised so "what is booked on these resources in [from, to)" is an
+    index range scan. Plain btree only — conflict detection is Pipeline's, so
+    there is no GiST / exclusion constraint here.
+
+    booking_id  CASCADE  — deleting a booking drops its index rows.
+    resource_id RESTRICT — a resource with bookings cannot be deleted.
+    """
+    __tablename__ = "booking_resource"
+
+    booking_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("entities.id", name="fk_booking_resource_booking_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    resource_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("entities.id", name="fk_booking_resource_resource_id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    project_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", name="fk_booking_resource_project_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    starts_at = Column(DateTime(timezone=True), nullable=False)
+    ends_at   = Column(DateTime(timezone=True), nullable=False)
+    state     = Column(String(64), nullable=False)
+    quantity  = Column(Integer, nullable=False, default=1, server_default="1")
+
+    __table_args__ = (
+        CheckConstraint("ends_at > starts_at", name="ck_booking_resource_interval"),
+        CheckConstraint("quantity >= 1", name="ck_booking_resource_quantity"),
+        Index("ix_booking_resource_resource_starts", "resource_id", "starts_at"),
+        Index("ix_booking_resource_project_starts", "project_id", "starts_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<DBBookingResource booking={self.booking_id!s:.8} resource={self.resource_id!s:.8}>"
+
+
+class DBPersonUsername(Base):
+    """username → person. The primary key makes a username belong to exactly
+    one person; rows are rewritten from ``person.attributes.usernames``."""
+    __tablename__ = "person_username"
+
+    username  = Column(String(256), primary_key=True)
+    person_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("entities.id", name="fk_person_username_person_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index("ix_person_username_person_id", "person_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<DBPersonUsername {self.username!r} → {self.person_id!s:.8}>"
 
 
 # ─────────────────────────────────────────────────────────────
