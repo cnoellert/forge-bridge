@@ -29,6 +29,8 @@ from forge_contracts.vocabulary import (
 )
 
 from forge_contracts import (
+    ASSET_TYPE_FITTED_MODEL,
+    KNOWN_ASSET_TYPES,
     KNOWN_CAPACITY_KINDS,
     KNOWN_RESOURCE_KINDS,
     KNOWN_RESPONSIBILITY_PARTIES,
@@ -40,6 +42,7 @@ from forge_contracts import (
 
 from forge_bridge.core.registry import Registry
 from forge_bridge.core.vocabulary import STANDARD_ROLES, Role, Status
+from forge_bridge.store.fitted_model_lifecycle_repo import FITTED_MODEL_ASSET_TYPE
 from forge_bridge.store.models import ENTITY_TYPES
 
 
@@ -141,3 +144,13 @@ def test_asset_is_not_a_scheduling_or_resource_kind():
     kind nor a bookable resource kind."""
     assert "asset" not in KNOWN_SCHEDULING_KINDS
     assert "asset" not in KNOWN_RESOURCE_KINDS
+
+
+# ── Asset types (forge-contracts v0.10 / ADR-013, #279) ──────────────────────────────────────
+# #160 stored fitted models under the free-text asset_type `fitted-model`; v0.10 promoted that
+# value into the contract. Bridge's constant is now bound to the contract — this guard keeps the
+# stored value and the contract from drifting apart (same pattern as the ADR-008 guard above).
+
+def test_fitted_model_asset_type_is_the_contract_value():
+    assert FITTED_MODEL_ASSET_TYPE == ASSET_TYPE_FITTED_MODEL == "fitted-model"
+    assert ASSET_TYPE_FITTED_MODEL in KNOWN_ASSET_TYPES

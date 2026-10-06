@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
+from forge_contracts import ASSET_TYPE_FITTED_MODEL as FITTED_MODEL_ASSET_TYPE
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,7 +22,6 @@ from forge_bridge.store.models import DBEntity, DBLocation
 from forge_bridge.store.repo import EventRepo
 
 
-FITTED_MODEL_ASSET_TYPE = "fitted-model"
 GC_ACTIVE = "active"
 GC_MARKED = "marked"
 GC_COLLECTED = "collected"
