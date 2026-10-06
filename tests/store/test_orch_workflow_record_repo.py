@@ -82,7 +82,17 @@ def test_migration_0016_matches_the_orm_entity_types() -> None:
     migration = _migration()
 
     assert ENTITY_TYPE in ENTITY_TYPES
-    assert set(migration._POST_242_ENTITY_TYPES) == set(ENTITY_TYPES)
+    # 0016 is no longer head: everything the ORM adds above it must be exactly
+    # what 0017 (#274 scheduling) adds. 0017's own test pins post == ORM.
+    later = importlib.import_module(
+        "forge_bridge.store.migrations.versions.0017_scheduling_foundation"
+    )
+    assert set(migration._POST_242_ENTITY_TYPES) == set(
+        later._PRE_274_ENTITY_TYPES
+    )
+    assert set(ENTITY_TYPES) - set(migration._POST_242_ENTITY_TYPES) == set(
+        later.SCHEDULING_ENTITY_TYPES
+    )
 
 
 # --------------------------------------------------------------------------- #

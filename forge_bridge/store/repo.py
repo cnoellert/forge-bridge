@@ -30,6 +30,7 @@ from forge_bridge.core.entities import (
     Asset, BridgeEntity, Layer, Media, Project as CoreProject,
     Sequence as CoreSequence, Shot, Stack, Version,
 )
+from forge_bridge.core.scheduling import SCHEDULING_CLASSES
 from forge_bridge.core.staged import StagedOperation
 from forge_bridge.core.registry import Registry, RoleDefinition, RelationshipTypeDef
 from forge_bridge.core.traits import Relationship
@@ -206,10 +207,17 @@ class ProjectRepo:
     async def save(self, project: CoreProject) -> DBProject:
         existing = await self.session.get(DBProject, project.id)
 
+        # lifecycle_state is written ONLY when the caller set it (#274). Callers
+        # that save a freshly built CoreProject(name, code) — e.g. Pipeline's
+        # catalog binding — must not reset a stored lifecycle to the default.
+        lifecycle_state = getattr(project, "lifecycle_state", None)
+
         if existing:
             existing.name       = project.name
             existing.code       = project.code
             existing.attributes = project.metadata
+            if lifecycle_state is not None:
+                existing.lifecycle_state = lifecycle_state
             return existing
         else:
             db_proj = DBProject(
@@ -218,6 +226,8 @@ class ProjectRepo:
                 code=project.code,
                 attributes=project.metadata,
             )
+            if lifecycle_state is not None:
+                db_proj.lifecycle_state = lifecycle_state
             self.session.add(db_proj)
             return db_proj
 
@@ -251,6 +261,7 @@ class ProjectRepo:
         BridgeEntity.__init__(p, id=db.id, metadata=db.attributes or {})
         p.name = db.name
         p.code = db.code
+        p.lifecycle_state = db.lifecycle_state
         return p
 
 
@@ -275,6 +286,23 @@ _TYPED_ATTR_KEYS: dict[str, frozenset[str]] = {
     "staged_operation": frozenset({"operation", "proposer", "parameters", "result",
                                    "approver", "executor", "approved_at", "executed_at"}),
 }
+# Scheduling records (#274) own their typed keys on the class.
+_TYPED_ATTR_KEYS.update(
+    {entity_type: cls.TYPED_KEYS for entity_type, cls in SCHEDULING_CLASSES.items()}
+)
+
+
+def _check_scheduling_update(existing: DBEntity, entity_type: str, attrs: dict) -> None:
+    """Refuse updates that would change a scheduling record's identity."""
+    if existing.entity_type != entity_type:
+        raise ValueError(
+            f"entity {existing.id} is a {existing.entity_type}, not a {entity_type}"
+        )
+    if entity_type == "resource":
+        # A person's bookable facet stays bound to that person forever.
+        before = (existing.attributes or {}).get("person_id")
+        if before != attrs.get("person_id"):
+            raise ValueError("resource.person_id is immutable once stored")
 
 
 class EntityRepo:
@@ -307,7 +335,23 @@ class EntityRepo:
         if hasattr(entity, "status"):
             status_val = entity.status.value if hasattr(entity.status, "value") else str(entity.status)
 
+        scheduling = entity_type in SCHEDULING_CLASSES
+        if scheduling:
+            # Scheduling records carry their own scope (#274): project-scoped
+            # kinds hold project_id, studio-scoped kinds must stay NULL.
+            own = entity.project_id
+            if project_id is not None and own is not None and project_id != own:
+                raise ValueError(
+                    f"{entity_type} project_id {own} disagrees with save(project_id={project_id})"
+                )
+            if project_id is not None and not entity.PROJECT_SCOPED:
+                raise ValueError(f"{entity_type} is studio-scoped: project_id must be None")
+            project_id = project_id or own
+
         existing = await self.session.get(DBEntity, entity.id)
+
+        if existing and scheduling:
+            _check_scheduling_update(existing, entity_type, attrs)
 
         if existing:
             existing.name       = name
@@ -488,6 +532,9 @@ class EntityRepo:
             a["approved_at"] = op.approved_at.isoformat() if op.approved_at else None
             a["executed_at"] = op.executed_at.isoformat() if op.executed_at else None
 
+        elif t in SCHEDULING_CLASSES:
+            a.update(entity.to_attributes())
+
         return a
 
     def _to_core(self, db: DBEntity) -> BridgeEntity:
@@ -582,6 +629,16 @@ class EntityRepo:
             )
             e.executed_at = (
                 datetime.fromisoformat(a["executed_at"]) if a.get("executed_at") else None
+            )
+
+        elif t in SCHEDULING_CLASSES:
+            e = SCHEDULING_CLASSES[t].from_record(
+                id=db.id,
+                name=db.name,
+                status=db.status,
+                project_id=db.project_id,
+                attributes=a,
+                created_at=getattr(db, "created_at", None),
             )
 
         else:
