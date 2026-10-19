@@ -67,6 +67,10 @@ def _post_once(bridge, payload: object) -> tuple[int, dict]:
             "_exec_typed_workfile_lifecycle_on_main_thread",
         ),
         (
+            "review_open",
+            "_exec_typed_review_open_on_main_thread",
+        ),
+        (
             "shot_resource_publish_plan",
             "_exec_typed_shot_resource_publish_plan_on_main_thread",
         ),
@@ -261,6 +265,62 @@ def test_typed_workfile_lifecycle_runs_via_flame_adapter(
     assert isinstance(plugin, FlamePlugin)
     adapter = plugin.workfile_adapter()
     assert isinstance(adapter, FlameWorkfileAdapter)
+    assert adapter.flame_module is flame_namespace
+    assert adapter.context == {"already_on_main_thread": True}
+
+
+def test_typed_review_open_runs_via_flame_review_adapter(
+    bridge,
+    monkeypatch,
+) -> None:
+    captured: dict = {}
+    dispatch_module = ModuleType("forge_core.review.host_dispatch")
+
+    def execute(payload: dict, *, plugins: list[object]) -> dict:
+        captured["payload"] = payload
+        captured["plugins"] = plugins
+        return {"kind": "pipeline.review.host_dispatch_result"}
+
+    dispatch_module.execute_review_host_dispatch = execute
+    plugin_module = ModuleType("forge_flame.plugin")
+
+    class FlamePlugin:
+        pass
+
+    plugin_module.FlamePlugin = FlamePlugin
+    adapter_module = ModuleType("forge_flame.review")
+
+    class FlameReviewAdapter:
+        def __init__(
+            self,
+            *,
+            flame_module: object,
+            context: dict[str, object],
+        ) -> None:
+            self.flame_module = flame_module
+            self.context = context
+
+    adapter_module.FlameReviewAdapter = FlameReviewAdapter
+    flame_namespace = object()
+    bridge._namespace["flame"] = flame_namespace
+    monkeypatch.setattr(bridge, "_bootstrap_forge_runtime", lambda: None)
+    monkeypatch.setitem(
+        sys.modules,
+        "forge_core.review.host_dispatch",
+        dispatch_module,
+    )
+    monkeypatch.setitem(sys.modules, "forge_flame.plugin", plugin_module)
+    monkeypatch.setitem(sys.modules, "forge_flame.review", adapter_module)
+
+    result = bridge._execute_typed_review_open({"reel_name": "GATE_050 - cmn"})
+
+    assert result == {"kind": "pipeline.review.host_dispatch_result"}
+    assert captured["payload"] == {"reel_name": "GATE_050 - cmn"}
+    assert len(captured["plugins"]) == 1
+    plugin = captured["plugins"][0]
+    assert isinstance(plugin, FlamePlugin)
+    adapter = plugin.review_adapter()
+    assert isinstance(adapter, FlameReviewAdapter)
     assert adapter.flame_module is flame_namespace
     assert adapter.context == {"already_on_main_thread": True}
 

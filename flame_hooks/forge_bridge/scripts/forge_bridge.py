@@ -342,6 +342,21 @@ def _execute_typed_workfile_lifecycle(params):
     return execute_workfile_host_dispatch(params, plugins=[plugin])
 
 
+def _execute_typed_review_open(params):
+    """Load review Versions into Flame's FORGE Review reel group."""
+    _bootstrap_forge_runtime()
+    from forge_core.review.host_dispatch import execute_review_host_dispatch
+    from forge_flame.plugin import FlamePlugin
+    from forge_flame.review import FlameReviewAdapter
+
+    plugin = FlamePlugin()
+    plugin.review_adapter = lambda: FlameReviewAdapter(  # type: ignore[method-assign]
+        flame_module=_namespace.get("flame"),
+        context={"already_on_main_thread": True},
+    )
+    return execute_review_host_dispatch(params, plugins=[plugin])
+
+
 def _execute_typed_shot_resource_publish_plan(params):
     """Compile a read-only transaction plan through Flame's live publisher."""
     _bootstrap_forge_runtime()
@@ -466,6 +481,15 @@ def _exec_typed_workfile_lifecycle_on_main_thread(params, timeout=None):
     )
 
 
+def _exec_typed_review_open_on_main_thread(params, timeout=None):
+    """Open review reels on Flame's main thread."""
+    return _exec_typed_operation_on_main_thread(
+        _execute_typed_review_open,
+        params,
+        timeout=timeout,
+    )
+
+
 def _exec_typed_shot_resource_publish_plan_on_main_thread(
     params,
     timeout=None,
@@ -564,6 +588,7 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
         if op_name not in {
             "host_graph_mutation",
             "host_graph_read",
+            "review_open",
             "shot_resource_load",
             "shot_resource_publish_plan",
             "workfile_lifecycle",
@@ -591,6 +616,11 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             )
         elif op_name == "workfile_lifecycle":
             result = _exec_typed_workfile_lifecycle_on_main_thread(
+                params,
+                timeout=timeout,
+            )
+        elif op_name == "review_open":
+            result = _exec_typed_review_open_on_main_thread(
                 params,
                 timeout=timeout,
             )
