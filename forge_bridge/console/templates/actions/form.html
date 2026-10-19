@@ -1,0 +1,28 @@
+{% extends "shell.html" %}
+{% block title %}{{ verb.label }} — Forge Console{% endblock %}
+
+{% block view %}
+<h1 class="view-title">{{ verb.label }}</h1>
+<p class="chip-caption">{{ verb.summary }}</p>
+
+{# Step 1: name the sequence, then load its live segments. The segment picker,
+   the typed value field and the Preview button are rendered by the fragment
+   swapped into #actions-picker. STAGE-ONLY — nothing applies on this page. #}
+<div class="card actions-step">
+  <label class="actions-field">
+    <span class="actions-field__label">Sequence</span>
+    <input type="text" name="sequence" class="actions-input"
+           placeholder="name of the sequence open in Flame" autocomplete="off">
+  </label>
+  <button class="btn"
+          hx-get="/ui/fragments/actions-segments?verb={{ verb.name }}"
+          hx-include="[name='sequence']"
+          hx-target="#actions-picker"
+          hx-swap="innerHTML">Load segments</button>
+</div>
+
+<div id="actions-picker"></div>
+<div id="actions-result"></div>
+
+<p class="actions-back"><a href="/ui/actions">&larr; All actions</a></p>
+{% endblock %}
