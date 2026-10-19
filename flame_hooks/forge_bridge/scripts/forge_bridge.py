@@ -128,20 +128,37 @@ def start_announce(descriptor):
 
 
 def _make_descriptor():
-    """Return the 10-field SessionDescriptor dict for this Flame process.
+    """Return the SessionDescriptor dict for this Flame process.
 
     Rebuilds lazily on each call so `project` reflects the currently-open
     project (flame.project.current_project changes on project switch).
     No forge_core import — standalone file; see three-layer kill-switch / D-02.
+
+    `project` is the forge project: FORGE_PROJECT, set by Pipeline's
+    `forge launch`, wins over the Flame project name (Pipeline Phase 50.1;
+    "" -> None). The Flame name is only the fallback for a Flame not started
+    by the launcher. `flame_projekt` (native name) and `flame_uuid` (wiretap
+    UUID) carry the durable Flame projekt identity (Pipeline link-propagation
+    Hop 2). Both are env-driven (FORGE_FLAME_PROJEKT / FORGE_FLAME_UUID) so
+    they are present at announce time before flame.project finishes loading;
+    `flame_projekt` falls back to the live Flame name. See #287.
     """
-    project = None
-    try:
-        import flame as _fl
-        project = str(_fl.project.current_project.name)
-    except Exception:
-        # Pitfall 6: project may not be loaded at app_initialized time, or
-        # flame module may not be available in test/offline contexts.
-        pass
+    project = os.environ.get("FORGE_PROJECT") or None
+    flame_projekt = os.environ.get("FORGE_FLAME_PROJEKT") or None
+    # Resolve the live Flame projekt name once, for whichever fallback needs it.
+    flame_name = None
+    if project is None or flame_projekt is None:
+        try:
+            import flame as _fl
+            flame_name = str(_fl.project.current_project.name) or None
+        except Exception:
+            # Pitfall 6: project may not be loaded at app_initialized time, or
+            # flame module may not be available in test/offline contexts.
+            flame_name = None
+    if project is None:
+        project = flame_name
+    if flame_projekt is None:
+        flame_projekt = flame_name
     return {
         "instance_id": f"flame-{os.getpid()}-{_NONCE}",
         "dcc": "flame",
@@ -153,6 +170,8 @@ def _make_descriptor():
         "port": BRIDGE_PORT,
         "started_at": _STARTED_AT,
         "version": "",
+        "flame_projekt": flame_projekt,
+        "flame_uuid": os.environ.get("FORGE_FLAME_UUID") or None,
     }
 
 
