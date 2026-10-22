@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "forge-bridge"
-version = "1.10.3"
+version = "1.10.4"
 description = "Protocol-agnostic communication middleware for post-production pipelines"
 readme = "README.md"
 license = { text = "GPL-3.0" }
@@ -20,7 +20,7 @@ dependencies = [
     "jinja2>=3.1",
     "rich>=13.9.4",
     "starlette",
-    "forge-contracts @ git+https://github.com/cnoellert/forge-contracts.git@v0.10",
+    "forge-contracts @ git+https://github.com/cnoellert/forge-contracts.git@v0.11",
 ]
 
 [project.scripts]
