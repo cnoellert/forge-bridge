@@ -305,6 +305,65 @@ class Asset(Versionable, BridgeEntity):
 
 
 # ─────────────────────────────────────────────────────────────
+# Plate
+# ─────────────────────────────────────────────────────────────
+
+class Plate(Versionable, BridgeEntity):
+    """A timed piece of a source that shots read their frames from.
+
+    A context beside Shot and Asset with its own Versions, Tasks and
+    streams (forge-pipeline ADR-012). A plate is identified by its name;
+    its source range is versioned, so each Version carries its own range
+    and cut-in and the plate itself does not.
+
+    shot_id is the plate's home shot. Other shots may consume the plate's
+    Versions too.
+
+    Endpoint mappings:
+        Flame:    one element of a published segment (its openclip)
+        ShotGrid: Element / plate Version under a Shot
+    """
+
+    def __init__(
+        self,
+        name: str,
+        project_id: Optional[uuid.UUID | str] = None,
+        shot_id: Optional[uuid.UUID | str] = None,
+        status: Status | str = Status.PENDING,
+        id: Optional[uuid.UUID | str] = None,
+        metadata: Optional[dict] = None,
+    ):
+        super().__init__(id=id, metadata=metadata)
+        self.name: str = name
+        self.project_id: Optional[uuid.UUID] = (
+            uuid.UUID(str(project_id)) if project_id else None
+        )
+        self.shot_id: Optional[uuid.UUID] = (
+            uuid.UUID(str(shot_id)) if shot_id else None
+        )
+        self.status: Status = (
+            Status.from_string(status) if isinstance(status, str)
+            else (status if status is not None else Status.PENDING)
+        )
+
+        if self.shot_id:
+            self.add_relationship(self.shot_id, "member_of")
+
+    def to_dict(self) -> dict:
+        d = super().to_dict()
+        d.update({
+            "name": self.name,
+            "project_id": str(self.project_id) if self.project_id else None,
+            "shot_id": str(self.shot_id) if self.shot_id else None,
+            "status": self.status.value,
+        })
+        return d
+
+    def __repr__(self) -> str:
+        return f"Plate(name={self.name!r}, id={self.id!s:.8}...)"
+
+
+# ─────────────────────────────────────────────────────────────
 # Version
 # ─────────────────────────────────────────────────────────────
 
@@ -314,8 +373,8 @@ class Version(BridgeEntity):
     Versions are immutable once created. A new iteration is always
     a new Version entity with a higher version_number.
 
-    parent_type is "shot" or "asset" — determines what the version
-    belongs to.
+    parent_type is "shot", "asset" or "plate" — determines what the
+    version belongs to.
     """
 
     def __init__(

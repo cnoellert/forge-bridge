@@ -10,7 +10,7 @@ from fractions import Fraction
 import pytest
 
 from forge_bridge.core import (
-    Asset, FrameRange, Layer, Location, Media, Project,
+    Asset, FrameRange, Layer, Location, Media, Plate, Project,
     Relational, Relationship, Registry, RelationshipTypeDef,
     RoleDefinition, Sequence, Shot, Stack, STANDARD_ROLES,
     SYSTEM_REL_KEYS, Status, StorageType, Timecode, Version,
@@ -274,6 +274,27 @@ class TestRelationships:
 # ─────────────────────────────────────────────────────────────
 # Layer stores role_key, not Role object
 # ─────────────────────────────────────────────────────────────
+
+class TestPlate:
+    def test_plate_is_member_of_its_home_shot(self):
+        shot  = Shot(name="sh010")
+        plate = Plate(name="sh010_plate_bg", shot_id=shot.id)
+        assert plate.entity_type == "plate"
+        rels = plate.get_relationships()
+        assert len(rels) == 1
+        assert rels[0].target_id == shot.id
+        assert rels[0].rel_key == SYSTEM_REL_KEYS["member_of"]
+
+    def test_plate_versions_name_plate_as_parent_type(self):
+        plate   = Plate(name="sh010_plate_bg", project_id=uuid.uuid4())
+        version = Version(version_number=1, parent_id=plate.id, parent_type="plate")
+        assert version.parent_id == plate.id
+        d = plate.to_dict()
+        assert d["entity_type"] == "plate"
+        assert d["shot_id"] is None
+        assert d["project_id"] == str(plate.project_id)
+        assert d["status"] == "pending"
+
 
 class TestLayer:
     def setup_method(self):

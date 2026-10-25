@@ -47,7 +47,15 @@ def test_migration_0017_revision_chain() -> None:
 
 def test_migration_0017_post_tuple_matches_the_orm_entity_types() -> None:
     migration = _migration()
-    assert set(migration._POST_274_ENTITY_TYPES) == set(ENTITY_TYPES)
+    # 0017 is no longer head: everything the ORM adds above it must be exactly
+    # what 0018 (plate) adds. 0018's own test pins post == ORM.
+    later = importlib.import_module(
+        "forge_bridge.store.migrations.versions.0018_plate_entity"
+    )
+    assert set(migration._POST_274_ENTITY_TYPES) == set(later._PRE_0018_ENTITY_TYPES)
+    assert set(ENTITY_TYPES) - set(migration._POST_274_ENTITY_TYPES) == {
+        later.PLATE_ENTITY_TYPE
+    }
     assert list(migration._POST_274_ENTITY_TYPES) == sorted(
         migration._POST_274_ENTITY_TYPES
     )

@@ -43,7 +43,7 @@ from sqlalchemy.exc import IntegrityError
 
 from forge_bridge.core import scheduling as sched
 from forge_bridge.core.entities import (
-    Asset, Layer, Media, Project as CoreProject,
+    Asset, Layer, Media, Plate, Project as CoreProject,
     Sequence as CoreSequence, Shot, Stack, Version,
 )
 from forge_bridge.core.registry import (
@@ -1315,6 +1315,14 @@ class Router:
                 status=status,
                 metadata={k: v for k, v in a.items() if k != "asset_type"},
             )
+        elif t == "plate":
+            return Plate(
+                name=name,
+                project_id=msg.get("project_id"),
+                shot_id=a.get("shot_id"),
+                status=status,
+                metadata={k: v for k, v in a.items() if k != "shot_id"},
+            )
         elif t == "version":
             # Our publish attributes: shot_id, iteration, version_label,
             # sequence_name, published_by. Legacy: version_number, parent_id.
@@ -1573,6 +1581,7 @@ _UPDATABLE_FIELDS: dict[str, dict[str, Callable]] = {
     "shot":     {"name": _str, "status": _status, "sequence_id": _opt_uuid,
                  "cut_in": _opt_timecode, "cut_out": _opt_timecode},
     "asset":    {"name": _str, "status": _status, "asset_type": _str},
+    "plate":    {"name": _str, "status": _status, "shot_id": _opt_uuid},
     "version":  {"name": _str, "status": _status, "version_number": _int,
                  "parent_id": _opt_uuid, "parent_type": _str,
                  "created_by": _opt_str},

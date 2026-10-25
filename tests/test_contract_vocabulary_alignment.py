@@ -101,9 +101,10 @@ def test_offlist_role_still_registerable():
 # entity-classification is federation-shared." These guards fail if the shared subset and bridge's
 # superset ever silently drift — the whole point of the promotion.
 
-def test_deliverable_types_seed_is_shot_and_asset():
-    """The promoted axis is exactly the version-owner deliverable subset (ADR-008 seed)."""
-    assert set(KNOWN_DELIVERABLE_TYPES) == {"shot", "asset"}
+def test_deliverable_types_are_shot_asset_and_plate():
+    """The promoted axis is exactly the version-owner deliverable subset: the ADR-008 seed
+    plus plate (forge-contracts v0.12, forge-pipeline ADR-012)."""
+    assert set(KNOWN_DELIVERABLE_TYPES) == {"shot", "asset", "plate"}
 
 
 def test_deliverable_types_are_a_subset_of_bridge_entity_types():
