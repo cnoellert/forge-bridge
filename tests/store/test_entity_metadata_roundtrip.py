@@ -71,3 +71,18 @@ def test_layer_role_key_is_typed_not_metadata():
     e = _to_core({"role_key": key, "order": 0}, entity_type="layer", name="L01")
     assert str(e.role_key) == key
     assert "role_key" not in e.metadata
+
+
+def test_plate_shot_id_is_typed_and_metadata_survives():
+    """A plate reads back its home shot as a typed field; open keys stay metadata."""
+    import uuid
+    shot_id = uuid.uuid4()
+    e = _to_core(
+        {"shot_id": str(shot_id), "element": "plate_bg", "tape_name": "A001C003"},
+        entity_type="plate",
+        name="sh010_plate_bg",
+    )
+    assert e.entity_type == "plate"
+    assert e.name == "sh010_plate_bg"
+    assert e.shot_id == shot_id
+    assert e.metadata == {"element": "plate_bg", "tape_name": "A001C003"}

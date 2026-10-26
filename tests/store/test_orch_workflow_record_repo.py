@@ -92,7 +92,7 @@ def test_migration_0016_matches_the_orm_entity_types() -> None:
     )
     assert set(ENTITY_TYPES) - set(migration._POST_242_ENTITY_TYPES) == set(
         later.SCHEDULING_ENTITY_TYPES
-    )
+    ) | {"plate"}  # 0018
 
 
 # --------------------------------------------------------------------------- #

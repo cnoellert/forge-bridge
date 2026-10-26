@@ -3,7 +3,7 @@ forge-bridge core vocabulary.
 
     from forge_bridge.core import (
         # Entities
-        Project, Sequence, Shot, Asset, Version, Media, Stack, Layer, StagedOperation,
+        Project, Sequence, Shot, Asset, Plate, Version, Media, Stack, Layer, StagedOperation,
         # Traits
         Versionable, Locatable, Relational,
         # Relationship primitives
@@ -26,6 +26,7 @@ from forge_bridge.core.entities import (
     BridgeEntity,
     Layer,
     Media,
+    Plate,
     Project,
     Sequence,
     Shot,
@@ -67,7 +68,7 @@ from forge_bridge.core.registry import (
 
 __all__ = [
     # Entities
-    "BridgeEntity", "Project", "Sequence", "Shot", "Asset",
+    "BridgeEntity", "Project", "Sequence", "Shot", "Asset", "Plate",
     "Version", "Media", "Stack", "Layer", "StagedOperation",
     # Traits
     "Versionable", "Locatable", "Relational",

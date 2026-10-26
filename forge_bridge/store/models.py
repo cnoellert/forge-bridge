@@ -228,6 +228,9 @@ class DBProject(Base):
 
 ENTITY_TYPES = frozenset({
     "sequence", "shot", "asset", "version", "media", "layer", "stack",
+    # Plate (forge-contracts v0.12) — a context beside shot and asset that
+    # owns its own Versions and Tasks (forge-pipeline ADR-012).
+    "plate",
     "staged_operation",
     "assent_record",
     # Generation spend-gate (#146) — one row in the shared entities table,

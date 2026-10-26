@@ -27,7 +27,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from forge_bridge.core.entities import (
-    Asset, BridgeEntity, Layer, Media, Project as CoreProject,
+    Asset, BridgeEntity, Layer, Media, Plate, Project as CoreProject,
     Sequence as CoreSequence, Shot, Stack, Version,
 )
 from forge_bridge.core.scheduling import SCHEDULING_CLASSES
@@ -286,6 +286,7 @@ _TYPED_ATTR_KEYS: dict[str, frozenset[str]] = {
     "sequence":         frozenset({"frame_rate", "duration_tc"}),
     "shot":             frozenset({"cut_in", "cut_out", "sequence_id"}),
     "asset":            frozenset({"asset_type"}),
+    "plate":            frozenset({"shot_id"}),
     "version":          frozenset({"version_number", "parent_id", "parent_type", "created_by"}),
     "media":            frozenset({"format", "resolution", "colorspace", "bit_depth", "version_id", "frame_range"}),
     "layer":            frozenset({"role_key", "order", "stack_id", "version_id"}),
@@ -505,6 +506,9 @@ class EntityRepo:
         elif t == "asset":
             a["asset_type"] = getattr(entity, "asset_type", "generic")
 
+        elif t == "plate":
+            a["shot_id"] = str(entity.shot_id) if getattr(entity, "shot_id", None) else None
+
         elif t == "version":
             v = entity
             a["version_number"] = v.version_number
@@ -580,6 +584,14 @@ class EntityRepo:
             e.name       = db.name
             e.asset_type = a.get("asset_type", "generic")
             e.project_id = db.project_id
+            e.status     = Status.from_string(db.status) if db.status else Status.PENDING
+
+        elif t == "plate":
+            e = Plate.__new__(Plate)
+            BridgeEntity.__init__(e, id=db.id, metadata={})
+            e.name       = db.name
+            e.project_id = db.project_id
+            e.shot_id    = uuid.UUID(a["shot_id"]) if a.get("shot_id") else None
             e.status     = Status.from_string(db.status) if db.status else Status.PENDING
 
         elif t == "version":
